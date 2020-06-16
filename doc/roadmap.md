@@ -18,6 +18,7 @@ snapshot “editions”.
 * Enough documentation to enable a moderately sophisticated user to acquire, set up, and use the system
 
 ## Tentative Planning
+
 ### M0
 The goal of the first milestone is to “boot” and get running with an identifiably different system, minimal aesthetics, minimal user functionality, but a viable target platform for further work.
 The (vast) majority of M0 work should be done in Python, to ensure it’s malleable.
@@ -30,35 +31,23 @@ Infrastructure
 * Release process
 
 System
-* Interim base OS
-   * Processes / threads
-   * Memory
-   * Block storage drivers
-   * Keyboard / mouse
-   * Display and GPU
-   * Network devices and TCP/IP stack
-   * Alpine Linux?  Debian Linux?  FreeBSD?  Zircon/Fuschia?
-* Some sort of low-level graphics API
-   * No X, no Wayland
-   * Probably not Qt or GNOME or other existing UI toolkit either, unless I come across something well suited or as a great starting point for forking
-   * OpenGL ES 2 or 3?  As a base API to the GPU.  How does this work with the Linux framebuffer?  SDL?  DirectFB?  OpenVG?  Etc.
+* Linux host
+* A collection of cooperating processes
+  * Probably written in Python?
 * Some sort of IPC
-   * Kernel mediated
-   * Not DBus
-   * Mach + MIG
-   * Protobuf / CapNProto / Thrift / Avro / etc
-   * Is there a role for Elvin here?
-   * In-memory local transport option + network transport option
+  * Maybe UDP-based?
+  * Application layer
+  * Not DBus
+  * Protobuf / CapNProto / Thrift / Avro / etc
+  * Is there a role for Elvin here?
+* GUI
+  * Full-screen window
+  * Linux framebuffer?
+  * OpenGL/X11?
 * Bootstrap
-   * init, probably BSD-style?
-   * Local storage
-   * Network
-      * DHCP
-      * WiFi client
-      * Try to avoid FDO bloat (NetworkManager, systemd-*, etc)
-   * Widget service
-   * Execution service
-   * Terminal Service
+  * Maybe just a shell script, starting up processes?
+  * Storage over Linux FS
+  * Network shared with host OS
 
 Services
 * Security
@@ -106,8 +95,32 @@ Support web browsing, and begin work on metadata/indexer support to make that ex
 Infrastructure
 
 System
+* Interim base OS
+   * Processes / threads
+   * Memory
+   * Block storage drivers
+   * Keyboard / mouse
+   * Display and GPU
+   * Network devices and TCP/IP stack
+   * Linux?  FreeBSD?  Zircon/Fuschia?  Minix3?  
+* Some sort of IPC
+   * Kernel mediated
+   * Not DBus
+   * Mach + MIG
+   * Protobuf / CapNProto / Thrift / Avro / etc
+   * Is there a role for Elvin here?
+   * In-memory local transport option + network transport option
+* Some sort of low-level graphics API
+   * Not X, not Wayland
+   * Not Qt or Gtk or other existing UI toolkit either, unless I come 
+     across something well suited or as a great starting point for 
+     forking
+   * OpenGL ES 2 or 3?  As a base API to the GPU.  How does this work 
+     with the Linux framebuffer?  SDL?  DirectFB?  OpenVG?  Etc.
 * Language runtime
-   * C?  Go?  Rust?   Something that can be compiled, with decent performance, and not too difficult to retarget to a non-POSIX runtime.
+   * C?  Go?  Rust?   Something that can be compiled, with decent 
+     performance, and not too difficult to retarget to a non-POSIX 
+     runtime.
 
 Services
 * URL fetcher
@@ -389,9 +402,17 @@ single layer.
 * https://pypi.org/project/glfw/
 * https://github.com/oasislinux/oasis
 
+Example of bare-metal OpenGL application
+* https://gitlab.freedesktop.org/mesa/kmscube/
+  
+Notes on running on RPi4
+* https://www.raspberrypi.org/forums/viewtopic.php?p=1490438
+* https://github.com/matusnovak/rpi-opengl-without-x
 
 L4, LittleKernel, Fuschia/Zircon, Minix3, -- some existing micro-kernel
 might be a good start for the OS?  
+
+* Cut-down RPi Linux: https://dietpi.com/
 
 ## Notes
 * How does a Calculator app fit in?
