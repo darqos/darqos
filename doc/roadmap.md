@@ -203,12 +203,14 @@ Services
    * System-to-user communication
 * People
    * Repository of data about people
-   * Able to sync with external services (Exchange, Google, CardDAV, vCard, LinkedIn, etc)
+   * Able to sync with external services (Exchange, Google, CardDAV,
+     vCard, LinkedIn, etc)
    * Index and History providers
    * Needs better name, since it can be businesses or groups etc also
 * Calendar
    * Repository of calendar events
-   * Able to sync with external services (Exchange, Google, CalDAV, vCalendar)
+   * Able to sync with external services (Exchange, Google, CalDAV,
+     vCalendar)
    * Index and History providers
 * Mail
    * IMAP, SMTP, JMAP, Exchange, etc, service
@@ -220,7 +222,8 @@ Services
       * Some sort of object provider?
       * How’s this related to, eg. the Storage service?
 * Messages
-   * Interface to external services: GChat, Slack, Discord, WhatsApp, Signal, etc
+   * Interface to external services: GChat, Slack, Discord, WhatsApp,
+     Signal, etc
    * Index, Metadata, Notification, and History providers
       * Maybe Storage as well?
    * Sync local archive with remote where supported (eg. Slack)?
@@ -233,16 +236,20 @@ Services
 Types
 * Mail
    * CRUD
-      * Reply / Reply-all / Forward are specialisations of standard create action
+      * Reply / Reply-all / Forward are specialisations of standard 
+        create action
       * Delete is just delete, Update is just edit
       * Send is a type-specific action, I guess
       * Headers might translate nicely into metadata?
    * MIME
-      * Consider archive support for eg. HTML email, which can change given externally-hosted content
+      * Consider archive support for eg. HTML email, which can change 
+        given externally-hosted content
    * Mail objects aren’t special
-      * They have Index, Metadata, and History (like all other objects), and so you don’t need folders
+      * They have Index, Metadata, and History (like all other objects),
+        and so you don’t need folders
       * Inbox is really just part of the Notification service
-      * So there’s no special collection required for mail: just Notification and the type actions?
+      * So there’s no special collection required for mail: just
+        Notification and the type actions?
 * Message
    * CRUD
    * Unified interface to multiple providers
@@ -253,10 +260,14 @@ Types
 * Sound
    * CRUD+DM
    * Audio player/editor
-   * Might want different presentation facets for podcast vs. song vs. sample vs. etc
+   * Might want different presentation facets for podcast vs. song vs.
+     sample vs. etc
+   * Music, and Album, as possibly derived types?
+   * Music plugin for selector/dashboard/HUD?
 
 ### M4
-Office: word processor, spreadsheet, slides, vector drawing, pixel drawing
+Office: word processor, spreadsheet, slides, vector drawing, pixel
+drawing
 
 Infrastructure
 
@@ -283,7 +294,8 @@ Types
    * Inkscape?
 * Pixel Drawing
    * CRUD+DM
-   * Should scale from simple image viewer for eg. Messages, to Photoshop-style editing capability
+   * Should scale from simple image viewer for eg. Messages, to
+     Photoshop-style editing capability
    * Start with GIMP?
 * Diagrams
    * CRUD+DM
@@ -326,7 +338,8 @@ Types
    * CRUD+DM
    * Specialised tool for icons, vs. pixel/vector images
       * How to determine which one to use?
-      * Can this be a scalable feature of an overall “Images” application?
+      * Can this be a scalable feature of an overall “Images”
+        application?
 * PCBs
    * Schematic capture
    * Board design
@@ -348,7 +361,8 @@ Types
    * Eg. Delicious Monster, Bookpedia, etc.
 * eBook
    * RD+DM
-   * How is this related to the PDF viewer?  Or even the Document viewer?
+   * How is this related to the PDF viewer?  Or even the Document
+     viewer?
       * Is there a different UI for “books” vs. “papers”?
       * Is that difference something that should really just be 
         presentational affordances, driven by metadata?
