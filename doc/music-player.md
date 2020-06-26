@@ -100,5 +100,14 @@ work: I think ... I'm not sure you want to search of your volume knob
 like you do any other object?  Perhaps?  Does this mean it just lives
 on the "shelf" of docked objects in the selector?
 
- 
- 
+## Open Issues
+* Selection plugin?
+* System hardware/device configuration: how are these objects
+  accessed?
+* Is there a distinction between sound and music objects?
+* How does the audio system deal with multi-channel sound?
+  * Stereo, 5.1, 7.1, Atmos, etc
+* Can I leverage Jack for the audio system?
+* Is there any commonality between the audio system model, as 
+  described above, and how the system should handle displays and
+  input devices?
