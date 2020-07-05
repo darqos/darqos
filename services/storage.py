@@ -13,10 +13,11 @@
 #
 # For now, let's have a simple API, and a runtime library to match.
 
-from .base import Service
+from darq.os.base import Service
 
 import hashlib
 import sqlite3
+import sys
 import zmq
 
 
@@ -40,6 +41,11 @@ class StorageService(Service):
                        "key text not null primary key, "
                        "value blob)")
         self.db.commit()
+
+        self.context = None
+        self.socket = None
+        self.active = False
+
         return
 
     @staticmethod
@@ -105,18 +111,40 @@ class StorageService(Service):
         return value
 
     def listen(self):
-        self.zmq_context = zmq.Context()
-        self.socket = self.zmq_context.socket(zmq.REP)
+
+        self.context = zmq.Context()
+        self.socket = self.context.socket(zmq.REP)
         self.socket.bind("tcp://*:11001")
+        self.active = True
+
+        while self.active:
+            message = self.socket.recv()
+            self.handle_request(message)
+
         return
 
-    def handle_request(self):
+    def handle_request(self, message):
         return
 
     def send_response(self):
+        self.socket.send()
         return
 
     def close(self):
         self.socket.close()
-        self.zmq_context.destroy()
+        self.socket = None
+
+        self.context.destroy()
+        self.context = None
         return
+
+    def run(self) -> int:
+        self.listen()
+        self.close()
+        return 0
+
+
+if __name__ == "__main__":
+    service = StorageService()
+    result = service.run()
+    sys.exit(result)
