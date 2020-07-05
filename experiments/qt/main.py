@@ -14,7 +14,7 @@ import sys
 import PyQt5
 from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QTextEdit, QMenu, QShortcut, qApp
 from PyQt5 import QtCore
-from PyQt5.QtGui import QColor, QKeySequence
+from PyQt5.QtGui import QColor, QKeySequence, QMouseEvent
 
 
 class DarqTextEdit(QTextEdit):
@@ -42,10 +42,10 @@ class DarqTextEdit(QTextEdit):
 class TextTypeView(QWidget):
     def __init__(self, *args):
         super().__init__(*args)
-        self.init_ui()
-        return
 
-    def init_ui(self):
+        # Window placement.
+        self._drag_start = None
+
         self.resize(1024, 768)
         self.move(300, 300)
         self.setWindowTitle('New')
@@ -60,7 +60,42 @@ class TextTypeView(QWidget):
         e.resize(924, 668)
         e.move(50, 50)
 
+        # Install mouse event handler.
+
         self.show()
+        return
+
+    def mousePressEvent(self, a0: QMouseEvent) -> None:
+        print("Mouse Press Event: " + str(a0.pos()))
+        self._drag_start = a0.pos()
+        a0.ignore()
+        return
+
+    def mouseReleaseEvent(self, a0: QMouseEvent) -> None:
+
+        self._move_window(a0.pos())
+        a0.ignore()
+        return
+
+    def mouseDoubleClickEvent(self, a0: QMouseEvent) -> None:
+        a0.ignore()
+        return
+
+    def mouseMoveEvent(self, a0: QMouseEvent) -> None:
+        print("Mouse Move Event")
+        print("event pos = " + str(a0.pos()))
+        print("window pos = " + str(self.pos()))
+        print("Event x & y = " + str(a0.x()) + " " + str(a0.y()))
+
+        self._move_window(a0.pos())
+        a0.ignore()
+        return
+
+    def _move_window(self, drag_pos):
+        delta_x = drag_pos.x() - self._drag_start.x()
+        delta_y = drag_pos.y() - self._drag_start.y()
+
+        self.move(self.pos().x() + delta_x, self.pos().y() + delta_y)
         return
 
     def contextMenuEvent(self, event):
