@@ -2,9 +2,14 @@
 
 from typing import Union
 
-import struct
+import base64
+import orjson
 import zmq
 
+# The IPC mechanism used between the runtime library and the service
+# instance should really be encapsulated as a class that can be used
+# by the APIs, rather than being reimplemented for each service.  But
+# for now, just hack it up and we'll factor it out later.
 
 class Storage:
     """Interface to storage system."""
@@ -20,35 +25,57 @@ class Storage:
         return
 
     def set(self, key: str, value: Union[bytes, bytearray]):
-        tag_len = struct.pack("<H", len("set"))
-        key_len = struct.pack("<L", len(key.encode()))
-        value_len = struct.pack("<L", len(value))
+        request = {"method": "set",
+                   "xid": "xxx",
+                   "key": key,
+                   "value": base64.b64encode(value).decode()}
+        buf = orjson.dumps(request)
+        self.socket.send(buf)
 
-        request = tag_len + b"set" + key_len + key.encode() + value_len + value
-        self.socket.send(request)
-
-        reply = self.socket.recv()
+        reply = self.socket.recv_json()
+        print(reply)
         return
 
     def update(self, key: str, value: Union[bytes, bytearray]):
         pass
 
     def exists(self, key: str) -> bool:
-        tag_len = struct.pack("<H", len("exists"))
-        key_len = struct.pack("<L", len(key.encode()))
+        request = {"method": "exists",
+                   "xid": "xxx",
+                   "key": key}
+        self.socket.send_json(request)
 
-        request = tag_len + b"exists" + key_len + key.encode()
-        self.socket.send(request)
+        reply = self.socket.recv_json()
+        assert reply['method'] == "exists"
+        assert "result" in reply
 
-        reply = self.socket.recv()
-
-    pass
+        return reply['result']
 
     def get(self, key: str) -> bytearray:
-        pass
+        request = {"method": "get",
+                   "xid": "xxx",
+                   "key": key}
+        buf = orjson.dumps(request)
+        self.socket.send(buf)
+
+        buf = self.socket.recv()
+        reply = orjson.loads(buf)
+        print(reply)
+
+        value = base64.b64decode(reply["value"])
+        return value
 
     def delete(self, key: str):
-        pass
+        request = {"method": "delete",
+                   "xid": "xxx",
+                   "key": key}
+        buf = orjson.dumps(request)
+        self.socket.send(buf)
+
+        buf = self.socket.recv()
+        reply = orjson.loads(buf)
+        print(reply)
+        return
 
 
 #

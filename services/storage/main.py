@@ -2,9 +2,9 @@
 
 # Blob storage service.
 #
-# Initially, all blobs will be stored as files.  As a subsequent optimisation,
-# it might make sense to store smaller objects in a SQLite database or
-# something similar instead.
+# Initially, all blobs will be stored in SQLite.  As a subsequent
+# optimisation, it might make sense to store larger objects in simple
+# files instead.
 #
 # The ideal scenario would be for the stored data to be mapped into the
 # memory of the client process, and then fetched from disc as required
@@ -15,7 +15,9 @@
 
 from darq.os.base import Service
 
+import base64
 import hashlib
+import orjson
 import sqlite3
 import sys
 import zmq
@@ -60,8 +62,10 @@ class StorageService(Service):
         :param key: Key string.
         :param value: Value data."""
 
+        print("set(%s, %s)" % (key, str(value)))
+
         cursor = self.db.cursor()
-        cursor.execute("insert into storage value (?, ?)",
+        cursor.execute("insert into storage values (?, ?)",
                        (self._hash(key), value))
         self.db.commit()
         return
@@ -80,7 +84,7 @@ class StorageService(Service):
         self.db.commit()
         return
 
-    def has_key(self, key: str) -> bool:
+    def exists(self, key: str) -> bool:
         """Check whether key is set.
 
         :param key: String eky.
@@ -90,6 +94,7 @@ class StorageService(Service):
         cursor.execute("select count(key) from storage where key = ?",
                        (self._hash(key),))
         row = cursor.fetchone()
+        cursor.close()
         if row is None:
             return False
         if row[0] != 1:
@@ -105,10 +110,20 @@ class StorageService(Service):
         cursor.execute("select value from storage where key = ?",
                        (self._hash(key),))
         row = cursor.fetchone()
+        cursor.close()
         if row is None:
             return None
         value = row[0]
         return value
+
+    def delete(self, key: str):
+        """Deletes the value for key."""
+
+        cursor = self.db.cursor()
+        cursor.execute("delete from storage where key = ?",
+                       (self._hash(key),))
+        self.db.commit()
+        return
 
     def listen(self):
 
@@ -118,12 +133,61 @@ class StorageService(Service):
         self.active = True
 
         while self.active:
-            message = self.socket.recv()
+            message = self.socket.recv_json()
             self.handle_request(message)
 
         return
 
-    def handle_request(self, message):
+    def handle_request(self, request):
+        if "method" not in request:
+            self.socket.send_json({"error": "No method name specified"})
+            return
+
+        print("Request: ", request)
+
+        method = request["method"]
+        if method == "set":
+            self.set(request["key"], base64.b64decode(request["value"]))
+
+            self.socket.send_json({"method": request["method"],
+                                   "xid": request["xid"],
+                                   "result": True})
+            return
+
+        elif method == "update":
+            print("update")
+
+        elif method == "exists":
+            rpc_result = self.exists(request["key"])
+            reply = {"method": "exists",
+                     "xid": request["xid"],
+                     "result": rpc_result}
+            buf = orjson.dumps(reply)
+            self.socket.send(buf)
+            return
+
+        elif method == "get":
+            value = self.get(request["key"])
+            reply = {"method": request["method"],
+                     "xid": request["xid"],
+                     "result": value is not None,
+                     "value": base64.b64encode(value).decode()}
+            buf = orjson.dumps(reply)
+            self.socket.send(buf)
+            return
+
+        elif method == "delete":
+            self.delete(request["key"])
+            reply = {"method": request["method"],
+                     "xid": request["xid"],
+                     "result": True}
+            buf = orjson.dumps(reply)
+            self.socket.send(buf)
+            return
+
+        else:
+            self.socket.send_json({"method": request["method"],
+                                   "result": False})
         return
 
     def send_response(self):
