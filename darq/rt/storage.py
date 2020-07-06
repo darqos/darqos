@@ -11,6 +11,7 @@ import zmq
 # by the APIs, rather than being reimplemented for each service.  But
 # for now, just hack it up and we'll factor it out later.
 
+
 class Storage:
     """Interface to storage system."""
 

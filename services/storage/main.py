@@ -17,10 +17,8 @@ from darq.os.base import Service
 
 import base64
 import hashlib
-import orjson
 import sqlite3
 import sys
-import zmq
 
 
 class StorageService(Service):
@@ -125,33 +123,13 @@ class StorageService(Service):
         self.db.commit()
         return
 
-    def listen(self):
+    def handle_request(self, request: dict):
+        """Handle requests."""
 
-        self.context = zmq.Context()
-        self.socket = self.context.socket(zmq.REP)
-        self.socket.bind("tcp://*:11001")
-        self.active = True
-
-        while self.active:
-            message = self.socket.recv_json()
-            self.handle_request(message)
-
-        return
-
-    def handle_request(self, request):
-        if "method" not in request:
-            self.socket.send_json({"error": "No method name specified"})
-            return
-
-        print("Request: ", request)
-
-        method = request["method"]
+        method = request.get("method")
         if method == "set":
             self.set(request["key"], base64.b64decode(request["value"]))
-
-            self.socket.send_json({"method": request["method"],
-                                   "xid": request["xid"],
-                                   "result": True})
+            self.send_reply(request, result=True)
             return
 
         elif method == "update":
@@ -159,53 +137,24 @@ class StorageService(Service):
 
         elif method == "exists":
             rpc_result = self.exists(request["key"])
-            reply = {"method": "exists",
-                     "xid": request["xid"],
-                     "result": rpc_result}
-            buf = orjson.dumps(reply)
-            self.socket.send(buf)
+            self.send_reply(request, result=rpc_result)
             return
 
         elif method == "get":
             value = self.get(request["key"])
-            reply = {"method": request["method"],
-                     "xid": request["xid"],
-                     "result": value is not None,
-                     "value": base64.b64encode(value).decode()}
-            buf = orjson.dumps(reply)
-            self.socket.send(buf)
+            self.send_reply(request,
+                            result=value is not None,
+                            value=base64.b64encode(value).decode())
             return
 
         elif method == "delete":
             self.delete(request["key"])
-            reply = {"method": request["method"],
-                     "xid": request["xid"],
-                     "result": True}
-            buf = orjson.dumps(reply)
-            self.socket.send(buf)
+            self.send_reply(request, result=True)
             return
 
         else:
-            self.socket.send_json({"method": request["method"],
-                                   "result": False})
+            super().handle_request(request)
         return
-
-    def send_response(self):
-        self.socket.send()
-        return
-
-    def close(self):
-        self.socket.close()
-        self.socket = None
-
-        self.context.destroy()
-        self.context = None
-        return
-
-    def run(self) -> int:
-        self.listen()
-        self.close()
-        return 0
 
 
 if __name__ == "__main__":
