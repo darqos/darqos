@@ -59,7 +59,7 @@ class StorageService(Service):
         :param key: Key string.
         :param value: Value data."""
 
-        print("set(%s, %s)" % (key, str(value)))
+        print(f"set({key}, {value})")
 
         cursor = self.db.cursor()
         cursor.execute("insert into storage values (?, ?)",
@@ -75,7 +75,7 @@ class StorageService(Service):
 
         If 'key' is not already set, return an error."""
 
-        print("update(%s, %s)" % (key, str(value)))
+        print(f"update({key}, {value})")
 
         cursor = self.db.cursor()
         cursor.execute("update storage set value = ? where key = ?",
@@ -94,11 +94,15 @@ class StorageService(Service):
                        (self._hash(key),))
         row = cursor.fetchone()
         cursor.close()
+
+        key_exists = True
         if row is None:
-            return False
+            key_exists = False
         if row[0] != 1:
-            return False
-        return True
+            key_exists = False
+
+        print(f"exists({key}) -> {key_exists}")
+        return key_exists
 
     def get(self, key: str):
         """Returns the value for key.
@@ -111,12 +115,17 @@ class StorageService(Service):
         row = cursor.fetchone()
         cursor.close()
         if row is None:
+            print(f"get({key}) -> None")
             return None
         value = row[0]
+
+        print(f"get({key}) -> {value}")
         return value
 
     def delete(self, key: str):
         """Deletes the value for key."""
+
+        print(f"delete({key})")
 
         cursor = self.db.cursor()
         cursor.execute("delete from storage where key = ?",
