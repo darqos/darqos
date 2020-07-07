@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QTextEdit, QMenu, QShortcut, qApp
+from PyQt5.QtWidgets import QApplication, QWidget, QTextEdit, QMenu, QShortcut, qApp, QVBoxLayout
 from PyQt5 import QtCore
 from PyQt5.QtGui import QColor, QKeySequence, QMouseEvent
 
@@ -278,7 +278,7 @@ class DarqTextEdit(QTextEdit):
     def __init__(self, parent):
         """Constructor."""
 
-        super().__init__(parent)
+        super().__init__()
         self.parent = parent
 
         self.setStyleSheet("QTextEdit {"
@@ -330,6 +330,7 @@ class TextTypeView(QWidget):
 
         # Window placement.
         self._drag_start = None
+        self._fullscreen = False
 
         # Create view.
         super().__init__()
@@ -342,15 +343,17 @@ class TextTypeView(QWidget):
         self.setWindowTitle('New')
 
         # Remove title bar, traffic lights, etc.
-        flags = QtCore.Qt.WindowFlags(QtCore.Qt.FramelessWindowHint)
-        self.setWindowFlags(flags)
+        self.flags = QtCore.Qt.WindowFlags(QtCore.Qt.FramelessWindowHint)
+        self.setWindowFlags(self.flags)
 
         # Draw text view inside frame.
+        self.layout = QVBoxLayout()
+        self.layout.setContentsMargins(50, 50, 50, 50)
         self.edit = DarqTextEdit(self)
-        self.edit.resize(self.width() - 100, self.height() - 100)
-        self.edit.move(50, 50)
         self.edit.append(self.text.text)
+        self.layout.addWidget(self.edit)
 
+        self.setLayout(self.layout)
         self.show()
         return
 
@@ -388,16 +391,25 @@ class TextTypeView(QWidget):
 
     def contextMenuEvent(self, event):
         m = QMenu()
-        m.addAction("Other")
-        m.addAction("Stuff")
-        m.addAction("Goes")
-        m.addAction("Here")
+        fullscreen_action = m.addAction("Full screen")
+        m.addAction("Show metadata")
         m.addSeparator()
         quit_action = m.addAction("Close")
 
         action = m.exec_(self.mapToGlobal(event.pos()))
         if action == quit_action:
             self.close()
+        elif action == fullscreen_action:
+            self.toggle_fullscreen()
+        return
+
+    def toggle_fullscreen(self):
+        if self._fullscreen:
+            self.showNormal()
+            self._fullscreen = False
+        else:
+            self.showFullScreen()
+            self._fullscreen = True
         return
 
     def close(self):
