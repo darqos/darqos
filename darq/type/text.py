@@ -315,10 +315,14 @@ class TextTypeView(QWidget):
         # Load content.
         self.storage = Storage.api()
         if url is not None:
-            self.url = url  # FIXME: figure this out and fix
-            buf = self.storage.get(self.url)
-            print(len(buf))
-            self.text = Text.from_bytes(buf)
+            self.url = url  # FIXME: parsing?  volumes?  etc
+
+            if self.storage.exists(self.url):
+                buf = self.storage.get(self.url)
+                self.text = Text.from_bytes(buf)
+            else:
+                self.storage.set(self.url, b'')
+                self.text = Text.new()
         else:
             self.url = str(uuid.uuid4())
             self.storage.set(self.url, b'')
@@ -338,8 +342,7 @@ class TextTypeView(QWidget):
         self.setWindowTitle('New')
 
         # Remove title bar, traffic lights, etc.
-        flags = QtCore.Qt.WindowFlags(
-            QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint)
+        flags = QtCore.Qt.WindowFlags(QtCore.Qt.FramelessWindowHint)
         self.setWindowFlags(flags)
 
         # Draw text view inside frame.
