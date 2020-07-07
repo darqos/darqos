@@ -30,7 +30,7 @@ class StorageService(Service):
     set as required, rather than being completely loaded all at once."""
 
     def __init__(self, file: str = None):
-        super().__init__()
+        super().__init__("tcp://*:11001")
 
         if file is None:
             file = "storage.sqlite"
@@ -76,9 +76,11 @@ class StorageService(Service):
 
         If 'key' is not already set, return an error."""
 
+        print("update(%s, %s)" % (key, str(value)))
+
         cursor = self.db.cursor()
         cursor.execute("update storage set value = ? where key = ?",
-                       (self._hash(key), value))
+                       (value, self._hash(key)))
         self.db.commit()
         return
 
@@ -133,7 +135,9 @@ class StorageService(Service):
             return
 
         elif method == "update":
-            print("update")
+            self.update(request["key"], base64.b64decode(request["value"]))
+            self.send_reply(request, result=True)
+            return
 
         elif method == "exists":
             rpc_result = self.exists(request["key"])
@@ -142,9 +146,10 @@ class StorageService(Service):
 
         elif method == "get":
             value = self.get(request["key"])
-            self.send_reply(request,
-                            result=value is not None,
-                            value=base64.b64encode(value).decode())
+            self.send_reply(
+                request,
+                result=value is not None,
+                value=base64.b64encode(value).decode() if value else '')
             return
 
         elif method == "delete":

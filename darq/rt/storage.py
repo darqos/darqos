@@ -33,12 +33,21 @@ class Storage:
         buf = orjson.dumps(request)
         self.socket.send(buf)
 
-        reply = self.socket.recv_json()
-        print(reply)
-        return
+        buf = self.socket.recv()
+        reply = orjson.loads(buf)
+        return reply["result"]
 
     def update(self, key: str, value: Union[bytes, bytearray]):
-        pass
+        request = {"method": "update",
+                   "xid": "xxx",
+                   "key": key,
+                   "value": base64.b64encode(value).decode()}
+        buf = orjson.dumps(request)
+        self.socket.send(buf)
+
+        buf = self.socket.recv()
+        reply = orjson.loads(buf)
+        return reply["result"]
 
     def exists(self, key: str) -> bool:
         request = {"method": "exists",
@@ -75,11 +84,9 @@ class Storage:
 
         buf = self.socket.recv()
         reply = orjson.loads(buf)
-        print(reply)
-        return
+        return reply["result"]
 
 
-#
 def test():
     s = Storage.api()
     assert not s.exists("foo")
@@ -90,4 +97,5 @@ def test():
     assert not s.exists("foo")
 
 
-test()
+if __name__ == "__main__":
+    test()
