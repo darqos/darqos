@@ -2,6 +2,15 @@
 
 from typing import Optional
 
+from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QTextEdit, QMenu, QShortcut, qApp
+from PyQt5 import QtCore
+from PyQt5.QtGui import QColor, QKeySequence, QMouseEvent
+
+from darq.rt.storage import Storage
+
+import sys
+import uuid
+
 
 class Object:
     """Base class for types."""
@@ -66,8 +75,15 @@ class Text(Object):
         return
 
     @staticmethod
-    def new()
+    def new():
         return Text()
+
+    @staticmethod
+    def load(oid: str):
+        """Load a Text object from storage."""
+        # get bytes from storage
+        text = Text.from_bytes()
+        return text
 
     @staticmethod
     def from_bytes(buffer: bytes):
@@ -127,7 +143,7 @@ class Text(Object):
         """Set the point from the mark, and the mark from the point."""
         tmp = self.mark
         self.mark = self.point
-        self.point = mark
+        self.point = tmp
         return
 
     def shift_point_backward(self, positions: int = 1) -> int:
@@ -252,3 +268,151 @@ class Text(Object):
         self.point = 0
         self.mark = len(self.text)  # FIXME: need to be normalized unicode length
         return
+
+
+########################################################################
+
+class DarqTextEdit(QTextEdit):
+    """TextEdit control with altered style and extended context menu."""
+
+    def __init__(self, parent):
+        """Constructor."""
+
+        super().__init__(parent)
+        self.parent = parent
+
+        self.setStyleSheet("QTextEdit {"
+                           " background-color: #323232;"
+                           " border-style: none;"
+                           " font-size: 18px; "
+                           "}")
+        self.setAcceptRichText(True)
+        c = QColor()
+        c.setRgb(123, 187, 236, 255)
+        self.setTextColor(c)
+        return
+
+    def contextMenuEvent(self, event):
+        """Extend standard context menu."""
+
+        m = self.createStandardContextMenu()
+        m.addSeparator()
+        close_action = m.addAction("Close")
+
+        action = m.exec_(self.mapToGlobal(event.pos()))
+        if action == close_action:
+            self.parent.close()
+
+
+########################################################################
+
+class TextTypeView(QWidget):
+    """GUI text type."""
+
+    def __init__(self, url: str = None):
+        """Constructor."""
+
+        # Load content.
+        self.storage = Storage.api()
+        if url is not None:
+            self.url = url  # FIXME: figure this out and fix
+            buf = self.storage.get(self.url)
+            print(len(buf))
+            self.text = Text.from_bytes(buf)
+        else:
+            self.url = uuid.uuid4().get_hex()
+            self.storage.set(self.url, b'')
+            self.text = Text.new()
+
+        # Window placement.
+        self._drag_start = None
+
+        # Create view.
+        super().__init__()
+
+        # Default size.
+        self.resize(1024, 768)
+
+        # Default position.
+        self.move(300, 300)
+        self.setWindowTitle('New')
+
+        # Remove title bar, traffic lights, etc.
+        flags = QtCore.Qt.WindowFlags(
+            QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint)
+        self.setWindowFlags(flags)
+
+        # Draw text view inside frame.
+        self.edit = DarqTextEdit(self)
+        self.edit.resize(self.width() - 100, self.height() - 100)
+        self.edit.move(50, 50)
+        self.edit.append(self.text.text)
+
+        self.show()
+        return
+
+    def mousePressEvent(self, a0: QMouseEvent) -> None:
+        print("Mouse Press Event: " + str(a0.pos()))
+        self._drag_start = a0.pos()
+        a0.ignore()
+        return
+
+    def mouseReleaseEvent(self, a0: QMouseEvent) -> None:
+        self._move_window(a0.pos())
+        a0.ignore()
+        return
+
+    def mouseDoubleClickEvent(self, a0: QMouseEvent) -> None:
+        a0.ignore()
+        return
+
+    def mouseMoveEvent(self, a0: QMouseEvent) -> None:
+        print("Mouse Move Event")
+        print("event pos = " + str(a0.pos()))
+        print("window pos = " + str(self.pos()))
+        print("Event x & y = " + str(a0.x()) + " " + str(a0.y()))
+
+        self._move_window(a0.pos())
+        a0.ignore()
+        return
+
+    def _move_window(self, drag_pos):
+        delta_x = drag_pos.x() - self._drag_start.x()
+        delta_y = drag_pos.y() - self._drag_start.y()
+
+        self.move(self.pos().x() + delta_x, self.pos().y() + delta_y)
+        return
+
+    def contextMenuEvent(self, event):
+        m = QMenu()
+        m.addAction("Other")
+        m.addAction("Stuff")
+        m.addAction("Goes")
+        m.addAction("Here")
+        m.addSeparator()
+        quit_action = m.addAction("Close")
+
+        action = m.exec_(self.mapToGlobal(event.pos()))
+        if action == quit_action:
+            self.close()
+        return
+
+    def close(self):
+        text = self.edit.toPlainText()
+        self.storage.update(self.url, text.encode())
+        super().close()
+        return
+
+
+def main():
+    url = None
+    if len(sys.argv) > 1:
+        url = sys.argv[1]
+
+    app = QApplication(sys.argv)
+    text = TextTypeView(url)
+    sys.exit(app.exec_())
+
+
+if __name__ == "__main__":
+    main()
