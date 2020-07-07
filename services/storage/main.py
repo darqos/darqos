@@ -49,10 +49,9 @@ class StorageService(Service):
         return
 
     @staticmethod
-    def _hash(key: str):
+    def _hash(key: str) -> str:
         """(Internal) Return a prepared key."""
-        k = hashlib.sha256(key.encode())
-        return k.digest()
+        return hashlib.sha256(key.encode()).hexdigest()
 
     def set(self, key: str, value):
         """Set the value for a key.
