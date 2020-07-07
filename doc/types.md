@@ -1,4 +1,67 @@
 # Types
+Types, in the sense of MIME types and similar characterisations, are
+a fundamental aspect of the system.  Most of what would usually be
+considered applications are installed in the system as type implementations.
+
+Users access the system via an implementation of the Terminal Service.
+The terminal service provides a shell-like facility for interacting with
+the system.  One feature of this shell is the ability to create new
+instances of types.
+
+## Type Registry
+The set of types known to the system is managed by the Type Registry.
+A user can request the creation of a new type instance, or the use of an
+existing type instance, using the type registry to find the implementation
+of the type.
+
+### Creation
+Using a shell, the user requests a new instance of a named type.  The
+shell looks up the type name in the registry, and obtains a reference
+to the type's implementation.  The shell uses the kernel to spawn a new
+process, running the type's implementation.
+
+* Does it make sense for each type instance to be a new process?
+  * Perhaps one process could manage many different types (eg. consider
+    displayed text documents, or HTML documents, or ...)
+  * Maybe it should be up to the type implementation to determine what
+    resources it requires?
+  * So perhaps a type _factory_ should exist, and be asked to create
+    a new instance?
+    
+### Use
+For a pre-existing object, discovered through the object selector, the
+type should be available via metadata.  In this case, it's still
+necessary to create a new type implementation, but it should be
+initialised from the storage server with the pre-existing content.
+
+* So perhaps this should be another function on the type factory?
+
+## Implementation
+
+So, in fact, perhaps the Type Registry could be implemented using the
+metadata service?  The type name, maybe some other tags, etc, could all
+be stored in the metadata, and the shell could simply look it up there?
+
+So ...
+* On startup, the shell will query the metadata service, looking for
+  types.  
+* Those types will populate a cached set of the available types.
+  * New types can be added at runtime: how is the cache updated?
+    * Polled regularly?  (urgh)
+    * Persistent queries in the metadata service?  (hrm)
+    * An explicit API, which requires an explicit target service, to
+      register a new type? (easiest)
+
+Perhaps that's the best argument for it being a separate service.  In
+which case, the type registry at least could just use the metadata
+service as storage, but provides a point of coordination for registering
+types and maintaining the cache.
+
+What access to this service is required outside the shell?  Does there
+need to be an API for this in the standard runtime>
+
+ 
+# Type Collection
 
 One fundamental decision is to separate Text / Document and Code as 
 different types.  Document should encompass everything from a README to 
@@ -6,12 +69,12 @@ FrameMaker, and the fundamental behaviour should be that it is displayed
 immediately as it is edited.
 
 Code, on the other hand, undergoes a process of compilation or 
-interpretation to generate some artefact.  The distinction is basically 
+interpretation to generate some artifact.  The distinction is basically 
 in the workflow, rather than the content (since a lot of the time, 
 they’re both just an ordered collection of Unicode code points).
 
 The interesting point is Markdown (and thus, TeX, roff, etc), where the 
-Document is produced as an artefact of the Code.
+Document is produced as an artifact of the Code.
 
 One of the goals of M0 is to be able to create, show, and edit simple 
 text documents.  That will require a simple text editor.  There’s some 
@@ -41,7 +104,7 @@ unique about this type implementation?
   * This implies that the API is available for programmatic access
   * Which should include scripting
   * So type implementations should be a library, with an API, and an 
-  (optional?) GUI component that exposes the API to a terminal
+    (optional?) GUI component that exposes the API to a terminal
 * These APIs should be discoverable, self-documenting, and have decent 
   consistency between different types.
   * ie. something more like a Smalltalk class hierarchy than an existing 
