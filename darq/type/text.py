@@ -320,7 +320,7 @@ class TextTypeView(QWidget):
             print(len(buf))
             self.text = Text.from_bytes(buf)
         else:
-            self.url = uuid.uuid4().get_hex()
+            self.url = str(uuid.uuid4())
             self.storage.set(self.url, b'')
             self.text = Text.new()
 
