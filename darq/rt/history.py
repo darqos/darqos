@@ -15,6 +15,11 @@ class Events(enum.Enum):
 
 
 class History:
+    """Interface to the History Service."""
+
+    @staticmethod
+    def api() -> "History":
+        return History()
 
     def __init__(self):
         self.context = zmq.Context()
@@ -35,3 +40,18 @@ class History:
         buf = self.socket.recv()
         reply = orjson.loads(buf)
         return reply["result"]
+
+    def get_events_for_period(self, start_time: datetime, end_time: datetime):
+        """Get list of events within a time range."""
+
+        request = {"method": "get_events_for_period",
+                   "xid": "xxx",
+                   "start_time": start_time,
+                   "end_time": end_time}
+        buf = orjson.dumps(request)
+        self.socket.send(buf)
+
+        buf = self.socket.recv()
+        reply = orjson.loads(buf)
+        return reply["events"]
+
