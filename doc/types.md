@@ -146,3 +146,13 @@ They're not indicated in the naming, which suggests some additional
 information is stored about types: this could end up make a Type an
 object, which might get kinda meta.
 
+# References
+
+https://developer.android.com/guide/components/intents-common
+https://developer.android.com/guide/components/intents-filters
+https://developer.android.com/reference/android/content/Intent
+
+https://developer.apple.com/documentation/uniformtypeidentifiers
+https://developer.apple.com/documentation/uniformtypeidentifiers/defining_file_and_data_types_for_your_app
+https://developer.apple.com/documentation/uniformtypeidentifiers/uttype
+
