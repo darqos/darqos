@@ -1,4 +1,4 @@
-#! /usr/bin/env python3
+#
 
 from darq.os.base import Service
 from darq.rt.history import Events
@@ -39,7 +39,8 @@ class HistoryService(Service):
 
     def get_events_for_period(self, start_time: datetime, end_time: datetime):
         cursor = self.db.cursor()
-        cursor.execute("select timestamp, subject, event from history "
+        cursor.execute("select timestamp, subject, event "
+                       "from history "
                        "where timestamp >= ? "
                        "  and timestamp < ?",
                        (start_time, end_time))
