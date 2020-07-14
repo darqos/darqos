@@ -127,3 +127,22 @@ unique about this type implementation?
   * All had a unified language experience.
   * Unix immediately split that into shell and C: why?  Historical 
     accident?
+
+# Sub-types
+In some cases, it makes sense to have polymorphism for types.  The
+motivating example is paper books and e-books: both have similar
+metadata, but e-books have actual content in the storage service,
+while paper books have a physical location property.
+
+Depending on how collections end up being handled though, it might
+make sense for both types of books to be handled by a single
+collection, which kinda implies a base, parent type for both book
+sub-types.
+
+How is this to be handled within the type system?
+
+I think it's the case that Apple's UTI system has sub-types as well.
+They're not indicated in the naming, which suggests some additional
+information is stored about types: this could end up make a Type an
+object, which might get kinda meta.
+
