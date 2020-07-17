@@ -8,59 +8,70 @@ The terminal service provides a shell-like facility for interacting with
 the system.  One feature of this shell is the ability to create new
 instances of types.
 
-## Type Registry
-The set of types known to the system is managed by the Type Registry.
+## Type Service
+The set of types known to the system is managed by the Type Service.
 A user can request the creation of a new type instance, or the use of an
-existing type instance, using the type registry to find the implementation
+existing type instance, using the type service to find the implementation
 of the type.
 
 ### Creation
 Using a shell, the user requests a new instance of a named type.  The
-shell looks up the type name in the registry, and obtains a reference
-to the type's implementation.  The shell uses the kernel to spawn a new
-process, running the type's implementation.
+shell looks up the type name in the service registry, and obtains a 
+reference to the type's implementation.  The shell uses the kernel 
+to spawn a new process, running the type's implementation.
 
 * Does it make sense for each type instance to be a new process?
-  * Perhaps one process could manage many different types (eg. consider
-    displayed text documents, or HTML documents, or ...)
-  * Maybe it should be up to the type implementation to determine what
-    resources it requires?
+  * Perhaps one process could manage many different type instances?
+    eg. consider displayed text documents, or HTML documents, etc
+  * Maybe it should be up to the type implementation to determine 
+    what resources it requires?
   * So perhaps a type _factory_ should exist, and be asked to create
     a new instance?
     
 ### Use
-For a pre-existing object, discovered through the object selector, the
-type should be available via metadata.  In this case, it's still
-necessary to create a new type implementation, but it should be
+For a pre-existing object, discovered through the object selector, 
+its type should be available via metadata.  In this case, it's still
+necessary to create a new type instance, but it should be
 initialised from the storage server with the pre-existing content.
 
-* So perhaps this should be another function on the type factory?
+This is another variant of the type factory.
 
 ## Implementation
 
-So, in fact, perhaps the Type Registry could be implemented using the
-metadata service?  The type name, maybe some other tags, etc, could all
-be stored in the metadata, and the shell could simply look it up there?
+Types are defined as part of the persistent state of the system.  This
+state is owned and managed by the Type Service.  Programs access the
+Type Service via an API in the usual way.
 
-So ...
-* On startup, the shell will query the metadata service, looking for
-  types.  
-* Those types will populate a cached set of the available types.
-  * New types can be added at runtime: how is the cache updated?
-    * Polled regularly?  (urgh)
-    * Persistent queries in the metadata service?  (hrm)
-    * An explicit API, which requires an explicit target service, to
-      register a new type? (easiest)
+A lot of the terminology here is adopted from Apple's Uniform Type
+system.
 
-Perhaps that's the best argument for it being a separate service.  In
-which case, the type registry at least could just use the metadata
-service as storage, but provides a point of coordination for registering
-types and maintaining the cache.
+A _Type Implementation_ is a program that provides actions for a type.
+Actions are things like _create_, _view_ or _print_.  Type implementations
+are one of the major classes of application for the system.
 
-What access to this service is required outside the shell?  Does there
-need to be an API for this in the standard runtime>
+Type descriptions consist of:
+* The type identifier (either the same as, or similar to Apple's UTI)
+* Zero or more other types to which this type conforms (to use the
+  Apple terminology).  Note that this isn't a simple inheritance tree:
+  types can conform to many other types.
+* Zero or more MIME types that are equivalent
+* Zero or more file extensions that indicate equivalence
+* An optional link to a factory for this type
 
- 
+### Factory API
+
+To create type instance, either new or reifying an existing, persisted
+instance, a program should invoke the type's factory via the type
+service API.  The factory should probably be a plugin module for the
+type service.
+
+The standard factory API should be:
+* new()
+* load(url)
+
+### Type Instance API
+
+A type instance
 # Type Collection
 
 One fundamental decision is to separate Text / Document and Code as 
