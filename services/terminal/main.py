@@ -3,10 +3,9 @@
 
 import sys
 import PyQt5
-from PyQt5 import QtCore
-from PyQt5.QtCore import QAbstractNativeEventFilter, QAbstractEventDispatcher
+from PyQt5 import QtCore, QtWidgets
 from PyQt5.QtGui import QColor, QKeySequence, QMouseEvent
-from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QTextEdit, QMenu, QShortcut, qApp
+from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QTextEdit, QMenu, QShortcut, QVBoxLayout, qApp
 
 from darq.type.text import TextTypeView
 
@@ -45,15 +44,29 @@ class ObjectFactory(QWidget):
 
     def on_create(self):
         o = TextTypeView()
+        self.hide()
+        return
 
 
 class ObjectSelector(QWidget):
     def __init__(self, *args):
         super().__init__(*args)
-        self.init_ui()
-        return
 
-    def init_ui(self):
+        # Set size & position.
+        screen = QtWidgets.QDesktopWidget().screenGeometry(0)
+        self.resize(int(screen.width() * 0.7), int(screen.height() * 0.7))
+        self.move(int(screen.width() * 0.15), int(screen.height() * 0.15))
+
+        # Set window stype.
+        flags = QtCore.Qt.WindowFlags(
+            QtCore.Qt.WindowStaysOnTopHint | QtCore.Qt.FramelessWindowHint)
+        self.setWindowFlags(flags)
+
+        self.layout = QVBoxLayout()
+        self.layout.setContentsMargins(50, 50, 50, 50)
+
+        self.setLayout(self.layout)
+        self.show()
         return
 
 
