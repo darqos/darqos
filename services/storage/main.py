@@ -16,7 +16,6 @@
 from darq.os.base import Service
 
 import base64
-import hashlib
 import sqlite3
 import sys
 
@@ -48,11 +47,6 @@ class StorageService(Service):
 
         return
 
-    @staticmethod
-    def _hash(key: str) -> str:
-        """(Internal) Return a prepared key."""
-        return hashlib.sha256(key.encode()).hexdigest()
-
     def set(self, key: str, value):
         """Set the value for a key.
 
@@ -63,7 +57,7 @@ class StorageService(Service):
 
         cursor = self.db.cursor()
         cursor.execute("insert into storage values (?, ?)",
-                       (self._hash(key), value))
+                       (key, value))
         self.db.commit()
         return
 
@@ -79,7 +73,7 @@ class StorageService(Service):
 
         cursor = self.db.cursor()
         cursor.execute("update storage set value = ? where key = ?",
-                       (value, self._hash(key)))
+                       (value, key))
         self.db.commit()
         return
 
@@ -90,8 +84,7 @@ class StorageService(Service):
         :returns: True if set, False otherwise."""
 
         cursor = self.db.cursor()
-        cursor.execute("select count(key) from storage where key = ?",
-                       (self._hash(key),))
+        cursor.execute("select count(key) from storage where key = ?", (key,))
         row = cursor.fetchone()
         cursor.close()
 
@@ -110,8 +103,7 @@ class StorageService(Service):
         :param key: String key."""
 
         cursor = self.db.cursor()
-        cursor.execute("select value from storage where key = ?",
-                       (self._hash(key),))
+        cursor.execute("select value from storage where key = ?", (key,))
         row = cursor.fetchone()
         cursor.close()
         if row is None:
@@ -128,8 +120,7 @@ class StorageService(Service):
         print(f"delete({key})")
 
         cursor = self.db.cursor()
-        cursor.execute("delete from storage where key = ?",
-                       (self._hash(key),))
+        cursor.execute("delete from storage where key = ?", (key,))
         self.db.commit()
         return
 
