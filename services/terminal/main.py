@@ -11,7 +11,6 @@ from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QTextEdit, QMenu
 from darq.type.text import TextTypeView
 
 
-
 class ObjectFactory(QWidget):
     """Enables creation of new type instances."""
 
@@ -64,10 +63,12 @@ class UI(QWidget):
 
         self.factory = ObjectFactory()
         self.factory_shortcut = QShortcut(QKeySequence("Ctrl+n"), self)
+        self.factory_shortcut.setContext(QtCore.Qt.ApplicationShortcut)
         self.factory_shortcut.activated.connect(self.on_factory)
 
         self.selector = ObjectSelector()
         self.selector_shortcut = QShortcut(QKeySequence("Ctrl+s"), self)
+        self.selector_shortcut.setContext(QtCore.Qt.ApplicationShortcut)
         self.selector_shortcut.activated.connect(self.on_selector)
 
         flags = QtCore.Qt.WindowFlags(QtCore.Qt.WindowStaysOnBottomHint)
@@ -95,13 +96,19 @@ class UI(QWidget):
     def on_factory(self, *args):
         """Display a panel enabling creation of new type instances."""
         print("Factory: " + str(args))
-        self.factory.show()
+        if self.factory.isVisible():
+            self.factory.hide()
+        else:
+            self.factory.show()
         return
 
     def on_selector(self, *args):
         """Display a panel enabling a search of existing objects."""
         print("Selector: " + str(args))
-        self.selector.show()
+        if self.selector.isVisible():
+            self.selector.hide()
+        else:
+            self.selector.show()
         return
 
 
