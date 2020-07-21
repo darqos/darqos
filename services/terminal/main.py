@@ -2,12 +2,121 @@
 # Copyright (C) 2020 David Arnold
 
 import sys
+import typing
+from urllib.parse import urlparse
+
 import PyQt5
 from PyQt5 import QtCore, QtWidgets
-from PyQt5.QtGui import QColor, QKeySequence, QMouseEvent
-from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QTextEdit, QMenu, QShortcut, QVBoxLayout, qApp
+from PyQt5.QtGui import QColor, QKeySequence, QMouseEvent, QIcon, QPixmap
+from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QMenu, QShortcut, QHBoxLayout, QVBoxLayout, QLineEdit, QLabel, QToolButton, QToolBar, qApp, QAction
 
 from darq.type.text import TextTypeView
+
+
+class Type:
+    def __init__(self):
+        self.name: str = ""
+        self.description: str = ""
+        self.impl: str = ""
+        self.icon: str = ""
+        return
+
+
+class TypeCacheModel:
+    def __init__(self):
+
+        # Table of named types.
+        self.types = {}
+
+        # Sorted type name index.
+        self.type_names = []
+
+        # Most recently used types.
+        self.used_types = []
+
+        # Pinned types, in order.
+        self.pinned_types: typing.List[str] = []
+        return
+
+    def add_type(self, type_: Type) -> None:
+        """Add a type to the system."""
+
+        if type_.name in self.types:
+            raise KeyError(f"Type '{type_.name}' already exists.")
+
+        # FIXME: Cache icon.
+
+        self.types[type_.name] = type_
+        return
+
+    def remove_type(self, name: str) -> None:
+        """Remove a type from the system."""
+
+        if name not in self.types:
+            raise KeyError(f"No such type '{name}'")
+
+        if name in self.pinned_types:
+            self.pinned_types.remove(name)
+
+        if name in self.used_types:
+            self.used_types.remove(name)
+
+        del self.types[name]
+        return
+
+    def append_pinned_type(self, name: str) -> None:
+        """Append a type to the pinned list."""
+
+        t = self.types.get(name)
+        if t is None:
+            raise KeyError(f"No such type '{name}'")
+
+        self.pinned_types.append(name)
+        return
+
+    def insert_pinned_type(self, index: int, name: str) -> None:
+        """Insert a type into the pinned list."""
+
+        t = self.types.get(name)
+        if t is None:
+            raise KeyError(f"No such type '{name}'")
+
+        self.pinned_types.insert(index, name)
+        return
+
+    def unpin_type(self, name: str) -> None:
+        """Remove a type from the pinned list."""
+
+        if name not in self.pinned_types:
+            raise KeyError(f"No such type '{name}'")
+
+        if name in self.pinned_types:
+            self.pinned_types.remove(name)
+
+        return
+
+    def pinned_count(self) -> int:
+        """Return number of pinned types."""
+
+        return len(self.pinned_types)
+
+    def pinned_type(self, index: int) -> Type:
+        """Return type at index in pinned type list."""
+
+        if index < 0 or index >= len(self.pinned_types):
+            raise IndexError(f"Pinned types index out of range: {index}")
+
+        name = self.pinned_types[index]
+        return self.types[name]
+
+    def use_type(self, name: str) -> None:
+        """Record usage of a type."""
+
+        if name in self.used_types:
+            self.used_types.remove(name)
+
+        self.used_types.insert(0, name)
+        return
 
 
 class ObjectFactory(QWidget):
@@ -16,30 +125,96 @@ class ObjectFactory(QWidget):
     def __init__(self, *args):
         """Constructor."""
         super().__init__(*args)
-        self.init_ui()
-        return
 
-    def init_ui(self):
-
-        # Hide the default chrome.
-        flags = QtCore.Qt.WindowFlags(QtCore.Qt.WindowStaysOnTopHint |
-                                      QtCore.Qt.FramelessWindowHint)
-        self.setWindowFlags(flags)
+        # Cache.
+        self.types = TypeCacheModel()
+        self.init_types()
 
         # Set size and position.
+        screen = QtWidgets.QDesktopWidget().screenGeometry(0)
+        self.resize(int(screen.width() * 0.7), int(screen.height() * 0.7))
+        self.move(int(screen.width() * 0.15), int(screen.height() * 0.15))
+
+        # Set window type.
+        flags = QtCore.Qt.WindowFlags(
+            QtCore.Qt.WindowStaysOnTopHint | QtCore.Qt.FramelessWindowHint)
+        self.setWindowFlags(flags)
+
+        self.layout = QVBoxLayout()
+        self.layout.setContentsMargins(50, 50, 50, 50)
 
         # Pinned types.
-        # Recently used types.
+        #self.hotbar = QHBoxLayout()
+        self.hotbar = QToolBar()
+        self.hotbar.setStyleSheet("QToolBar { }")
+        #self.hotbar.setContentsMargins(20, 20, 20, 20)
+        for index in range(self.types.pinned_count()):
+            t = self.types.pinned_type(index)
+            #pb1 = QToolButton()
+            #pb1.setStyleSheet("QToolButton { width: 100px; height: 100px; font: 18px; margin: 15px 15px 15px 15px; }")
+            #pb1.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
+            #pb1.setText(t.name)
+            url = urlparse(t.icon)
+            icon = QIcon(url.path)
+            #print(str(icon.availableSizes()))
+            #pb1.setIcon(icon)
+            #pb1.clicked.connect(self.on_create)
+            #self.hotbar.addWidget(pb1)
+            action = QAction(icon, t.name, qApp)
+            self.hotbar.addAction(action)
+
+        #self.hotbar.addStretch(1)
+        self.layout.addWidget(self.hotbar)
+
         # Search bar.
-        # Selected type icon.
-        # Search text.
-        # Go button.
-        # Matching types list.
+        self.omnibox = QHBoxLayout()
+        self.omnibox.setContentsMargins(20, 20, 20, 20)
+        self.omnitext = QLineEdit()
+        self.omnitext.setStyleSheet("QLineEdit { font-size: 20px; padding: 12px; border: none; border-radius: 10px; }")
+        self.omnitext.setFrame(False)  # Doesn't seem to do anything'
+        self.omnitext.setAttribute(QtCore.Qt.WA_MacShowFocusRect, False)
+        self.omnitext.setPlaceholderText("Search ...")
+        self.omnitext.setClearButtonEnabled(True)
+        self.omnitext.setTextMargins(20, 20, 20, 20)
+        self.omnibox.addWidget(self.omnitext)
+        self.layout.addLayout(self.omnibox)
 
-        # FIXME: and in the meantime ...
-        b = QPushButton("Text", self)
-        b.clicked.connect(self.on_create)
+        # Unfiltered types, MRU order (?)
+        self.object_table = QVBoxLayout()
+        self.object_table.setContentsMargins(20, 20, 20, 20)
+        row1 = QLabel("line")
+        self.object_table.addWidget(row1)
+        self.layout.addLayout(self.object_table)
+        self.layout.setStretch(2, 100)
 
+        self.setLayout(self.layout)
+        self.hide()
+        return
+
+    def init_types(self):
+        """Initialize types collection."""
+
+        # List of known types, with index by name, by last use, and by
+        # keyword from their description.  Each type has a name, icon, and
+        # a description.
+        #
+        # There's also an ordered list of "pinned" types.
+
+        text = Type()
+        text.name = "Text"
+        text.description = "Unformatted Unicode document"
+        text.impl = "file:///Users/d/work/personal/darqos/darq/types/text.py"
+        text.icon = "file:///Users/d/work/personal/darqos/darq/icons/txt.png"
+        self.types.add_type(text)
+        self.types.append_pinned_type("Text")
+
+        book = Type()
+        book.name = "Book Details"
+        book.description = "Catalog data for a book"
+        book.impl = ""
+        book.icon = "file:///Users/d/work/personal/darqos/darq/icons/book.png"
+        self.types.add_type(book)
+        self.types.append_pinned_type("Book Details")
         return
 
     def on_create(self):
@@ -57,7 +232,7 @@ class ObjectSelector(QWidget):
         self.resize(int(screen.width() * 0.7), int(screen.height() * 0.7))
         self.move(int(screen.width() * 0.15), int(screen.height() * 0.15))
 
-        # Set window stype.
+        # Set window type.
         flags = QtCore.Qt.WindowFlags(
             QtCore.Qt.WindowStaysOnTopHint | QtCore.Qt.FramelessWindowHint)
         self.setWindowFlags(flags)
@@ -65,8 +240,35 @@ class ObjectSelector(QWidget):
         self.layout = QVBoxLayout()
         self.layout.setContentsMargins(50, 50, 50, 50)
 
+        self.hotbar = QHBoxLayout()
+        self.hotbar.setContentsMargins(20, 20, 20, 20)
+        pb1 = QPushButton()
+        pb1.setText("Text")
+        self.hotbar.addWidget(pb1)
+        self.hotbar.addStretch(1)
+        self.layout.addLayout(self.hotbar)
+
+        self.omnibox = QHBoxLayout()
+        self.omnibox.setContentsMargins(20, 20, 20, 20)
+        self.omnitext = QLineEdit()
+        self.omnitext.setStyleSheet("QLineEdit { font-size: 20px; padding: 12px; border: none; border-radius: 10px; }")
+        self.omnitext.setFrame(False)  # Doesn't seem to do anything'
+        self.omnitext.setAttribute(QtCore.Qt.WA_MacShowFocusRect, False)
+        self.omnitext.setPlaceholderText("Search ...")
+        self.omnitext.setClearButtonEnabled(True)
+        self.omnitext.setTextMargins(20, 20, 20, 20)
+        self.omnibox.addWidget(self.omnitext)
+        self.layout.addLayout(self.omnibox)
+
+        self.object_table = QVBoxLayout()
+        self.object_table.setContentsMargins(20, 20, 20, 20)
+        row1 = QLabel("line")
+        self.object_table.addWidget(row1)
+        self.layout.addLayout(self.object_table)
+        self.layout.setStretch(2, 100)
+
         self.setLayout(self.layout)
-        self.show()
+        self.hide()
         return
 
 
