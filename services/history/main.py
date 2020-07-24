@@ -48,6 +48,18 @@ class HistoryService(Service):
         cursor.close()
         return rows
 
+    def get_events(self, start_time: datetime, count: int, older: bool):
+        cursor = self.db.cursor()
+        cursor.execute("select timestamp, subject. event "
+                       "from history "
+                       "where timestamp >= ? "
+                       "order by timestamp ?"
+                       "limit ?",
+                       (start_time, "" if older else "desc", count))
+        rows = cursor.fetchall()
+        cursor.close()
+        return rows
+
     def handle_request(self, request: dict):
         """Handle requests."""
 
@@ -57,7 +69,12 @@ class HistoryService(Service):
                            request["subject"],
                            request["event"])
             self.send_reply(request, result=True)
-            return
+
+        elif method == "get_events":
+            rows = self.get_events(request["start_time"],
+                                   request["count"],
+                                   request["older"])
+            self.send_reply(request, result=True)
 
         elif method == "get_events_for_period":
             rows = self.get_events_for_period(request["start_time"],

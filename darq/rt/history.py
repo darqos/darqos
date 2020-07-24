@@ -55,3 +55,23 @@ class History:
         reply = orjson.loads(buf)
         return reply["events"]
 
+    def get_events(self, start_time: datetime, count: int, older: bool):
+        """Get events from a starting time.
+
+        :param start_time: Starting time for events.
+        :param count: Number of events to fetch.
+        :param older: Get events older than start_time if True, else younger.
+
+        This request is intended for pagination of large requests."""
+
+        request = {"method": "get_events",
+                   "xid": "xxx",
+                   "start_time": start_time,
+                   "count": count,
+                   "older": older}
+        buf = orjson.dumps(request)
+        self.socket.send(buf)
+
+        buf = self.socket.recv()
+        reply = orjson.loads(buf)
+        return reply["events"]
