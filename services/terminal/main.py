@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 import PyQt5
 from PyQt5 import QtCore, QtWidgets
 from PyQt5.QtGui import QColor, QKeySequence, QMouseEvent, QIcon, QPixmap
-from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QMenu, QShortcut, QHBoxLayout, QVBoxLayout, QLineEdit, QLabel, QToolButton, QToolBar, qApp, QAction
+from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QMenu, QShortcut, QHBoxLayout, QVBoxLayout, QLineEdit, QLabel, QToolButton, QToolBar, qApp, QAction, QTableWidget, QTableWidgetItem
 
 from darq.type.text import TextTypeView
 
@@ -144,26 +144,14 @@ class ObjectFactory(QWidget):
         self.layout.setContentsMargins(50, 50, 50, 50)
 
         # Pinned types.
-        #self.hotbar = QHBoxLayout()
         self.hotbar = QToolBar()
         self.hotbar.setStyleSheet("QToolBar { }")
-        #self.hotbar.setContentsMargins(20, 20, 20, 20)
         for index in range(self.types.pinned_count()):
             t = self.types.pinned_type(index)
-            #pb1 = QToolButton()
-            #pb1.setStyleSheet("QToolButton { width: 100px; height: 100px; font: 18px; margin: 15px 15px 15px 15px; }")
-            #pb1.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
-            #pb1.setText(t.name)
             url = urlparse(t.icon)
             icon = QIcon(url.path)
-            #print(str(icon.availableSizes()))
-            #pb1.setIcon(icon)
-            #pb1.clicked.connect(self.on_create)
-            #self.hotbar.addWidget(pb1)
             action = QAction(icon, t.name, qApp)
             self.hotbar.addAction(action)
-
-        #self.hotbar.addStretch(1)
         self.layout.addWidget(self.hotbar)
 
         # Search bar.
@@ -240,14 +228,6 @@ class ObjectSelector(QWidget):
         self.layout = QVBoxLayout()
         self.layout.setContentsMargins(50, 50, 50, 50)
 
-        self.hotbar = QHBoxLayout()
-        self.hotbar.setContentsMargins(20, 20, 20, 20)
-        pb1 = QPushButton()
-        pb1.setText("Text")
-        self.hotbar.addWidget(pb1)
-        self.hotbar.addStretch(1)
-        self.layout.addLayout(self.hotbar)
-
         self.omnibox = QHBoxLayout()
         self.omnibox.setContentsMargins(20, 20, 20, 20)
         self.omnitext = QLineEdit()
@@ -260,12 +240,27 @@ class ObjectSelector(QWidget):
         self.omnibox.addWidget(self.omnitext)
         self.layout.addLayout(self.omnibox)
 
-        self.object_table = QVBoxLayout()
+        # Here I'm going to start with the list of objects from
+        # the history service.  This will need to be completely
+        # rejigged in future.
+
+        # So, a table ... date/time, event, type, details of object.
+        #
+        # The object details will be the tricky bit: objects don't
+        # have to have a name or anything.  Perhaps it'd be good for
+        # the type implementation to have a method to get a description
+        # of the object in a type-specific way?
+
+        self.object_table = QTableWidget(10, 4, self)
+        self.object_table.setHorizontalHeaderLabels(("Date / Time", "Type", "Event", "Object"))
+        self.object_table.verticalHeader().setVisible(False)
         self.object_table.setContentsMargins(20, 20, 20, 20)
-        row1 = QLabel("line")
-        self.object_table.addWidget(row1)
-        self.layout.addLayout(self.object_table)
-        self.layout.setStretch(2, 100)
+        for r in range(10):
+            for c in (0, 1, 2, 3):
+                item = QTableWidgetItem()
+                item.setText(["datetime", "type", "event", "description of object"][c])
+                self.object_table.setItem(r, c, item)
+        self.layout.addWidget(self.object_table)
 
         self.setLayout(self.layout)
         self.hide()
