@@ -1,7 +1,7 @@
 #
 
 from darq.os.base import Service
-from darq.rt.history import Events
+from darq.rt.history import Event
 
 from datetime import datetime
 import sqlite3
@@ -29,10 +29,11 @@ class HistoryService(Service):
         self.active = False
         return
 
-    def add_event(self, timestamp: datetime, subject: str, event: Events):
+    def add_event(self, timestamp: datetime, subject: str, event: Event):
         """Record an event."""
         cursor = self.db.cursor()
-        cursor.execute("insert into history values (?, ?, ?)",
+        cursor.execute("insert into history (timestamp, subject, event) "
+                       "values (?, ?, ?)",
                        (timestamp, subject, event))
         self.db.commit()
         return
@@ -50,12 +51,21 @@ class HistoryService(Service):
 
     def get_events(self, start_time: datetime, count: int, older: bool):
         cursor = self.db.cursor()
-        cursor.execute("select timestamp, subject. event "
-                       "from history "
-                       "where timestamp >= ? "
-                       "order by timestamp ?"
-                       "limit ?",
-                       (start_time, "" if older else "desc", count))
+        if older:
+            cursor.execute("select timestamp, subject, event "
+                           "from history "
+                           "where timestamp >= ? "
+                           "order by timestamp desc "
+                           "limit ?",
+                           (start_time, count))
+        else:
+            cursor.execute("select timestamp, subject, event "
+                           "from history "
+                           "where timestamp >= ? "
+                           "order by timestamp asc "
+                           "limit ?",
+                           (start_time, count))
+
         rows = cursor.fetchall()
         cursor.close()
         return rows
@@ -74,7 +84,7 @@ class HistoryService(Service):
             rows = self.get_events(request["start_time"],
                                    request["count"],
                                    request["older"])
-            self.send_reply(request, result=True)
+            self.send_reply(request, result=True, events=rows)
 
         elif method == "get_events_for_period":
             rows = self.get_events_for_period(request["start_time"],

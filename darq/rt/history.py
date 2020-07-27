@@ -7,11 +7,11 @@ import zmq
 
 
 @enum.unique
-class Events(enum.Enum):
-    CREATED = enum.auto()
-    VIEWED = enum.auto()
-    MODIFIED = enum.auto()
-    PRINTED = enum.auto()
+class Event(enum.Enum):
+    CREATED = "created"
+    READ = "read"
+    MODIFIED = "modified"
+    PRINTED = "printed"
 
 
 class History:
@@ -27,7 +27,7 @@ class History:
         self.socket.connect("tcp://localhost:11002")
         return
 
-    def add_event(self, subject: str, event: Events):
+    def add_event(self, subject: str, event: Event):
 
         request = {"method": "add_event",
                    "xid": "xxx",
@@ -75,3 +75,31 @@ class History:
         buf = self.socket.recv()
         reply = orjson.loads(buf)
         return reply["events"]
+
+
+def test():
+    api = History.api()
+
+    start_time = datetime.utcnow()
+
+    api.add_event("foo", Event.CREATED)
+    api.add_event("foo", Event.MODIFIED)
+    api.add_event("foo", Event.READ)
+
+    later_time = datetime.utcnow()
+
+    api.add_event("foo", Event.READ)
+    api.add_event("foo", Event.PRINTED)
+
+    all = api.get_events(start_time, 100, False)
+    old = api.get_events(later_time, 100, True)
+    new = api.get_events(later_time, 100, False)
+
+    assert len(all) == 5
+    assert len(old) == 3
+    assert len(new) == 2
+    return
+
+
+if __name__ == "__main__":
+    test()
