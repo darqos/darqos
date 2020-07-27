@@ -59,5 +59,68 @@ provide some specialisation to the UI?
 Alternatively, there could be a collection type for books, which does
 the presentation and links to the actual books?  Not sure that's a
 great UX though ... but certainly music, video and books should all be
-similarly implemented here. 
+similarly implemented here.
+
+## Roadmap
+
+The Book type is a useful example of a category of types where it's
+necessary to have sub-type implementations.  On that basis, and given
+the ready availability of a Python/Qt e-reader codebase, I think it
+makes sense to advance the Book type in the roadmap to explore how
+sub-typing and specialized collections can work.
+
+* Implement the basic physical book type
+  * A simple collection of data about a specific book
+  * Presentation like a card catalog, but with a cover picture
+  * Type constraints in the selector UI
+
+* Implement a specialized collection type for books.
+  * Figure out how these will actually work
+  * Come up with a nice UI
+  
+* Add an e-book type
+  * Basically the same data in type instance, but with the addition
+    of a reference to the actual content in the storage server
+  * Figure out how to model adding a new e-book to the system vs.
+    actually creating the e-book content
+    * Since this is a bunch of UI work I don't want to get into yet
+    * And I don't have a good handle on how it should be modelled
+      either.
+      * It's possibly the same model as songs and videos, where
+        you create a record for the physical object, but don't 
+        create the object itself?
+      * So perhaps the type should be called BookCatalog, not Book?
+        * BookRecord?  BookDetails?  CatalogedBook?  BookInfo?
+        
+## UI
+
+Fields:
+* Cover image
+* Title
+* Series Title
+* Series Number
+* Author(s)
+* Publisher
+* Place Published
+* Date Published
+* ISBN
+* Format
+* Edition
+* Pages
+* Dimensions
+* Language
+* Date Purchased
+* Genre
+* Dewey
+* LCC
+* Summary
+* Location
+
+Notes:
+* Not every book will populate every field.
+* Title and Author should use a larger font, especially title.
+* It'd be good if authors, publishers, plaec published, etc, had 
+  completion based on previous entries.  
+* Should this be using the MARC21 (MARCXML, MARCJSON, ISO2709) standard
+  for bibliographic data?  it's potentially a good idea ...
   
