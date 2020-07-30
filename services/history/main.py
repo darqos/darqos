@@ -50,11 +50,13 @@ class HistoryService(Service):
         return rows
 
     def get_events(self, start_time: datetime, count: int, older: bool):
+        print(f"get_events({start_time}, {count}, {older})")
+
         cursor = self.db.cursor()
         if older:
             cursor.execute("select timestamp, subject, event "
                            "from history "
-                           "where timestamp >= ? "
+                           "where timestamp <= ? "
                            "order by timestamp desc "
                            "limit ?",
                            (start_time, count))

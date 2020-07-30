@@ -4,6 +4,7 @@
 import sys
 import typing
 from urllib.parse import urlparse
+from datetime import datetime
 
 import PyQt5
 from PyQt5 import QtCore, QtWidgets
@@ -11,6 +12,7 @@ from PyQt5.QtGui import QColor, QKeySequence, QMouseEvent, QIcon, QPixmap
 from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QMenu, QShortcut, QHBoxLayout, QVBoxLayout, QLineEdit, QLabel, QToolButton, QToolBar, qApp, QAction, QTableWidget, QTableWidgetItem
 
 from darq.type.text import TextTypeView
+from darq.rt.history import History
 
 
 class Type:
@@ -264,7 +266,42 @@ class ObjectSelector(QWidget):
 
         self.setLayout(self.layout)
         self.hide()
+
+        self.history = History.api()
         return
+
+    def show(self):
+
+        # FIXME: needs a lot more work here ...
+        # Populate history list
+        self.object_table.clearContents()
+
+        now = datetime.utcnow()
+        history = self.history.get_events(now, 100, True)
+
+        r = 0
+        for event in history:
+            for c in range(4):
+                item = QTableWidgetItem()
+                item.setText([event[0], "type", event[2], event[1]][c])
+                self.object_table.setItem(r, c, item)
+            r += 1
+
+        super().show()
+        return
+
+    def hide(self):
+        super().hide()
+        return
+
+    def toggle_visibility(self):
+        """Show if hidden; hide if shown"""
+        if self.isVisible():
+            self.hide()
+        else:
+            self.show()
+        return
+
 
 
 class UI(QWidget):
@@ -315,12 +352,8 @@ class UI(QWidget):
     def on_selector(self, *args):
         """Display a panel enabling a search of existing objects."""
         print("Selector: " + str(args))
-        if self.selector.isVisible():
-            self.selector.hide()
-        else:
-            self.selector.show()
+        self.selector.toggle_visibility()
         return
-
 
 def main():
     app = QApplication(sys.argv)
