@@ -7,7 +7,7 @@ from PyQt5 import QtCore
 from PyQt5.QtGui import QColor, QKeySequence, QMouseEvent
 
 from darq.rt.storage import Storage
-from darq.rt.history import History, Events
+from darq.rt.history import History, Event
 
 import sys
 import uuid
@@ -323,16 +323,16 @@ class TextTypeView(QWidget):
             if self.storage.exists(self.url):
                 buf = self.storage.get(self.url)
                 self.text = Text.from_bytes(buf)
-                self.history.add_event(self.url, Events.VIEWED)
+                self.history.add_event(self.url, Event.VIEWED)
             else:
                 self.storage.set(self.url, b'')
                 self.text = Text.new()
-                self.history.add_event(self.url, Events.CREATED)
+                self.history.add_event(self.url, Event.CREATED)
         else:
             self.url = str(uuid.uuid4())
             self.storage.set(self.url, b'')
             self.text = Text.new()
-            self.history.add_event(self.url, Events.CREATED)
+            self.history.add_event(self.url, Event.CREATED)
 
         # Window placement.
         self._drag_start = None
