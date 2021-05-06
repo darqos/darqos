@@ -3,50 +3,53 @@
 Where to start?
 
 There are many things to be done, falling into many different categories.
-What’s important is actually making concrete progress, which means 
-actually implementing things, getting experience, and cycling.  The 
-Xerox Smalltalk team did 2 year iterations, which seems like a long time 
-these days.  I think continuous integration is probably a better 
-approach, perhaps reflecting the Bell Labs approach of doing occasional 
+What’s important is actually making concrete progress, which means
+actually implementing things, getting experience, and cycling.  The
+Xerox Smalltalk team did 2 year iterations, which seems like a long time
+these days.  I think continuous integration is probably a better
+approach, perhaps reflecting the Bell Labs approach of doing occasional
 snapshot “editions”.
 
 
 ## Deliverables
-* A statement of philosophy and goals, being an implicit motivation for the project also
+* A statement of philosophy and goals, being an implicit motivation
+  for the project also
 * A statement of non-goals, for clarity, reducing incorrect assumptions
-* A working computer system: hardware + software, suitable for performing various tasks
-* Enough documentation to enable a moderately sophisticated user to acquire, set up, and use the system
+* A working computer system: hardware + software, suitable for
+  performing various tasks
+* Enough documentation to enable a moderately sophisticated user to
+  acquire, set up, and use the system
 
 ## Tentative Planning
 
 ### M0
-The goal of the first milestone is to “boot” and get running with an identifiably different system, minimal aesthetics, minimal user functionality, but a viable target platform for further work.
-The (vast) majority of M0 work should be done in Python, to ensure it’s malleable.
+The goal of the first milestone is to “boot” and get running with an
+identifiably different system, minimal aesthetics, minimal user
+functionality, but a viable target platform for further work.
+
+The (vast) majority of M0 work should be done in Python, to ensure
+it’s malleable.
 
 Infrastructure
-* Repository
+* Repository (DONE)
 * Project structure
 * CI
 * Documentation
 * Release process
 
 System
-* Linux host
+* Unix host
+  * macOS or Linux, really
 * A collection of cooperating processes
-  * Probably written in Python?
+  * Written in Python
 * Some sort of IPC
-  * Maybe UDP-based?
-  * Application layer
-  * Not DBus
-  * Protobuf / CapNProto / Thrift / Avro / etc
-  * Is there a role for Elvin here?
+  * ZeroMQ with JSON marshalling, for now.
 * GUI
   * Full-screen window
-  * Linux framebuffer?
-  * OpenGL/X11?
+  * PyQt5 for macOS/X11
 * Bootstrap
-  * Maybe just a shell script, starting up processes?
-  * Storage over Linux FS
+  * Basic shell script, starting up Unix processes
+  * Storage backed by Unix FS
   * Network shared with host OS
 
 Services
@@ -57,20 +60,17 @@ Services
 * Storage
    * S3-like?
    * NewtonOS soup/store?
-* Loader
-   * Load and execute some code
-   * Part of the bootstrapping process, I guess.
-   * Ultimately, it should distinguish between native code, interpreters/VMs, emulators, etc.
 * History
    * System-wide
    * Activity timeline
 * Terminal Manager
    * For want of a better term
-   * Manages keyboard and pointer event distribution
-   * Provides containers for other UI elements
-      * And composites everything onto the screen
-   * Probably provides the Widget Service API too?
-      * Like, draw_button, draw_text, etc.
+   * Framebuffer(s)
+   * Keyboard
+   * Mouse, trackpad, etc.
+   * Microphone(s)
+   * Speakers, headphones, etc
+   * Manages input event distribution
 * Login
    * Login
    * Logout
@@ -88,6 +88,25 @@ Types
    * CRUD
    * UTF8
    * Decent fixed-width font
+   * Basically just using PyQt5's text widget
+   * No BiDi or vertical support
+
+Story
+* Turn on device.
+* See login window.
+  * No need to deal with initial account creation, etc, yet.
+* Log in with username/password.
+  * Should use TAB to move between entry widgets
+  * Should default to username entry
+  * Should allow shutdown / reboot
+* Get initial UI.
+  * Search bar, object factory, etc
+* Create a new text document
+* Close the text viewer
+* Find document with search bar, and view it again
+* Delete the text document
+* Confirm it cannot be found with search
+* Logout
 
 ### M1
 Support web browsing, and begin work on metadata/indexer support to make that experience better than on existing platforms.
@@ -102,7 +121,7 @@ System
    * Keyboard / mouse
    * Display and GPU
    * Network devices and TCP/IP stack
-   * Linux?  FreeBSD?  Zircon/Fuschia?  Minix3?  
+   * Linux?  FreeBSD?  Zircon/Fuschia?  Minix3?
 * Some sort of IPC
    * Kernel mediated
    * Not DBus
@@ -112,14 +131,14 @@ System
    * In-memory local transport option + network transport option
 * Some sort of low-level graphics API
    * Not X, not Wayland
-   * Not Qt or Gtk or other existing UI toolkit either, unless I come 
-     across something well suited or as a great starting point for 
+   * Not Qt or Gtk or other existing UI toolkit either, unless I come
+     across something well suited or as a great starting point for
      forking
-   * OpenGL ES 2 or 3?  As a base API to the GPU.  How does this work 
+   * OpenGL ES 2 or 3?  As a base API to the GPU.  How does this work
      with the Linux framebuffer?  SDL?  DirectFB?  OpenVG?  Etc.
 * Language runtime
-   * C?  Go?  Rust?   Something that can be compiled, with decent 
-     performance, and not too difficult to retarget to a non-POSIX 
+   * C?  Go?  Rust?   Something that can be compiled, with decent
+     performance, and not too difficult to retarget to a non-POSIX
      runtime.
 
 Services
@@ -188,11 +207,11 @@ Types
    * Intellisense support
    * Debugger support
    * Blame support
-   * Must support Python, C, HTML, CSS, JavaScript, Bash, any any other 
+   * Must support Python, C, HTML, CSS, JavaScript, Bash, any any other
      system languages (others out of scope for this milestone)
 
 ### M3
-PIM support: email, calendar, contacts, messaging, world clock, 
+PIM support: email, calendar, contacts, messaging, world clock,
 
 Infrastructure
 
@@ -236,13 +255,13 @@ Services
 Types
 * Mail
    * CRUD
-      * Reply / Reply-all / Forward are specialisations of standard 
+      * Reply / Reply-all / Forward are specialisations of standard
         create action
       * Delete is just delete, Update is just edit
       * Send is a type-specific action, I guess
       * Headers might translate nicely into metadata?
    * MIME
-      * Consider archive support for eg. HTML email, which can change 
+      * Consider archive support for eg. HTML email, which can change
         given externally-hosted content
    * Mail objects aren’t special
       * They have Index, Metadata, and History (like all other objects),
@@ -352,11 +371,11 @@ Types
 * Book
    * Could be an eBook, or an avatar for a physical book
    * Bunch of metadata
-   * Some similarities to music and video: there can be physical 
-     entities that are cataloged with their metadata, but don’t have a 
-     stored object underneath them.  They then have a collective 
+   * Some similarities to music and video: there can be physical
+     entities that are cataloged with their metadata, but don’t have a
+     stored object underneath them.  They then have a collective
      presentation that facilitates browsing in a type-appropriate way.
-   * Some metadata lookup/collection functionality here too (ie. ISBN 
+   * Some metadata lookup/collection functionality here too (ie. ISBN
      scan, and then lookup/fetch)
    * Eg. Delicious Monster, Bookpedia, etc.
 * eBook
@@ -364,13 +383,13 @@ Types
    * How is this related to the PDF viewer?  Or even the Document
      viewer?
       * Is there a different UI for “books” vs. “papers”?
-      * Is that difference something that should really just be 
+      * Is that difference something that should really just be
         presentational affordances, driven by metadata?
-      * Does this end up implying that Document and Book are different 
-        facets of the same thing, with a bunch of underlying converters 
+      * Does this end up implying that Document and Book are different
+        facets of the same thing, with a bunch of underlying converters
         to port the content over?
 * Bibliography
-   * Again, a kind of specialised metadata collection, for mostly 
+   * Again, a kind of specialised metadata collection, for mostly
      externally stored objects.
    * Eg. BibDesk
 * Game
@@ -380,16 +399,16 @@ Types
       * ROMs are really just an executable with a different “VM”
 
 ## Possible Technology Elements
-Cario (cairographics.org) is a 2D graphics library with backends for 
+Cario (cairographics.org) is a 2D graphics library with backends for
 various things, including PNG and (experimentally) DirectFB.
 
 Pango is a proper text API that integrates with Cairo.
 
-DirectFb is an abstraction over the Linux framebuffer that appears to 
+DirectFb is an abstraction over the Linux framebuffer that appears to
 be dead, but otherwise sounds quite nice.
 
-Replacing DirectFB with writing directly to the Linux framebuffer 
-device (/dev/fb0) might be an option?  Or perhaps it’d be necessary to 
+Replacing DirectFB with writing directly to the Linux framebuffer
+device (/dev/fb0) might be an option?  Or perhaps it’d be necessary to
 get into DRI/DRM with libdrm and /dev/dri/cardX or /dev/dri/renderDX?
 
 Or, use OpenGL ES as the base layer?
@@ -418,13 +437,13 @@ single layer.
 
 Example of bare-metal OpenGL application
 * https://gitlab.freedesktop.org/mesa/kmscube/
-  
+
 Notes on running on RPi4
 * https://www.raspberrypi.org/forums/viewtopic.php?p=1490438
 * https://github.com/matusnovak/rpi-opengl-without-x
 
 L4, LittleKernel, Fuschia/Zircon, Minix3, -- some existing micro-kernel
-might be a good start for the OS?  
+might be a good start for the OS?
 
 * Cut-down RPi Linux: https://dietpi.com/
 
@@ -432,13 +451,13 @@ might be a good start for the OS?
 * How does a Calculator app fit in?
    * It has no object, unless you get pretty obscure
       * Although typing arithmetic into the search bar should probably
-        a) use the Calculator service, and 
+        a) use the Calculator service, and
         b) offer a means of bringing up a UI based on what you’ve typed
            so far
    * It could be a “tool panel” type thing?
-      * Either invoked directly off the dashboard, or perhaps “tools” 
+      * Either invoked directly off the dashboard, or perhaps “tools”
         as a category can be found via search/index?’
-   * If there’s to be a “New …” button, aimed at creating objects, 
+   * If there’s to be a “New …” button, aimed at creating objects,
      perhaps “calculation” could be in there?  Pretty obscure though …
 * Types need to be a combination of:
    * Executable APIs exposed to the system
@@ -448,7 +467,7 @@ might be a good start for the OS?
          * Sometimes perhaps automagic, based on metadata
          * But probably switchable manually also?
       * Does an audio-driven UI fit in here too?  Alexa/Siri?
-   * The GUI presentation should be able to be embedded within other 
+   * The GUI presentation should be able to be embedded within other
      GUI elements, so that eg. the Document UI can display Images.
 * How are Services embodied?
    * Are they just an available API?
