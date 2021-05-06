@@ -1,4 +1,4 @@
-There's an old term for a class of application called Personal 
+There's an old term for a class of application called Personal
 Information Management: PIM.  This is contacts, addresses, calendars,
 notes, etc.
 
@@ -28,6 +28,14 @@ address this space, but are universal.
       implementation, not in Person: this is just a reference.
   * Dates
     * Birth, death, marriage?, hiring?, graduation, first meeting, etc
+    * Some of these will be one-off, simple date/time data
+    * Some will be more complex repeating data, ideally using or at
+      least derived from the rrdate stuff in iCalendar.
+    * Can we deal with different calendars?
+      * Japanese dynastic
+      * Islamic
+      * Jewish
+      * etc
   * Notes
     * Just plain text notes, but make sure they're indexed
   * Relationships
@@ -43,14 +51,14 @@ address this space, but are universal.
       than work.  Could cover clubs, sporting teams, professional
       associations, etc.
     * It might be possible to merge this with employment?
-    
+
 ## Place
  * A place is really just any identified geography.
  * It could have:
    * Latitude and longitude
    * Street address
    * Containment hierarchy
- 
+
 ## Organisation
 * Primarily for companies, since working at one is a very common
 attribute for a Person, but should cover any organisation.
@@ -72,7 +80,7 @@ and substituting a reference to the canonical object.
 For example, translating a phone number or email address into a
 reference to the owning Person.
 
-Like with macOS, some sort of automagic detection and highlighting 
+Like with macOS, some sort of automagic detection and highlighting
 of these references might be good.
 
 It'd also be good to have some sort of synchronisation or auto-
@@ -114,3 +122,9 @@ contacts (like CardDAV) or whatever.
 These objects should all be implemented by the Entity Service.  The
 Entity service could, and probably should, support two-way sync,
 allowing it to eg. update your CardDAV provider (eg. Google).
+
+## Lookup
+These relationships can be browsed by following links presented in
+the various type viewers for these types.  They should also populate
+the history service with events, and the index service with textual
+names, addresses, notes, etc.
