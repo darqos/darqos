@@ -22,11 +22,20 @@ snapshot “editions”.
 
 ## Tentative Planning
 
-### M0
-The goal of the first milestone is to “boot” and get running with an
-identifiably different system, minimal aesthetics, minimal user
-functionality, but a viable target platform for further work.
+There will be an initial series of milestone targets, providing a
+platform for experimentation primarily at the UX level.  In
+particular, these milstones will build upon existing kernels and
+language runtimes.
 
+These initial prototype milestones will have a "P" (for prototype)
+prefix.  Subsequent releases removing dependencies on existing kernels
+and library software will have an "M" prefix.
+
+
+### P0
+The goal of the first prototype milestone is to “boot” and get running
+with an identifiably different system, minimal aesthetics, minimal
+user functionality, but a viable target platform for further work.
 The (vast) majority of M0 work should be done in Python, to ensure
 it’s malleable.
 
@@ -38,114 +47,95 @@ Infrastructure
 * Release process
 
 System
-* Unix host
-  * macOS or Linux, really
+* Host OS
+  * Unix: macOS or Linux, really
+* IPC
+  * ZeroMQ with JSON marshalling.
 * A collection of cooperating processes
   * Written in Python
-* Some sort of IPC
-  * ZeroMQ with JSON marshalling, for now.
+  * Communicating using the ZMQ IPC
 * GUI
   * Full-screen window
   * PyQt5 for macOS/X11
 * Bootstrap
   * Basic shell script, starting up Unix processes
-  * Storage backed by Unix FS
+  * Storage backed by sqlite and Unix FS
   * Network shared with host OS
 
 Services
 * Security
-   * Identity
-   * Authentication
-   * Permissions
+  * Identity
+  * Authentication
+  * Permissions
 * Storage
-   * S3-like?
-   * NewtonOS soup/store?
+  * Key-value blob store
 * History
-   * System-wide
-   * Activity timeline
-* Terminal Manager
-   * For want of a better term
-   * Framebuffer(s)
-   * Keyboard
-   * Mouse, trackpad, etc.
-   * Microphone(s)
-   * Speakers, headphones, etc
-   * Manages input event distribution
-* Login
-   * Login
-   * Logout
-   * Lock
-   * Reboot
-   * Shutdown
-* Dashboard
-   * Search
-   * History
-   * Clock
-   * WiFi
+  * System-wide
+  * Activity timeline
+* Terminal
+  * Framebuffer(s)
+    * Using Qt5 with a full-screen window, and Z-ordering of other
+      windows.
+    * Remove all the OS decoration
+  * Keyboard
+    * via Qt
+  * Mouse, trackpad, etc.
+    * via Qt
+  * Supports login, etc, through interaction with the security
+    service.
+    * Login, logout, lock, reboot, shutdown
+* HUD
+  * If HUD is actually separate from Terminal?
+  * Search
+  * Factory
+  * History
+  * Clock
+
+Runtime
+* Object loader
+* Some sort of abstraction for access to the GUI?
 
 Types
 * Text
-   * CRUD
-   * UTF8
-   * Decent fixed-width font
-   * Basically just using PyQt5's text widget
-   * No BiDi or vertical support
+  * CRUD
+  * UTF8
+  * Decent fixed-width font
+  * Basically just using PyQt5's text widget
+  * No BiDi or vertical support
+  * The tricky stuff here will be the distinction between the type and
+    the view(er).
+    * The type implementation should mediate access to the object.
+    * It should have an exposed API.
+    * The viewer should use the type implementation, including
+      providing whatever hooks are required for rendering.
 
 Story
-* Turn on device.
+* Boot device.
 * See login window.
   * No need to deal with initial account creation, etc, yet.
 * Log in with username/password.
   * Should use TAB to move between entry widgets
   * Should default to username entry
   * Should allow shutdown / reboot
-* Get initial UI.
+  * Enter should DTRT (move to password if in username, submit if in password)
+* Get initial UI
   * Search bar, object factory, etc
 * Create a new text document
 * Close the text viewer
 * Find document with search bar, and view it again
-* Delete the text document
-* Confirm it cannot be found with search
 * Logout
 
-### M1
-Support web browsing, and begin work on metadata/indexer support to make that experience better than on existing platforms.
 
-Infrastructure
-
-System
-* Interim base OS
-   * Processes / threads
-   * Memory
-   * Block storage drivers
-   * Keyboard / mouse
-   * Display and GPU
-   * Network devices and TCP/IP stack
-   * Linux?  FreeBSD?  Zircon/Fuschia?  Minix3?
-* Some sort of IPC
-   * Kernel mediated
-   * Not DBus
-   * Mach + MIG
-   * Protobuf / CapNProto / Thrift / Avro / etc
-   * Is there a role for Elvin here?
-   * In-memory local transport option + network transport option
-* Some sort of low-level graphics API
-   * Not X, not Wayland
-   * Not Qt or Gtk or other existing UI toolkit either, unless I come
-     across something well suited or as a great starting point for
-     forking
-   * OpenGL ES 2 or 3?  As a base API to the GPU.  How does this work
-     with the Linux framebuffer?  SDL?  DirectFB?  OpenVG?  Etc.
-* Language runtime
-   * C?  Go?  Rust?   Something that can be compiled, with decent
-     performance, and not too difficult to retarget to a non-POSIX
-     runtime.
+### P1
+Support web browsing, and begin work on metadata/indexer support to
+make that experience better than on existing platforms.
 
 Services
 * URL fetcher
    * HTTP, HTTPS, FTP, SFTP, FTPS, etc
    * Not involved in WebSockets or WebRTC
    * Caching / archiving
+   * Runtime object loader plugin
 * Metadata
    * Tagging, typing, etc
    * Closely integrated with storage
@@ -155,39 +145,49 @@ Services
 * Credentials
    * Secure storage of various secrets
    * 2FA token generation
-* Conversion
-   * FAT / FAT32 / exFAT read/write, eg for USB storage
-   * ISO / Joliet read/write, eg.CD/DVDs
-   * Compression and archive formats
-      * Eg. tar, zip, 7z, bzip, rar, etc, etc, etc
-   * Perhaps part of some sort of general translation service?
-      * With plugin abilities to add bilateral capabilities
+   * Support for web browser, basically
 
 Types
 * PDF
-   * Display only
-* HTML
-   * Display-only
-   * HTML5/CSS3/ES7/SVG2/etc
-      * CEF / cefpython (https://github.com/cztomczak/cefpython)
-   * Use URL fetcher
-      * So we get history, metadata, caching and archiving control
+  * Display only
+  * Possible vectors:
+    * https://github.com/Belval/pdf2image
+    * https://github.com/Zain-Bin-Arshad/PDF-Viewer
+    * https://github.com/pymupdf/PyMuPDF
+  * This might require some refactoring of the type/viewer design.
 
-### M2
+* HTML
+  * Display-only
+  * HTML5/CSS3/ES7/SVG2/etc
+    * CEF / cefpython (https://github.com/cztomczak/cefpython)
+  * Use URL fetcher
+    * So we get history, metadata, caching and archiving control
+  * This might require some refactoring of the type/viewer design.
+
+
+### P2
 Programming, to the point of becoming self-hosting.
 
 Infrastructure
 
 System
+* Some sort of conceptual support for USB storage / SD cards / etc in
+  the storage system.
 
 Services
 * Diff / Merge
-   * Add support to existing types for diff and merge operations
-   * Three-way merge UI element for objects, including collections
+  * Add support to existing types for diff and merge operations
+  * Three-way merge UI element for objects, including collections
+* Conversion
+  * Compression and archive formats
+    * Eg. tar, zip, 7z, bzip, rar, etc, etc, etc
+    * ISO / Joliet read/write, eg.CD/DVDs
+  * Perhaps part of some sort of general translation service?
+    * With plugin abilities to add bilateral capabilities
 
 Types
 * Collection
-   * CRUD+DM
+   * CRUD+DM (Create, Read, Update, Delete + Diff, Merge)
    * Generic set/group type
 * Project
    * CRUD+DM
@@ -198,20 +198,46 @@ Types
    * Specialised collection
    * Trees, branches, tags
    * Commit log viewer, etc
+   * Should there be derivative objects for different SCMs?  Or
+     plugins to specialize a single implementation?
+     * Must support Git
+     * It'd be nice to support RCS and CVS as well.
+     * Maybe Subversion?
 * Code
+   * Sub-type of Text
    * CRUD+DM
    * Moderately decent source code editor
+     * Emacs itself doesn't make sense here, but something with
+       usefully similar keybindings would be good?
+     * https://github.com/mradultiw/pyropes
    * Line numbers
    * Highlighting
    * Sublime-style scrolling
    * Intellisense support
+     * via language server protocol?
    * Debugger support
    * Blame support
    * Must support Python, C, HTML, CSS, JavaScript, Bash, any any other
      system languages (others out of scope for this milestone)
 
-### M3
-PIM support: email, calendar, contacts, messaging, world clock,
+Story
+* At this point, the system should be useful for programming.
+* The _system_ should provide equivalent functionality to an IDE,
+  without being a monolithic application
+  * So, projects manage the constituent objects
+  * Some sort of LSP (?) will extract the semantic elements from the
+    text, and expose that to the Repository/Project?
+  * How is debugging integrated?
+  * How is compilation integrated?
+  * Integration with system search
+    * Both for code and documenation
+  * What events get added to history?
+
+
+### P3
+PIM support: email, calendar, contacts, messaging, world clock.  This
+should be enough for daily driving with the exception of office and
+graphical work.
 
 Infrastructure
 
@@ -284,7 +310,7 @@ Types
    * Music, and Album, as possibly derived types?
    * Music plugin for selector/dashboard/HUD?
 
-### M4
+### P4
 Office: word processor, spreadsheet, slides, vector drawing, pixel
 drawing
 
@@ -325,20 +351,7 @@ Types
    * CRUD+DM
    * Should support CAD formats for 3D printing
 
-### M5
-Improve performance.
-
-Infrastructure
-
-System
-* Replace interim base OS with suitable microkernel
-* Optimize IPC mechanism
-
-Services
-
-Types
-
-### M6
+### P5
 Fill out features for full daily-driver usage.
 
 Infrastructure
@@ -397,6 +410,49 @@ Types
    * Specialisation of executable
       * Save files should be type instances
       * ROMs are really just an executable with a different “VM”
+
+Throughout the P-series of milestones, we can take advantage of the
+underlying Unix operating system to wrap existing applications into
+the Darq model.  This will facilitate experimentation with the model
+while not requiring the effort to rewrite massive amounts of
+functionality onto a new OS/GUI.
+
+After the P-series, it is conceivable that we choose not to proceed to
+rewriting the OS, or that we adopt a cut-down form of an existing
+kernel and runtime instead.
+
+
+
+### M0
+
+System
+* Interim base OS
+   * Processes / threads
+   * Memory
+   * Block storage drivers
+   * Keyboard / mouse
+   * Display and GPU
+   * Network devices and TCP/IP stack
+   * Linux?  FreeBSD?  Zircon/Fuschia?  Minix3?
+* Some sort of IPC
+   * Kernel mediated
+   * Not DBus
+   * Mach + MIG
+   * Protobuf / CapNProto / Thrift / Avro / etc
+   * Is there a role for Elvin here?
+   * In-memory local transport option + network transport option
+* Some sort of low-level graphics API
+   * Not X, not Wayland
+   * Not Qt or Gtk or other existing UI toolkit either, unless I come
+     across something well suited or as a great starting point for
+     forking
+   * OpenGL ES 2 or 3?  As a base API to the GPU.  How does this work
+     with the Linux framebuffer?  SDL?  DirectFB?  OpenVG?  Etc.
+* Language runtime
+   * C?  Go?  Rust?   Something that can be compiled, with decent
+     performance, and not too difficult to retarget to a non-POSIX
+     runtime.
+
 
 ## Possible Technology Elements
 Cario (cairographics.org) is a 2D graphics library with backends for
