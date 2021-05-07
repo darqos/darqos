@@ -1,4 +1,5 @@
-#
+#! /usr/bin/env python
+# Copyright (C) 2020-2021 David Arnold
 
 from darq.os.base import Service
 from darq.rt.history import Event
@@ -9,6 +10,11 @@ import sys
 
 
 class HistoryService(Service):
+    """
+    The History service records a stream of time-stamped events reported by other
+    components in the system.  It can return records of past events by time range
+    or count.
+    """
 
     def __init__(self, file: str = None):
         super().__init__("tcp://*:11002")
