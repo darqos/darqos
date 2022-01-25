@@ -1,6 +1,26 @@
 #! /usr/bin/env python
 # Copyright (C) 2022 David Arnold
 
+# * Define and implement an API and protocol for the service
+# * Define and implement a database schema for the service
+# * Write a generic GUI client
+#   * Able to CRUD types.
+#   * Able to CRUD arbitrary data.
+# * Figure out how this relates to the MIME-ish types system
+# * Design and implement interface to vCard / CardDAV
+# * Design and implement interface to vCalendar / CalDAV (birthdays, etc)
+# * Research ISO standards for place addresses
+# * Research LinkedIn import/export
+# * Design and implement interface to OpenStreetMap / etc
+# * Write dedicated person UI
+# * Write dedicated place UI
+# * Research means of sharing both types and information
+#   * And ideally, some sort of standard handling for duplicates and
+#     translation between local and remote representations
+
+# Is it reasonable to try to replace MacOS contacts app using this as
+# backend and a dedicated front-end?
+
 import sys
 import typing
 from urllib.parse import urlparse
