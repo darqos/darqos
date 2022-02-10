@@ -1,4 +1,5 @@
-#
+# DarqOS
+# Copyright (C) 2018-2022 David Arnold
 
 from typing import Optional
 
@@ -323,7 +324,7 @@ class TextTypeView(QWidget):
             if self.storage.exists(self.url):
                 buf = self.storage.get(self.url)
                 self.text = Text.from_bytes(buf)
-                self.history.add_event(self.url, Event.VIEWED)
+                self.history.add_event(self.url, Event.READ)
             else:
                 self.storage.set(self.url, b'')
                 self.text = Text.new()
@@ -422,7 +423,7 @@ class TextTypeView(QWidget):
         if self.edit.document().isModified():
             text = self.edit.toPlainText()
             self.storage.update(self.url, text.encode())
-            self.history.add_event(self.url, Events.MODIFIED)
+            self.history.add_event(self.url, Event.MODIFIED)
 
         super().close()
         return
