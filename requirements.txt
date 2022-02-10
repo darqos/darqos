@@ -1,0 +1,6 @@
+PyInstaller
+PyQt5
+
+orjson
+pillow
+zmq
