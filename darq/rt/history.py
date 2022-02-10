@@ -1,4 +1,5 @@
-#
+# darqos
+# Copyright (C) 2020-2022 David Arnold
 
 from datetime import datetime
 import enum
@@ -8,9 +9,18 @@ import zmq
 
 @enum.unique
 class Event(enum.Enum):
+    """Events recorded by the history service."""
+
+    # Object was created.
     CREATED = "created"
+
+    # Object was read, but not modified.
     READ = "read"
+
+    # Object was altered.
     MODIFIED = "modified"
+
+    # Object was printed (?)
     PRINTED = "printed"
 
 
@@ -28,6 +38,7 @@ class History:
         return
 
     def add_event(self, subject: str, event: Event):
+        """Record an event."""
 
         request = {"method": "add_event",
                    "xid": "xxx",
