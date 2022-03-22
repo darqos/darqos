@@ -1,0 +1,11 @@
+BEGIN:VCARD
+VERSION:3.0
+FN:APNIC
+N:;APNIC;;;
+TEL;TYPE=WORK:+61 7 3858 3100
+item1.ORG:APNIC
+item1.X-ABLabel:Work
+item2.URL:www.apnic.net
+item2.X-ABLabel:homePage
+CATEGORIES:myContacts
+END:VCARD

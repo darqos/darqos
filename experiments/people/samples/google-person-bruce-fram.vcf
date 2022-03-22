@@ -1,0 +1,23 @@
+BEGIN:VCARD
+VERSION:3.0
+FN:Bruce Fram
+N:Fram;Bruce;;;
+EMAIL;TYPE=INTERNET:brucefram@sbcglobal.net
+TEL;TYPE=WORK:+1 650 234 4864
+TEL;TYPE=HOME:+1 650 843 1026
+TEL;TYPE=MAIN:+1 650 678 9021
+item1.TEL:+1 650 843 1214
+item1.X-ABLabel:homeFax
+ADR;TYPE=WORK:;;Building 3\, Suite 290 3000 Sand Hill Rd;Menlo Park;CA;9402
+ 5;USA;3000 Sand Hill Rd\, Building 3\, Suite 290\nMenlo Park\, CA 94025\nU
+ SA
+ADR;TYPE=HOME:;;580 Loma Verde Ave;Palo Alto;CA;94306;USA;580 Loma Verde Av
+ e\nPalo Alto\, CA 94306\nUSA
+item2.ORG:Mantara
+item2.X-ABLabel:Work
+item3.TITLE:CEO
+item3.X-ABLabel:Work
+PHOTO:https://lh3.googleusercontent.com/contacts/AKUYANTKG0I5Rjo7Dk13ZO9suq
+ K_rtSpcGiNEsoYnoVdV2aaTjCqQ-dn
+CATEGORIES:myContacts
+END:VCARD

@@ -1,0 +1,12 @@
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Apple Inc.//Mac OS X 10.14.6//EN
+N:Angelier;Paul;;;
+FN:Paul Angelier
+EMAIL;type=INTERNET;type=HOME;type=pref:paul@angelier.fr
+TEL;type=CELL;type=VOICE;type=pref:+49 151 22640649
+item1.ADR;type=HOME;type=pref:;;Niebuhrstrasse 38\n2nd Floor;Berlin;;10629;Germany
+item1.X-ABADR:de
+UID:267e3044-8764-49d9-968a-1eaabbf9e364
+X-ABUID:9C522EE9-4B05-4994-A0CA-84A3314E9AAF:ABPerson
+END:VCARD

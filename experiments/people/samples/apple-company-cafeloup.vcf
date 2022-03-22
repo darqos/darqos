@@ -1,0 +1,15 @@
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Apple Inc.//Mac OS X 10.14.6//EN
+N:;;;;
+FN:Cafe Loup
+ORG:Cafe Loup;
+TEL;type=WORK;type=VOICE;type=pref:+1 201 255 4746
+item1.ADR;type=WORK;type=pref:;;105 W 13th St;New York;NY;;USA
+item1.X-ABADR:au
+item2.URL;type=pref:cafeloupnyc.com
+item2.X-ABLabel:_$!<HomePage>!$_
+X-ABShowAs:COMPANY
+UID:34798c54-6fcb-4c43-9a65-41bcb0241b27
+X-ABUID:C9F2E2D1-F96B-4457-A8CD-BD2A3E2B11F2:ABPerson
+END:VCARD

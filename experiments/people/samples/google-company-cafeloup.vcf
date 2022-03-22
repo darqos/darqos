@@ -1,0 +1,13 @@
+BEGIN:VCARD
+VERSION:3.0
+FN:Cafe Loup
+N:Loup;Cafe;;;
+TEL;TYPE=WORK:+1 201 255 4746
+ADR;TYPE=WORK:;;105 W 13th St;New York;NY;;USA;105 W 13th St\nNew York\, NY
+ \nUSA
+item1.ORG:Cafe Loup
+item1.X-ABLabel:Work
+item2.URL:cafeloupnyc.com
+item2.X-ABLabel:homePage
+CATEGORIES:myContacts
+END:VCARD
