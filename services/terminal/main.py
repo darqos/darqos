@@ -153,6 +153,8 @@ class ObjectFactory(QWidget):
             url = urlparse(t.icon)
             icon = QIcon(url.path)
             action = QAction(icon, t.name, qApp)
+            action.triggered.connect(self.on_create)
+
             self.hotbar.addAction(action)
         self.layout.addWidget(self.hotbar)
 
@@ -205,6 +207,7 @@ class ObjectFactory(QWidget):
         book.icon = "file:///Users/d/work/personal/darqos/darq/icons/book.png"
         self.types.add_type(book)
         self.types.append_pinned_type("Book Details")
+
         return
 
     def on_create(self):
