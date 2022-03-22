@@ -9,21 +9,10 @@ from PyQt5.QtGui import QColor, QKeySequence, QMouseEvent
 
 from darq.rt.storage import Storage
 from darq.rt.history import History, Event
+from darq.rt.object import Object
 
 import sys
 import uuid
-
-
-class Object:
-    """Base class for types."""
-
-    def __init__(self):
-        return
-
-    @staticmethod
-    def new():
-        """Create a new instance of this type."""
-        return
 
 
 class Text(Object):
