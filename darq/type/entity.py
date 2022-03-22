@@ -1,11 +1,11 @@
-
+# Copyright (C) 2020-2021 David Arnold
 
 import sys
 import uuid
 
-from darq.type.base import Object
+from darq.type.base import *
 from darq.rt.storage import Storage
-from darq.rt.history import History, Events
+from darq.rt.history import History, Event
 
 from PyQt5.QtWidgets import QApplication, QWidget, QTextEdit, QGridLayout
 from PyQt5 import QtCore
@@ -70,6 +70,7 @@ class Person(Entity):
         # etc
         return
 
+#address_reltype = darq.rt.base.lookup_or_create_type("entity.address", "FIXME")
 
 class Organisation(Entity):
     """A company, association, or other group of people."""
