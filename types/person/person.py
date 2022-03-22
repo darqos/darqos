@@ -3,7 +3,7 @@
 
 from typing import Optional
 
-from PyQt5.QtWidgets import QApplication, QWidget, QTextEdit, QMenu, QShortcut, qApp, QVBoxLayout
+from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QTextEdit, QMenu, QShortcut, qApp, QVBoxLayout
 from PyQt5 import QtCore
 from PyQt5.QtGui import QColor, QKeySequence, QMouseEvent
 
@@ -61,11 +61,29 @@ class Person(Object):
 
     See also the related applications for Organisations, Locations, and
     Groups.
+
+    When this application is started, it requires an identifier for a
+    Person object.  That identifier must be resolved (via the system
+    runtime) to a specific entity within a specific Knowledgebase
+    Service instance, accessed via a specific protocol.
+
+    In the short term, this should be a TCP host:port and identifier,
+    and accessible using Cap'n'Proto over TCP.
+
+    Actions this lens should support are: new, view, edit, print, etc.
+
     """
 
     def __init__(self):
         """Create a new Person instance."""
         super().__init__()
+
+        self._id = None
+        self._full_name = ""
+        self._birth_timestamp = None
+        self._death_timestamp = None
+        self._emails = []
+
         return
 
     @staticmethod
@@ -76,21 +94,22 @@ class Person(Object):
     def load(oid: str):
         """Load a Person object from storage."""
         # get bytes from storage
-        text = Text.from_bytes()
-        return text
+        person = Person.from_bytes()
+        return person
 
     @staticmethod
     def from_bytes(buffer: bytes):
         """Create a Person object from serialized bytes.
 
         :param buffer: Byte buffer."""
-        text = Text()
-        text.text = buffer.decode()
-        return text
+        person = Person()
+        #person.text = buffer.decode()
+        return person
 
     def to_bytes(self) -> bytes:
         """Return a serialized form of the Text object."""
-        return self.text.encode()
+        return b''
+        #return self.text.encode()
 
     @staticmethod
     def type():
@@ -105,9 +124,10 @@ class PersonTypeView(QWidget):
     def __init__(self, url: str = None):
         """Constructor."""
 
+        # Initiate connection to runtime services.
         # FIXME: self.kb = KB.api()
-        self.storage = Storage.api()
-        self.history = History.api()
+        # FIXME: self.history = History.api()
+        # FIXME: self.index = Index.api()
 
         # Load content.
         if url is not None:
@@ -122,10 +142,15 @@ class PersonTypeView(QWidget):
                 self.text = Text.new()
                 self.history.add_event(self.url, Event.CREATED)
         else:
+            # Generate identifier for new object.
             self.url = str(uuid.uuid4())
-            self.storage.set(self.url, b'')
-            self.text = Text.new()
-            self.history.add_event(self.url, Event.CREATED)
+
+            # Create placeholder in KB.
+            self.person = Person.new()
+            #self.storage.set(self.url, b'')
+
+            # Record creation event.
+            #self.history.add_event(self.url, Event.CREATED)
 
         # Window placement.
         self._drag_start = None
@@ -148,24 +173,22 @@ class PersonTypeView(QWidget):
         # Draw text view inside frame.
         self.layout = QVBoxLayout()
         self.layout.setContentsMargins(50, 50, 50, 50)
-        self.edit = DarqTextEdit(self)
-        self.edit.append(self.text.text)
-        self.layout.addWidget(self.edit)
+
+        self.full_name = QLabel()
+        self.full_name.setText("Full Name")
+        self.layout.addWidget(self.full_name)
 
         self.setLayout(self.layout)
         self.show()
-        return
 
     def mousePressEvent(self, a0: QMouseEvent) -> None:
         print("Mouse Press Event: " + str(a0.pos()))
         self._drag_start = a0.pos()
         a0.ignore()
-        return
 
     def mouseReleaseEvent(self, a0: QMouseEvent) -> None:
         self._move_window(a0.pos())
         a0.ignore()
-        return
 
     def mouseDoubleClickEvent(self, a0: QMouseEvent) -> None:
         a0.ignore()
