@@ -38,6 +38,11 @@ class Object:
         self._storage_id = None
         return
 
+    @staticmethod
+    def new():
+        """Create a new instance of this type."""
+        pass
+
 
 class ObjectProxy:
     """
