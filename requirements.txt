@@ -3,4 +3,5 @@ PyQt5
 
 orjson
 pillow
+vobject
 zmq
