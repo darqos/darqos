@@ -1,5 +1,6 @@
 #! /usr/bin/env python
-# Copyright (C) 2021 David Arnold
+# darqos
+# Copyright (C) 2021-2022 David Arnold
 
 # Security Service
 
@@ -57,7 +58,6 @@ class SecurityService(Service):
 
     def login(self, user_name: str, password: str) -> bytes:
         pass
-
 
     def handle_request(self, request: dict):
         """Handle requests."""
