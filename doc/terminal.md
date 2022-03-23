@@ -1,8 +1,8 @@
 # Terminal Service
 
-The terminal service performs a role not unlike Unix getty: it exposes
-an abstraction of a user's screen, keyboard, mouse, microphone,
-speakers, camera, etc, to the system.
+The terminal service performs a role not unlike Unix getty or xdm:
+it exposes an abstraction of a user's screen, keyboard, mouse,
+microphone, speakers, camera, etc, to the system.
 
 This abstraction can then be implemented using physical or logical
 devices, based on availability and configuration.  A system without a
@@ -12,6 +12,7 @@ provide other services, however.
 In the initial milestones, the focus is on a simple terminal.
 Dedicated (ie. not shared) physical devices, directly attached to the
 host hardware.
+
 
 While using an underlying Linux kernel, and prior to figuring out the
 best abstraction for a graphical display ... I'm pretty tempted to use
