@@ -1,10 +1,10 @@
 # darqos
 # Copyright (C) 2022 David Arnold
 
-world: historyd
+world: history-service
 
-historyd: main.py main.spec
-	pyinstaller -F main.spec
+history-service: main.py main.spec
+	env PYTHONPATH=../.. pyinstaller -F main.spec
 
 clean:
 	rm -rf build dist __pycache__
