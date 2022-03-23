@@ -1,5 +1,5 @@
 #! /usr/bin/env python
-# Copyright (C) 2021 David Arnold
+# Copyright (C) 2021-2022 David Arnold
 
 # Metadata Service
 
