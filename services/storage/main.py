@@ -1,4 +1,5 @@
-#
+# DarqOS
+# Copyright (C) 2019-2022
 
 # Blob storage service.
 #

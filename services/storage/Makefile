@@ -1,10 +1,10 @@
 # darqos
 # Copyright (C) 2022 David Arnold
 
-world: storaged
+world: storage-service
 
-storaged: main.py main.spec
-	pyinstaller -F main.spec
+storage-service: main.py main.spec
+	env PYTHONPATH=../.. pyinstaller -F main.spec
 
 clean:
 	rm -rf build dist __pycache__
