@@ -6,13 +6,14 @@
 export PYTHONPATH=/Users/d/work/personal/darqos
 
 # Start services.
-services/storage/dist/storaged &
-services/history/dist/historyd &
-
-#python services/metadata/main.py &
-#python services/index/main.py &
+services/history/dist/history-service &
+services/index/dist/index-service &
+services/index/dist/metadata-service &
+services/index/dist/security-service &
+services/storage/dist/storage-service &
+services/storage/dist/terminal-service &
 
 # Start GUI shell.
-#python services/terminal/main.py &
+python services/terminal/main.py &
 
-python darq/type/text.py
+#python darq/type/text.py

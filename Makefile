@@ -10,6 +10,7 @@ world clean:
 	(cd services/metadata; make $@)
 	(cd services/security; make $@)
 	(cd services/storage; make $@)
+	(cd services/terminal; make $@)
 
 	# Types
 	(cd types/text; make $@)
