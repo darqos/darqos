@@ -50,15 +50,22 @@ System
 * Host OS
   * Unix: macOS or Linux, really
 * IPC
-  * ZeroMQ with JSON marshalling.
+  * ZeroMQ with JSON marshalling?
+  * Direct TCP with JSON?
+  * Direct TCP with Cap'n'Proto?
+  * Do we need object/service activation?
+    * And if so, what's a good option?   
 * A collection of cooperating processes
   * Written in Python
-  * Communicating using the ZMQ IPC
+  * Communicating using the selected IPC
 * GUI
   * Full-screen window
   * PyQt5 for macOS/X11
 * Bootstrap
   * Basic shell script, starting up Unix processes
+    * It'd be good to have a clean shutdown, so processes should
+      register themselves with the runtime once they're up, so they
+      can be killed.
   * Storage backed by sqlite and Unix FS
   * Network shared with host OS
 
@@ -69,6 +76,11 @@ Services
   * Permissions
 * Storage
   * Key-value blob store
+* Index
+  * Submit text to for indexing
+  * Storage in storage service?
+    * Maybe it's better to directly use Sqlite3 for now?
+  * Lookup by keywords
 * History
   * System-wide
   * Activity timeline
@@ -85,11 +97,15 @@ Services
     service.
     * Login, logout, lock, reboot, shutdown
 * HUD
-  * If HUD is actually separate from Terminal?
-  * Search
+  * Is HUD actually separate from Terminal?
+    * No?
   * Factory
-  * History
+  * Search
+    * Index
+    * History
+    * Metadata
   * Clock
+
 
 Runtime
 * Object loader
