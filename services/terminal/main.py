@@ -1,5 +1,6 @@
 #! /usr/bin/env python
-# Copyright (C) 2020 David Arnold
+# darqos
+# Copyright (C) 2020-2022 David Arnold
 
 import sys
 import typing
@@ -357,6 +358,7 @@ class UI(QWidget):
         print("Selector: " + str(args))
         self.selector.toggle_visibility()
         return
+
 
 def main():
     app = QApplication(sys.argv)
