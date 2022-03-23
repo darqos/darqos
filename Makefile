@@ -6,6 +6,7 @@ all: world
 world clean:
 	# Services
 	(cd services/history; make $@)
+	(cd services/index; make $@)
 	(cd services/metadata; make $@)
 	(cd services/security; make $@)
 	(cd services/storage; make $@)
