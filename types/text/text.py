@@ -3,9 +3,9 @@
 
 from typing import Optional
 
-from PyQt5.QtWidgets import QApplication, QWidget, QTextEdit, QMenu, QShortcut, qApp, QVBoxLayout
-from PyQt5 import QtCore
-from PyQt5.QtGui import QColor, QKeySequence, QMouseEvent
+from PyQt6.QtWidgets import QApplication, QWidget, QTextEdit, QMenu, QVBoxLayout
+from PyQt6 import QtCore
+from PyQt6.QtGui import QColor, QKeySequence, QMouseEvent, QShortcut
 
 from darq.rt.storage import Storage
 from darq.rt.history import History, Event
@@ -290,7 +290,7 @@ class DarqTextEdit(QTextEdit):
         m.addSeparator()
         close_action = m.addAction("Close")
 
-        action = m.exec_(self.mapToGlobal(event.pos()))
+        action = m.exec(self.mapToGlobal(event.pos()))
         if action == close_action:
             self.parent.close()
 
@@ -339,7 +339,7 @@ class TextTypeView(QWidget):
         self.setWindowTitle('New')
 
         # Remove title bar, traffic lights, etc.
-        self.flags = QtCore.Qt.WindowFlags(QtCore.Qt.FramelessWindowHint)
+        self.flags = QtCore.Qt.WindowType(QtCore.Qt.WindowType.FramelessWindowHint)
         self.setWindowFlags(self.flags)
 
         # Draw text view inside frame.
@@ -425,7 +425,7 @@ def main():
 
     app = QApplication(sys.argv)
     text = TextTypeView(url)
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":
