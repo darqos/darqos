@@ -50,9 +50,15 @@ System
 * Host OS
   * Unix: macOS or Linux, really
 * IPC
-  * ZeroMQ with JSON marshalling?
-  * Direct TCP with JSON?
-  * Direct TCP with Cap'n'Proto?
+  * Implemented via language (Python) runtime, so that the details
+    are hidden from the applications
+  * API: maybe call() / serve()?
+    * Perhaps with send, recv, listen, etc, underneath?
+  * Implementation should focus entirely on dev simplicity for now
+    * ZeroMQ with JSON marshalling?
+    * Direct TCP with JSON?
+    * Direct TCP with Cap'n'Proto?
+    * Does it need an IDL?
   * Do we need object/service activation?
     * And if so, what's a good option?   
 * A collection of cooperating processes
@@ -112,6 +118,14 @@ Runtime
 * Some sort of abstraction for access to the GUI?
 
 Types
+* Type base class
+  * Installation operation
+    * Register with type service
+    * Implementation stored in storage service
+    * Installed as part of "root filesystem" during build?
+      * ie. pre-installed into storage service database?
+    * How about subsequent updates and new types?
+      * Check or register all type implementations during bootstrap? 
 * Text
   * CRUD
   * UTF8
