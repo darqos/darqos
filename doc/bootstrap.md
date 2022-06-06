@@ -1,5 +1,32 @@
 # Bootstrap
 
+
+## P0
+
+ 1. First prototype release
+ 2. Unix processes, communicated over TCP
+ 3. Python only
+ 4. Start order
+    * Name server
+    * Type server
+    * Storage server
+    * Others
+ 5. For start up, use a Python "agent"
+    * Needs a TCP API
+      * Reboot and shutdown actions
+    * Shutdown should be a script too
+      * Which just sends the right message to the agent
+    * Has a list of services to start, in order
+      * No dependencies (unless we really need them, static will do)
+    * boot.py is parent process; all other spawn from it.
+      * Could do something with control groups later, if required
+    * Agent process should monitor services, and restart them on exit
+ 6. The build system should have a target that produces a
+     pre-initialised storage service database.
+     * This will avoid the need to come up with any other installation
+       mechanism in the short term
+
+
 ## M0
 
 In M0, there will be no actually DarqOS kernel (since it will use a host
@@ -27,6 +54,4 @@ operating system).
     * In this case, just create a large window.
     * Needs to have pointer & keyboard, in this case inherited from X11
       window, when in focus.
-   
-   
-  
+ 
