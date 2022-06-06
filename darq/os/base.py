@@ -46,9 +46,13 @@ class Service:
 
         # Receive and dispatch.
         while self.active:
-            buf = self._socket.recv()
-            message = orjson.loads(buf)
-            self.handle_request(message)
+            try:
+                buf = self._socket.recv()
+                message = orjson.loads(buf)
+                self.handle_request(message)
+
+            except KeyboardInterrupt:
+                print("Ignore C-c")
 
         # Clean up.
         self._socket.close()
@@ -56,6 +60,8 @@ class Service:
 
         self._context.destroy()
         self._context = None
+
+        self.handle_shutdown()
         return
 
     def handle_request(self, request: dict):
@@ -72,6 +78,10 @@ class Service:
                             result=False,
                             description=f"Unknown method requested {method}")
         return
+
+    def handle_shutdown(self):
+        """Override this method to handle shutdown requests."""
+        pass
 
     def send_reply(self, request: dict, reply: dict = None, **kwargs):
         """Construct and send standard reply message.
@@ -109,6 +119,6 @@ class ServiceAPI:
         buf = orjson.dumps(request)
         self._socket.send(buf)
 
-        bug = self._socket.recv()
+        buf = self._socket.recv()
         response = orjson.loads(buf)
         return response

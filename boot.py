@@ -4,6 +4,7 @@
 # Copyright (C) 2022 David Arnold
 ################################################################
 
+import errno
 import os
 import signal
 import sys
@@ -11,6 +12,8 @@ import time
 
 from dataclasses import dataclass
 
+import orjson
+import zmq
 
 BOOT_ERR = f"""Error: unable to find DarqOS system files in %s.
 You must either start from the DarqOS installation directory, or set 
@@ -21,19 +24,19 @@ the DARQ_ROOT environment variable to point to it.
 class ServiceInfo:
     name: str = ''
     filename: str = ''
-    order: int = 0
+    port: int = 0
     pid: int = 0
 
 
 SERVICES = [
-    #ServiceInfo("Storage", "storage/main.py", 100, 0),
-    #ServiceInfo("Type", "type/main.py", 200, 0),
+    ServiceInfo("Storage", "storage/main.py", 11001, 0),
+    ServiceInfo("Type", "type/main.py", 11006, 0),
 
     # index-service
     # metadata-service
     # security-service
 
-    ServiceInfo("Terminal", "terminal/main.py", 900, 0),
+    # ServiceInfo("Terminal", "terminal/main.py", 0, 0),
 ]
 
 
@@ -94,14 +97,40 @@ class Bootstrap:
         shutdown = SERVICES[:]
         shutdown.reverse()
         for service_info in shutdown:
-            os.kill(service_info.pid, signal.SIGINT)
-            print(f"Requested {service_info.name} Service shut down.")
+            if service_info.port:
+                # Send request to shut down.
+                context = zmq.Context()
+                socket = context.socket(zmq.REQ)
+                socket.connect(f"tcp://localhost:{service_info.port}")
+                buf = orjson.dumps({"method": "shutdown", "xid": "xxx"})
+                socket.send(buf)
 
-        time.sleep(1)
+                buf = socket.recv()
+                response = orjson.loads(buf)
+                if response["result"]:
+                    print(f"{service_info.name} Service shutdown request accepted.")
 
-        for service_info in shutdown:
-            os.kill(service_info.pid, signal.SIGTERM)
-            print(f"Forced {service_info.name} Service to shut down.")
+                socket.close()
+                context.destroy()
+
+                # Give it a few seconds.
+                time.sleep(20)
+
+                # Check that process has exited.
+                try:
+                    os.kill(service_info.pid, 0)
+                except ProcessLookupError:
+                    print(f"{service_info.name} Service exited.")
+                    continue
+
+                # Process still running, so SIGTERM it.
+                os.kill(service_info.pid, signal.SIGTERM)
+                print(f"{service_info.name} Service terminated.")
+
+            else:
+                # Terminate process.
+                os.kill(service_info.pid, signal.SIGTERM)
+                print(f"{service_info.name} Service terminated.")
 
         print("System halted.")
         return

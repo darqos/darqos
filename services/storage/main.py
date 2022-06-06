@@ -48,6 +48,11 @@ class StorageService(Service):
 
         return
 
+    @staticmethod
+    def get_name() -> str:
+        """Return the service name."""
+        return "storage"
+
     def set(self, key: str, value):
         """Set the value for a key.
 
@@ -159,6 +164,14 @@ class StorageService(Service):
 
         else:
             super().handle_request(request)
+        return
+
+    def handle_shutdown(self):
+        # Clean up database connection.
+        self.db.close()
+        self.db = None
+
+        print("Storage Service shutdown handled successfully.")
         return
 
 
