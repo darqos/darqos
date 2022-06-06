@@ -55,11 +55,13 @@ class QuantityValue:
     def __init__(self, value):
         self.value = value
 
+
 class StringValue:
     """String value type."""
 
     def __init__(self, value: str):
         self.value = value
+
 
 class TextValue:
     """Multi-language value type."""
@@ -105,6 +107,7 @@ class TimePrecision(Enum):
     # Milli = 15
     # Micro = 16
     Nanoseconds = 17
+
 
 class TimeValue:
     def __init__(self,
@@ -194,12 +197,22 @@ class Qualifier:
 
 
 class Statement:
+    """A statement associates a Property value with an Item or Property."""
+
     def __init__(self,
                  property_id: str = '',
                  value = None,
                  qualifiers: Optional[Iterable[Qualifier]] = None,
                  references: Optional[Iterable[Reference]] = None,
                  rank: Optional[Rank] = None):
+        """Constructor.
+
+        :param property_id: Identifier for Property to be associated.
+        :param value: Value of associated property.
+        :param qualifiers: Qualifiers for the associated property.
+        :param references: References for the associated property.
+        :param rank: Status of the associated property."""
+
         # Claim a property and value.
         self.property_id: str = property_id
         self.value: Any = value
@@ -223,7 +236,7 @@ class Statement:
 
 class Property:
     def __init__(self, iid: str = ""):
-        if len(iid) == 0:
+        if iid is None or len(iid) == 0:
             self.id = str(uuid.uuid4())
         else:
             self.id = iid
@@ -252,14 +265,19 @@ class Property:
     def add_alias(self, alias: str):
         self.aliases.append(alias)
 
-    def add_statement(self, property: 'Property', value, qualifiers):
-        s = Statement(property, value)
+    def add_statement(self, prop: 'Property', value, qualifiers):
+        s = Statement(prop.get_id(), value)
         self.statements.append(s)
 
 
 class Item:
+    """Represents an item of knowledge.
+
+    Items have properties describing them."""
+
     def __init__(self, item_id: Optional[str] = None):
-        if len(item_id) == 0
+        """Constructor."""
+        if item_id is None or len(item_id) == 0:
             self.item_id = str(uuid.uuid4())
         else:
             self.item_id = item_id
@@ -268,6 +286,25 @@ class Item:
         self.description: str = ''
         self.aliases: List[str] = []
         self.statements = []
+
+    def get_id(self):
+        return self.id
+
+    def set_label(self, label: str):
+        self.label = label
+
+    def get_label(self) -> str:
+        return self.label
+
+    def set_description(self, description: str):
+        self.description = description
+
+    def add_alias(self, alias: str):
+        self.aliases.append(alias)
+
+    def add_statement(self, prop: Property, value, qualifiers=None):
+        s = Statement(prop.get_id(), value)
+        self.statements.append(s)
 
 
 class KnowledgeBase:
@@ -278,6 +315,36 @@ class KnowledgeBase:
         return KnowledgeBase()
 
     def __init__(self):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        #self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
+        self.items = {}
+        self.properties = {}
 
+    def add_item(self, label: str, item_id: str = None, desc: str = None):
+        """Create and register an item."""
+        item = Item(item_id)
+        item.set_label(label)
+        item.set_description(desc)
+
+        self.items[label] = item
+        return item
+
+    def find_item(self, label: str) -> Optional[Item]:
+        """Look up item by label"""
+        for i in self.items.values():
+            if i.get_label() == label:
+                return i
+
+    def add_property(self, label: str, prop_id: str = None):
+        """Create and register a property."""
+        p = Property(prop_id)
+        p.set_label(label)
+
+        self.properties[label] = p
+        return p
+
+    def find_property(self, label: str) -> Optional[Property]:
+        """Look up property by label."""
+        for p in self.properties.values():
+            if p.get_label() == label:
+                return p

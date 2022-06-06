@@ -1,6 +1,7 @@
 #
 
 import orjson
+import os
 import zmq
 
 
@@ -14,35 +15,46 @@ class Service:
         self.url: str = url
 
         # zmq context.
-        self.context = None
+        self._context = None
 
         # zmq listening socket.
-        self.socket = None
+        self._socket = None
 
         # Active flag: if False, exist service loop and shut down.
         self.active: bool = False
+
+        # Write PID to run file.
+        tmpdir = os.environ.get("TMPDIR", "/tmp")
+        f = open(os.path.join(tmpdir, f"{self.get_name()}.pid"), "w")
+        f.write(f"{os.getpid()}\n")
+        f.close()
         return
+
+    @staticmethod
+    def get_name() -> str:
+        """Return the service name."""
+        return "service"
 
     def run(self):
         """Accept and dispatch service requests."""
 
-        self.context = zmq.Context()
-        self.socket = self.context.socket(zmq.REP)
-        self.socket.bind(self.url)
+        self._context = zmq.Context()
+        self._socket = self._context.socket(zmq.REP)
+        self._socket.bind(self.url)
         self.active = True
 
         # Receive and dispatch.
         while self.active:
-            buf = self.socket.recv()
+            buf = self._socket.recv()
             message = orjson.loads(buf)
             self.handle_request(message)
 
         # Clean up.
-        self.socket.close()
-        self.socket = None
+        self._socket.close()
+        self._socket = None
 
-        self.context.destroy()
-        self.context = None
+        self._context.destroy()
+        self._context = None
         return
 
     def handle_request(self, request: dict):
@@ -78,43 +90,24 @@ class Service:
         reply["method"] = request["method"]
         reply["xid"] = request["xid"]
         buf = orjson.dumps(reply)
-        self.socket.send(buf)
+        self._socket.send(buf)
         return
 
 
-class TypeDefinition:
-    """Description of an object type."""
+class ServiceAPI:
+    """Base class for runtime service APIs."""
 
-    def __init__(self):
-        self.uti = 'public.base'
-        self.name = ''
-        self.description = ''
-        self.implementation = ''
-        return
+    def __init__(self, sid: str):
+        self._sid = sid
+        self._context = zmq.Context()
+        self._socket = self._context.socket(zmq.REQ)
+        self._socket.connect(self._sid)
 
-    def get_uti(self) -> str:
-        """Return the unique Uniform Type Identifier (UTI) for this type."""
-        return self.uti
+    def rpc(self, request: dict) -> dict:
+        """Send a server request, and await a reply."""
+        buf = orjson.dumps(request)
+        self._socket.send(buf)
 
-    def get_name(self) -> str:
-        """Return the unique short name for this type."""
-        return self.name
-
-    def get_description(self) -> str:
-        """Return a short description of the produced object type."""
-        return self.description
-
-    def get_implementation(self) -> str:
-        """Return the storage URL for the type implementation."""
-        return self.implementation
-
-    @staticmethod
-    def from_dict(d):
-        """Create a type description from a dictionary."""
-        td = TypeDefinition()
-        td.uti = d.get("uti")
-        td.name = d.get("name")
-        td.description = d.get("description")
-        td.implementation = d.get("implementation")
-        return td
-
+        bug = self._socket.recv()
+        response = orjson.loads(buf)
+        return response
