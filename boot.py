@@ -1,15 +1,40 @@
-#
+#! /usr/bin/env python3
+################################################################
+# darqos
+# Copyright (C) 2022 David Arnold
+################################################################
 
 import os
 import signal
 import sys
 import time
 
+from dataclasses import dataclass
+
 
 BOOT_ERR = f"""Error: unable to find DarqOS system files in %s.
 You must either start from the DarqOS installation directory, or set 
 the DARQ_ROOT environment variable to point to it.
 """
+
+@dataclass
+class ServiceInfo:
+    name: str = ''
+    filename: str = ''
+    order: int = 0
+    pid: int = 0
+
+
+SERVICES = [
+    #ServiceInfo("Storage", "storage/main.py", 100, 0),
+    #ServiceInfo("Type", "type/main.py", 200, 0),
+
+    # index-service
+    # metadata-service
+    # security-service
+
+    ServiceInfo("Terminal", "terminal/main.py", 900, 0),
+]
 
 
 class Bootstrap:
@@ -38,26 +63,19 @@ class Bootstrap:
 
         # Start services.
         # FIXME: no dependencies for now: just use fixed order.
-        #self.storage_pid = self._start_service("Storage", "storage/main.py", root)
-        #self.type_id = self._start_service("Type", "type/main.py", root)
-        #self.history_pid = self._start_service("History", "history/main.py", root)
-
-        # index-service
-        # metadata-service
-        # security-service
-
-        self.terminal_pid = self._start_service("Terminal", "terminal/main.py", root)
+        for service_info in SERVICES:
+            self._start_service(service_info, root)
 
         print("System up.")
         return
 
-    def _start_service(self, name, file_name, root):
+    def _start_service(self, service_info: ServiceInfo, root: str):
         """(Internal) Start a service process."""
 
-        args = ["python", f"{root}/services/{file_name}"]
+        args = ["python", f"{root}/services/{service_info.filename}"]
         pid = os.spawnvp(os.P_NOWAIT, "python", args)
-        print(f"Started {name} from {args[1]} ... pid {pid}")
-        return pid
+        print(f"Started {service_info.name} from {args[1]} ... pid {pid}")
+        service_info.pid = pid
 
     def wait(self):
         try:
@@ -73,13 +91,17 @@ class Bootstrap:
         print("Shutting down ...")
 
         # reverse order shutdown of services.
-        os.kill(self.terminal_pid, signal.SIGTERM)
-        # security
-        # metadata
-        # index
-        # history
-        # type
-        #os.kill(self.storage_pid, signal.SIGTERM)
+        shutdown = SERVICES[:]
+        shutdown.reverse()
+        for service_info in shutdown:
+            os.kill(service_info.pid, signal.SIGINT)
+            print(f"Requested {service_info.name} Service shut down.")
+
+        time.sleep(1)
+
+        for service_info in shutdown:
+            os.kill(service_info.pid, signal.SIGTERM)
+            print(f"Forced {service_info.name} Service to shut down.")
 
         print("System halted.")
         return
