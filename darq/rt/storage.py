@@ -1,10 +1,11 @@
-#
+# darqos
+# Copyright (C) 2022 David Arnold
 
 from typing import Union
 
+from darq.os.base import ServiceAPI
+
 import base64
-import orjson
-import zmq
 
 # The IPC mechanism used between the runtime library and the service
 # instance should really be encapsulated as a class that can be used
@@ -12,7 +13,7 @@ import zmq
 # for now, just hack it up and we'll factor it out later.
 
 
-class Storage:
+class Storage(ServiceAPI):
     """Interface to storage system."""
 
     @staticmethod
@@ -20,9 +21,7 @@ class Storage:
         return Storage()
 
     def __init__(self):
-        self.context = zmq.Context()
-        self.socket = self.context.socket(zmq.REQ)
-        self.socket.connect("tcp://localhost:11001")
+        super().__init__("tcp://localhost:11001")
         return
 
     def set(self, key: str, value: Union[bytes, bytearray]):
@@ -30,11 +29,7 @@ class Storage:
                    "xid": "xxx",
                    "key": key,
                    "value": base64.b64encode(value).decode()}
-        buf = orjson.dumps(request)
-        self.socket.send(buf)
-
-        buf = self.socket.recv()
-        reply = orjson.loads(buf)
+        reply = self.rpc(request)
         return reply["result"]
 
     def update(self, key: str, value: Union[bytes, bytearray]):
@@ -42,20 +37,14 @@ class Storage:
                    "xid": "xxx",
                    "key": key,
                    "value": base64.b64encode(value).decode()}
-        buf = orjson.dumps(request)
-        self.socket.send(buf)
-
-        buf = self.socket.recv()
-        reply = orjson.loads(buf)
+        reply = self.rpc(request)
         return reply["result"]
 
     def exists(self, key: str) -> bool:
         request = {"method": "exists",
                    "xid": "xxx",
                    "key": key}
-        self.socket.send_json(request)
-
-        reply = self.socket.recv_json()
+        reply = self.rpc(request)
         assert reply['method'] == "exists"
         assert "result" in reply
 
@@ -65,11 +54,7 @@ class Storage:
         request = {"method": "get",
                    "xid": "xxx",
                    "key": key}
-        buf = orjson.dumps(request)
-        self.socket.send(buf)
-
-        buf = self.socket.recv()
-        reply = orjson.loads(buf)
+        reply = self.rpc(request)
         print(reply)
 
         value = base64.b64decode(reply["value"])
@@ -79,11 +64,7 @@ class Storage:
         request = {"method": "delete",
                    "xid": "xxx",
                    "key": key}
-        buf = orjson.dumps(request)
-        self.socket.send(buf)
-
-        buf = self.socket.recv()
-        reply = orjson.loads(buf)
+        reply = self.rpc(request)
         return reply["result"]
 
 
