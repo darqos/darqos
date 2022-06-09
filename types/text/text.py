@@ -4,12 +4,11 @@
 from typing import Optional
 
 from PyQt6.QtWidgets import QApplication, QWidget, QTextEdit, QMenu, QVBoxLayout
-from PyQt6 import QtCore
-from PyQt6.QtGui import QColor, QKeySequence, QMouseEvent, QShortcut
 
 from darq.rt.storage import Storage
 from darq.rt.history import History, Event
 from darq.rt.object import Object
+from darq.os.ipc import IpcNode
 
 import sys
 import uuid
@@ -73,7 +72,7 @@ class Text(Object):
     def load(oid: str):
         """Load a Text object from storage."""
         # get bytes from storage
-        text = Text.from_bytes()
+        text = Text.from_bytes(str)
         return text
 
     @staticmethod
@@ -261,13 +260,31 @@ class Text(Object):
         return
 
 
+class TypeImplementation(IpcNode):
+    pass
+
+
+class TextImplementation(TypeImplementation):
+    def __init__(self):
+        super().__init__()
+
+    # Open connection to type service
+    # start heartbeat ping timer
+    # Handle requests from type service
+
+
+
 def main():
-    url = None
-    if len(sys.argv) > 1:
-        url = sys.argv[1]
+
+    if len(sys.argv) < 3:
+        # FIXME: log an error
+        return 1
+
+    host = sys.argv[1]
+    port = int(sys.argv[2])
 
     app = QApplication(sys.argv)
-    text = TextTypeView(url)
+    type_impl = TextImplementation()
     sys.exit(app.exec())
 
 

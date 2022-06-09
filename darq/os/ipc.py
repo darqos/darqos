@@ -19,13 +19,13 @@ class EventLoopInterface:
         pass
 
 
-class Endpoint:
+class IpcEndpoint:
     def __init__(self):
         self.host = ''
         self.port = 0
 
 
-class Node:
+class IpcNode:
 
     def __init__(self):
         # oid : socket
