@@ -1,12 +1,108 @@
 # Types
 Types, in the sense of MIME types and similar characterisations, are
-a fundamental aspect of the system.  Most of what would usually be
-considered applications are installed in the system as type implementations.
+a fundamental aspect of DarqOS.  A Type describes an object or entity,
+classifying it by its properties and behaviour.  Types can be both
+general and specific, with a rich conformance model that allows 
+generalisation of entire classes of entities.
 
-Users access the system via an implementation of the Terminal Service.
-The terminal service provides a shell-like facility for interacting with
-the system.  One feature of this shell is the ability to create new
-instances of types.
+Example types are: text document, PNG image, ZIP file, etc.
+
+## Type Implementations
+
+Types are defined as part of the persistent state of the system.  This
+state is owned and managed by the Type Service.  Programs access the
+Type Service via an API in the usual way.
+
+A lot of the terminology here is adopted from Apple's Uniform Type
+system.
+
+A _Type Implementation_ is a program that provides actions for a type.
+Actions are things like _create_, _view_ or _print_.  Type implementations
+are one of the major classes of application for the system.
+
+Type descriptions consist of:
+* The type identifier (derived from Apple's UTI)
+* Zero or more other types to which this type conforms (to use the
+  UTI terminology).  Note that this isn't a simple inheritance tree:
+  types can conform to many other types.
+* Zero or more MIME types that are equivalent
+* Zero or more file extensions that indicate equivalence
+* An icon to represent instances of this type
+* A reference to the implementation for this type
+* An optional endpoint for an active instance of the type implementation
+
+Whn a Type Implementation is installed in the system, it registers itself
+with the Type Service.  This process creates the description entries for
+the type(s) that the program implements.  Uninstalling will remove the
+description.  All type implementations should support these operations.
+
+To create type instances, a program should invoke the Type Service,
+passing it a UTI type name.  The Type Service consults its registry of
+types.  If the type implementation is not already running, it is started.
+The Type Service then requests a new instance via the Type Implementation's
+API, and receives an object reference result that is passed back to the
+initiating program.
+
+## Lens Implementations
+
+A type implementation provides the _behaviour_ of type instances:
+basically, the code.  It also determines how instances of the type
+are persisted (for example, using the storage service, or the knowledge
+base service).
+
+Access to objects' behaviour is via the IPC system.  The type implementation
+essentially exports an API for instances of the type, operating on specific
+instance data loaded from and saved to a persistence backend.
+
+But ... this is just the actual behaviour of the object: the "model" in
+MVC terms.  In addition to type implementations, there is a second class
+of applications in DarqOS: Lenses.
+
+A _lens_ is a way to view an object of a type.  Lenses expose the object's
+data to its users via the Terminal service.
+
+### Contexts
+
+A Lens is activated in a context.  There are two initial contexts defined:
+a CLI context and a GUI context.
+
+The CLI context implements a traditional command-line interface, with 
+textual input and output capability provided via the standard three
+streams: stdin, stdout, and stderr.  The output stream implements the
+VT-102 escape codes interface, allowing curses-style control of a 2D
+grid of character cells.
+
+The GUI context is the full DarqOS graphical shell, with high resolution
+bit-mapped graphics.
+
+This model will likely need refinement: it should cater for things like
+Jupyter Workbooks, and Alexa-style voice interfaces, etc, as well as the
+more traditional options.
+
+In addition, the I/O channels might reasonably include sound options in
+conjunction with visual choices: you could have a CLI visual display, but
+use stereo or surround audio for a music player, for instance.
+
+Similarly, what about visual functionality: there could be a difference
+when selecting a lens for a basic frame buffer vs. a GPU-accelerated 4K
+screen?
+
+### Lens Activation
+
+Within a Terminal Service, the user has a means of managing object
+references (or identifiers), and requesting actions upon them.  These
+requests combine:
+* a context
+* an object reference, including the object's type
+* an action
+
+The terminal must process that request and determine (with or without
+help from the user) which of its available Lenses should be used.
+
+The collection of Lenses, and their supported contexts, types, and action,
+is maintained by the Type Service.
+
+
 
 ## Type Service
 The set of types known to the system is managed by the Type Service.
@@ -36,42 +132,6 @@ initialised from the storage server with the pre-existing content.
 
 This is another variant of the type factory.
 
-## Implementation
-
-Types are defined as part of the persistent state of the system.  This
-state is owned and managed by the Type Service.  Programs access the
-Type Service via an API in the usual way.
-
-A lot of the terminology here is adopted from Apple's Uniform Type
-system.
-
-A _Type Implementation_ is a program that provides actions for a type.
-Actions are things like _create_, _view_ or _print_.  Type implementations
-are one of the major classes of application for the system.
-
-Type descriptions consist of:
-* The type identifier (either the same as, or similar to Apple's UTI)
-* Zero or more other types to which this type conforms (to use the
-  Apple terminology).  Note that this isn't a simple inheritance tree:
-  types can conform to many other types.
-* Zero or more MIME types that are equivalent
-* Zero or more file extensions that indicate equivalence
-* An optional link to a factory for this type
-
-### Factory API
-
-To create type instance, either new or reifying an existing, persisted
-instance, a program should invoke the type's factory via the type
-service API.  The factory should probably be a plugin module for the
-type service.
-
-The standard factory API should be:
-* new()
-* load(url)
-
-### Type Instance API
-
-A type instance
 # Type Collection
 
 One fundamental decision is to separate Text / Document and Code as 
@@ -134,7 +194,7 @@ unique about this type implementation?
         * Both of which could probably be solved
           * Am I trying to talk myself into writing this in Smalltalk?
             Srsly?
-* Smalltalk, Lillith, Oberon, LISP machines …
+* Smalltalk, Lilith, Oberon, LISP machines …
   * All had a unified language experience.
   * Unix immediately split that into shell and C: why?  Historical 
     accident?
