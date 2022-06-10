@@ -11,3 +11,7 @@ class ObjectNotFoundError(Exception):
     """Identified object not found."""
     pass
 
+
+class LocalPortNumberDoesNotExistError(Exception):
+    """Specified port number doesn't exist."""
+    pass
