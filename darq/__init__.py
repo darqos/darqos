@@ -6,12 +6,24 @@ from typing import Optional, Union
 
 from darq.rt.object import ObjectIdentifier, ObjectProxy
 from darq.rt.type import Type, TypeServiceAPI
-
+from darq.rt.storage import Storage
+from darq.rt.history import History
 
 # Globals
+#
+# These values represent the basic runtime state of the application
+# at the system level.  All applications have them.
+
+# FIXME: make service APIs dynamic, such that they self-construct on use
 
 _local_context_id: str = ''
-_type_service: TypeServiceAPI = TypeServiceAPI.api()
+_type_api: TypeServiceAPI = TypeServiceAPI.api()
+
+# Storage API.
+storage: Storage = Storage.api()
+
+# History API.
+history: History = History.api()
 
 
 def system_reboot():
@@ -82,11 +94,11 @@ def create_type(type_id: str, name: str):
 
 def register_type(typedef: Type):
     # FIXME: see darq.rt.type.TypeRegistry.register()
-    return _type_service.register(typedef)
+    return _type_api.register(typedef)
 
 
 def deregister_type(type_id: str):
-    return _type_service.deregister(type_id)
+    return _type_api.deregister(type_id)
 
 
 def get_type(type_id: str):
@@ -94,7 +106,7 @@ def get_type(type_id: str):
 
     :param type_id: Uniform Type Identifier for the requested type."""
 
-    return _type_service.get(type_id)
+    return _type_api.get(type_id)
 
 
 def create_object(type_id: str, is_transient: bool = False) -> ObjectProxy:
