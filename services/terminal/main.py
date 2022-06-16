@@ -1,4 +1,4 @@
-#! /usr/bin/env python
+#! /usr/bin/env python3
 # darqos
 # Copyright (C) 2020-2022 David Arnold
 
@@ -7,12 +7,11 @@ import typing
 from urllib.parse import urlparse
 from datetime import datetime
 
-import PyQt5
-from PyQt5 import QtCore, QtWidgets
-from PyQt5.QtGui import QColor, QKeySequence, QMouseEvent, QIcon, QPixmap
-from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QMenu, QShortcut, QHBoxLayout, QVBoxLayout, QLineEdit, QLabel, QToolButton, QToolBar, qApp, QAction, QTableWidget, QTableWidgetItem
+from PyQt6 import QtCore
+from PyQt6.QtGui import QKeySequence, QIcon, QAction, QShortcut, QScreen
+from PyQt6.QtWidgets import QApplication, QWidget, QPushButton, QMenu, QHBoxLayout, QVBoxLayout, QLineEdit, QLabel, QToolButton, QToolBar, QTableWidget, QTableWidgetItem, QGroupBox, QMainWindow
 
-from darq.type.text import TextTypeView
+#from darq.type.text import TextTypeView
 from darq.rt.history import History
 
 
@@ -50,6 +49,8 @@ class TypeCacheModel:
         # FIXME: Cache icon.
 
         self.types[type_.name] = type_
+        self.type_names.append(type_.name)
+        self.type_names.sort()
         return
 
     def remove_type(self, name: str) -> None:
@@ -121,6 +122,13 @@ class TypeCacheModel:
         self.used_types.insert(0, name)
         return
 
+    def get_types(self):
+        # FIXME: do proper iterator stuff here
+        res = []
+        for name in self.type_names:
+            res.append(self.types[name])
+        return res
+
 
 class ObjectFactory(QWidget):
     """Enables creation of new type instances."""
@@ -134,13 +142,13 @@ class ObjectFactory(QWidget):
         self.init_types()
 
         # Set size and position.
-        screen = QtWidgets.QDesktopWidget().screenGeometry(0)
+        screen = QScreen.availableGeometry(QApplication.primaryScreen())
         self.resize(int(screen.width() * 0.7), int(screen.height() * 0.7))
         self.move(int(screen.width() * 0.15), int(screen.height() * 0.15))
 
         # Set window type.
-        flags = QtCore.Qt.WindowFlags(
-            QtCore.Qt.WindowStaysOnTopHint | QtCore.Qt.FramelessWindowHint)
+        flags = QtCore.Qt.WindowType(QtCore.Qt.WindowType.WindowStaysOnTopHint |
+                                     QtCore.Qt.WindowType.FramelessWindowHint)
         self.setWindowFlags(flags)
 
         self.layout = QVBoxLayout()
@@ -153,7 +161,7 @@ class ObjectFactory(QWidget):
             t = self.types.pinned_type(index)
             url = urlparse(t.icon)
             icon = QIcon(url.path)
-            action = QAction(icon, t.name, qApp)
+            action = QAction(icon, t.name, QtCore.QCoreApplication.instance())
             action.triggered.connect(self.on_create)
 
             self.hotbar.addAction(action)
@@ -165,7 +173,7 @@ class ObjectFactory(QWidget):
         self.omnitext = QLineEdit()
         self.omnitext.setStyleSheet("QLineEdit { font-size: 20px; padding: 12px; border: none; border-radius: 10px; }")
         self.omnitext.setFrame(False)  # Doesn't seem to do anything'
-        self.omnitext.setAttribute(QtCore.Qt.WA_MacShowFocusRect, False)
+        #self.omnitext.setAttribute(QtCore.Qt.WA_MacShowFocusRect, False)
         self.omnitext.setPlaceholderText("Search ...")
         self.omnitext.setClearButtonEnabled(True)
         self.omnitext.setTextMargins(20, 20, 20, 20)
@@ -175,8 +183,10 @@ class ObjectFactory(QWidget):
         # Unfiltered types, MRU order (?)
         self.object_table = QVBoxLayout()
         self.object_table.setContentsMargins(20, 20, 20, 20)
-        row1 = QLabel("line")
-        self.object_table.addWidget(row1)
+        for t in self.types.get_types():
+            print(t.name, t.icon)
+            row = QLabel(t.name)
+            self.object_table.addWidget(row)
         self.layout.addLayout(self.object_table)
         self.layout.setStretch(2, 100)
 
@@ -209,6 +219,12 @@ class ObjectFactory(QWidget):
         self.types.add_type(book)
         self.types.append_pinned_type("Book Details")
 
+        person = Type()
+        person.name = "Person"
+        person.description = "A human being"
+        person.impl = ""
+        person.icon = "file:///Users/d/work/personal/darqos/darq/icons/person.png"
+        self.types.add_type(person)
         return
 
     def on_create(self):
@@ -222,13 +238,13 @@ class ObjectSelector(QWidget):
         super().__init__(*args)
 
         # Set size & position.
-        screen = QtWidgets.QDesktopWidget().screenGeometry(0)
+        screen = QScreen.availableGeometry(QApplication.primaryScreen())
         self.resize(int(screen.width() * 0.7), int(screen.height() * 0.7))
         self.move(int(screen.width() * 0.15), int(screen.height() * 0.15))
 
         # Set window type.
-        flags = QtCore.Qt.WindowFlags(
-            QtCore.Qt.WindowStaysOnTopHint | QtCore.Qt.FramelessWindowHint)
+        flags = QtCore.Qt.WindowType(QtCore.Qt.WindowType.WindowStaysOnTopHint |
+                                     QtCore.Qt.WindowType.FramelessWindowHint)
         self.setWindowFlags(flags)
 
         self.layout = QVBoxLayout()
@@ -239,7 +255,7 @@ class ObjectSelector(QWidget):
         self.omnitext = QLineEdit()
         self.omnitext.setStyleSheet("QLineEdit { font-size: 20px; padding: 12px; border: none; border-radius: 10px; }")
         self.omnitext.setFrame(False)  # Doesn't seem to do anything'
-        self.omnitext.setAttribute(QtCore.Qt.WA_MacShowFocusRect, False)
+        self.omnitext.setAttribute(QtCore.Qt.WidgetAttribute.WA_MacShowFocusRect, False)
         self.omnitext.setPlaceholderText("Search ...")
         self.omnitext.setClearButtonEnabled(True)
         self.omnitext.setTextMargins(20, 20, 20, 20)
@@ -307,24 +323,74 @@ class ObjectSelector(QWidget):
         return
 
 
+class Overlay(QMainWindow):
+    def __init__(self, *args):
+        super().__init__(*args)
+
+        box = QWidget()
+        self.setCentralWidget(box)
+
+        hbox = QHBoxLayout()
+        box.setLayout(hbox)
+        hbox.addStretch(1)
+        group_login = QWidget()
+        hbox.addWidget(group_login)
+        hbox.addStretch(1)
+
+        vbox = QVBoxLayout()
+        group_login.setLayout(vbox)
+        vbox.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+
+        username = QLineEdit()
+        username.setPlaceholderText("username")
+        vbox.addWidget(username)
+
+        password = QLineEdit()
+        password.setPlaceholderText("password")
+        password.setEchoMode(QLineEdit.EchoMode.Password)
+        vbox.addWidget(password)
+
+        login = QPushButton("login", self)
+        login.clicked.connect(self.on_login)
+        login.setDefault(True)
+        vbox.addWidget(login)
+
+        # Tab order for mouse-less login.
+        #self.setTabOrder(username, password)
+        #self.setTabOrder(password, login)
+
+        flags = QtCore.Qt.WindowType(QtCore.Qt.WindowType.WindowStaysOnTopHint |
+                                     QtCore.Qt.WindowType.FramelessWindowHint)
+        self.setWindowFlags(flags)
+        self.showFullScreen()
+        return
+
+    def on_login(self):
+        print("Login")
+
 
 class UI(QWidget):
     def __init__(self, *args):
         super().__init__(*args)
 
+        # Create new objects with Sys-n
         self.factory = ObjectFactory()
         self.factory_shortcut = QShortcut(QKeySequence("Ctrl+n"), self)
-        self.factory_shortcut.setContext(QtCore.Qt.ApplicationShortcut)
+        self.factory_shortcut.setContext(
+            QtCore.Qt.ShortcutContext.ApplicationShortcut)
         self.factory_shortcut.activated.connect(self.on_factory)
 
+        # Select an existing object with Sys-s
         self.selector = ObjectSelector()
         self.selector_shortcut = QShortcut(QKeySequence("Ctrl+s"), self)
-        self.selector_shortcut.setContext(QtCore.Qt.ApplicationShortcut)
+        self.selector_shortcut.setContext(
+            QtCore.Qt.ShortcutContext.ApplicationShortcut)
         self.selector_shortcut.activated.connect(self.on_selector)
 
-        flags = QtCore.Qt.WindowFlags(QtCore.Qt.WindowStaysOnBottomHint)
+        # Background window.
+        flags = QtCore.Qt.WindowType(QtCore.Qt.WindowType.WindowStaysOnTopHint |
+                                     QtCore.Qt.WindowType.FramelessWindowHint)
         self.setWindowFlags(flags)
-
         self.showFullScreen()
         return
 
@@ -336,13 +402,13 @@ class UI(QWidget):
         logout_action = m.addAction("Logout")
         quit_action = m.addAction("Shutdown")
 
-        action = m.exec_(self.mapToGlobal(event.pos()))
+        action = m.exec(self.mapToGlobal(event.pos()))
         if action == new_action:
             self.on_factory()
         elif action == find_action:
             self.on_selector()
         elif action == quit_action:
-            qApp.quit()
+            QApplication.quit()
 
     def on_factory(self, *args):
         """Display a panel enabling creation of new type instances."""
@@ -359,12 +425,17 @@ class UI(QWidget):
         self.selector.toggle_visibility()
         return
 
+    def on_login(self):
+        print("Login")
+
 
 def main():
     app = QApplication(sys.argv)
     ui = UI()
-    sys.exit(app.exec_())
+    #login = Overlay()
+    sys.exit(app.exec())
 
 
+print("main")
 if __name__ == "__main__":
     main()
