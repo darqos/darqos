@@ -1,22 +1,29 @@
-# Copyright (C) 2021 David Arnold
+# darqos
+# Copyright (C) 2021-2022 David Arnold
 
 import sys
 import typing
 import uuid
 
-from darq.type.base import Object
+import darq
+
+from darq.rt.object import Object
 from darq.rt.storage import Storage
 from darq.rt.history import History, Event
 
-from PyQt5.QtWidgets import QApplication, QWidget, QTextEdit, QGridLayout
-from PyQt5 import QtCore
+from PyQt6.QtWidgets import QApplication, QWidget, QTextEdit, QGridLayout
+from PyQt6 import QtCore
 
 
 class Image(Object):
 
+    #
     def __init__(self):
         """Constructor."""
         super().__init__()
+
+        self._format = None
+        self._data = b''
         return
 
     @staticmethod
@@ -30,7 +37,7 @@ class Image(Object):
         return image
 
     def get_size() -> typing.Tuple[int, int]:
-        return tuple(-1, -1)
+        return -1, -1
 
     def crop(self, left, top, right, bottom):
         return
@@ -50,8 +57,14 @@ class Image(Object):
     def set_contrast(self, contrast):
         return
 
+    def get_format(self):
+        return
 
+    def get_pixel(self, x: int, y: int):
+        return
 
+    def get_data(self):
+        return
 
 
 class ImageView(QWidget):
@@ -59,26 +72,23 @@ class ImageView(QWidget):
     def __init__(self, url: str = None):
         """Constructor."""
 
-        self.storage = Storage.api()
-        self.history = History.api()
-
         # Load content.
         if url is not None:
             self.url = url  # FIXME: parsing?  volumes?  etc
 
-            if self.storage.exists(self.url):
-                buf = self.storage.get(self.url)
+            if darq.storage.exists(self.url):
+                buf = darq.storage.get(self.url)
                 self.image = Image.from_bytes(buf)
-                self.history.add_event(self.url, Event.VIEWED)
+                darq.history.add_event(self.url, Event.VIEWED)
             else:
-                self.storage.set(self.url, b'')
+                darq.storage.set(self.url, b'')
                 self.image = Image.new()
-                self.history.add_event(self.url, Event.CREATED)
+                darq.history.add_event(self.url, Event.CREATED)
         else:
             self.url = str(uuid.uuid4())
-            self.storage.set(self.url, b'')
+            darq.storage.set(self.url, b'')
             self.image = Image.new()
-            self.history.add_event(self.url, Event.CREATED)
+            darq.history.add_event(self.url, Event.CREATED)
 
         super().__init__()
 
@@ -93,6 +103,28 @@ class ImageView(QWidget):
         layout.setContentsMargins(50, 50, 50, 50)
 
         return
+
+
+class ImageTypeImplementation:
+
+    # Should start, and serve a control interface.
+    # Control interface should support:
+    # - ping
+    # - shutdown
+    # - create
+    # - view
+    # - edit
+    # - print
+    # - copy (?)
+    # It should use the standard RPC facilities from the base OS.
+    #
+    # Creating a new object should be a request to the type manager,
+    # which will pass it on to the type implementation (this thing),
+    # which will allocate the object and return the OID.
+    #
+    # I need to figure out the
+    def __init__(self):
+        pass
 
 
 def main():
