@@ -41,6 +41,11 @@ class SecurityService(Service):
 
         return
 
+    @staticmethod
+    def get_name() -> str:
+        """Return the service name."""
+        return "security"
+
     def add_user(self, user_name: str, password: str) -> bool:
         pass
 

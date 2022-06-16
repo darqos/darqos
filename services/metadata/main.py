@@ -33,6 +33,11 @@ class MetadataService(Service):
 
         return
 
+    @staticmethod
+    def get_name() -> str:
+        """Return the service name."""
+        return "metadata"
+
     def set(self, key: str, value):
         """Set the value for a key.
 
