@@ -6,5 +6,5 @@
 * 11003 : Security
 * 11004 : Metadata
 * 11005 : Index
-* 10006 : Type
-
+* 11006 : Type
+* 11007 : Terminal
