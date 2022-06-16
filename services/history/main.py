@@ -35,6 +35,11 @@ class HistoryService(Service):
         self.active = False
         return
 
+    @staticmethod
+    def get_name() -> str:
+        """Return the service name."""
+        return "history"
+
     def add_event(self, timestamp: datetime, subject: str, event: Event):
         """Record an event."""
         cursor = self.db.cursor()
