@@ -1,10 +1,11 @@
 # darqos
 # Copyright (C) 2020-2022 David Arnold
 
-from datetime import datetime
 import enum
-import orjson
-import zmq
+
+from datetime import datetime
+
+from darq.os.base import ServiceAPI
 
 
 @enum.unique
@@ -24,7 +25,7 @@ class Event(enum.Enum):
     PRINTED = "printed"
 
 
-class History:
+class History(ServiceAPI):
     """Interface to the History Service."""
 
     @staticmethod
@@ -32,9 +33,7 @@ class History:
         return History()
 
     def __init__(self):
-        self.context = zmq.Context()
-        self.socket = self.context.socket(zmq.REQ)
-        self.socket.connect("tcp://localhost:11002")
+        super().__init__("tcp://localhost:11002")
         return
 
     def add_event(self, subject: str, event: Event):
@@ -45,11 +44,7 @@ class History:
                    "timestamp": datetime.utcnow(),
                    "subject": subject,
                    "event": event}
-        buf = orjson.dumps(request)
-        self.socket.send(buf)
-
-        buf = self.socket.recv()
-        reply = orjson.loads(buf)
+        reply = self.rpc(request)
         return reply["result"]
 
     def get_events_for_period(self, start_time: datetime, end_time: datetime):
@@ -59,11 +54,7 @@ class History:
                    "xid": "xxx",
                    "start_time": start_time,
                    "end_time": end_time}
-        buf = orjson.dumps(request)
-        self.socket.send(buf)
-
-        buf = self.socket.recv()
-        reply = orjson.loads(buf)
+        reply = self.rpc(request)
         return reply["events"]
 
     def get_events(self, start_time: datetime, count: int, older: bool):
@@ -80,11 +71,7 @@ class History:
                    "start_time": start_time,
                    "count": count,
                    "older": older}
-        buf = orjson.dumps(request)
-        self.socket.send(buf)
-
-        buf = self.socket.recv()
-        reply = orjson.loads(buf)
+        reply = self.rpc(request)
         return reply["events"]
 
 
