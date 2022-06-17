@@ -6,6 +6,7 @@ import logging
 import select
 import socket
 import struct
+import sys
 import typing
 
 LOG = logging.getLogger()
@@ -369,7 +370,7 @@ class Client:
         if header is None:
             # Added more bytes, but total available doesn't yet constitute
             # a message header.  This should only really happen in testing.
-            print("Received data too small for header")
+            logging.debug("Received data too small for header")
             return
 
         # Try to decode the entire message.  If it isn't all there,
@@ -390,7 +391,7 @@ class Client:
             self.handle_logout_request()
 
         else:
-            print(f"Received message with unexpected type: {header.type}")
+            logging.warning(f"Received message with unexpected type: {header.type}")
 
         return
 
@@ -411,7 +412,7 @@ class Client:
         if not login:
             return
 
-        print(f"handle_login_request(): requested port {login.requested_port}")
+        logging.info(f"handle_login_request(): requested port {login.requested_port}")
         if login.requested_port == 0:
             port = 42  # FIXME
         else:
@@ -424,19 +425,19 @@ class Client:
         return
 
     def handle_add_port_request(self, host: IFoo):
-        print("handle_add_port_request()")
+        logging.info("handle_add_port_request()")
         return
 
     def handle_remove_port_request(self):
-        print("handle_remove_port_request()")
+        logging.info("handle_remove_port_request()")
 
     def handle_send_message(self, host: IFoo):
         message = SendMessage.decode(self.recv_buffer)
         if not message:
-            print("Incomplete SendMessage")
+            logging.debug("Incomplete SendMessage")
             return
 
-        print(f"handle_send_message(): from {message.source}, to {message.destination}, len {message.payload_length}, [{message.payload.decode()}]")
+        logging.info(f"handle_send_message(): from {message.source}, to {message.destination}, len {message.payload_length}, [{message.payload.decode()}]")
 
         deliver = DeliverMessage()
         deliver.source = message.source
@@ -448,20 +449,20 @@ class Client:
         host.deliver_message(deliver)
 
     def handle_logout_request(self):
-        print("handle_logout_request()")
+        logging.info("handle_logout_request()")
 
     def send_login_response(self, port: int):
         response = LoginResponse()
         response.port = port
         buf = response.encode()
         self.send_data(buf)
-        print(f"Sent login_response(): port = {port}")
+        logging.info(f"Sent login_response(): port = {port}")
         return
 
     def send_deliver_message(self, message: DeliverMessage):
         buf = message.encode()
         self.send_data(buf)
-        print(f"SSent deliver_message")
+        logging.info(f"SSent deliver_message")
         return
 
 
@@ -490,6 +491,7 @@ class MessageService(Service):
     def run(self):
         """Main loop."""
 
+        logging.info("Servicing requests.")
         while self.is_active:
             l = [c.get_socket() for c in self.clients.values()]
             l.append(self.socket)
@@ -503,7 +505,7 @@ class MessageService(Service):
                     client.set_socket(new_client)
                     self.clients[new_client] = client
 
-                    print("Accepted new client")
+                    logging.info(f"Client socket [{s.fileno()}] connected")
 
                 else:
                     client = self.clients[s]
@@ -518,12 +520,12 @@ class MessageService(Service):
                         self.handle_disconnect(client)
                         continue
 
-                    print(f"Delivering {len(recv_buf)} bytes")
+                    logging.debug(f"Client port [{client.get_port()}] delivering {len(recv_buf)} bytes")
                     client.process_received_data(recv_buf, self)
 
             for s in ready_write:
                 if s == self.socket:
-                    print("Listening socket returned writeable")
+                    logging.debug("Listening socket returned writeable")
                 else:
                     client = self.clients.get(s)
                     if not client:
@@ -547,12 +549,12 @@ class MessageService(Service):
         if sock in self.clients:
             del self.clients[sock]
 
-        print(f"Client [{port}] on socket [{sock.fileno()}] disconnected")
+        logging.info(f"Client [{port}] on socket [{sock.fileno()}] disconnected")
         return
 
     def register_port(self, port: int, client: Client):
         if port in self.ports:
-            print(f"Error: port already registered: {port}")
+            logging.warning(f"Error: port already registered: {port}")
             return False
 
         self.ports[port] = client
@@ -561,7 +563,7 @@ class MessageService(Service):
     def deliver_message(self, message: DeliverMessage):
         dest = self.ports.get(message.destination)
         if not dest:
-            print(f"Failed to deliver message. No such port: {message.destination}")
+            logging.warning(f"Failed to deliver message. No such port: {message.destination}")
             return
 
         dest.send_deliver_message(message)
@@ -569,5 +571,9 @@ class MessageService(Service):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(stream=sys.stderr,
+                        format='%(asctime)s %(levelname)8s %(message)s',
+                        level=logging.DEBUG)
+
     service = MessageService()
     service.run()
