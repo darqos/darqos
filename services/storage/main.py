@@ -14,14 +14,14 @@
 #
 # For now, let's have a simple API, and a runtime library to match.
 
-from darq.os.base import Service
-
 import base64
 import sqlite3
 import sys
 
+import darq
 
-class StorageService(Service):
+
+class StorageService(darq.Service):
     """A simple persistent key:value store.
 
     All system storage (aside from early bootstrap) should use this service.

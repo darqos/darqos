@@ -1,7 +1,11 @@
-from .base import Service
+# DarqOS
+# Copyright (C) 2022 David Arnold
 
 
-class IndexService(Service):
+import darq
+
+
+class IndexService(darq.Service):
 
     def __init__(self):
         super().__init__()

@@ -62,7 +62,7 @@ def register_event_loop(interface: EventLoopInterface):
     pass
 
 
-def new_port(self, listener: PortListener, port: int = -1) -> int:
+def open_port(self, listener: PortListener, port: int = -1) -> int:
     """Allocate a new port for communication from/to this application.
 
     :param listener: Interface for reporting events on this port.

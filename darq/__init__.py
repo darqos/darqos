@@ -9,6 +9,19 @@ from darq.rt.type import Type, TypeServiceAPI
 from darq.rt.storage import Storage
 from darq.rt.history import History
 
+from darq.os.service import Service
+from darq.os.service import ServiceAPI
+
+# IPC
+from darq.os.ipc import EventLoopInterface
+from darq.os.ipc import PortListener
+from darq.os.ipc import register_event_loop
+from darq.os.ipc import open_port
+from darq.os.ipc import close_port
+from darq.os.ipc import send_chunk
+from darq.os.ipc import send_message
+
+
 # Globals
 #
 # These values represent the basic runtime state of the application
@@ -145,5 +158,3 @@ def lookup_object(object_id: Union[str, ObjectIdentifier]) -> ObjectProxy:
     # Ask type implementation to activate the object, and return a
     # proxy.
     pass
-
-

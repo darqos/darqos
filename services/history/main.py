@@ -1,7 +1,7 @@
 #! /usr/bin/env python
 # Copyright (C) 2020-2021 David Arnold
 
-from darq.os.base import Service
+import darq
 from darq.rt.history import Event
 
 from datetime import datetime
@@ -9,7 +9,7 @@ import sqlite3
 import sys
 
 
-class HistoryService(Service):
+class HistoryService(darq.Service):
     """
     The History service records a stream of time-stamped events reported by other
     components in the system.  It can return records of past events by time range

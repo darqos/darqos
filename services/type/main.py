@@ -2,13 +2,14 @@
 # darqos
 # Copyright (C) 2022 David Arnold
 
-from darq.os.base import Service
 from darq.rt.storage import Storage
 from darq.rt.type import Type
 
 import orjson
 import os
 import sys
+
+import darq
 
 KEY = "darq.typeservice.db"
 
@@ -50,7 +51,7 @@ class TypeDefinition:
         return td
 
 
-class TypeService(Service):
+class TypeService(darq.Service):
 
     def __init__(self):
         """Constructor."""
@@ -227,9 +228,8 @@ def initialize(service: TypeService):
     t = reg("com.apple.quicktime-image", "QuickTime Image")
     t = reg("com.apple.icns", "macOS Icon Image")
 
-
-
     return
+
 
 def main():
     service = TypeService()

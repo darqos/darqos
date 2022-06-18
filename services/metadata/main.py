@@ -1,17 +1,17 @@
 #! /usr/bin/env python
+# DarqOS
 # Copyright (C) 2021-2022 David Arnold
 
 # Metadata Service
-
-
-from darq.os.base import Service
 
 import base64
 import sqlite3
 import sys
 
+import darq
 
-class MetadataService(Service):
+
+class MetadataService(darq.Service):
     """A simple persistent metadata collections store."""
 
     def __init__(self, file: str = None):

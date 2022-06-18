@@ -9,55 +9,83 @@ import struct
 import sys
 import typing
 
-LOG = logging.getLogger()
 
-MSG_LOGIN_RQST = 1
-MSG_LOGIN_RESP = 2
-MSG_ADD_PORT_RQST = 3
-MSG_ADD_PORT_RESP = 4
-MSG_REMOVE_PORT_RQST = 5
-MSG_REMOVE_PORT_RESP = 6
-MSG_SEND_MESSAGE = 7
-MSG_SEND_CHUNK = 8
-MSG_DELIVER_MESSAGE = 9
-MSG_DELIVER_CHUNK = 10
-MSG_LOGOUT_RQST = 11
-MSG_LOGOUT_RESP = 12
+# Message type codes.
+MSG_ADD_PORT_RQST = 1
+MSG_ADD_PORT_RESP = 2
+MSG_REMOVE_PORT_RQST = 3
+MSG_REMOVE_PORT_RESP = 4
+MSG_SEND_MESSAGE = 5
+MSG_SEND_CHUNK = 6
+MSG_DELIVER_MESSAGE = 7
+MSG_DELIVER_CHUNK = 8
+
+
+class MessageDecodingError(Exception):
+    """Failed to decode a message from the supplied buffer."""
+    pass
+
+
+class CannotAllocatePortError(Exception):
+    """The ephemeral port range is exhausted."""
+    pass
 
 
 class Buffer:
+    """Basic byte buffer wrapper."""
+
     def __init__(self, buffer: bytes = b''):
+        """Constructor.
+
+        :param buffer: Optional initial contents."""
         self.buffer = buffer
 
     def peek(self, length: int) -> bytes:
+        """Return a copy of the start of the buffer.
+
+        :param length: Number of bytes to return."""
         return self.buffer[:length]
 
     def consume(self, length: int) -> int:
+        """Remove the start of the buffer.
+
+        :param length: Number of bytes to remove."""
         self.buffer = self.buffer[length:]
         return len(self.buffer)
 
     def append(self, buffer: bytes) -> int:
+        """Add more bytes to the end of the buffer.
+
+        :param buffer: Bytes to add."""
         self.buffer += buffer
         return len(self.buffer)
 
     def raw(self) -> bytes:
+        """Return reference to the internal assembly buffer."""
         return self.buffer
 
     def length(self) -> int:
+        """Return count of bytes in the buffer."""
         return len(self.buffer)
 
 
 class Message:
+    """Common header for all messages to/from the Message Service."""
 
+    # Header format.
     FORMAT = '!LBBxx'
+
+    # Header length (in bytes).
     LENGTH = struct.calcsize(FORMAT)
 
     def __init__(self):
+        """Constructor."""
         self.length = 0
         self.version = 0
         self.type = 0
 
     def encode(self) -> bytes:
+        """Return a byte buffer encoding this message header."""
         buf = struct.pack(Message.FORMAT,
                           self.length,
                           self.version,
@@ -66,14 +94,17 @@ class Message:
 
     @staticmethod
     def peek(buf: Buffer) -> typing.Optional['Message']:
-        """Peek at the message header."""
+        """Peek at the message header.
+
+        :param buf: Byte buffer to decode the header from."""
 
         if buf.length() < Message.LENGTH:
             return None
 
         try:
-            bits = struct.unpack(Message.FORMAT,
-                                 buf.peek(Message.LENGTH))
+            header = buf.peek(Message.LENGTH)
+            bits = struct.unpack(Message.FORMAT, header)
+
             msg = Message()
             msg.length = bits[0]
             msg.version = bits[1]
@@ -324,42 +355,64 @@ class DeliverMessage(Message):
             return None
 
 
-class IFoo:
+class ServiceInterface:
     def deliver_message(self, message: DeliverMessage):
         pass
 
     def register_port(self, port: int, client: 'Client'):
         pass
 
+    def get_ephemeral_port(self) -> int:
+        pass
+
 
 class Client:
-    def __init__(self):
-        self.socket = None
-        self.send_buffer = b''
-        self.recv_buffer = Buffer()
+    """Each connected TCP socket represents a client of the service.
+    The data associated with each of these clients is kept in instances
+    of this class.
 
-        self.port = 0
-        self.ports = []
+    The recv_buffer is used to reassemble messages if they're fragmented
+    across multiple calls to recv(), and also to process multiple messages
+    if they're aggregated into a single recv() call's returned data.
+
+    The send_buffer is used to queue data to be sent once the connection
+    to the client has drained.  This could be problematic, since there's
+    no back-pressure mechanism, but .. that's over-engineering for now."""
+
+    def __init__(self, sock: socket.socket):
+        """Constructor."""
+
+        # TCP socket connected to client process.
+        self.socket: socket.socket = sock
+
+        # Outbound data queue.
+        self.send_buffer: bytes = b''
+
+        # Inbound data queue.
+        self.recv_buffer: Buffer = Buffer()
+
+        # Client's port number, allocated when handling the Login Request.
+        self.port: int = 0
         return
 
-    def set_socket(self, sock: socket.socket):
-        """Save the TCP socket connected to this client.
-
-        :param sock: Server-side socket for client connection."""
-        self.socket = sock
+    def _id(self):
+        """(Internal) Log message prefix."""
+        port = f'{self.port if self.port else "-"}'
+        return f'Port [{self.socket.fileno()} / {port}]'
 
     def get_socket(self) -> socket.socket:
         """Return the TCP socket connected to this client."""
         return self.socket
 
-    def get_port(self):
+    def get_port(self) -> int:
         """Return the base port number for this client."""
         return self.port
 
-    def process_received_data(self, buf: bytes, host: IFoo):
+    def process_received_data(self, buf: bytes, host: ServiceInterface):
         """Process received TCP data.
 
         :param buf: Byte buffer of received data.
+        :param host: Reference to host service instance.
 
         Will append data to receive buffer, and if a complete
         message is available, dispatch it for handling."""
@@ -370,7 +423,7 @@ class Client:
         if header is None:
             # Added more bytes, but total available doesn't yet constitute
             # a message header.  This should only really happen in testing.
-            logging.debug("Received data too small for header")
+            logging.debug(f"{self._id()} Received data too small for header")
             return
 
         # Try to decode the entire message.  If it isn't all there,
@@ -391,8 +444,8 @@ class Client:
             self.handle_logout_request()
 
         else:
-            logging.warning(f"Received message with unexpected type: {header.type}")
-
+            logging.warning(f"{self._id()} Received message with "
+                            f"unexpected type code [{header.type}]")
         return
 
     def send_data(self, data: bytes):
@@ -406,32 +459,36 @@ class Client:
             data = data[sent:]
         return
 
-    def handle_login_request(self, host: IFoo):
+    def handle_login_request(self, host: ServiceInterface):
 
         login = LoginRequest.decode(self.recv_buffer)
         if not login:
             return
 
-        logging.info(f"handle_login_request(): requested port {login.requested_port}")
         if login.requested_port == 0:
-            port = 42  # FIXME
+            # FIXME: handle error here, and return NAK
+            port = host.get_ephemeral_port()
         else:
             port = login.requested_port
 
         self.port = port
         host.register_port(port, self)
 
+        logging.info(f"{self._id()} Login "
+                     f"requested port {login.requested_port}, "
+                     f"assigned port {port}.")
+
         self.send_login_response(port)
         return
 
-    def handle_add_port_request(self, host: IFoo):
+    def handle_add_port_request(self, host: ServiceInterface):
         logging.info("handle_add_port_request()")
         return
 
     def handle_remove_port_request(self):
         logging.info("handle_remove_port_request()")
 
-    def handle_send_message(self, host: IFoo):
+    def handle_send_message(self, host: ServiceInterface):
         message = SendMessage.decode(self.recv_buffer)
         if not message:
             logging.debug("Incomplete SendMessage")
@@ -501,8 +558,7 @@ class MessageService(Service):
             for s in ready_read:
                 if s == self.socket:
                     new_client, _ = self.socket.accept()
-                    client = Client()
-                    client.set_socket(new_client)
+                    client = Client(new_client)
                     self.clients[new_client] = client
 
                     logging.info(f"Client socket [{s.fileno()}] connected")
@@ -551,6 +607,21 @@ class MessageService(Service):
 
         logging.info(f"Client [{port}] on socket [{sock.fileno()}] disconnected")
         return
+
+    def get_ephemeral_port(self):
+        """Allocate an ephemeral port.
+
+        Note: this isn't thread-safe: if it's called again before the port
+        number is used, it will return the same value."""
+
+        # Start ephemeral ports at 60,000.
+        p = 60000
+        while p in self.ports:
+            p += 1
+            if p > 65535:
+                logging.error("Ephemeral port overflow!")
+                raise CannotAllocatePortError()
+        return p
 
     def register_port(self, port: int, client: Client):
         if port in self.ports:

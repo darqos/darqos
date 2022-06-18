@@ -4,14 +4,14 @@
 
 # Security Service
 
-from darq.os.base import Service
-
 import base64
 import sqlite3
 import sys
 
+import darq
 
-class SecurityService(Service):
+
+class SecurityService(darq.Service):
     """A simple security service."""
 
     def __init__(self, file: str = None):
