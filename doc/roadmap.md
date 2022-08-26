@@ -36,19 +36,22 @@ and library software will have an "M" prefix.
 The goal of the first prototype milestone is to “boot” and get running
 with an identifiably different system, minimal aesthetics, minimal
 user functionality, but a viable target platform for further work.
-The (vast) majority of M0 work should be done in Python, to ensure
+The (vast) majority of P0 work should be done in Python, to ensure
 it’s malleable.
 
 Infrastructure
 * Repository (DONE)
 * Project structure
-* CI
+* CI (GitLab-CI, I suppose?)
 * Documentation
 * Release process
 
 System
+* Host platform
+  * macOS laptop
+  * Raspberry Pi 4
 * Host OS
-  * Unix: macOS or Linux, really
+  * Unix: macOS or Linux
 * IPC
   * Implemented via language (Python) runtime, so that the details
     are hidden from the applications
@@ -74,6 +77,7 @@ System
       can be killed.
   * Storage backed by sqlite and Unix FS
   * Network shared with host OS
+  * Try to "take over" the device, hiding any of the host UI
 
 Services
 * Security
@@ -106,12 +110,13 @@ Services
   * Is HUD actually separate from Terminal?
     * No?
   * Factory
+    * Create instances of installed types
   * Search
     * Index
     * History
     * Metadata
   * Clock
-
+  * REPL?
 
 Runtime
 * Object loader
@@ -138,6 +143,7 @@ Types
     * It should have an exposed API.
     * The viewer should use the type implementation, including
       providing whatever hooks are required for rendering.
+    * This doesn't need to be emacs (yet): simple functionality is ok
 
 Story
 * Boot device.
@@ -147,9 +153,10 @@ Story
   * Should use TAB to move between entry widgets
   * Should default to username entry
   * Should allow shutdown / reboot
-  * Enter should DTRT (move to password if in username, submit if in password)
+  * Enter should DTRT (move to password if in username, submit if in
+    password)
 * Get initial UI
-  * Search bar, object factory, etc
+  * Search bar/object selector, object factory, etc
 * Create a new text document
 * Close the text viewer
 * Find document with search bar, and view it again
@@ -185,6 +192,7 @@ Types
     * https://github.com/Zain-Bin-Arshad/PDF-Viewer
     * https://github.com/pymupdf/PyMuPDF
   * This might require some refactoring of the type/viewer design.
+    * ie. what's the right API for a PDF object?
 
 * HTML
   * Display-only
@@ -193,7 +201,8 @@ Types
   * Use URL fetcher
     * So we get history, metadata, caching and archiving control
   * This might require some refactoring of the type/viewer design.
-
+    * ie. what's the right API for a PDF object?
+      * DOM?
 
 ### P2
 Programming, to the point of becoming self-hosting.
