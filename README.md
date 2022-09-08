@@ -59,10 +59,10 @@ models and configurations when it happens.
 Overview
 * [Bootstrap](doc/bootstrap.md)
 * [Security](doc/security.md)
+* [IPC](doc/ipc.md)
+* [Runtime](doc/runtime.md)
 * [UX](doc/ux.md)
 * [REPL](doc/repl.md)
-* [Runtime](doc/runtime.md)
-* [Ports](doc/ports.md)
 
 Services
 * [History](doc/history.md)
