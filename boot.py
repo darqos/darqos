@@ -29,6 +29,7 @@ class ServiceInfo:
 
 
 SERVICES = [
+    ServiceInfo("IPC", "message/main.py", 0, 0),
     ServiceInfo("Storage", "storage/main.py", 11001, 0),
     ServiceInfo("Type", "type/main.py", 11006, 0),
 
