@@ -57,22 +57,26 @@ models and configurations when it happens.
 * [Roadmap](doc/roadmap.md)
 
 Overview
+
 * [Bootstrap](doc/bootstrap.md)
 * [Security](doc/security.md)
 * [IPC](doc/ipc.md)
 * [Runtime](doc/runtime.md)
 * [UX](doc/ux.md)
 * [REPL](doc/repl.md)
+* [Objects, Types, and Lenses](doc/object.md)
 
 Services
-* [History](doc/history.md)
+
+* [Storage](doc/blob.md)
 * [Metadata](doc/metadata.md)
+* [History](doc/history.md)
 * [Index](doc/index.md) 
-* [BLOB](doc/blob.md)
 * [Terminal](doc/terminal.md)
 
 Tools and Types
-* [Types](doc/types.mg)
+
+* [Types](doc/types.md)
 * [Tools](doc/tools.md)
 * [Bibliography](doc/bib.md)
 * [Books](doc/book.md)
@@ -80,6 +84,7 @@ Tools and Types
 * [People](doc/pim.md)
 
 Details
+
 * [UI Events](doc/input-events.md)
 
 ## Contact
