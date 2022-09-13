@@ -1,368 +1,43 @@
 #! /usr/bin/env python
+# DarqOS
 # Copyright (C) 2022 David Arnold
 
-from darq.os.base import Service
+
 import logging
-import select
-import socket
-import struct
 import sys
-import typing
+from typing import MutableSequence
 
+import darq
+from darq.os.ipc import *
 
-# Message type codes.
-MSG_ADD_PORT_RQST = 1
-MSG_ADD_PORT_RESP = 2
-MSG_REMOVE_PORT_RQST = 3
-MSG_REMOVE_PORT_RESP = 4
-MSG_SEND_MESSAGE = 5
-MSG_SEND_CHUNK = 6
-MSG_DELIVER_MESSAGE = 7
-MSG_DELIVER_CHUNK = 8
 
+# TCP listening port for connection of IPC clients.
+TCP_PORT = 11000
 
-class MessageDecodingError(Exception):
-    """Failed to decode a message from the supplied buffer."""
-    pass
+# Start of auto-allocated IPC port numbers.
+EPHEMERAL_PORT_START = 16384
 
-
-class CannotAllocatePortError(Exception):
-    """The ephemeral port range is exhausted."""
-    pass
-
-
-class Buffer:
-    """Basic byte buffer wrapper."""
-
-    def __init__(self, buffer: bytes = b''):
-        """Constructor.
-
-        :param buffer: Optional initial contents."""
-        self.buffer = buffer
-
-    def peek(self, length: int) -> bytes:
-        """Return a copy of the start of the buffer.
-
-        :param length: Number of bytes to return."""
-        return self.buffer[:length]
-
-    def consume(self, length: int) -> int:
-        """Remove the start of the buffer.
-
-        :param length: Number of bytes to remove."""
-        self.buffer = self.buffer[length:]
-        return len(self.buffer)
-
-    def append(self, buffer: bytes) -> int:
-        """Add more bytes to the end of the buffer.
-
-        :param buffer: Bytes to add."""
-        self.buffer += buffer
-        return len(self.buffer)
-
-    def raw(self) -> bytes:
-        """Return reference to the internal assembly buffer."""
-        return self.buffer
-
-    def length(self) -> int:
-        """Return count of bytes in the buffer."""
-        return len(self.buffer)
-
-
-class Message:
-    """Common header for all messages to/from the Message Service."""
-
-    # Header format.
-    FORMAT = '!LBBxx'
-
-    # Header length (in bytes).
-    LENGTH = struct.calcsize(FORMAT)
-
-    def __init__(self):
-        """Constructor."""
-        self.length = 0
-        self.version = 0
-        self.type = 0
-
-    def encode(self) -> bytes:
-        """Return a byte buffer encoding this message header."""
-        buf = struct.pack(Message.FORMAT,
-                          self.length,
-                          self.version,
-                          self.type)
-        return buf
-
-    @staticmethod
-    def peek(buf: Buffer) -> typing.Optional['Message']:
-        """Peek at the message header.
-
-        :param buf: Byte buffer to decode the header from."""
-
-        if buf.length() < Message.LENGTH:
-            return None
-
-        try:
-            header = buf.peek(Message.LENGTH)
-            bits = struct.unpack(Message.FORMAT, header)
-
-            msg = Message()
-            msg.length = bits[0]
-            msg.version = bits[1]
-            msg.type = bits[2]
-            return msg
-
-        except:
-            return None
-
-    @staticmethod
-    def decode(buf: Buffer) -> typing.Optional['Message']:
-        msg = Message.peek(buf)
-        if msg:
-            buf.consume(Message.LENGTH)
-        return msg
-
-    def init(self, base: 'Message'):
-        self.length = base.length
-        self.version = base.version
-        self.type = base.type
-
-
-class LoginRequest(Message):
-
-    FORMAT = '!Q'
-    LENGTH = struct.calcsize(FORMAT)
-
-    def __init__(self):
-        super().__init__()
-        self.requested_port = 0
-
-    def encode(self) -> bytes:
-        buf = super().encode()
-        buf += struct.pack('!Q', self.requested_port)
-        return buf
-
-    @staticmethod
-    def decode(buf: Buffer) -> typing.Optional['LoginRequest']:
-        base = Message.decode(buf)
-        if not base:
-            return None
-
-        msg = LoginRequest()
-        msg.init(base)
-        try:
-            bits = struct.unpack(LoginRequest.FORMAT,
-                                 buf.peek(LoginRequest.LENGTH))
-            msg.requested_port = bits[0]
-            buf.consume(LoginRequest.LENGTH)
-            return msg
-
-        except:
-            return None
-
-
-class LoginResponse(Message):
-
-    FORMAT = '!Q'
-    LENGTH = struct.calcsize(FORMAT)
-
-    def __init__(self):
-        super().__init__()
-        self.port = 0
-
-    def encode(self) -> bytes:
-        buf = super().encode()
-        buf += struct.pack(LoginResponse.FORMAT, self.port)
-        return buf
-
-    @staticmethod
-    def decode(buf: Buffer) -> typing.Optional['LoginResponse']:
-        base = Message.decode(buf)
-        if not base:
-            return None
-
-        msg = LoginResponse()
-        super(msg).init(base)
-        try:
-            bits = struct.unpack(LoginResponse.FORMAT,
-                                 buf.peek(LoginResponse.LENGTH))
-
-            msg.port = bits[0]
-
-            buf.consume(LoginResponse.LENGTH)
-            return msg
-
-        except:
-            return None
-
-
-class AddPortRequest(Message):
-
-    FORMAT = '!Q'
-    LENGTH = struct.calcsize(FORMAT)
-
-    def __init__(self):
-        super().__init__()
-        self.requested_port = 0
-
-    def encode(self) -> bytes:
-        buf = super().encode()
-        buf += struct.pack('!Q', self.requested_port)
-        return buf
-
-    @staticmethod
-    def decode(buf: Buffer) -> typing.Optional['AddPortRequest']:
-        base = super().decode(buf)
-        if not base:
-            return None
-
-        msg = AddPortRequest()
-        super(msg).init(base)
-        try:
-            bits = struct.unpack(AddPortRequest.FORMAT,
-                                 buf.peek(AddPortRequest.LENGTH))
-
-            msg.requested_port = bits[0]
-
-            buf.consume(AddPortRequest.LENGTH)
-            return msg
-
-        except:
-            return None
-
-
-class AddPortResponse(Message):
-
-    FORMAT = '!Q'
-    LENGTH = struct.calcsize(FORMAT)
-
-    def __init__(self):
-        super().__init__()
-        self.port = 0
-
-    def encode(self) -> bytes:
-        buf = super().encode()
-        buf += struct.pack(AddPortResponse.FORMAT, self.port)
-        return buf
-
-    @staticmethod
-    def decode(buf: Buffer) -> typing.Optional['AddPortResponse']:
-        base = super().decode(buf)
-        if not base:
-            return None
-
-        msg = AddPortResponse()
-        super(msg).init(base)
-        try:
-            bits = struct.unpack(AddPortResponse.FORMAT,
-                                 buf.peek(AddPortResponse.LENGTH))
-
-            msg.port = bits[0]
-
-            buf.consume(AddPortResponse.LENGTH)
-            return msg
-
-        except:
-            return None
-
-
-class SendMessage(Message):
-
-    FORMAT = '!QQL'
-    LENGTH = struct.calcsize(FORMAT)
-
-    def __init__(self):
-        super().__init__()
-        self.source = 0
-        self.destination = 0
-        self.payload_length = 0
-        self.payload = b''
-
-    def encode(self) -> bytes:
-        buf = super().encode()
-        buf += struct.pack(SendMessage.FORMAT,
-                           self.source,
-                           self.destination,
-                           len(self.payload))
-        buf += self.payload
-        buf += '\0' * (4 - (len(self.payload) % 4))
-        return buf
-
-    @staticmethod
-    def decode(buf: Buffer) -> typing.Optional['SendMessage']:
-        base = Message.decode(buf)
-        if not base:
-            return None
-
-        msg = SendMessage()
-        msg.init(base)
-        try:
-            bits = struct.unpack(SendMessage.FORMAT,
-                                 buf.peek(SendMessage.LENGTH))
-            msg.source = bits[0]
-            msg.destination = bits[1]
-            msg.payload_length = bits[2]
-            buf.consume(SendMessage.LENGTH)
-            msg.payload = buf.peek(msg.payload_length)
-            buf.consume(msg.payload_length)
-            return msg
-
-        except:
-            return None
-
-
-class DeliverMessage(Message):
-
-    FORMAT = '!QQL'
-    LENGTH = struct.calcsize(FORMAT)
-
-    def __init__(self):
-        super().__init__()
-        self.source = 0
-        self.destination = 0
-        self.payload_length = 0
-        self.payload = b''
-
-    def encode(self) -> bytes:
-        buf = super().encode()
-        buf += struct.pack(DeliverMessage.FORMAT,
-                           self.source,
-                           self.destination,
-                           len(self.payload))
-        buf += self.payload
-        buf += b'\0' * (4 - (len(self.payload) % 4))
-        return buf
-
-    @staticmethod
-    def decode(buf: Buffer) -> typing.Optional['DeliverMessage']:
-        base = Message.decode(buf)
-        if not base:
-            return None
-
-        msg = DeliverMessage()
-        msg.init(base)
-        try:
-            bits = struct.unpack(DeliverMessage.FORMAT,
-                                 buf.peek(DeliverMessage.LENGTH))
-            msg.source = bits[0]
-            msg.destination = bits[1]
-            msg.payload_length = bits[2]
-            buf.consume(SendMessage.LENGTH)
-            msg.payload = buf.peek(msg.payload_length)
-            buf.consume(msg.payload_length)
-            return msg
-
-        except:
-            return None
+# End of auto-allocated IPC port numbers.
+EPHEMERAL_PORT_MAX = 2 ** 32
 
 
 class ServiceInterface:
+    """Interface between client and service."""
+
     def deliver_message(self, message: DeliverMessage):
+
         pass
 
     def register_port(self, port: int, client: 'Client'):
+        """Register a port for this client."""
+        pass
+
+    def deregister_port(self, port: int, client: 'Client'):
+        """Deregister a port for this client."""
         pass
 
     def get_ephemeral_port(self) -> int:
+        """Get a free ephemeral port."""
         pass
 
 
@@ -392,10 +67,10 @@ class Client:
         self.recv_buffer: Buffer = Buffer()
 
         # Client's port number, allocated when handling the Login Request.
-        self.port: int = 0
+        self.ports: MutableSequence[int] = []
         return
 
-    def _id(self):
+    def name(self):
         """(Internal) Log message prefix."""
         port = f'{self.port if self.port else "-"}'
         return f'Port [{self.socket.fileno()} / {port}]'
@@ -403,10 +78,6 @@ class Client:
     def get_socket(self) -> socket.socket:
         """Return the TCP socket connected to this client."""
         return self.socket
-
-    def get_port(self) -> int:
-        """Return the base port number for this client."""
-        return self.port
 
     def process_received_data(self, buf: bytes, host: ServiceInterface):
         """Process received TCP data.
@@ -423,29 +94,27 @@ class Client:
         if header is None:
             # Added more bytes, but total available doesn't yet constitute
             # a message header.  This should only really happen in testing.
-            logging.debug(f"{self._id()} Received data too small for header")
+            logging.debug(f"IPC: {self.name()} Received data too small for header")
             return
 
         # Try to decode the entire message.  If it isn't all there,
         # just silently return.
-        if header.type == MSG_LOGIN_RQST:
-            self.handle_login_request(host)
-
-        elif header.type == MSG_ADD_PORT_RQST:
-            self.handle_add_port_request(host)
+        if header.type == MSG_OPEN_PORT_RQST:
+            self.handle_open_port_request(host)
 
         elif header.type == MSG_REMOVE_PORT_RQST:
-            self.handle_remove_port_request()
+            self.handle_close_port_request()
 
         elif header.type == MSG_SEND_MESSAGE:
             self.handle_send_message(host)
 
-        elif header.type == MSG_LOGOUT_RQST:
-            self.handle_logout_request()
+        elif header.type == MSG_SEND_CHUNK:
+            self.handle_send_chunk()
 
         else:
-            logging.warning(f"{self._id()} Received message with "
-                            f"unexpected type code [{header.type}]")
+            logging.warning(f"IPC: {self.name()} Received message with "
+                            f"unexpected type code [{header.type}] "
+                            "Ignoring message.")
         return
 
     def send_data(self, data: bytes):
@@ -454,47 +123,77 @@ class Client:
         :param data: Byte buffer of data to send."""
 
         # FIXME: append to send buffer, and write async
+
         while len(data) > 0:
             sent = self.socket.send(data)
             data = data[sent:]
         return
 
-    def handle_login_request(self, host: ServiceInterface):
-
-        login = LoginRequest.decode(self.recv_buffer)
-        if not login:
+    def handle_open_port_request(self, host: ServiceInterface):
+        """Handle request for new port."""
+        request = OpenPortRequest.decode(self.recv_buffer)
+        if not request:
+            logging.warning(f"IPC: unable to decode open_port request")
             return
 
-        if login.requested_port == 0:
-            # FIXME: handle error here, and return NAK
-            port = host.get_ephemeral_port()
-        else:
-            port = login.requested_port
+        port = request.requested_port
 
-        self.port = port
+        # A requested port value of zero means to auto-assign a port number.
+        if port == 0:
+            port = host.get_ephemeral_port()
+            if port <= 0:
+                logging.error("IPC: Ephemeral port overflow; request failed.")
+                self.send_open_port_response(False, request.requested_port)
+                return
+
+        self.ports.append(port)
         host.register_port(port, self)
 
-        logging.info(f"{self._id()} Login "
-                     f"requested port {login.requested_port}, "
-                     f"assigned port {port}.")
+        logging.info(f"IPC: {self.name()} new_port "
+                     f"requested {request.requested_port}, "
+                     f"assigned {port}.")
 
-        self.send_login_response(port)
+        logging.info(f"IPC: {self.name()} open_port({port}) succeeded")
+        self.send_open_port_response(True, port)
         return
 
-    def handle_add_port_request(self, host: ServiceInterface):
-        logging.info("handle_add_port_request()")
-        return
+    def handle_close_port_request(self, host: ServiceInterface):
+        """Handle request to close port."""
 
-    def handle_remove_port_request(self):
-        logging.info("handle_remove_port_request()")
-
-    def handle_send_message(self, host: ServiceInterface):
-        message = SendMessage.decode(self.recv_buffer)
-        if not message:
-            logging.debug("Incomplete SendMessage")
+        request = ClosePortRequest.decode(self.recv_buffer)
+        if not request:
+            logging.warning(f"IPC: unable to decode close_port request")
             return
 
-        logging.info(f"handle_send_message(): from {message.source}, to {message.destination}, len {message.payload_length}, [{message.payload.decode()}]")
+        port = request.port
+
+        if port not in self.ports:
+            logging.warning(f"IPC: close_port({port}) failed: bad port")
+            self.send_close_port_response(False, port)
+            return
+
+        self.ports.remove(port)
+        host.deregister_port(port, self)
+
+        logging.info(f"IPC: {self.name()} close_port({port}) succeeded")
+        self.send_close_port_response(True, port)
+        return
+
+    def handle_send_message(self, host: ServiceInterface):
+        """Handle request to send message from connected client.
+
+        :param host:
+        :returns: None"""
+
+        message = SendMessage.decode(self.recv_buffer)
+        if not message:
+            logging.debug("IPC: Received partial SendMessage")
+            return
+
+        logging.info(f"IPC: send_message: from {message.source}, "
+                     f"to {message.destination}, "
+                     f"len {message.payload_length}, "
+                     f"[{message.payload.decode()}]")
 
         deliver = DeliverMessage()
         deliver.source = message.source
@@ -505,28 +204,42 @@ class Client:
         # Find destination
         host.deliver_message(deliver)
 
-    def handle_logout_request(self):
-        logging.info("handle_logout_request()")
+    def handle_send_chunk(self, host: ServiceInterface):
+        logging.info("send_chunk")
 
-    def send_login_response(self, port: int):
-        response = LoginResponse()
+    def send_open_port_response(self, result: bool, port: int):
+        response = OpenPortResponse()
+        response.result = result
         response.port = port
         buf = response.encode()
         self.send_data(buf)
-        logging.info(f"Sent login_response(): port = {port}")
+        logging.info(f"IPC: new_port response: result={result}, port={port}")
+        return
+
+    def send_close_port_response(self, result: bool, port: int):
+        response = ClosePortResponse()
+        response.result = result
+        response.port = port
+        buf = response.encode()
+        self.send_data(buf)
+        logging.info(f"IPC: close_port response: port {port}")
         return
 
     def send_deliver_message(self, message: DeliverMessage):
+        """Send delivey_message to client process."""
+
         buf = message.encode()
         self.send_data(buf)
-        logging.info(f"SSent deliver_message")
+        logging.info(f"deliver_message")
         return
 
 
-class MessageService(Service):
+class IPCService(darq.Service):
+    """IPC message router."""
 
     def __init__(self):
-        super().__init__("tcp://*.11000")
+        """Constructor."""
+        super().__init__(SelectEventLoop(), 11000)
 
         self.is_active: bool = True
         self.clients: typing.Dict[socket.socket : Client] = {}
@@ -541,14 +254,17 @@ class MessageService(Service):
 
         # Event loop.
 
+        # Complete.
+        logging.info("IPC: service initialized.")
+
     @staticmethod
     def get_name() -> str:
-        return "message"
+        return "IPC"
 
     def run(self):
         """Main loop."""
 
-        logging.info("Servicing requests.")
+        logging.info("IPC: Servicing requests.")
         while self.is_active:
             l = [c.get_socket() for c in self.clients.values()]
             l.append(self.socket)
@@ -561,7 +277,7 @@ class MessageService(Service):
                     client = Client(new_client)
                     self.clients[new_client] = client
 
-                    logging.info(f"Client socket [{s.fileno()}] connected")
+                    logging.info(f"IPC: Client socket [{s.fileno()}] connected")
 
                 else:
                     client = self.clients[s]
@@ -576,12 +292,12 @@ class MessageService(Service):
                         self.handle_disconnect(client)
                         continue
 
-                    logging.debug(f"Client port [{client.get_port()}] delivering {len(recv_buf)} bytes")
+                    logging.debug(f"IPC: Client port [{client.get_port()}] delivering {len(recv_buf)} bytes")
                     client.process_received_data(recv_buf, self)
 
             for s in ready_write:
                 if s == self.socket:
-                    logging.debug("Listening socket returned writeable")
+                    logging.debug("IPC: Listening socket returned writeable")
                 else:
                     client = self.clients.get(s)
                     if not client:
@@ -605,7 +321,7 @@ class MessageService(Service):
         if sock in self.clients:
             del self.clients[sock]
 
-        logging.info(f"Client [{port}] on socket [{sock.fileno()}] disconnected")
+        logging.info(f"IPC: Client [{port}] on socket [{sock.fileno()}] disconnected")
         return
 
     def get_ephemeral_port(self):
@@ -614,30 +330,46 @@ class MessageService(Service):
         Note: this isn't thread-safe: if it's called again before the port
         number is used, it will return the same value."""
 
-        # Start ephemeral ports at 60,000.
-        p = 60000
+        # Start ephemeral ports at EPHEMERAL_PORT_START
+        p = EPHEMERAL_PORT_START
         while p in self.ports:
             p += 1
-            if p > 65535:
-                logging.error("Ephemeral port overflow!")
-                raise CannotAllocatePortError()
+            if p >= EPHEMERAL_PORT_MAX:
+                return -1
         return p
 
     def register_port(self, port: int, client: Client):
         if port in self.ports:
-            logging.warning(f"Error: port already registered: {port}")
+            logging.warning(f"IPC: Error: port already registered: {port}")
             return False
 
         self.ports[port] = client
         return True
 
+    def deregister_port(self, port: int, client: Client):
+        if port not in self.ports:
+            logging.warning(f"IPC: Error: port not registered: {port}")
+            return False
+
+        registered_client = self.ports[port]
+        if registered_client != client:
+            logging.warning(f"IPC: deregister_port({port}, {client.name()}) "
+                            f"doesn't match registered client "
+                            f"{registered_client.name()}")
+            return False
+
+        del self.ports[port]
+        return True
+
     def deliver_message(self, message: DeliverMessage):
-        dest = self.ports.get(message.destination)
-        if not dest:
-            logging.warning(f"Failed to deliver message. No such port: {message.destination}")
+        """Deliver a received message to its destination port's client."""
+        dest_client = self.ports.get(message.destination)
+        if not dest_client:
+            logging.warning(f"IPC: Failed to deliver message. "
+                            f"No such port: {message.destination}")
             return
 
-        dest.send_deliver_message(message)
+        dest_client.send_deliver_message(message)
         return
 
 
@@ -646,5 +378,5 @@ if __name__ == "__main__":
                         format='%(asctime)s %(levelname)8s %(message)s',
                         level=logging.DEBUG)
 
-    service = MessageService()
+    service = IPCService()
     service.run()
