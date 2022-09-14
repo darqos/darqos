@@ -72,12 +72,14 @@ class Client:
 
     def name(self):
         """(Internal) Log message prefix."""
-        port = f'{self.port if self.port else "-"}'
-        return f'Port [{self.socket.fileno()} / {port}]'
+        return f'Port [{self.socket.fileno()}]'
 
     def get_socket(self) -> socket.socket:
         """Return the TCP socket connected to this client."""
         return self.socket
+
+    def get_ports(self):
+        return self.ports
 
     def process_received_data(self, buf: bytes, host: ServiceInterface):
         """Process received TCP data.
@@ -109,8 +111,13 @@ class Client:
             self.handle_send_message(host)
 
         elif header.type == MSG_SEND_CHUNK:
-            self.handle_send_chunk()
+            self.handle_send_chunk(host)
 
+        elif header.type == MSG_DELIVER_MESSAGE:
+            self.handle_deliver_message(host)
+
+        elif header.type == MSG_DELIVER_CHUNK:
+            self.handle_deliver_chunk(host)
         else:
             logging.warning(f"IPC: {self.name()} Received message with "
                             f"unexpected type code [{header.type}] "
@@ -204,8 +211,23 @@ class Client:
         # Find destination
         host.deliver_message(deliver)
 
+    def handle_deliver_message(self, host: ServiceInterface):
+        message = DeliverMessage.decode(self.recv_buffer)
+        if not message:
+            logging.debug("IPC: Received partial DeliverMessage")
+            return
+
+        logging.info(f"IPC: deliver_message: "
+                     f"from {message.source}, "
+                     f"to {message.destination}, "
+                     f"len {message.payload_length}")
+
+
     def handle_send_chunk(self, host: ServiceInterface):
         logging.info("send_chunk")
+
+    def handle_deliver_chunk(self, host: ServiceInterface):
+        logging.info("deliver_chunk")
 
     def send_open_port_response(self, result: bool, port: int):
         response = OpenPortResponse()
@@ -226,7 +248,7 @@ class Client:
         return
 
     def send_deliver_message(self, message: DeliverMessage):
-        """Send delivey_message to client process."""
+        """Send delivery_message to client process."""
 
         buf = message.encode()
         self.send_data(buf)
@@ -292,7 +314,8 @@ class IPCService(darq.Service):
                         self.handle_disconnect(client)
                         continue
 
-                    logging.debug(f"IPC: Client port [{client.get_port()}] delivering {len(recv_buf)} bytes")
+                    logging.debug(f"IPC: Client [{client.name()}] "
+                                  f"delivering {len(recv_buf)} bytes")
                     client.process_received_data(recv_buf, self)
 
             for s in ready_write:
@@ -312,16 +335,18 @@ class IPCService(darq.Service):
 
     def handle_disconnect(self, client: Client):
         # Deregister port.
-        port = client.get_port()
-        if port in self.ports:
-            del self.ports[port]
+        ports = client.get_ports()
+        for port in ports:
+            if port in self.ports:
+                del self.ports[port]
+                logging.debug(f"IPC: closed port {port}")
 
         # Remove client.
         sock = client.get_socket()
         if sock in self.clients:
             del self.clients[sock]
 
-        logging.info(f"IPC: Client [{port}] on socket [{sock.fileno()}] disconnected")
+        logging.info(f"IPC: Client on socket [{sock.fileno()}] disconnected")
         return
 
     def get_ephemeral_port(self):
