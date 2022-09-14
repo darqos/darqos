@@ -4,26 +4,24 @@
 
 import orjson
 import os
-import zmq
+
+from darq.os.ipc import EventLoopInterface, PortListener, open_port, close_port, send_message
 
 
-class Service:
+class Service(PortListener):
     """Service base class."""
 
-    def __init__(self, url: str):
+    def __init__(self, loop: EventLoopInterface, port: int = 0):
         """Constructor."""
 
-        # Endpoint URL.
-        self.url: str = url
+        # Save event loop access handle.
+        self.loop: EventLoopInterface = loop
 
-        # zmq context.
-        self._context = None
-
-        # zmq listening socket.
-        self._socket = None
+        # Service port.
+        self.port: int = port
 
         # Active flag: if False, exist service loop and shut down.
-        self.active: bool = False
+        self.active: bool = True
 
         # Write PID to run file.
         tmpdir = os.environ.get("TMPDIR", "/tmp")
@@ -40,34 +38,28 @@ class Service:
     def run(self):
         """Accept and dispatch service requests."""
 
-        self._context = zmq.Context()
-        self._socket = self._context.socket(zmq.REP)
-        self._socket.bind(self.url)
-        self.active = True
+        # Register event loop.
+        # FIXME
+
+        # Open service port.
+        open_port(self, self.port)
 
         # Receive and dispatch.
         while self.active:
             try:
-                buf = self._socket.recv()
-                message = orjson.loads(buf)
-                self.handle_request(message)
+                self.loop.run()
 
             except KeyboardInterrupt:
                 print("Ignore C-c")
 
         # Clean up.
-        self._socket.close()
-        self._socket = None
-
-        self._context.destroy()
-        self._context = None
-
-        self.handle_shutdown()
+        close_port(self.port)
         return
 
-    def handle_request(self, request: dict):
+    def handle_request(self, reply_port: int, request: dict):
         """Dispatch the requested method.
 
+        :param reply_port: Port number for reply.
         :param request: Decoded request as dictionary."""
 
         method = request.get("method")
@@ -75,18 +67,21 @@ class Service:
             self.send_reply(request, result=True)
             self.active = False
         else:
-            self.send_reply(request,
+            self.send_reply(reply_port,
+                            request,
                             result=False,
                             description=f"Unknown method requested {method}")
         return
 
     def handle_shutdown(self):
         """Override this method to handle shutdown requests."""
-        pass
+        self.active = False
+        return
 
-    def send_reply(self, request: dict, reply: dict = None, **kwargs):
+    def send_reply(self, port: int, request: dict, reply: dict = None, **kwargs):
         """Construct and send standard reply message.
 
+        :param port: Reply port
         :param request: Request dictionary (for method and xid values)
         :param reply: Optional reply dictionary
         :param kwargs: Optional keyword parameters, added to reply
@@ -102,25 +97,70 @@ class Service:
         reply["method"] = request["method"]
         reply["xid"] = request["xid"]
         buf = orjson.dumps(reply)
-        self._socket.send(buf)
+
+        send_message(self.port, port, buf)
         return
 
+    def on_message(self, source: int, destination: int, buffer: bytes):
+        """Handle a delivered message."""
 
-class ServiceAPI:
+        if destination == self.port:
+            message = orjson.loads(buffer)
+            self.handle_request(source, message)
+
+        else:
+            # FIXME: deal with unhandled dest port
+            pass
+        pass
+
+    def on_chunk(self, source: int, destination: int, stream: int, offset: int, chunk: bytes):
+        """Handle a delivered stream chunk."""
+
+        # Streaming not used for base service.
+        pass
+
+    def on_error(self, port: int, error: int, reason: str):
+        """Handle a reported communications error."""
+        # FIXME
+        pass
+
+
+class ServiceAPI(PortListener):
     """Base class for runtime service APIs."""
 
-    def __init__(self, sid: str):
-        self._sid = sid
-        self._context = zmq.Context()
-        self._socket = self._context.socket(zmq.REQ)
-        self._socket.connect(self._sid)
+    def __init__(self, port: int):
+        self._service_port = port
+        self._port = open_port(self)
 
     def rpc(self, request: dict) -> dict:
         """Send a server request, and await a reply."""
         buf = orjson.dumps(request)
-        self._socket.send(buf)
+        send_message(self._port, self._service_port, buf)
 
         buf = self._socket.recv()
         response = orjson.loads(buf)
         return response
 
+    def on_message(self, source: int, destination: int, buffer: bytes):
+        """Handle a delivered message."""
+
+        if destination == self._port:
+            message = orjson.loads(buffer)
+            # FIXME: interrupt event loop
+            self.handle_request(source, message)
+
+        else:
+            # FIXME: deal with unhandled dest port
+            pass
+        pass
+
+    def on_chunk(self, source: int, destination: int, stream: int, offset: int, chunk: bytes):
+        """Handle a delivered stream chunk."""
+
+        # Streaming not used for base service.
+        pass
+
+    def on_error(self, port: int, error: int, reason: str):
+        """Handle a reported communications error."""
+        # FIXME
+        pass
