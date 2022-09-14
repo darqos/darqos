@@ -1,4 +1,5 @@
 # Types
+
 Types, in the sense of MIME types and similar characterisations, are
 a fundamental aspect of DarqOS.  A Type describes an object or entity,
 classifying it by its properties and behaviour.  Types can be both

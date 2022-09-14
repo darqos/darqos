@@ -24,7 +24,7 @@ snapshot “editions”.
 
 There will be an initial series of milestone targets, providing a
 platform for experimentation primarily at the UX level.  In
-particular, these milstones will build upon existing kernels and
+particular, these milestones will build upon existing kernels and
 language runtimes.
 
 These initial prototype milestones will have a "P" (for prototype)
@@ -43,8 +43,14 @@ Infrastructure
 * Repository (DONE)
 * Project structure
 * CI (GitLab-CI, I suppose?)
-* Documentation
+* Manual stack
+  * Markdown?
+  * RST?
+  * API reference generation and integration
+  * HTML and PDF output
 * Release process
+  * Distribution formats
+  * Testing
 
 System
 * Host platform
@@ -53,23 +59,28 @@ System
 * Host OS
   * Unix: macOS or Linux
 * IPC
-  * Implemented via language (Python) runtime, so that the details
-    are hidden from the applications
+  * API in Python runtime module
+  * Use a single central message broker process to provide the shared
+    "kernel" state.
   * API: maybe call() / serve()?
     * Perhaps with send, recv, listen, etc, underneath?
   * Implementation should focus entirely on dev simplicity for now
-    * ZeroMQ with JSON marshalling?
-    * Direct TCP with JSON?
-    * Direct TCP with Cap'n'Proto?
-    * Does it need an IDL?
+    * Processes communicate with the broker over TCP.
+    * Runtime-to-broker messages marshalled with Python struct
+    * Process-to-process message marshalling TBC
+      * JSON?
+      * Binary (struct)
+      * Something else?  GPB, Cap'n'proto, Avro, etc?
+      * Does it need an IDL?
   * Do we need object/service activation?
     * And if so, what's a good option?   
 * A collection of cooperating processes
   * Written in Python
   * Communicating using the selected IPC
 * GUI
-  * Full-screen window
-  * PyQt5 for macOS/X11
+  * Full-screen window background, hiding all the host OS 
+  * Use PyQt5 (and/or PyQt6) for macOS/X11
+    * Avoids getting bogged down widget libraries, etc. 
 * Bootstrap
   * Basic shell script, starting up Unix processes
     * It'd be good to have a clean shutdown, so processes should
@@ -80,12 +91,18 @@ System
   * Try to "take over" the device, hiding any of the host UI
 
 Services
-* Security
-  * Identity
-  * Authentication
-  * Permissions
 * Storage
   * Key-value blob store
+* Metadata
+  * Two level key
+    * ObjectID / item_key
+  * Typed data
+    * Numbers, strings
+    * Lists (?)
+  * Where to store?
+    * blob?
+    * sqlite?
+    * other?
 * Index
   * Submit text to for indexing
   * Storage in storage service?
@@ -96,9 +113,9 @@ Services
   * Activity timeline
 * Terminal
   * Framebuffer(s)
-    * Using Qt5 with a full-screen window, and Z-ordering of other
+    * Using Qt5/Qt6 with a full-screen window, and Z-ordering of other
       windows.
-    * Remove all the OS decoration
+    * Remove all the OS decoration on windows
   * Keyboard
     * via Qt
   * Mouse, trackpad, etc.
@@ -149,12 +166,9 @@ Story
 * Boot device.
 * See login window.
   * No need to deal with initial account creation, etc, yet.
-* Log in with username/password.
-  * Should use TAB to move between entry widgets
-  * Should default to username entry
+* Log in with password.
+  * No need for user -- there's only one
   * Should allow shutdown / reboot
-  * Enter should DTRT (move to password if in username, submit if in
-    password)
 * Get initial UI
   * Search bar/object selector, object factory, etc
 * Create a new text document
@@ -167,15 +181,15 @@ Story
 Support web browsing, and begin work on metadata/indexer support to
 make that experience better than on existing platforms.
 
+Infrastructure
+
 Services
 * URL fetcher
    * HTTP, HTTPS, FTP, SFTP, FTPS, etc
    * Not involved in WebSockets or WebRTC
    * Caching / archiving
    * Runtime object loader plugin
-* Metadata
-   * Tagging, typing, etc
-   * Closely integrated with storage
+   * Use curl?  Or CEF?
 * Indexer
    * Uses storage and metadata
    * Searching and completions
@@ -203,6 +217,8 @@ Types
   * This might require some refactoring of the type/viewer design.
     * ie. what's the right API for a PDF object?
       * DOM?
+
+Story
 
 ### P2
 Programming, to the point of becoming self-hosting.
@@ -456,19 +472,32 @@ the Darq model.  This will facilitate experimentation with the model
 while not requiring the effort to rewrite massive amounts of
 functionality onto a new OS/GUI.
 
-After the P-series, it is conceivable that we choose not to proceed to
-rewriting the OS, or that we adopt a cut-down form of an existing
-kernel and runtime instead.
 
+## Evaluation
 
+The purpose of the P-series releases is to experiment and gain live user
+experience with the broad range of ideas that directly impact the UX of
+the operating system, while avoiding effort on anything that doesn't
+service that goal.
+
+Once the P-series is complete, an evaluation of those results will lead
+to a revised vision of both the user experience, and the requirements
+of the supporting system.
+
+It is anticipated that this will produce a succinct requirements
+specification that then leads to a change of focus from top-down to
+bottom-up, delivering an OS kernel and system services able to support
+a production-ready implementation of the target user experience.
 
 ### M0
+
+Indrastructure
 
 System
 * Interim base OS
    * Processes / threads
    * Memory
-   * Block storage drivers
+   * Block storage
    * Keyboard / mouse
    * Display and GPU
    * Network devices and TCP/IP stack
@@ -481,7 +510,7 @@ System
    * Is there a role for Elvin here?
    * In-memory local transport option + network transport option
 * Some sort of low-level graphics API
-   * Not X, not Wayland
+   * Not X, likely not Wayland
    * Not Qt or Gtk or other existing UI toolkit either, unless I come
      across something well suited or as a great starting point for
      forking
@@ -518,7 +547,7 @@ by libinput).
 Where does SDL2 fit into this picture?
 
 I *think* there’s a few categories here:
-* SDL2, DirectFB, /dev/fb0, OpenGL, libdrm(?)
+* SDL2, DirectFB, /dev/fb0, OpenGL, libdrm(?), WebGPU
 * Cario (+ Pango), OpenVG
 * evdev, libinput
 
@@ -539,6 +568,13 @@ Notes on running on RPi4
 
 L4, LittleKernel, Fuschia/Zircon, Minix3, -- some existing micro-kernel
 might be a good start for the OS?
+
+What about Mach?  GNUmach?  CMU Mach 3.0?  OSF MK8.x?  Utah?  There's a
+whole rich history here, and it has everything needed, albeit built a
+very long time ago -- what would need to change?
+
+See the recent USENIX :login article from Jon Crowcroft:
+https://www.usenix.org/publications/loginonline/transcending-posix-end-era
 
 * Cut-down RPi Linux: https://dietpi.com/
 

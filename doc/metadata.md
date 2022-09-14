@@ -6,12 +6,6 @@ service persists collections of name/type/value data.
 There are many uses of this data, and the service fulfills many roles
 in the system.
 
-* Association of type information with objects
-  * All objects have a MIME-like type, stored in metadata
-  * This should probably actually be Apple's Uniform Type Identifier
-    * https://en.wikipedia.org/wiki/Uniform_Type_Identifier
-    * https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/understanding_utis/understand_utis_intro/understand_utis_intro.html
-    * https://developer.apple.com/library/archive/documentation/Miscellaneous/Reference/UTIRef/Articles/System-DeclaredUniformTypeIdentifiers.html
 * User tags
 * Screen view position data
 * Internal cursor positioning / scroll positioning data
@@ -68,4 +62,3 @@ So, a table of object_id + tag + value, and maybe just text match?
   * Return objects for which tag exists, and has a value matching any
     of the supplied values
 
- 
