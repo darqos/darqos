@@ -30,14 +30,16 @@ from darq.os.ipc import send_message
 # FIXME: make service APIs dynamic, such that they self-construct on use
 
 _local_context_id: str = ''
-_type_api: TypeServiceAPI = TypeServiceAPI.api()
+#_type_api: TypeServiceAPI = TypeServiceAPI.api()
+_type_api = None
 
 # Storage API.
-storage: Storage = Storage.api()
+#storage: Storage = Storage.api()
+storage = None
 
 # History API.
-history: History = History.api()
-
+#history: History = History.api()
+history = None
 
 def system_reboot():
     """Restart the system.
