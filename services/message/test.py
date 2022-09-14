@@ -8,17 +8,18 @@ def main():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect(('localhost', 11000))
 
-    # Login request
-    fmt = '!LBBxxQ'
-    buf = struct.pack(fmt, 16, 1, 1, 11000)
+    # Request port
+    fmt = '!LBBxxL'
+    buf = struct.pack(fmt, 16, 1, 1, 2917)
     s.send(buf)
-    print("sent login")
+    print("sent open_port")
 
-    # Login response
+    # open_port response.
     buf = s.recv(65535)
-    bits = struct.unpack('!LBBxxQ', buf)
-    port = bits[3]
-    print(f'Assigned port number is {port}')
+    bits = struct.unpack('!LBBxx?L', buf)
+    result = bits[3]
+    port = bits[4]
+    print(f'Result {result}, port {port}')
 
     # Send a message to myself
     fmt = '!LBBxxQQL'
