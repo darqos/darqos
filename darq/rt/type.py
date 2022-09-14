@@ -5,7 +5,7 @@
 
 from typing import Dict, Iterable, List, Optional
 
-from darq.os.base import ServiceAPI
+from darq.os.service import ServiceAPI
 
 import zmq
 

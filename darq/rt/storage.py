@@ -3,7 +3,7 @@
 
 from typing import Union
 
-from darq.os.base import ServiceAPI
+from darq.os.service import ServiceAPI
 
 import base64
 

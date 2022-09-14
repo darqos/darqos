@@ -5,8 +5,7 @@ import enum
 
 from datetime import datetime
 
-from darq.os.base import ServiceAPI
-
+from darq.os.service import ServiceAPI
 
 @enum.unique
 class Event(enum.Enum):
@@ -33,7 +32,7 @@ class History(ServiceAPI):
         return History()
 
     def __init__(self):
-        super().__init__("tcp://localhost:11002")
+        super().__init__(11002)
         return
 
     def add_event(self, subject: str, event: Event):
