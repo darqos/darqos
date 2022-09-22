@@ -18,11 +18,10 @@
 #   port numbers, and total message size.
 # - Multicast ports are possible; maybe even using the existing AddPort
 #   API?
-import dataclasses
+
 import select
 import socket
 import struct
-import sys
 import time
 import typing
 
@@ -36,6 +35,8 @@ MSG_SEND_MESSAGE = 5
 MSG_SEND_CHUNK = 6
 MSG_DELIVER_MESSAGE = 7
 MSG_DELIVER_CHUNK = 8
+MSG_BOOT = 9
+MSG_SHUTDOWN = 10
 
 
 class MessageDecodingError(Exception):
@@ -63,6 +64,9 @@ class Buffer:
         :param length: Number of bytes to return."""
         return self.buffer[:length]
 
+    def peek_slice(self, offset: int, length: int) -> bytes:
+        return self.buffer[offset: offset+length]
+
     def consume(self, length: int) -> int:
         """Remove the start of the buffer.
 
@@ -85,289 +89,273 @@ class Buffer:
         """Return count of bytes in the buffer."""
         return len(self.buffer)
 
+    def __getitem__(self, n: int) -> int:
+        """Return the integer value of the byte of offset.
+
+        :param n: Zero-based offset from start of buffer.
+        :returns: Integer value of byte at offset 'n'."""
+        return self.buffer[n]
+
+
+class UInt8(int):
+    """8-bit unsigned integer field value type."""
+    pass
+
+
+class UInt16(int):
+    """16-bit unsigned integer field value type."""
+    pass
+
+
+class UInt32(int):
+    """32-bit unsigned integer field value type."""
+    pass
+
+
+class UInt64(int):
+    """64-bit unsigned integer field value type."""
+    pass
+
+
+class Codec:
+    """Message encode/decoder."""
+    def __init__(self):
+        """Constructor."""
+        self.registry = {}
+        return
+
+    def register(self, message_type: int, klass):
+        """Register the class associated with a message type code."""
+        self.registry[message_type] = klass
+
+    @staticmethod
+    def pad_for_encode(buf: bytes, n: int):
+        buf += (n - len(buf) % n) * b'\x00'
+
+    @staticmethod
+    def pad_for_decode(offset: int, field_type) -> int:
+        """Return additional padding required to append typed value."""
+        # Type alignments.
+        if field_type in (bool, UInt8):
+            alignment = 1
+        elif field_type == UInt16:
+            alignment = 2
+        elif field_type in(bytes, UInt32):
+            alignment = 4
+        elif field_type == UInt64:
+            alignment = 8
+        else:
+            raise Exception("unknown field type")
+
+        # If current offset % alignment is zero, no padding required.
+        # Otherwise, pad to next multiple of alignment.
+        if (offset % alignment) == 0:
+            return 0
+
+        padding = alignment - (offset % alignment)
+        return padding
+
+    def encode(self, message: 'Message') -> bytes:
+        """Encode the supplied message, and return a byte buffer."""
+        # Accumulated output buffer.
+        buf = b''
+
+        for value in message.__dict__.values():
+            value_type = type(value)
+
+            if value_type == UInt8:
+                buf += value.to_bytes(1, 'big', signed=False)
+            elif value_type == UInt16:
+                self.pad_for_encode(buf, 2)
+                buf += value.to_bytes(2, 'big', signed=False)
+            elif value_type == UInt32:
+                self.pad_for_encode(buf, 4)
+                buf += value.to_bytes(4, 'big', signed=False)
+            elif value_type == UInt64:
+                self.pad_for_encode(buf, 8)
+                buf += value.to_bytes(8, 'big', signed=False)
+            elif value_type == bool:
+                x = 1 if value else 0
+                buf += x.to_bytes(1, 'big', signed=False)
+            elif value_type == bytes:
+                self.pad_for_encode(buf, 4)
+                length = len(value)
+                buf += length.to_bytes(4, 'big', signed=False)
+                buf += value
+            else:
+                raise Exception('unhandled value type in message')
+
+        return buf
+
+    def decode(self, buf: Buffer):
+
+        # Get version.
+        if buf.length() < 1:
+            return None
+
+        version = buf[0]
+        if version != 1:
+            raise Exception("unhandled protocol version")
+
+        # Version 1
+        if buf.length() < 2:
+            return None
+
+        header_length = buf[1]
+        if buf.length() < header_length:
+            return None
+
+        type_code = buf[2]
+        message_type = self.registry.get(type_code)
+        if message_type is None:
+            raise Exception("unhandled message type")
+
+        message = message_type()
+        offset = 0
+        for name, value in message.__dict__.items():
+            ft = type(value)
+
+            if ft == UInt8:
+                raw = buf.peek_slice(offset, 1)
+                offset += 1
+                setattr(message, name, UInt8(raw[0]))
+            elif ft == UInt16:
+                offset += self.pad_for_decode(offset, ft)
+                raw = buf.peek_slice(offset, 2)
+                offset += 2
+                setattr(message, name, UInt16(struct.unpack('!S', raw)[0]))
+            elif ft == UInt32:
+                offset += self.pad_for_decode(offset, ft)
+                raw = buf.peek_slice(offset, 4)
+                offset += 4
+                setattr(message, name, UInt32(struct.unpack('!L', raw)[0]))
+            elif ft == UInt64:
+                offset += self.pad_for_decode(offset, ft)
+                raw = buf.peek_slice(offset, 8)
+                offset += 8
+                setattr(message, name, UInt64(struct.unpack('!Q', raw)[0]))
+            elif ft == bool:
+                raw = buf.peek_slice(offset, 1)
+                offset += 1
+                setattr(message, name, raw[0] == 1)
+            elif ft == bytes:
+                offset += self.pad_for_decode(offset, ft)
+                raw_length = buf.peek_slice(offset, 4)
+                string_length = struct.unpack('!L', raw_length)[0]
+                offset += 4
+                raw_string = buf.peek_slice(offset, string_length)
+                setattr(message, name, raw_string)
+                offset += string_length
+            else:
+                raise Exception('unhandled value type in message')
+
+        buf.consume(offset)
+        return message
+
 
 class Message:
     """Common header for all messages to/from the Message Service."""
 
-    # Header format.
-    FORMAT = '!LBBxx'
-
-    # Header length (in bytes).
-    LENGTH = struct.calcsize(FORMAT)
-
     def __init__(self):
         """Constructor."""
-        self.length = 0
-        self.version = 0
-        self.type = 0
 
-    def encode(self) -> bytes:
-        """Return a byte buffer encoding this message header."""
-        buf = struct.pack(Message.FORMAT,
-                          self.length,
-                          self.version,
-                          self.type)
-        return buf
+        # Message version.
+        self.version = UInt8(0)
 
-    @staticmethod
-    def peek(buf: Buffer) -> typing.Optional['Message']:
-        """Peek at the message header.
+        # Length of header in bytes.
+        self.header_length = UInt8(0)
 
-        :param buf: Byte buffer to decode the header from."""
+        # Message type code.
+        self.type = UInt8(0)
 
-        if buf.length() < Message.LENGTH:
-            return None
+        # Padding.
+        self._hpad0 = UInt8(0)
 
-        try:
-            header = buf.peek(Message.LENGTH)
-            bits = struct.unpack(Message.FORMAT, header)
+        # Message length, including header, in bytes.
+        self.length = UInt32(0)
 
-            msg = Message()
-            msg.length = bits[0]
-            msg.version = bits[1]
-            msg.type = bits[2]
-            return msg
-
-        except:
-            return None
-
-    @staticmethod
-    def decode(buf: Buffer) -> typing.Optional['Message']:
-        msg = Message.peek(buf)
-        if msg:
-            buf.consume(Message.LENGTH)
-        return msg
+    def get_header_length(self) -> int:
+        """Return length of this message's header."""
+        return self.header_length
 
     def init(self, base: 'Message'):
-        self.length = base.length
         self.version = base.version
+        self.header_length = base.header_length
         self.type = base.type
+        self._hpad0 = 0
+        self.length = base.length
+
+    def set_version(self, version: int):
+        self.version = UInt8(version)
+
+    def set_header_length(self, length: int):
+        self.header_length = UInt8(length)
+
+    def set_type(self, type_code: int):
+        self.type = UInt8(type_code)
+
+    def set_length(self, length: int):
+        self.length = UInt32(length)
 
 
 class OpenPortRequest(Message):
-
-    FORMAT = '!L'
-    LENGTH = struct.calcsize(FORMAT)
-
     def __init__(self):
         super().__init__()
-        self.requested_port: int = 0
-
-    def encode(self) -> bytes:
-        buf = super().encode()
-        buf += struct.pack(OpenPortRequest.FORMAT, self.requested_port)
-        return buf
-
-    @staticmethod
-    def decode(buf: Buffer) -> typing.Optional['OpenPortRequest']:
-        base = Message.decode(buf)
-        if not base:
-            return None
-
-        msg = OpenPortRequest()
-        msg.init(base)
-        try:
-            bits = struct.unpack(OpenPortRequest.FORMAT,
-                                 buf.peek(OpenPortRequest.LENGTH))
-            msg.requested_port = bits[0]
-            buf.consume(OpenPortRequest.LENGTH)
-            return msg
-
-        except:
-            return None
+        self.requested_port: UInt64 = UInt64(0)
 
 
 class OpenPortResponse(Message):
 
-    FORMAT = '!?L'
-    LENGTH = struct.calcsize(FORMAT)
-
     def __init__(self):
         super().__init__()
+        self.port: UInt64 = UInt64(0)
         self.result: bool = False
-        self.port: int = 0
-
-    def encode(self) -> bytes:
-        buf = super().encode()
-        buf += struct.pack(OpenPortResponse.FORMAT, self.result, self.port)
-        return buf
-
-    @staticmethod
-    def decode(buf: Buffer) -> typing.Optional['OpenPortResponse']:
-        base = Message.decode(buf)
-        if not base:
-            return None
-
-        msg = OpenPortResponse()
-        super(msg).init(base)
-        try:
-            bits = struct.unpack(OpenPortResponse.FORMAT,
-                                 buf.peek(OpenPortResponse.LENGTH))
-
-            msg.result = bits[0]
-            msg.port = bits[1]
-
-            buf.consume(OpenPortResponse.LENGTH)
-            return msg
-
-        except:
-            return None
 
 
 class ClosePortRequest(Message):
-    FORMAT = '!L'
-    LENGTH = struct.calcsize(FORMAT)
-
     def __init__(self):
         super().__init__()
-        self.port: int = 0
-
-    def encode(self) -> bytes:
-        buf = super().encode()
-        buf += struct.pack(ClosePortRequest.FORMAT, self.port)
-        return buf
-
-    @staticmethod
-    def decode(buf: Buffer) -> typing.Optional['ClosePortRequest']:
-        base = Message.decode(buf)
-        if not base:
-            return None
-
-        msg = ClosePortRequest()
-        super(msg).init(base)
-        try:
-            bits = struct.unpack(ClosePortRequest.FORMAT,
-                                 buf.peek(ClosePortRequest.LENGTH))
-            msg.port = bits[0]
-
-            buf.consume(ClosePortRequest.LENGTH)
-            return msg
-
-        except:
-            return None
+        self.port: UInt64 = UInt64(0)
 
 
 class ClosePortResponse(Message):
-    FORMAT = '!?L'
-    LENGTH = struct.calcsize(FORMAT)
-
     def __init__(self):
         super().__init__()
-        self.port: int = 0
-
-    def encode(self) -> bytes:
-        buf = super().encode()
-        buf += struct.pack(ClosePortResponse.FORMAT, self.port)
-        return buf
-
-    @staticmethod
-    def decode(buf: Buffer) -> typing.Optional['ClosePortResponse']:
-        base = Message.decode(buf)
-        if not base:
-            return None
-
-        msg = ClosePortResponse()
-        super(msg).init(base)
-        try:
-            bits = struct.unpack(ClosePortResponse.FORMAT,
-                                 buf.peek(ClosePortResponse.LENGTH))
-            msg.port = bits[0]
-
-            buf.consume(ClosePortResponse.LENGTH)
-            return msg
-
-        except:
-            return None
+        self.port: UInt64 = UInt64(0)
 
 
 class SendMessage(Message):
-
-    FORMAT = '!QQL'
-    LENGTH = struct.calcsize(FORMAT)
-
     def __init__(self):
         super().__init__()
-        self.source = 0
-        self.destination = 0
-        self.payload_length = 0
+        self.source: UInt64 = UInt64(0)
+        self.destination: UInt64 = UInt64(0)
         self.payload = b''
-
-    def encode(self) -> bytes:
-        buf = super().encode()
-        buf += struct.pack(SendMessage.FORMAT,
-                           self.source,
-                           self.destination,
-                           len(self.payload))
-        buf += self.payload
-        buf += '\0' * (4 - (len(self.payload) % 4))
-        return buf
-
-    @staticmethod
-    def decode(buf: Buffer) -> typing.Optional['SendMessage']:
-        base = Message.decode(buf)
-        if not base:
-            return None
-
-        msg = SendMessage()
-        msg.init(base)
-        try:
-            bits = struct.unpack(SendMessage.FORMAT,
-                                 buf.peek(SendMessage.LENGTH))
-            msg.source = bits[0]
-            msg.destination = bits[1]
-            msg.payload_length = bits[2]
-            buf.consume(SendMessage.LENGTH)
-            msg.payload = buf.peek(msg.payload_length)
-            buf.consume(msg.payload_length)
-            return msg
-
-        except:
-            return None
 
 
 class DeliverMessage(Message):
-
-    FORMAT = '!QQL'
-    LENGTH = struct.calcsize(FORMAT)
-
     def __init__(self):
         super().__init__()
-        self.source = 0
-        self.destination = 0
-        self.payload_length = 0
+        self.source: UInt64 = UInt64(0)
+        self.destination: UInt64 = UInt64(0)
         self.payload = b''
 
-    def encode(self) -> bytes:
-        buf = super().encode()
-        buf += struct.pack(DeliverMessage.FORMAT,
-                           self.source,
-                           self.destination,
-                           len(self.payload))
-        buf += self.payload
-        buf += b'\0' * (4 - (len(self.payload) % 4))
-        return buf
 
-    @staticmethod
-    def decode(buf: Buffer) -> typing.Optional['DeliverMessage']:
-        base = Message.decode(buf)
-        if not base:
-            return None
+class SendChunk(Message):
+    def __init__(self):
+        super().__init__()
+        self.source: UInt64 = UInt64(0)
+        self.destination: UInt64 = UInt64(0)
+        self.offset: UInt64 = UInt64(0)
+        self.payload = b''
 
-        msg = DeliverMessage()
-        msg.init(base)
-        try:
-            bits = struct.unpack(DeliverMessage.FORMAT,
-                                 buf.peek(DeliverMessage.LENGTH))
-            msg.source = bits[0]
-            msg.destination = bits[1]
-            msg.payload_length = bits[2]
-            buf.consume(SendMessage.LENGTH)
-            msg.payload = buf.peek(msg.payload_length)
-            buf.consume(msg.payload_length)
-            return msg
 
-        except:
-            return None
+class DeliverChunk(Message):
+    def __init__(self):
+        super().__init__()
+        self.source: UInt64 = UInt64(0)
+        self.destination: UInt64 = UInt64(0)
+        self.offset: UInt64 = UInt64(0)
+        self.payload = b''
 
 
 class EventLoopInterface:
@@ -442,8 +430,6 @@ class SelectEventLoop(EventLoopInterface):
                 if t.expiry < now:
                     t.expiry += t.duration
                     t.listener()
-
-
 
     def stop(self):
         self.active = False

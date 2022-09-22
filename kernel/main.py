@@ -1,7 +1,22 @@
 #! /usr/bin/env python
-# DarqOS
+# darqos
 # Copyright (C) 2022 David Arnold
 
+# This file is the main executable of the network service that currently
+# provides the functionality expected to ultimately reside in the darqos
+# kernel.
+#
+# Access to this functionality is via the system IPC mechanism, also
+# implemented by this service.  Consequently, every darqos process has a
+# TCP connection to this service which it uses to perform pseudo-system
+# calls (p-calls).
+#
+# Applications invoke p-calls by sending a message via the IPC system.
+# The construction and transmission of those messages is implemented in
+# the darq.kernel namespace, and the function wrappers for each p-call
+# are exposed in the 'darq' namespace for concise access in user code.
+#
+# xxx
 
 import logging
 import sys
@@ -21,27 +36,7 @@ EPHEMERAL_PORT_START = 16384
 EPHEMERAL_PORT_MAX = 2 ** 32
 
 
-class ServiceInterface:
-    """Interface between client and service."""
-
-    def deliver_message(self, message: DeliverMessage):
-
-        pass
-
-    def register_port(self, port: int, client: 'Client'):
-        """Register a port for this client."""
-        pass
-
-    def deregister_port(self, port: int, client: 'Client'):
-        """Deregister a port for this client."""
-        pass
-
-    def get_ephemeral_port(self) -> int:
-        """Get a free ephemeral port."""
-        pass
-
-
-class Client:
+class IPCClient:
     """Each connected TCP socket represents a client of the service.
     The data associated with each of these clients is kept in instances
     of this class.
@@ -54,8 +49,10 @@ class Client:
     to the client has drained.  This could be problematic, since there's
     no back-pressure mechanism, but .. that's over-engineering for now."""
 
-    def __init__(self, sock: socket.socket):
+    def __init__(self, kernel, sock: socket.socket):
         """Constructor."""
+
+        self.kernel = kernel
 
         # TCP socket connected to client process.
         self.socket: socket.socket = sock
@@ -67,7 +64,7 @@ class Client:
         self.recv_buffer: Buffer = Buffer()
 
         # Client's port number, allocated when handling the Login Request.
-        self.ports: MutableSequence[int] = []
+        self.ports: MutableSequence[UInt64] = []
         return
 
     def name(self):
@@ -78,50 +75,29 @@ class Client:
         """Return the TCP socket connected to this client."""
         return self.socket
 
+    def add_port(self, port: UInt64):
+        self.ports.append(port)
+
+    def remove_port(self, port: UInt64):
+        self.ports.remove(port)
+
     def get_ports(self):
         return self.ports
 
-    def process_received_data(self, buf: bytes, host: ServiceInterface):
+    def get_buffer(self):
+        return self.recv_buffer
+
+    def receive_data(self, buf: bytes):
         """Process received TCP data.
 
         :param buf: Byte buffer of received data.
-        :param host: Reference to host service instance.
 
         Will append data to receive buffer, and if a complete
         message is available, dispatch it for handling."""
 
         # See if we have a header yet.
         self.recv_buffer.append(buf)
-        header = Message.peek(self.recv_buffer)
-        if header is None:
-            # Added more bytes, but total available doesn't yet constitute
-            # a message header.  This should only really happen in testing.
-            logging.debug(f"IPC: {self.name()} Received data too small for header")
-            return
-
-        # Try to decode the entire message.  If it isn't all there,
-        # just silently return.
-        if header.type == MSG_OPEN_PORT_RQST:
-            self.handle_open_port_request(host)
-
-        elif header.type == MSG_REMOVE_PORT_RQST:
-            self.handle_close_port_request()
-
-        elif header.type == MSG_SEND_MESSAGE:
-            self.handle_send_message(host)
-
-        elif header.type == MSG_SEND_CHUNK:
-            self.handle_send_chunk(host)
-
-        elif header.type == MSG_DELIVER_MESSAGE:
-            self.handle_deliver_message(host)
-
-        elif header.type == MSG_DELIVER_CHUNK:
-            self.handle_deliver_chunk(host)
-        else:
-            logging.warning(f"IPC: {self.name()} Received message with "
-                            f"unexpected type code [{header.type}] "
-                            "Ignoring message.")
+        self.kernel.dispatch(self)
         return
 
     def send_data(self, data: bytes):
@@ -136,127 +112,8 @@ class Client:
             data = data[sent:]
         return
 
-    def handle_open_port_request(self, host: ServiceInterface):
-        """Handle request for new port."""
-        request = OpenPortRequest.decode(self.recv_buffer)
-        if not request:
-            logging.warning(f"IPC: unable to decode open_port request")
-            return
 
-        port = request.requested_port
-
-        # A requested port value of zero means to auto-assign a port number.
-        if port == 0:
-            port = host.get_ephemeral_port()
-            if port <= 0:
-                logging.error("IPC: Ephemeral port overflow; request failed.")
-                self.send_open_port_response(False, request.requested_port)
-                return
-
-        self.ports.append(port)
-        host.register_port(port, self)
-
-        logging.info(f"IPC: {self.name()} new_port "
-                     f"requested {request.requested_port}, "
-                     f"assigned {port}.")
-
-        logging.info(f"IPC: {self.name()} open_port({port}) succeeded")
-        self.send_open_port_response(True, port)
-        return
-
-    def handle_close_port_request(self, host: ServiceInterface):
-        """Handle request to close port."""
-
-        request = ClosePortRequest.decode(self.recv_buffer)
-        if not request:
-            logging.warning(f"IPC: unable to decode close_port request")
-            return
-
-        port = request.port
-
-        if port not in self.ports:
-            logging.warning(f"IPC: close_port({port}) failed: bad port")
-            self.send_close_port_response(False, port)
-            return
-
-        self.ports.remove(port)
-        host.deregister_port(port, self)
-
-        logging.info(f"IPC: {self.name()} close_port({port}) succeeded")
-        self.send_close_port_response(True, port)
-        return
-
-    def handle_send_message(self, host: ServiceInterface):
-        """Handle request to send message from connected client.
-
-        :param host:
-        :returns: None"""
-
-        message = SendMessage.decode(self.recv_buffer)
-        if not message:
-            logging.debug("IPC: Received partial SendMessage")
-            return
-
-        logging.info(f"IPC: send_message: from {message.source}, "
-                     f"to {message.destination}, "
-                     f"len {message.payload_length}, "
-                     f"[{message.payload.decode()}]")
-
-        deliver = DeliverMessage()
-        deliver.source = message.source
-        deliver.destination = message.destination
-        deliver.payload_length = message.payload_length
-        deliver.payload = message.payload
-
-        # Find destination
-        host.deliver_message(deliver)
-
-    def handle_deliver_message(self, host: ServiceInterface):
-        message = DeliverMessage.decode(self.recv_buffer)
-        if not message:
-            logging.debug("IPC: Received partial DeliverMessage")
-            return
-
-        logging.info(f"IPC: deliver_message: "
-                     f"from {message.source}, "
-                     f"to {message.destination}, "
-                     f"len {message.payload_length}")
-
-
-    def handle_send_chunk(self, host: ServiceInterface):
-        logging.info("send_chunk")
-
-    def handle_deliver_chunk(self, host: ServiceInterface):
-        logging.info("deliver_chunk")
-
-    def send_open_port_response(self, result: bool, port: int):
-        response = OpenPortResponse()
-        response.result = result
-        response.port = port
-        buf = response.encode()
-        self.send_data(buf)
-        logging.info(f"IPC: new_port response: result={result}, port={port}")
-        return
-
-    def send_close_port_response(self, result: bool, port: int):
-        response = ClosePortResponse()
-        response.result = result
-        response.port = port
-        buf = response.encode()
-        self.send_data(buf)
-        logging.info(f"IPC: close_port response: port {port}")
-        return
-
-    def send_deliver_message(self, message: DeliverMessage):
-        """Send delivery_message to client process."""
-
-        buf = message.encode()
-        self.send_data(buf)
-        logging.info(f"deliver_message")
-        return
-
-
-class IPCService(darq.Service):
+class PseudoKernel(darq.Service):
     """IPC message router."""
 
     def __init__(self):
@@ -264,8 +121,8 @@ class IPCService(darq.Service):
         super().__init__(SelectEventLoop(), 11000)
 
         self.is_active: bool = True
-        self.clients: typing.Dict[socket.socket : Client] = {}
-        self.ports: typing.Dict[int, Client] = {}
+        self.clients: typing.Dict[socket.socket: IPCClient] = {}
+        self.ports: typing.Dict[int, IPCClient] = {}
 
         # Listening socket.
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -273,6 +130,15 @@ class IPCService(darq.Service):
         self.socket.setblocking(False)
         self.socket.bind(('0.0.0.0', 11000))
         self.socket.listen()
+
+        # Protocol codec.
+        self.codec = Codec()
+        self.codec.register(MSG_OPEN_PORT_RQST, OpenPortRequest)
+        self.codec.register(MSG_OPEN_PORT_RESP, OpenPortResponse)
+        self.codec.register(MSG_REMOVE_PORT_RQST, ClosePortRequest)
+        self.codec.register(MSG_REMOVE_PORT_RESP, ClosePortResponse)
+        self.codec.register(MSG_SEND_MESSAGE, SendMessage)
+        self.codec.register(MSG_DELIVER_MESSAGE, DeliverMessage)
 
         # Event loop.
 
@@ -288,15 +154,15 @@ class IPCService(darq.Service):
 
         logging.info("IPC: Servicing requests.")
         while self.is_active:
-            l = [c.get_socket() for c in self.clients.values()]
-            l.append(self.socket)
+            sl = [c.get_socket() for c in self.clients.values()]
+            sl.append(self.socket)
 
-            ready_read, ready_write, junk = select.select(l, l, [], 1.0)
+            ready_read, ready_write, junk = select.select(sl, sl, [], 1.0)
 
             for s in ready_read:
                 if s == self.socket:
                     new_client, _ = self.socket.accept()
-                    client = Client(new_client)
+                    client = IPCClient(self, new_client)
                     self.clients[new_client] = client
 
                     logging.info(f"IPC: Client socket [{s.fileno()}] connected")
@@ -316,7 +182,7 @@ class IPCService(darq.Service):
 
                     logging.debug(f"IPC: Client [{client.name()}] "
                                   f"delivering {len(recv_buf)} bytes")
-                    client.process_received_data(recv_buf, self)
+                    client.receive_data(recv_buf)
 
             for s in ready_write:
                 if s == self.socket:
@@ -333,7 +199,7 @@ class IPCService(darq.Service):
                             client.send_buffer = b''
         return
 
-    def handle_disconnect(self, client: Client):
+    def handle_disconnect(self, client: IPCClient):
         # Deregister port.
         ports = client.get_ports()
         for port in ports:
@@ -363,7 +229,7 @@ class IPCService(darq.Service):
                 return -1
         return p
 
-    def register_port(self, port: int, client: Client):
+    def register_port(self, port: int, client: IPCClient):
         if port in self.ports:
             logging.warning(f"IPC: Error: port already registered: {port}")
             return False
@@ -371,7 +237,7 @@ class IPCService(darq.Service):
         self.ports[port] = client
         return True
 
-    def deregister_port(self, port: int, client: Client):
+    def deregister_port(self, port: int, client: IPCClient):
         if port not in self.ports:
             logging.warning(f"IPC: Error: port not registered: {port}")
             return False
@@ -394,14 +260,175 @@ class IPCService(darq.Service):
                             f"No such port: {message.destination}")
             return
 
-        dest_client.send_deliver_message(message)
+        buf = self.codec.encode(message)
+        dest_client.send_data(buf)
+        return
+
+    def boot(self):
+        pass
+
+    def shutdown(self):
+        pass
+
+    def handle_open_port_request(self,
+                                 client: IPCClient,
+                                 request: OpenPortRequest):
+        """Handle request for new port."""
+        port = request.requested_port
+
+        # A requested port value of zero means to auto-assign a port number.
+        if port == 0:
+            port = self.get_ephemeral_port()
+            if port <= 0:
+                logging.error("IPC: Ephemeral port overflow; request failed.")
+                self.send_open_port_response(client,
+                                             request.requested_port,
+                                             False)
+                return
+
+        client.add_port(port)
+        self.register_port(port, client)
+
+        logging.info(f"IPC: {client.name()} new_port "
+                     f"requested {request.requested_port}, "
+                     f"assigned {port}.")
+
+        logging.info(f"IPC: {client.name()} open_port({port}) succeeded")
+        self.send_open_port_response(client, port, True)
+        return
+
+    def handle_close_port_request(self,
+                                  client: IPCClient,
+                                  request: ClosePortRequest):
+        """Handle request to close port."""
+
+        port = request.port
+
+        if port not in self.ports:
+            logging.warning(f"IPC: close_port({port}) failed: bad port")
+            self.send_close_port_response(client, port, False)
+            return
+
+        client.remove_port(port)
+        self.deregister_port(port, client)
+
+        logging.info(f"IPC: {client.name()} close_port({port}) succeeded")
+        self.send_close_port_response(client, port, True)
+        return
+
+    def handle_send_message(self,
+                            source: IPCClient,
+                            message: SendMessage):
+        """Handle request to send message from connected client.
+
+        :param source: Client session that received this message.
+        :param message: Received message."""
+
+        logging.info(f"IPC: send_message: from {message.source}, "
+                     f"to {message.destination}, "
+                     f"[{message.payload}]")
+
+        # Look up destination.
+        destination = self.ports.get(message.destination)
+        if destination is None:
+            raise Exception("bad destination port in send")
+
+        deliver = DeliverMessage()
+        deliver.set_version(1)
+        deliver.set_header_length(8)
+        deliver.set_type(MSG_DELIVER_MESSAGE)
+        deliver.set_length(8 + 20 + len(message.payload))
+
+        deliver.source = message.source
+        deliver.destination = message.destination
+        deliver.payload = message.payload
+
+        buf = self.codec.encode(deliver)
+        destination.send_data(buf)
+        logging.info(f"Sent deliver_message")
+        return
+
+    def handle_send_chunk(self,
+                          client: IPCClient,
+                          message: SendChunk):
+        logging.info("send_chunk")
+
+    def handle_deliver_chunk(self,
+                             client: IPCClient,
+                             message: DeliverChunk):
+        logging.info("deliver_chunk")
+
+    def send_open_port_response(self,
+                                client: IPCClient,
+                                port: UInt64,
+                                result: bool):
+        response = OpenPortResponse()
+        response.port = port
+        response.result = result
+        buf = self.codec.encode(response)
+        client.send_data(buf)
+        logging.info(f"IPC: new_port response: result={result}, port={port}")
+        return
+
+    def send_close_port_response(self,
+                                 client: IPCClient,
+                                 port: UInt64,
+                                 result: bool):
+        response = ClosePortResponse()
+        response.port = port
+        response.result = result
+        buf = self.codec.encode(response)
+        client.send_data(buf)
+        logging.info(f"IPC: close_port response: port {port}")
+        return
+
+    def dispatch(self, client):
+        """Process received data.
+
+        :param client: Client connection that received data
+
+        Handle received message, if buffer contains one."""
+
+        # See if we have a header yet.
+        try:
+            message = self.codec.decode(client.get_buffer())
+        except Exception as e:
+            logging.warning(f"IPC: failed to decode received message: {e}")
+            return
+
+        if message is None:
+            # Added more bytes, but total available doesn't yet constitute
+            # a message.  This should only really happen in testing.
+            logging.debug(f"IPC: {client.name()} "
+                          f"Received data too small for message")
+            return
+
+        if message.type == MSG_OPEN_PORT_RQST:
+            self.handle_open_port_request(client, message)
+
+        elif message.type == MSG_REMOVE_PORT_RQST:
+            self.handle_close_port_request(client, message)
+
+        elif message.type == MSG_SEND_MESSAGE:
+            self.handle_send_message(client, message)
+
+        elif message.type == MSG_SEND_CHUNK:
+            self.handle_send_chunk(client, message)
+
+        else:
+            logging.warning(f"IPC: {client.name()} Received message with "
+                            f"unexpected type code [{message.type}] "
+                            "Ignoring message.")
         return
 
 
+################################################################
+
 if __name__ == "__main__":
+    # FIXME: currently, just log to stderr.
     logging.basicConfig(stream=sys.stderr,
                         format='%(asctime)s %(levelname)8s %(message)s',
                         level=logging.DEBUG)
 
-    service = IPCService()
+    service = PseudoKernel()
     service.run()
