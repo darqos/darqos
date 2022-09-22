@@ -1,7 +1,33 @@
 # Bootstrap
 
+## P-Series
 
-## P0
+ 1. Using the host OS, start the p-kernel process.
+    * The p-kernel executable should be at a known, top-level
+      location within the system image.
+    * The system image should be a Unix directory tree, with various
+      required files at known locations within the tree.
+    * Despite being a file structure from the host OS viewpoint, it
+      is considerd an opaque image from within DarqOS.
+    * 
+ 1. Using either hard-wired, or possibly config-file, settings, the
+    p-kernel should start the various system services required for
+    operation, in the appropriate order.
+    * Some p-kernel functions are implemented within the p-kernel 
+      process itself, others exist as separate system service processes.
+    * Services to be started include:
+      * Storage
+      * Metadata
+      * Index
+      * History
+      * Security
+      * Terminal
+ 1. The Terminal Service should be started last, and will allow the
+    user to log in to the system.
+
+
+
+
 
  1. First prototype release
  2. Unix processes, communicated over TCP
