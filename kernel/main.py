@@ -20,10 +20,11 @@
 
 import logging
 import sys
-from typing import MutableSequence
 
 import darq
 from darq.os.ipc import *
+
+from ipc import IPCClient
 
 
 # TCP listening port for connection of IPC clients.
@@ -35,82 +36,12 @@ EPHEMERAL_PORT_START = 16384
 # End of auto-allocated IPC port numbers.
 EPHEMERAL_PORT_MAX = 2 ** 32
 
+# Services.
+#
+# For now, this is the registry of system services, started on boot.
+# Ideally, this might be outside the code, but, that can come later.
 
-class IPCClient:
-    """Each connected TCP socket represents a client of the service.
-    The data associated with each of these clients is kept in instances
-    of this class.
-
-    The recv_buffer is used to reassemble messages if they're fragmented
-    across multiple calls to recv(), and also to process multiple messages
-    if they're aggregated into a single recv() call's returned data.
-
-    The send_buffer is used to queue data to be sent once the connection
-    to the client has drained.  This could be problematic, since there's
-    no back-pressure mechanism, but .. that's over-engineering for now."""
-
-    def __init__(self, kernel, sock: socket.socket):
-        """Constructor."""
-
-        self.kernel = kernel
-
-        # TCP socket connected to client process.
-        self.socket: socket.socket = sock
-
-        # Outbound data queue.
-        self.send_buffer: bytes = b''
-
-        # Inbound data queue.
-        self.recv_buffer: Buffer = Buffer()
-
-        # Client's port number, allocated when handling the Login Request.
-        self.ports: MutableSequence[UInt64] = []
-        return
-
-    def name(self):
-        """(Internal) Log message prefix."""
-        return f'Port [{self.socket.fileno()}]'
-
-    def get_socket(self) -> socket.socket:
-        """Return the TCP socket connected to this client."""
-        return self.socket
-
-    def add_port(self, port: UInt64):
-        self.ports.append(port)
-
-    def remove_port(self, port: UInt64):
-        self.ports.remove(port)
-
-    def get_ports(self):
-        return self.ports
-
-    def get_buffer(self):
-        return self.recv_buffer
-
-    def receive_data(self, buf: bytes):
-        """Process received TCP data.
-
-        :param buf: Byte buffer of received data.
-
-        Will append data to receive buffer, and if a complete
-        message is available, dispatch it for handling."""
-
-        # See if we have a header yet.
-        self.recv_buffer.append(buf)
-        self.kernel.dispatch(self)
-        return
-
-    def send_data(self, data: bytes):
-        """Send a message to a connected client.
-
-        :param data: Byte buffer of data to send."""
-
-        # FIXME: append to send buffer, and write async
-
-        while len(data) > 0:
-            sent = self.socket.send(data)
-            data = data[sent:]
-        return
+SERVICES = []
 
 
 class PseudoKernel(darq.Service):
@@ -122,7 +53,7 @@ class PseudoKernel(darq.Service):
 
         self.is_active: bool = True
         self.clients: typing.Dict[socket.socket: IPCClient] = {}
-        self.ports: typing.Dict[int, IPCClient] = {}
+        self.fds: typing.Dict[int, IPCClient] = {}
 
         # Listening socket.
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -132,6 +63,7 @@ class PseudoKernel(darq.Service):
         self.socket.listen()
 
         # Protocol codec.
+        # FIXME: move this somewhere to run at import time
         self.codec = Codec()
         self.codec.register(MSG_OPEN_PORT_RQST, OpenPortRequest)
         self.codec.register(MSG_OPEN_PORT_RESP, OpenPortResponse)
@@ -200,11 +132,15 @@ class PseudoKernel(darq.Service):
         return
 
     def handle_disconnect(self, client: IPCClient):
-        # Deregister port.
+        """Handle disconnection of a client process.
+
+        :param client: Client that has disconnected."""
+
+        # Deregister ports.
         ports = client.get_ports()
         for port in ports:
-            if port in self.ports:
-                del self.ports[port]
+            if port in self.fds:
+                del self.fds[port]
                 logging.debug(f"IPC: closed port {port}")
 
         # Remove client.
@@ -221,40 +157,46 @@ class PseudoKernel(darq.Service):
         Note: this isn't thread-safe: if it's called again before the port
         number is used, it will return the same value."""
 
-        # Start ephemeral ports at EPHEMERAL_PORT_START
-        p = EPHEMERAL_PORT_START
-        while p in self.ports:
-            p += 1
-            if p >= EPHEMERAL_PORT_MAX:
-                return -1
-        return p
+        # Ports are allocated at random, outside the WKP range.
+        port = random.randint(EPHEMERAL_PORT_START, EPHEMERAL_PORT_MAX)
+        while port in self.fds:
+            port = random.randint(EPHEMERAL_PORT_START, EPHEMERAL_PORT_MAX)
+
+        # FIXME: there's a race condition here, that the port could be
+        # FIXME: reused before it's registered.
+        return port
 
     def register_port(self, port: int, client: IPCClient):
-        if port in self.ports:
-            logging.warning(f"IPC: Error: port already registered: {port}")
+        """Record the association between a port and a client (socket)."""
+        if port in self.fds:
+            logging.warning(f"IPC: register_port() error: "
+                            f"port already registered: {port}")
             return False
 
-        self.ports[port] = client
+        self.fds[port] = client
         return True
 
     def deregister_port(self, port: int, client: IPCClient):
-        if port not in self.ports:
-            logging.warning(f"IPC: Error: port not registered: {port}")
+        """Delete the association between a port and a client (socket)."""
+        if port not in self.fds:
+            logging.warning(f"IPC: deregister_port() error: "
+                            f"port not registered: {port}")
             return False
 
-        registered_client = self.ports[port]
+        registered_client = self.fds[port]
         if registered_client != client:
-            logging.warning(f"IPC: deregister_port({port}, {client.name()}) "
+            logging.warning(f"IPC: deregister_port() error: "
+                            f"port ({port}, and client {client.name()}) "
                             f"doesn't match registered client "
                             f"{registered_client.name()}")
             return False
 
-        del self.ports[port]
+        del self.fds[port]
         return True
 
     def deliver_message(self, message: DeliverMessage):
         """Deliver a received message to its destination port's client."""
-        dest_client = self.ports.get(message.destination)
+        dest_client = self.fds.get(message.destination)
         if not dest_client:
             logging.warning(f"IPC: Failed to deliver message. "
                             f"No such port: {message.destination}")
@@ -304,7 +246,7 @@ class PseudoKernel(darq.Service):
 
         port = request.port
 
-        if port not in self.ports:
+        if port not in self.fds:
             logging.warning(f"IPC: close_port({port}) failed: bad port")
             self.send_close_port_response(client, port, False)
             return
@@ -329,7 +271,7 @@ class PseudoKernel(darq.Service):
                      f"[{message.payload}]")
 
         # Look up destination.
-        destination = self.ports.get(message.destination)
+        destination = self.fds.get(message.destination)
         if destination is None:
             raise Exception("bad destination port in send")
 
@@ -383,7 +325,7 @@ class PseudoKernel(darq.Service):
         return
 
     def dispatch(self, client):
-        """Process received data.
+        """Process data received from clients.
 
         :param client: Client connection that received data
 
@@ -400,7 +342,7 @@ class PseudoKernel(darq.Service):
             # Added more bytes, but total available doesn't yet constitute
             # a message.  This should only really happen in testing.
             logging.debug(f"IPC: {client.name()} "
-                          f"Received data too small for message")
+                          f"Queued received data too small for message")
             return
 
         if message.type == MSG_OPEN_PORT_RQST:
