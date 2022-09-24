@@ -222,7 +222,6 @@ class Codec:
         return message
 
 
-
 class EventLoopInterface:
     """Abstraction of event loop to work across uvloop for CLI and Qt
     for GUI applications."""
@@ -302,7 +301,6 @@ class SelectEventLoop(EventLoopInterface):
 
     def stop(self):
         self.active = False
-        pass
 
 
 class PortListener:
