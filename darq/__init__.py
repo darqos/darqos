@@ -1,25 +1,33 @@
 # darqos
 # Copyright (C) 2022 David Arnold
 
-import os, uuid
+# This package should entirely define the namespace used by client programs.
+#
+# It does that by binding names from subsidiary packages, presenting the
+# various classes and functions as a unified API.
+
+import os
+import uuid
+
 from typing import Optional, Union
 
-from darq.rt.object import ObjectIdentifier, ObjectProxy
-from darq.rt.type import Type, TypeServiceAPI
-from darq.rt.storage import Storage
-from darq.rt.history import History
+from darq.services.object import ObjectIdentifier, ObjectProxy
+from darq.services.type import TypeServiceAPI
+from darq.services.storage import Storage
+from darq.services.history import History
 
-from darq.os.service import Service
-from darq.os.service import ServiceAPI
+from darq.runtime.service import Service
+from darq.runtime.service import ServiceAPI
+from darq.runtime.type import Type
 
 # IPC
-from darq.os.ipc import EventLoopInterface
-from darq.os.ipc import PortListener
-from darq.os.ipc import register_event_loop
-from darq.os.ipc import open_port
-from darq.os.ipc import close_port
-from darq.os.ipc import send_chunk
-from darq.os.ipc import send_message
+from darq.kernel.ipc import EventLoopInterface
+from darq.kernel.ipc import PortListener
+from darq.kernel.ipc import register_event_loop
+from darq.kernel.ipc import open_port
+from darq.kernel.ipc import close_port
+from darq.kernel.ipc import send_chunk
+from darq.kernel.ipc import send_message
 
 
 # Globals
@@ -40,6 +48,11 @@ storage = None
 # History API.
 #history: History = History.api()
 history = None
+
+
+################################################################
+# Kernel API
+################################################################
 
 def system_reboot():
     """Restart the system.

@@ -18,22 +18,6 @@ METHOD = "method"
 RESULT = "result"
 
 
-class TypeTool:
-    def __init__(self):
-        # User-visible name for this tool, usually like "TextTool".
-        self.name: str = ""
-
-        # Type supported by this Lens.
-        self.type: str = ""
-
-        # Actions supported for this Lens.
-        self.actions: List[str] = []
-
-        # Storage identifier for the Lens implementation.
-        self.impl: str = ""
-        return
-
-
 class TypeServiceAPI(ServiceAPI):
     """Interface to the type system.
 
