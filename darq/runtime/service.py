@@ -5,7 +5,7 @@
 import orjson
 import os
 
-from darq.os.ipc import EventLoopInterface, PortListener, open_port, close_port, send_message
+from darq.kernel.ipc import EventLoopInterface, PortListener, open_port, close_port, send_message
 
 
 class Service(PortListener):
