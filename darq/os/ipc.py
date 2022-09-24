@@ -25,18 +25,7 @@ import struct
 import time
 import typing
 
-
-# Message type codes.
-MSG_OPEN_PORT_RQST = 1
-MSG_OPEN_PORT_RESP = 2
-MSG_REMOVE_PORT_RQST = 3
-MSG_REMOVE_PORT_RESP = 4
-MSG_SEND_MESSAGE = 5
-MSG_SEND_CHUNK = 6
-MSG_DELIVER_MESSAGE = 7
-MSG_DELIVER_CHUNK = 8
-MSG_BOOT = 9
-MSG_SHUTDOWN = 10
+from .types import UInt8, UInt16, UInt32, UInt64
 
 
 class MessageDecodingError(Exception):

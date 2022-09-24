@@ -1,7 +1,4 @@
-#
+# darqos
+# Copyright (C) 2022 David Arnold
 
-#import base
-#import ipc
-#import kernel
-#import service
 
