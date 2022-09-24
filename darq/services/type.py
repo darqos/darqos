@@ -5,7 +5,7 @@
 
 from typing import List
 
-from darq import ServiceAPI
+from darq.runtime.service import ServiceAPI
 
 
 # Default URL for Type service.

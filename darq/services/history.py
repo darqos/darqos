@@ -5,7 +5,7 @@ import enum
 
 from datetime import datetime
 
-from darq.os.service import ServiceAPI
+from darq.runtime.service import ServiceAPI
 
 @enum.unique
 class Event(enum.Enum):

@@ -3,7 +3,9 @@
 
 import socket
 from typing import MutableSequence
-from darq.os.ipc import *
+
+from darq.kernel.types import UInt64
+from darq.kernel.ipc import Buffer
 
 
 class IPCClient:

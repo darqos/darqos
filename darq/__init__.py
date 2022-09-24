@@ -11,11 +11,11 @@ import uuid
 
 from typing import Optional, Union
 
-from darq.services.object import ObjectIdentifier, ObjectProxy
 from darq.services.type import TypeServiceAPI
 from darq.services.storage import Storage
 from darq.services.history import History
 
+from darq.runtime.object import ObjectIdentifier, ObjectProxy
 from darq.runtime.service import Service
 from darq.runtime.service import ServiceAPI
 from darq.runtime.type import Type

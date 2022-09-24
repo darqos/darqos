@@ -22,7 +22,8 @@ import logging
 import sys
 
 import darq
-from darq.os.ipc import *
+from darq.kernel.ipc import *
+from darq.kernel.message import *
 
 from ipc import IPCClient
 
