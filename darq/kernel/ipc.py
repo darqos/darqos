@@ -25,6 +25,7 @@ import struct
 import time
 import typing
 
+from .loop import EventLoopInterface
 from .types import UInt8, UInt16, UInt32, UInt64
 
 
