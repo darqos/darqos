@@ -222,87 +222,6 @@ class Codec:
         return message
 
 
-class EventLoopInterface:
-    """Abstraction of event loop to work across uvloop for CLI and Qt
-    for GUI applications."""
-
-    def add_socket(self, sock, listener):
-        pass
-
-    def cancel_socket(self, sock):
-        pass
-
-    def add_timer(self, duration, listener) -> int:
-        pass
-
-    def cancel_timer(self, timer_id: int):
-        pass
-
-    def run(self):
-        pass
-
-    def stop(self):
-        pass
-
-
-class SelectTimerState:
-    """Timer state for select-based event loop."""
-
-    def __init__(self, duration, listener):
-        self.duration = duration
-        self.listener = listener
-        self.expiry = 0
-
-
-class SelectEventLoop(EventLoopInterface):
-    """A simple select-based event loop."""
-
-    def __init__(self):
-        """Constructor."""
-        self.sockets: typing.Dict[int, socket] = {}
-        self.timers: typing.Dict[int, SelectTimerState] = {}
-        self.active: bool = False
-
-    def add_socket(self, sock, listener):
-        self.sockets[sock] = listener
-
-    def cancel_socket(self, sock):
-        del self.sockets[sock]
-        pass
-
-    def add_timer(self, duration, listener) -> int:
-        new_id = len(self.timers)
-        self.timers[new_id] = SelectTimerState(time.time() + duration, listener)
-        # FIXME
-        pass
-
-    def cancel_timer(self, timer_id: int):
-        pass
-
-    def run(self):
-        self.active = True
-
-        while self.active:
-            rr, rw, _ = select.select(self.sockets, self.sockets, [], 0)
-
-            for s in rr:
-                listener = self.sockets[s]
-                listener(s)
-
-            for s in rw:
-                listener = self.sockets[s]
-                listener(s)
-
-            for t in self.timers.values():
-                now = time.time()
-                if t.expiry < now:
-                    t.expiry += t.duration
-                    t.listener()
-
-    def stop(self):
-        self.active = False
-
-
 class PortListener:
     """Interface required for applications to use the p-kernel IPC."""
 
@@ -353,6 +272,7 @@ def _block_and_dispatch():
     should be dispatched.  While processing the arrived message
     of course a further RPC might be made"""
     pass
+
 
 # Runtime API functions.
 
