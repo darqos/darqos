@@ -1,6 +1,7 @@
 # darqos
 # Copyright (C) 2022 David Arnold
 
+import logging
 import socket
 from typing import MutableSequence
 
@@ -92,3 +93,37 @@ class IPCClient:
             sent = self.socket.send(data)
             data = data[sent:]
         return
+
+    def on_readable(self, sock: socket.socket):
+        """Handle data available to receive."""
+
+        try:
+            recv_buf = self.socket.recv(65536)
+        except ConnectionResetError:
+            logging.warning(f"IPC: Client connection reset.")
+            self.kernel.handle_disconnect(self)
+            return
+
+        if len(recv_buf) == 0:
+            logging.warning(f"IPC: Client connection closed.")
+            self.kernel.handle_disconnect(self)
+            return
+
+        self.recv_buffer.append(recv_buf)
+        logging.debug(f"IPC: Client [{self.name()}] "
+                      f"delivering {len(recv_buf)} bytes")
+
+        self.kernel.dispatch(self)
+        return
+
+    def on_writeable(self, sock: socket.socket):
+        """Handle socket ready for send."""
+
+        if len(self.send_buffer) > 0:
+            sent = self.socket.send(self.send_buffer)
+            if sent < len(self.send_buffer):
+                self.send_buffer = self.send_buffer[sent:]
+            else:
+                self.send_buffer = b''
+        return
+

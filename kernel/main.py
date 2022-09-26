@@ -19,10 +19,14 @@
 # xxx
 
 import logging
+import subprocess
 import sys
+
+from dataclasses import dataclass
 
 import darq
 from darq.kernel.ipc import *
+from darq.kernel.loop import SelectEventLoop
 from darq.kernel.message import *
 
 from ipc import IPCClient
@@ -41,8 +45,30 @@ EPHEMERAL_PORT_MAX = 2 ** 32
 #
 # For now, this is the registry of system services, started on boot.
 # Ideally, this might be outside the code, but, that can come later.
+# This list is ORDERED.
 
-SERVICES = []
+@dataclass
+class ServiceInfo:
+    name: str
+    path: str
+
+@dataclass
+class ServiceState:
+    name: str
+    process: subprocess.Popen
+
+
+SERVICES = [
+    ServiceInfo("storage", "services/storage/main.py"),
+    ServiceInfo("security", "services/security/main.py"),
+    ServiceInfo("type", "services/type/main.py"),
+    # ServiceInfo("name", "service/name/name.py"),
+    ServiceInfo("index", "services/index/main.py"),
+    ServiceInfo("history", "services/history/main.py"),
+    ServiceInfo("metadata", "services/metadata/main.py"),
+    # KB / things
+    ServiceInfo("terminal", "services/terminal/main.py")
+]
 
 
 class PseudoKernel(darq.Service):
@@ -51,6 +77,11 @@ class PseudoKernel(darq.Service):
     def __init__(self):
         """Constructor."""
         super().__init__(SelectEventLoop(), 11000)
+
+        self.services = []
+        self.types = []
+        self.tools = []
+        self.lenses = []
 
         self.is_active: bool = True
         self.clients: typing.Dict[socket.socket: IPCClient] = {}
@@ -94,28 +125,13 @@ class PseudoKernel(darq.Service):
 
             for s in ready_read:
                 if s == self.socket:
-                    new_client, _ = self.socket.accept()
-                    client = IPCClient(self, new_client)
-                    self.clients[new_client] = client
-
-                    logging.info(f"IPC: Client socket [{s.fileno()}] connected")
-
+                    self.handle_connect()
                 else:
-                    client = self.clients[s]
-                    try:
-                        recv_buf = s.recv(65536)
-                    except ConnectionResetError:
-                        self.handle_disconnect(client)
+                    client = self.clients.get(s)
+                    if not client:
+                        logging.warning(f"IPC: no client for socket")
                         continue
-
-                    if len(recv_buf) == 0:
-                        del self.clients[s]
-                        self.handle_disconnect(client)
-                        continue
-
-                    logging.debug(f"IPC: Client [{client.name()}] "
-                                  f"delivering {len(recv_buf)} bytes")
-                    client.receive_data(recv_buf)
+                    client.on_readable(s)
 
             for s in ready_write:
                 if s == self.socket:
@@ -123,13 +139,20 @@ class PseudoKernel(darq.Service):
                 else:
                     client = self.clients.get(s)
                     if not client:
+                        logging.warning(f"IPC: no client for socket")
                         continue
-                    if len(client.send_buffer) > 0:
-                        sent = s.send(client.send_buffer)
-                        if sent < len(client.send_buffer):
-                            client.send_buffer = client.send_buffer[sent:]
-                        else:
-                            client.send_buffer = b''
+                    client.on_writeable(s)
+        return
+
+    def handle_connect(self):
+        """Handle a new connection request."""
+
+        client_socket, client_addr = self.socket.accept()
+        client = IPCClient(self, client_socket)
+        self.clients[client_socket] = client
+
+        logging.info(f"IPC: Client socket [{client_socket.fileno()}] "
+                     f"connected from {client_addr}")
         return
 
     def handle_disconnect(self, client: IPCClient):
@@ -207,11 +230,46 @@ class PseudoKernel(darq.Service):
         dest_client.send_data(buf)
         return
 
-    def boot(self):
-        pass
+    def handle_reboot(self, client: IPCClient, message):
+        logging.info(f"System booting.")
 
-    def shutdown(self):
-        pass
+        # Shutdown first.
+        self.do_shutdown()
+
+        # Start services.
+        self.do_boot()
+
+    def handle_shutdown(self, client: IPCClient, message):
+        logging.info(f"System shutdown requested.")
+
+        self.do_shutdown()
+
+    def do_shutdown(self):
+        # Walk list of tools, and kill them all.
+        # Walk list of lenses, and kill them all.
+        # Walk list of types, and kill them all.
+
+        # Walk list of services, and kill them all.
+        service_state = self.services.pop()
+        while service_state:
+            service_state.process.terminate()
+            service_state = self.services.pop()
+
+        return
+
+    def do_boot(self):
+        """Start system services."""
+        # Start list of configured services.
+        for service_info in SERVICES:
+            p = subprocess.Popen(["python", service_info.path])
+            s = ServiceState(name=service_info.name, process=p)
+            self.services.append(s)
+        return
+
+    def schedule_boot(self):
+        """Schedule the boot process via the event loop."""
+        self.loop.add_deferred(self.do_boot)
+        return
 
     def handle_open_port_request(self,
                                  client: IPCClient,
@@ -358,6 +416,12 @@ class PseudoKernel(darq.Service):
         elif message.type == MSG_SEND_CHUNK:
             self.handle_send_chunk(client, message)
 
+        elif message.type == MSG_REBOOT:
+            self.handle_reboot(client, message)
+
+        elif message.type == MSG_SHUTDOWN:
+            self.handle_shutdown(client, message)
+
         else:
             logging.warning(f"IPC: {client.name()} Received message with "
                             f"unexpected type code [{message.type}] "
@@ -373,5 +437,14 @@ if __name__ == "__main__":
                         format='%(asctime)s %(levelname)8s %(message)s',
                         level=logging.DEBUG)
 
+    # Create p-Kernel.
     service = PseudoKernel()
+
+    # Queue up the boot process.
+    service.schedule_boot()
+
+    # Run the event loop.
     service.run()
+
+    logging.info(f"Exiting kernel.")
+    sys.exit(0)
