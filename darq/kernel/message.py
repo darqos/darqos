@@ -1,5 +1,5 @@
 # darqos
-# Copyright (C) 2022 David Arnold
+# Copyright (C) 2022-2023 David Arnold
 
 # Messages used for communication with the p-kernel.
 # These are roughly equivalent to system calls.
@@ -36,7 +36,7 @@ class Message:
         self.version = UInt8(0)
 
         # Length of header in bytes.
-        self.header_length = UInt8(0)
+        self.header_length = UInt8(8)
 
         # Message type code.
         self.type = UInt8(0)
@@ -89,6 +89,8 @@ class Message:
 class OpenPortRequest(Message):
     def __init__(self):
         super().__init__()
+        self.set_type(MSG_OPEN_PORT_RQST)
+        self.set_length(8 + 8)
         self.requested_port: UInt64 = UInt64(0)
 
 
