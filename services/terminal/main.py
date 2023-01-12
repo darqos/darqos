@@ -1,6 +1,6 @@
 #! /usr/bin/env python3
 # darqos
-# Copyright (C) 2020-2022 David Arnold
+# Copyright (C) 2020-2023 David Arnold
 
 import sys
 import typing
@@ -12,7 +12,7 @@ from PyQt6.QtGui import QKeySequence, QIcon, QAction, QShortcut, QScreen
 from PyQt6.QtWidgets import QApplication, QWidget, QPushButton, QMenu, QHBoxLayout, QVBoxLayout, QLineEdit, QLabel, QToolButton, QToolBar, QTableWidget, QTableWidgetItem, QGroupBox, QMainWindow
 
 #from darq.type.text import TextTypeView
-from darq.rt.history import History
+from darq.services.history import History
 
 
 class Type:
