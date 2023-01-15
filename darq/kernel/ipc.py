@@ -1,14 +1,15 @@
 # DarqOS
-# Copyright (C) 2022 David Arnold
+# Copyright (C) 2022-2023 David Arnold
 
-# How this will work:
+# p-Kernel System Calls
 #
+# How this will work:
 # - There's a central router process that will ultimately be in the kernel
 #   of the OS: it's called the pseudo-kernel, or p-kernel.
 # - The p-kernel offers a single TCP endpoint on a well-known TCP port.
-# - Any process wanting to use IPC establishes a TCP session to the
-#   p-kernel's TCP port.
-# - Clients can then request a new port, close an existing port, and
+# - Any process wanting to use Darq IPC establishes a TCP session to the
+#   p-kernel's TCP socket.
+# - Processes can then request a new port, close an existing port, and
 #   send and receive messages to/from those ports.
 # - Messages sent to the p-kernel using a simple framing header.
 # - LoginRqsuest / LoginReply / AddPort / RemovePort / Message / Chunk
@@ -19,15 +20,33 @@
 # - Multicast ports are possible; maybe even using the existing AddPort
 #   API?
 
-import select
+import logging
 import socket
 import struct
-import time
 import typing
 
 from .loop import EventLoopInterface
 from .types import UInt8, UInt16, UInt32, UInt64
 
+
+# Message type codes.
+# FIXME: make this a proper enum?
+MSG_OPEN_PORT_RQST = 1
+MSG_OPEN_PORT_RESP = 2
+MSG_REMOVE_PORT_RQST = 3
+MSG_REMOVE_PORT_RESP = 4
+MSG_SEND_MESSAGE = 5
+MSG_SEND_CHUNK = 6
+MSG_DELIVER_MESSAGE = 7
+MSG_DELIVER_CHUNK = 8
+MSG_REBOOT = 9
+MSG_SHUTDOWN = 10
+
+IPC_PORT = 11000
+RECV_BUFLEN = 65535
+
+
+########################################################################
 
 class MessageDecodingError(Exception):
     """Failed to decode a message from the supplied buffer."""
@@ -38,6 +57,8 @@ class CannotAllocatePortError(Exception):
     """The ephemeral port range is exhausted."""
     pass
 
+
+########################################################################
 
 class Buffer:
     """Basic byte buffer wrapper."""
@@ -55,28 +76,39 @@ class Buffer:
         return self.buffer[:length]
 
     def peek_slice(self, offset: int, length: int) -> bytes:
+        """Return a copy of a slice from the buffer.
+
+        :param offset: Index of first byte to return
+        :param length: Number of bytes to return
+        :returns: Copied array of bytes."""
         return self.buffer[offset: offset+length]
 
     def consume(self, length: int) -> int:
-        """Remove the start of the buffer.
+        """Discard the start of the buffer.
 
-        :param length: Number of bytes to remove."""
+        :param length: Number of bytes to remove
+        :returns: Number of bytes remaining in buffer."""
         self.buffer = self.buffer[length:]
         return len(self.buffer)
 
     def append(self, buffer: bytes) -> int:
         """Add more bytes to the end of the buffer.
 
-        :param buffer: Bytes to add."""
+        :param buffer: Bytes to add
+        :returns: Number of bytes now in buffer."""
         self.buffer += buffer
         return len(self.buffer)
 
     def raw(self) -> bytes:
-        """Return reference to the internal assembly buffer."""
+        """Return reference to the internal assembly buffer.
+
+        :returns: Reference to internal buffer storage."""
         return self.buffer
 
     def length(self) -> int:
-        """Return count of bytes in the buffer."""
+        """Return count of bytes in the buffer.
+
+        :returns: Number of bytes in the buffer."""
         return len(self.buffer)
 
     def __getitem__(self, n: int) -> int:
@@ -86,6 +118,150 @@ class Buffer:
         :returns: Integer value of byte at offset 'n'."""
         return self.buffer[n]
 
+
+########################################################################
+
+class Message:
+    """Common header for all messages to/from the p-kernel."""
+
+    def __init__(self, message_type: int = 0):
+        """Constructor."""
+
+        # Message version.
+        self.version = UInt8(0)
+
+        # Length of header in bytes.
+        self.header_length = UInt8(8)
+
+        # Message type code.
+        self.type = UInt8(message_type)
+
+        # Padding.
+        self._hpad0 = UInt8(0)
+
+        # Message length, including header, in bytes.
+        self.length = UInt32(0)
+
+    def get_header_length(self) -> int:
+        """Return length of this message's header."""
+        return self.header_length
+
+    def init(self, base: 'Message'):
+        """Initialise this message from another.
+
+        :param base: Message to copy."""
+        self.version = base.version
+        self.header_length = base.header_length
+        self.type = base.type
+        self._hpad0 = 0
+        self.length = base.length
+
+    def set_version(self, version: int):
+        """Set the version number header field.
+
+        :param version: Integer version number for message format."""
+        self.version = UInt8(version)
+
+    def set_header_length(self, length: int):
+        """Set the header length field.
+
+        :param length: Number of bytes in the header."""
+        self.header_length = UInt8(length)
+
+    def set_type(self, type_code: int):
+        """Set the message type code.
+
+        :param type_code: Integer message type code."""
+        self.type = UInt8(type_code)
+
+    def set_length(self, length: int):
+        """Set the total message length.
+
+        :param length: Total number of bytes in the message."""
+        self.length = UInt32(length)
+
+
+class OpenPortRequest(Message):
+    """Message to request creation of a new port."""
+    def __init__(self, port: int = 0):
+        """Request creation of new port.
+
+        :param port: Requested port number, or zero for default."""
+        super().__init__(MSG_OPEN_PORT_RQST)
+        self.set_length(8 + 8)
+        self.requested_port: UInt64 = UInt64(port)
+
+
+class OpenPortResponse(Message):
+    """Message to report result of port creation."""
+    def __init__(self, result: int = 0, port: int = 0):
+        """Report result of port creation.
+
+        :param result: Zero means success, otherwise error code
+        :param port: Created port number."""
+        super().__init__(MSG_OPEN_PORT_RESP)
+        self.set_length(8 + 8 + 1)
+        self.port: UInt64 = UInt64(port)
+        self.result: UInt8 = UInt8(result)
+
+
+class ClosePortRequest(Message):
+    def __init__(self):
+        super().__init__()
+        self.port: UInt64 = UInt64(0)
+
+
+class ClosePortResponse(Message):
+    def __init__(self):
+        super().__init__()
+        self.port: UInt64 = UInt64(0)
+
+
+class SendMessage(Message):
+    def __init__(self):
+        super().__init__()
+        self.source: UInt64 = UInt64(0)
+        self.destination: UInt64 = UInt64(0)
+        self.payload = b''
+
+
+class DeliverMessage(Message):
+    def __init__(self):
+        super().__init__()
+        self.source: UInt64 = UInt64(0)
+        self.destination: UInt64 = UInt64(0)
+        self.payload = b''
+
+
+class SendChunk(Message):
+    def __init__(self):
+        super().__init__()
+        self.source: UInt64 = UInt64(0)
+        self.destination: UInt64 = UInt64(0)
+        self.offset: UInt64 = UInt64(0)
+        self.payload = b''
+
+
+class DeliverChunk(Message):
+    def __init__(self):
+        super().__init__()
+        self.source: UInt64 = UInt64(0)
+        self.destination: UInt64 = UInt64(0)
+        self.offset: UInt64 = UInt64(0)
+        self.payload = b''
+
+
+class Reboot(Message):
+    def __init__(self):
+        super().__init__()
+
+
+class Shutdown(Message):
+    def __init__(self):
+        super().__init__()
+
+
+########################################################################
 
 class Codec:
     """Message encode/decoder."""
@@ -222,6 +398,41 @@ class Codec:
         buf.consume(offset)
         return message
 
+    def encode_uint8(self, value: int, buf: memoryview):
+        buf[0] = value
+        return 1
+
+    def encode_uint16(self, value: int, buf: memoryview):
+        buf[0:2] = value.to_bytes(2, byteorder='big', signed=False)
+        return 2
+
+    def encode_uint32(self, value: int, buf: memoryview) -> int:
+        buf[0:4] = value.to_bytes(4, byteorder='big', signed=False)
+        return 4
+
+    def encode_uint64(self, value: int, buf: memoryview) -> int:
+        buf[0] = value.to_bytes(8, byteorder='big', signed=False]
+        return 8
+
+    def encode_bool(self, value: bool, buf: memoryview) -> int:
+        buf[0] = 1 if value else 0
+        return 1
+
+    def encode_header(self, message: Message, buf: memoryview):
+        buf[0] = 1  # version
+        buf[1] = 8  # header length
+        buf[2] = message.type
+        buf[3] = 0  # always zero
+        buf[4:8] = message.length.to_bytes(4, byteorder='big', signed=False)
+        return 8
+
+    def encode_open_port_request(self, message: OpenPortRequest) -> bytes:
+        buf = bytearray(16)
+        offset = self.encode_header(message, memoryview(buf)
+        self.encode_uint64(message.requested_port, memoryview(buf)[offset:])
+        return buf
+
+########################################################################
 
 class PortListener:
     """Interface required for applications to use the p-kernel IPC."""
@@ -238,8 +449,45 @@ class PortListener:
         """Handle a reported communications error."""
         pass
 
+class PortState:
+    """Process-side state for an open port."""
+    def __init__(self, port_id: int):
+        """Constructor.
 
-class IpcRuntime:
+        :param port_id: Integer port identifier."""
+
+        # Unique identifier for this port.
+        self.port_id = port_id
+
+        self.is_open: bool = False
+
+        # Reassembly buffer.
+        self.buffer = Buffer()
+
+        # Queue of messages received for this port, but not yet
+        # retrieved by the application.
+        self.messages = []
+        return
+
+    def append_bytes(self, buf: bytes):
+        """Append received bytes to the reassembly buffer."""
+        return
+
+    def get_message(self) -> typing.Optional[Message]:
+        """Return a queued, received Message, if one is available.
+
+        :returns: a Message, or None if none is available."""
+        return
+
+
+class ProcessRuntimeState:
+    """The process-side state for the p-Kernel.
+
+    This class maintains all the process-side state of the p-Kernel
+    interface.  The "system calls" provided by darq.kernel use this
+    state, plus interactions with the remote p-Kernel, to implement
+    their functionality."""
+
     def __init__(self):
         # Socket connected to p-kernel message router.
         self.socket = None
@@ -253,110 +501,84 @@ class IpcRuntime:
         # Re-assembly buffer.
         self.recv_buffer = Buffer()
 
+        # Protocol encoding.
+        self.codec = Codec()
 
-# Process-wide IPC state.
-_state = IpcRuntime()
-IPC_PORT = 11000
-RECV_BUFLEN = 65535
+    def connect_to_p_kernel(self) -> int:
+        """Establish the TCP connection to the p-kerenl."""
 
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.socket.connect(('localhost', IPC_PORT))
+        return 0
 
-def _block_and_dispatch():
-    """(Internal)
+    def send_to_p_kernel(self, message):
+        buffer = self.codec.encode(message)
+        self.socket.sendall(buffer)
+        return
 
-    This function should run the event loop until
-    something happens, and then deal with things that happen,
-    until we hit an exit condition, at which time it should exit
-    the event loop.
+    def handle_bytes_from_p_kernel(self, buffer: bytes):
+        pass
 
-    It's possible that while waiting for a reply to an RPC, a
-    delivered message or chunk might arrive.  If they do, they
-    should be dispatched.  While processing the arrived message
-    of course a further RPC might be made"""
-    pass
+    def run_until_response_from_p_kernel(self):
+        pass
 
+    def open_port(self, listener: PortListener, port: int = -1) -> int:
+        """Allocate a new port for communication from/to this application.
 
-# Runtime API functions.
+        :param listener: Interface for reporting events on this port.
+        :param port: Optional requested port number.
+        :returns: Allocated port number."""
 
-def register_event_loop(interface: EventLoopInterface):
-    """Register the application's event loop with the IPC runtime.
+        # FIXME: how should an error be reported?  Exception?
 
-    :param interface: Event loop implementation to be used by the runtime
-    library."""
-    pass
+        # FIXME: validate requested port number
 
+        # If we don't have a p-kernel TCP session already, open one.
+        if self.socket is None:
+            if result := self.connect_to_p_kernel():
+                return result
 
-def open_port(listener: PortListener, port: int = -1) -> int:
-    """Allocate a new port for communication from/to this application.
+        # Claim this port locally.
+        if port != 0:
+            self.ports[port] = PortState(port)
 
-    :param listener: Interface for reporting events on this port.
-    :param port: Optional requested port number.
-    :returns: Allocated port number."""
+        # Send an open_port request to the p-Kernel.
+        request = OpenPortRequest(port)
+        self.send_to_p_kernel(request)
 
-    # FIXME: how should an error be reported?  Exception?
+        # FIXME: what I *want* to do here is enter a nested event loop instance, blocking until we get a reply.
+        # FIXME: that'd need to work with Qt (for apps) and the service event loop (which we control).
+        # FIXME: is that possible with Qt?  Can we just call _exec() again?  Looks like yes: just create a QEventLoop.
 
-    # If we don't have a TCP session already, open one.
-    if _state.socket is None:
-        _state.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        _state.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Wait for the response: ack or error.
+        message = _state.receive_from_port()
+        assert (message.type == MSG_OPEN_PORT_RESP)
+        response: OpenPortResponse = message
 
-        # FIXME: this should probably be non-blocking
-        _state.socket.connect(('localhost', IPC_PORT))
+        # FIXME: check errors
+        if response.result != 0:
+            return response.result
 
-        _state.socket.setblocking(False)
+        # FIXME: create local port state
+        _state.ports[response.port] = None
 
-    # Send an open_port request.
-    request = OpenPortRequest()
-    buffer = request.encode()
-    _state.socket.send(buffer)
+        # FIXME: return port_id
+        return response.port
 
-    # Wait for the response: ack or error.
-    # FIXME: need a switch here, because we could get deliveries.
-    # FIXME: handle C-c
-    # FIXME: handle zero-length recv
-    recv_buf = _state.socket.recv(RECV_BUFLEN)
-    _state.recv_buffer.append(recv_buf)
+    def receive_from_port(self, port: int) -> Message:
+        # Service a port, waiting for a reply, and delivering Messages
+        # and Chunks to their appropriate port queues.
 
-    response = OpenPortResponse.decode(_state.recv_buffer)
-    _state.ports[response.port] = listener
+        )
+        # FIXME: need a switch here, because we could get deliveries.
+        # FIXME: handle C-c
+        # FIXME: handle zero-length recv
+        recv_buf = _state.socket.recv(RECV_BUFLEN)
+        _state.recv_buffer.append(recv_buf)
 
-    # Save state, and return.
-    return response.port
+        response = _state.codec.decode(_state.recv_buffer)
 
-
-def close_port(port: int):
-    """Close a previously-allocated communication port.
-
-    :param port: Port number to be closed."""
-
-    # Send close_port request.
-    # Wait for response.
-    # Save state and return.
-    pass
-
-
-def send_message(source: int, destination: int, message: bytes):
-    """Send a message to another port.
-
-    :param source: Sending port number.
-    :param destination: Target port number.
-    :param message: Buffer to be sent."""
-
-    # Check source port matches one we've opened.
-    # Send send_message request.
-    # return
-    pass
-
-
-def send_chunk(self, source: int, destination: int, stream: int, offset: int, chunk: bytes):
-    """Send a stream chunk to another port.
-
-    :param source: Sending port number.
-    :param destination: Target port number.
-    :param stream: Stream identifier.
-    :param offset: Offset from start of stream for first byte of chunk.
-    :param message: Buffer to be sent."""
-
-    # Basically same as message, but extra chunky.
-    pass
+        return response
 
 
