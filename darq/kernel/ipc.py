@@ -301,38 +301,6 @@ class Codec:
         padding = alignment - (offset % alignment)
         return padding
 
-    def encode(self, message: 'Message') -> bytes:
-        """Encode the supplied message, and return a byte buffer."""
-        # Accumulated output buffer.
-        buf = b''
-
-        for value in message.__dict__.values():
-            value_type = type(value)
-
-            if value_type == UInt8:
-                buf += value.to_bytes(1, 'big', signed=False)
-            elif value_type == UInt16:
-                self.pad_for_encode(buf, 2)
-                buf += value.to_bytes(2, 'big', signed=False)
-            elif value_type == UInt32:
-                self.pad_for_encode(buf, 4)
-                buf += value.to_bytes(4, 'big', signed=False)
-            elif value_type == UInt64:
-                self.pad_for_encode(buf, 8)
-                buf += value.to_bytes(8, 'big', signed=False)
-            elif value_type == bool:
-                x = 1 if value else 0
-                buf += x.to_bytes(1, 'big', signed=False)
-            elif value_type == bytes:
-                self.pad_for_encode(buf, 4)
-                length = len(value)
-                buf += length.to_bytes(4, 'big', signed=False)
-                buf += value
-            else:
-                raise Exception('unhandled value type in message')
-
-        return buf
-
     def decode(self, buf: Buffer):
 
         # Get version.
@@ -411,7 +379,7 @@ class Codec:
         return 4
 
     def encode_uint64(self, value: int, buf: memoryview) -> int:
-        buf[0] = value.to_bytes(8, byteorder='big', signed=False]
+        buf[0:8] = value.to_bytes(8, byteorder='big', signed=False)
         return 8
 
     def encode_bool(self, value: bool, buf: memoryview) -> int:
@@ -428,9 +396,22 @@ class Codec:
 
     def encode_open_port_request(self, message: OpenPortRequest) -> bytes:
         buf = bytearray(16)
-        offset = self.encode_header(message, memoryview(buf)
+        offset = self.encode_header(message, memoryview(buf))
         self.encode_uint64(message.requested_port, memoryview(buf)[offset:])
         return buf
+
+    def encode_open_port_response(self, message:OpenPortResponse) -> bytes:
+        buf = bytearray()
+        return buf
+
+    def encode(self, message: 'Message') -> bytes:
+        """Encode the supplied message, and return a byte buffer."""
+
+        if message.type == MSG_OPEN_PORT_RQST:
+            return self.encode_open_port_request(typing.cast(OpenPortRequest, message))
+        elif message.type == MSG_OPEN_PORT_RESP:
+            return self.encode_open_port_response(typing.cast(OpenPortResponse, message))
+
 
 ########################################################################
 
@@ -504,6 +485,9 @@ class ProcessRuntimeState:
         # Protocol encoding.
         self.codec = Codec()
 
+        # Event loop.
+        self.loop = None
+
     def connect_to_p_kernel(self) -> int:
         """Establish the TCP connection to the p-kerenl."""
 
@@ -570,7 +554,6 @@ class ProcessRuntimeState:
         # Service a port, waiting for a reply, and delivering Messages
         # and Chunks to their appropriate port queues.
 
-        )
         # FIXME: need a switch here, because we could get deliveries.
         # FIXME: handle C-c
         # FIXME: handle zero-length recv

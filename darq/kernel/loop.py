@@ -1,10 +1,26 @@
 # darqos
 # Copyright (C) 2022 David Arnold
 
+
+
+import logging
 import select
 import socket
 import time
 import typing
+
+from PyQt5.QtCore import QEventLoop, QSocketNotifier, QTimer
+from PyQt5.QtWidgets import QApplication
+
+
+class DuplicateSocketError(Exception):
+    """The specified socket is already registered."""
+    pass
+
+
+class SocketNotFoundError(Exception):
+    """The specified socket is not registered."""
+    pass
 
 
 class EventLoopInterface:
@@ -44,6 +60,19 @@ class SocketListener:
 
     def on_writeable(self, sock: socket.socket):
         pass
+
+    def on_connected(self, sock: socket.socket):
+        pass
+
+
+class DeferredListener:
+    def __init__(self, loop, function):
+        self.loop: EventLoopInterface = loop
+        self.function = function
+
+    def on_timeout(self, timer_id: int, expiry_time: float, actual_time: float):
+        self.loop.cancel_timer(timer_id)
+        self.function()
 
 
 class SelectTimerState:
@@ -99,7 +128,7 @@ class SelectTimerCollection:
         i = 0
         while i < len(self.timers):
             if self.timers[i].timer_id == timer_id:
-                del self.timers[timer_id]
+                del self.timers[i]
                 return True
             i += 1
         return False
@@ -149,11 +178,11 @@ class SelectEventLoop(EventLoopInterface):
         :param timer_id: Identifier for registered timeout."""
         return self.timers.cancel_timer(timer_id)
 
-    def add_deferred(self, listener: TimerListener):
+    def add_deferred(self, callback):
         """Call this listener at the end of this loop iteration.
 
-        :param listener: Listner for callbacks."""
-        self.add_timer(0, listener)
+        :param callback: Function to execute."""
+        self.add_timer(0, DeferredListener(self, callback))
 
     def run(self):
         """Enter event loop and begin processing events."""
@@ -162,8 +191,8 @@ class SelectEventLoop(EventLoopInterface):
 
         while self.active:
             if len(self.timers) > 0:
-                timeout = self.timers[0]
-                for t in self.timers:
+                timeout = self.timers[0].expiry
+                for t in self.timers[1:]:
                     # FIXMD: get next timer expiry time, or fallback timeout
                     pass
             else:
@@ -183,9 +212,92 @@ class SelectEventLoop(EventLoopInterface):
                 now = time.time()
                 if t.expiry < now:
                     t.expiry += t.duration
-                    t.listener.on_timeout(t.timer_id, t.expiry)
+                    t.listener.on_timeout(t.timer_id, t.expiry, now)
 
     def stop(self):
         """Exit event loop at next iteration."""
         self.active = False
 
+
+class QtSocketState:
+    def __init__(self, sock: socket.socket, listener: SocketListener):
+        self.socket = sock
+        self.listener = listener
+
+        self.read_notifier = QSocketNotifier(sock.fileno(), QSocketNotifier.Type.Read)
+        self.read_notifier.activated.connect(self.on_readable)
+        self.read_notifier.setEnabled(True)
+
+        self.write_notifier = QSocketNotifier(sock.fileno(), QSocketNotifier.Type.Write)
+        self.write_notifier.activated.connect(self.on_writeable)
+        self.read_notifier.setEnabled(True)
+        return
+
+    def on_readable(self, sock):
+        """Slot callback for event notifications."""
+
+        self.listener.on_readable(self.socket)
+
+    def on_writeable(self, sock):
+        self.listener.on_writeable(self.socket)
+
+
+class QtEventLoop(EventLoopInterface):
+
+    def __init__(self):
+        super().__init__()
+        self.loop = None
+        self.timers = {}
+        self.sockets: dict[int, QtSocketState] = {}
+        return
+
+    def add_socket(self, sock: socket.socket, callback: SocketListener):
+        # All sockets have both read and write monitoring; no sockets
+        # support exception monitoring.
+        if sock.fileno() in self.sockets:
+            raise DuplicateSocketError(sock)
+
+        state = QtSocketState(sock, callback)
+        self.sockets[sock.fileno()] = state
+        return
+
+    def cancel_socket(self, sock: socket.socket):
+        if sock.fileno() not in self.sockets:
+            raise SocketNotFoundError(sock)
+
+        state = self.sockets[sock.fileno()]
+        state.read_notifier.setEnabled(False)
+        state.read_notifier = None
+
+        state.write_notifier.setEnabled(False)
+        state.write_notifier = None
+
+        del self.sockets[sock.fileno()]
+        return
+
+    def add_timer(self, duration: float, callback: TimerListener) -> int:
+
+        # Convert duration to milliseconds
+        ms_duration = int(duration / 1000)
+
+        timer = QTimer()
+        timer.timeout.connect(callback.on_timeout)
+        timer.start(ms_duration)
+
+        self.timers[timer.timerId()] = timer
+        return timer.timerId()
+
+    def cancel_timer(self, timer_id: int):
+        pass
+
+    def add_deferred(self, callback):
+        pass
+
+    def run(self):
+        """Enter event loop.  Run until stop() is called."""
+        loop = QEventLoop()
+        loop.run()
+
+    def stop(self):
+        """Exit inner-most event loop instance."""
+        loop.stop()
