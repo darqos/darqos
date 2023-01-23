@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 ################################################################
 # darqos
-# Copyright (C) 2022 David Arnold
+# Copyright (C) 2022-2023 David Arnold
 ################################################################
 
 import errno
@@ -13,10 +13,10 @@ import time
 from dataclasses import dataclass
 
 import orjson
-import zmq
+
 
 BOOT_ERR = f"""Error: unable to find DarqOS system files in %s.
-You must either start from the DarqOS installation directory, or set 
+You must either start from the DarqOS installation directory, or set
 the DARQ_ROOT environment variable to point to it.
 """
 
@@ -37,14 +37,15 @@ SERVICES = [
     # metadata-service
     # security-service
 
-    # ServiceInfo("Terminal", "terminal/main.py", 0, 0),
+    ServiceInfo("Terminal", "terminal/main.py", 0, 0),
 ]
 
 
 class Bootstrap:
     def boot(self):
-        """Boot the M0 interim implementation."""
+        """Boot the interim Unix-based implementation."""
 
+        print("darqos 1st edition")
         print("Booting ...")
 
         # Look for the system files.
@@ -52,7 +53,7 @@ class Bootstrap:
         if root is None:
             root = os.getcwd()
 
-        if not os.path.exists(f"{root}/darq/rt/type.py"):
+        if not os.path.exists(f"{root}/darq/runtime/type.py"):
             sys.stderr.write(BOOT_ERR % root)
             sys.exit(1)
 
@@ -142,5 +143,3 @@ if __name__ == "__main__":
     bootstrap.boot()
     bootstrap.wait()
     bootstrap.shutdown()
-
-
