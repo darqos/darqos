@@ -2,16 +2,33 @@
 # darqos
 # Copyright (C) 2020-2023 David Arnold
 
+# Terminal Service
+#
+# Unlike the other services, the Terminal Service isn't directly used
+# by applications (tools, lenses, etc).  Instead, it mostly does things
+# directly on behalf of the user.
+#
+# Since it uses Qt, it uses the Qt event loop.  Thus, when using the
+# regular service APIs, it must supply them with the Qt event loop
+# adaptor.
+
+
+import logging
 import sys
 import typing
+
 from urllib.parse import urlparse
 from datetime import datetime
 
-from PyQt6 import QtCore
-from PyQt6.QtGui import QKeySequence, QIcon, QAction, QShortcut, QScreen
-from PyQt6.QtWidgets import QApplication, QWidget, QPushButton, QMenu, QHBoxLayout, QVBoxLayout, QLineEdit, QLabel, QToolButton, QToolBar, QTableWidget, QTableWidgetItem, QGroupBox, QMainWindow
+from PyQt5 import QtCore
+from PyQt5.QtGui import QKeySequence, QIcon, QScreen
+from PyQt5.QtWidgets import QAction, QShortcut, QApplication, QWidget, QPushButton, QMenu, QHBoxLayout, QVBoxLayout, QLineEdit, QLabel, QToolButton, QToolBar, QTableWidget, QTableWidgetItem, QGroupBox, QMainWindow
+
+import qdarktheme
 
 #from darq.type.text import TextTypeView
+import darq
+
 from darq.services.history import History
 
 
@@ -287,7 +304,7 @@ class ObjectSelector(QWidget):
         self.setLayout(self.layout)
         self.hide()
 
-        self.history = History.api()
+        # FIXME: self.history = History.api()
         return
 
     def show(self):
@@ -370,6 +387,15 @@ class Overlay(QMainWindow):
 
 
 class UI(QWidget):
+
+    # This needs some work to create a top-level window *on each screen* rather
+    # than just one.  To do that, it's going to have to iterate the screen list
+    # that it gets from QApplication, and place a widget on each.
+    #
+    # This will also probably complicate the placement of the various overlay
+    # panels: it might make sense to use the screen currently containing the
+    # mouse cursor?
+
     def __init__(self, *args):
         super().__init__(*args)
 
@@ -386,6 +412,15 @@ class UI(QWidget):
         self.selector_shortcut.setContext(
             QtCore.Qt.ShortcutContext.ApplicationShortcut)
         self.selector_shortcut.activated.connect(self.on_selector)
+
+        # Events with Sys-E
+        self.events = None  # FXIME
+        self.events_shortcut = QShortcut(QKeySequence("Ctrl+e"), self)
+        self.events_shortcut.setContext(
+            QtCore.Qt.ShortcutContext.ApplicationShortcut)
+        self.events_shortcut.activated.connect(self.on_events)
+
+        # FIXME
 
         # Background window.
         flags = QtCore.Qt.WindowType(QtCore.Qt.WindowType.WindowStaysOnTopHint |
@@ -425,17 +460,34 @@ class UI(QWidget):
         self.selector.toggle_visibility()
         return
 
+    def on_events(self, *args):
+        print("events")
+
     def on_login(self):
         print("Login")
 
 
 def main():
+    # FIXME: currently, just log to stderr.
+    logging.basicConfig(stream=sys.stderr,
+                        format='%(asctime)s terminal %(levelname)8s %(message)s',
+                        level=logging.DEBUG)
+
+    logging.info(f"Starting Terminal.")
+
     app = QApplication(sys.argv)
+    qdarktheme.setup_theme()
+
+    darq.init(darq.QtEventLoop())
+
     ui = UI()
     #login = Overlay()
-    sys.exit(app.exec())
+
+    result = app.exec()
+
+    logging.info(f"Exiting Terminal ({result}).")
+    sys.exit(result)
 
 
-print("main")
 if __name__ == "__main__":
     main()
