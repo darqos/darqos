@@ -5,6 +5,12 @@
 # Try Lark
 
 from lark import Lark, Transformer
+from decimal import *
+
+import re
+
+# Number RE:
+# re.match(r"[-\+]?([0-9]+.[0-9]+|[0-9]+.|.[0-9]+)([eE][-\+]?[0-9]+)?", "-623.123456789e1").span()
 
 # * expression: bracketed_expression | expression operator expression
 #               | value | unary_sign value
@@ -20,50 +26,7 @@ from lark import Lark, Transformer
 # binary_operator: "+" | "-" | "*" | "/" | "mod" | "%"
 
 
-class NumberTransformer(Transformer):
-
-    def integer(self, tokens):
-        return int(tokens[0])
-
-    def whole_real(self, tokens):
-        return float(tokens[0])
-
-    def fractional_real(self, tokens):
-        return float(tokens[0].value + tokens[1].value)
-
-    def real(self, tokens):
-        return float(tokens[0].value + tokens[1].value + tokens[2].value)
-
-    def simple_number(self, tokens):
-        return tokens[0]
-
-    def unary_operator(self, tokens):
-        return tokens[0].value
-
-    def signed_simple(self, tokens):
-        if tokens[0] == '-':
-            return tokens[1] * -1
-        else:
-            return tokens[1]
-
-    def exp(self, tokens):
-        return tokens[0].value
-
-    def signed_exponent(self, tokens):
-        return int(tokens[0] + tokens[1].value)
-
-    def exponent_value(self, tokens):
-        return int(tokens[0])
-
-    def lay_number(self, tokens):
-        return tokens[0]
-
-    def sci_number(self, tokens):
-        print("sci_number", tokens)
-        return tokens[0] * pow(10, tokens[2])
-
-    def number(self, tokens):
-        return tokens[0]
+# Lark parser.
 
 parser = Lark(r"""
 
@@ -92,10 +55,57 @@ lay_number: simple_number | signed_simple
 sci_number: lay_number exp exponent_value
 
 number: lay_number | sci_number
- 
+
 %import common.WS
-%ignore WS 
+%ignore WS
 """, start="number")
+
+
+# Lark transformer.
+
+class NumberTransformer(Transformer):
+
+    def integer(self, tokens):
+        return Decimal(tokens[0])
+
+    def whole_real(self, tokens):
+        return Decimal(tokens[0])
+
+    def fractional_real(self, tokens):
+        return Decimal(tokens[0].value + tokens[1].value)
+
+    def real(self, tokens):
+        return Decimal(tokens[0].value + tokens[1].value + tokens[2].value)
+
+    def simple_number(self, tokens):
+        return tokens[0]
+
+    def unary_operator(self, tokens):
+        return tokens[0].value
+
+    def signed_simple(self, tokens):
+        if tokens[0] == '-':
+            return tokens[1] * -1
+        else:
+            return tokens[1]
+
+    def exp(self, tokens):
+        return tokens[0].value
+
+    def signed_exponent(self, tokens):
+        return Decimal(tokens[0] + tokens[1].value)
+
+    def exponent_value(self, tokens):
+        return Decimal(tokens[0])
+
+    def lay_number(self, tokens):
+        return tokens[0]
+
+    def sci_number(self, tokens):
+        return tokens[0] * pow(10, tokens[2])
+
+    def number(self, tokens):
+        return tokens[0]
 
 
 tests = [
@@ -120,7 +130,13 @@ tests = [
 
 for test in tests:
     result = parser.parse(test)
-    print(f"{test} -> {result.pretty()}")
-
     transform = NumberTransformer().transform(result)
-    print(transform)
+    print(f"Checking {test} == {transform}")
+
+
+x = re.compile(r"""[-+]?([0-9]+|[0-9]+[\.]|[\.][0-9]+|[0-9]+[\.][0-9]+)""")
+
+print("\nregex\n")
+for test in tests:
+    result = x.match(test)
+    print(f"Checking {test} == {result.group(0)}")
