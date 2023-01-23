@@ -28,7 +28,7 @@ import uuid
 # spreadsheet, since it'd need a table to drive a graph.
 
 # The UI should probably look more like a notebook than a calculator:
-# there's no point have virtual keys, when you have a keyboard!  So better
+# there's no point having virtual keys, when you have a keyboard!  So better
 # to show a cursor, a current line, and maybe results with identifiers.
 #
 #  1 + 1
@@ -46,6 +46,17 @@ import uuid
 #
 # And then persistence: I think I can just save the whole thing as a text
 # document?  Parsing it should be trivial.
+
+# Things I'd like to add:
+# - math quantities (pi, e, etc)
+# - trig functions, etc.
+# - units (the Unix database) (try pip 'pint'?)
+# - Physical constants (avogadro's, etc, etc)
+# - Physical quantities (mass of Earth, orbits of planets, speed of light, etc)
+#   - Include a nice UI to look these up, with text descriptions, etc
+#     - Should these be in the KB as WikiData-like entities?
+# - graphing (matplotlib?)
+# - maybe symbolic math, like sympy?
 
 
 class Calculation(Object):
