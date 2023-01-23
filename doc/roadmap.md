@@ -32,7 +32,7 @@ prefix.  Subsequent releases removing dependencies on existing kernels
 and library software will have an "M" prefix.
 
 
-### P0
+### First Edition
 The goal of the first prototype milestone is to “boot” and get running
 with an identifiably different system, minimal aesthetics, minimal
 user functionality, but a viable target platform for further work.
@@ -48,16 +48,18 @@ Infrastructure
   * RST?
   * API reference generation and integration
   * HTML and PDF output
+  * man pages?
 * Release process
   * Distribution formats
+    * tarball and/or git clone? 
   * Testing
 
 System
 * Host platform
-  * macOS laptop
-  * Raspberry Pi 4
+  * Ubuntu 22.04 LTS AMD64
+  * Raspberry Pi 4/400
 * Host OS
-  * Unix: macOS or Linux
+  * Unix: Ubuntu, Debian, or Raspbian
 * IPC
   * API in Python runtime module
   * Use a single central message broker process to provide the shared
@@ -79,10 +81,13 @@ System
   * Communicating using the selected IPC
 * GUI
   * Full-screen window background, hiding all the host OS 
-  * Use PyQt5 (and/or PyQt6) for macOS/X11
-    * Avoids getting bogged down widget libraries, etc. 
+  * Use PyQt5 (and/or PyQt6) for Ubuntu/X11
+    * Avoids getting bogged down widget libraries, etc.
+    * For Raspberry Pi 4/400, use the EGL target of Qt (no X11, no Wayland)
 * Bootstrap
-  * Basic shell script, starting up Unix processes
+  * Untar / clone source into /darq/src
+  * Run install script, copying stuff into place
+  * Run boot script, starting up Unix processes
     * It'd be good to have a clean shutdown, so processes should
       register themselves with the runtime once they're up, so they
       can be killed.
@@ -111,9 +116,13 @@ Services
 * History
   * System-wide
   * Activity timeline
+* Security
+  * User authentication 
+* Type
+  * Registry 
 * Terminal
   * Framebuffer(s)
-    * Using Qt5/Qt6 with a full-screen window, and Z-ordering of other
+    * Using Qt5 with a full-screen window, and Z-ordering of other
       windows.
     * Remove all the OS decoration on windows
   * Keyboard
@@ -123,15 +132,14 @@ Services
   * Supports login, etc, through interaction with the security
     service.
     * Login, logout, lock, reboot, shutdown
-* HUD
-  * Is HUD actually separate from Terminal?
-    * No?
   * Factory
     * Create instances of installed types
   * Search
     * Index
     * History
     * Metadata
+  * Events
+    * Universal inbox 
   * Clock
   * REPL?
 
@@ -166,6 +174,7 @@ Story
 * Boot device.
 * See login window.
   * No need to deal with initial account creation, etc, yet.
+    * Could do this via firstboot script? 
 * Log in with password.
   * No need for user -- there's only one
   * Should allow shutdown / reboot
@@ -177,26 +186,32 @@ Story
 * Logout
 
 
-### P1
+### Second Edition
 Support web browsing, and begin work on metadata/indexer support to
 make that experience better than on existing platforms.
 
 Infrastructure
+* Nothing new
+
+System
+* Host Platform
+  * Consider adding PinePhone
 
 Services
 * URL fetcher
-   * HTTP, HTTPS, FTP, SFTP, FTPS, etc
-   * Not involved in WebSockets or WebRTC
-   * Caching / archiving
-   * Runtime object loader plugin
-   * Use curl?  Or CEF?
+  * HTTP, HTTPS, FTP, SFTP, FTPS, etc
+  * Not involved in WebSockets or WebRTC
+  * Caching / archiving
+  * Runtime object loader plugin
+  * Use curl?  Or CEF?
 * Indexer
-   * Uses storage and metadata
-   * Searching and completions
+  * Uses storage and metadata
+  * Searching and completions
 * Credentials
-   * Secure storage of various secrets
-   * 2FA token generation
-   * Support for web browser, basically
+  * Secure storage of various secrets
+  * 2FA token generation
+  * Support for web browser, basically
+  * Part of Security service?
 
 Types
 * PDF
@@ -215,12 +230,13 @@ Types
   * Use URL fetcher
     * So we get history, metadata, caching and archiving control
   * This might require some refactoring of the type/viewer design.
-    * ie. what's the right API for a PDF object?
+    * ie. what's the right API for a HTML object?
       * DOM?
 
 Story
+* tbd
 
-### P2
+### Third Edition
 Programming, to the point of becoming self-hosting.
 
 Infrastructure
@@ -289,7 +305,7 @@ Story
   * What events get added to history?
 
 
-### P3
+### Fourth Edition
 PIM support: email, calendar, contacts, messaging, world clock.  This
 should be enough for daily driving with the exception of office and
 graphical work.
@@ -365,7 +381,7 @@ Types
    * Music, and Album, as possibly derived types?
    * Music plugin for selector/dashboard/HUD?
 
-### P4
+### Fifth Edition
 Office: word processor, spreadsheet, slides, vector drawing, pixel
 drawing
 
@@ -406,7 +422,7 @@ Types
    * CRUD+DM
    * Should support CAD formats for 3D printing
 
-### P5
+### Sixth Edition
 Fill out features for full daily-driver usage.
 
 Infrastructure
@@ -466,7 +482,7 @@ Types
       * Save files should be type instances
       * ROMs are really just an executable with a different “VM”
 
-Throughout the P-series of milestones, we can take advantage of the
+Throughout the initial series of milestones, we can take advantage of the
 underlying Unix operating system to wrap existing applications into
 the Darq model.  This will facilitate experimentation with the model
 while not requiring the effort to rewrite massive amounts of
@@ -475,12 +491,12 @@ functionality onto a new OS/GUI.
 
 ## Evaluation
 
-The purpose of the P-series releases is to experiment and gain live user
+The purpose of the initial series releases is to experiment and gain live user
 experience with the broad range of ideas that directly impact the UX of
 the operating system, while avoiding effort on anything that doesn't
 service that goal.
 
-Once the P-series is complete, an evaluation of those results will lead
+Once the initial series is complete, an evaluation of those results will lead
 to a revised vision of both the user experience, and the requirements
 of the supporting system.
 
@@ -489,7 +505,7 @@ specification that then leads to a change of focus from top-down to
 bottom-up, delivering an OS kernel and system services able to support
 a production-ready implementation of the target user experience.
 
-### M0
+### Seventh Edition
 
 Indrastructure
 
@@ -505,7 +521,7 @@ System
 * Some sort of IPC
    * Kernel mediated
    * Not DBus
-   * Mach + MIG
+   * Mach + MIG?
    * Protobuf / CapNProto / Thrift / Avro / etc
    * Is there a role for Elvin here?
    * In-memory local transport option + network transport option
@@ -515,7 +531,7 @@ System
      across something well suited or as a great starting point for
      forking
    * OpenGL ES 2 or 3?  As a base API to the GPU.  How does this work
-     with the Linux framebuffer?  SDL?  DirectFB?  OpenVG?  Etc.
+     with the Linux framebuffer?  EGL?
 * Language runtime
    * C?  Go?  Rust?   Something that can be compiled, with decent
      performance, and not too difficult to retarget to a non-POSIX
