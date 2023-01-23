@@ -1,0 +1,69 @@
+#! /usr/bin/env python3
+# darqos
+# Copyright (C) 2022 David Arnold
+
+import darq.rt
+
+import orjson
+import os
+import sys
+import uuid
+
+
+def install(package_file) -> bool:
+    # Run executable and collect JSON info.
+    # FIXME: error checking (try / except)
+    f = os.popen(f"{package_file} --type-info")
+    buf = f.read()
+    f.close()
+
+    # FIXME: error checking (try / catch)
+    type_info = orjson.loads(buf)
+
+    # Get icon.
+
+    # Get executable.
+    # FIXME: error checking (try / catch)
+    f = open(package_file, 'r')
+    exe_buf = f.read()
+    f.close()
+
+    # Generate unique identifier for the installed type.
+    type_id = uuid.uuid4().hex
+    exe_id = uuid.uuid4().hex
+    icon_id = uuid.uuid4().hex
+
+    # Open executable file, ready to copy bytes to Storage service.
+    # Connect to storage service.
+    darq.rt.Storage.set(exe_id, exe_buf)
+
+    # Create new entry and populate.
+    darq.rt.Storage.set(icon_id, icon_buf)
+
+    # Consider creating a class to handle the load, temp file, execute
+    #  code for actually running executables for now?
+    # Locate icon's byte array.
+
+    # Create new Type Service entry, using data from executable: type,
+    #  description, icon, and whole executable.
+    return True
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Error: no args")
+        sys.exit(1)
+
+    package_file = sys.argv[1]
+    if not os.path.exists(package_file):
+        print(f"No such file: {package_file}")
+        sys.exit(1)
+
+    result = install(package_file)
+    if not result:
+        print(f"Error installing package.")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
