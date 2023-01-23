@@ -1,5 +1,5 @@
 # DarqOS
-# Copyright (C) 2019-2022
+# Copyright (C) 2019-2023
 
 # Blob storage service.
 #
@@ -30,7 +30,7 @@ class StorageService(darq.Service):
     set as required, rather than being completely loaded all at once."""
 
     def __init__(self, file: str = None):
-        super().__init__("tcp://*:11001")
+        super().__init__(darq.SelectEventLoop())
 
         if file is None:
             file = "storage.sqlite"
