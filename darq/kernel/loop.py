@@ -188,6 +188,7 @@ class SelectEventLoop(EventLoopInterface):
         """Enter event loop and begin processing events."""
 
         self.active = True
+        listener = None
 
         while self.active:
             if len(self.timers) > 0:
@@ -201,12 +202,14 @@ class SelectEventLoop(EventLoopInterface):
             rr, rw, _ = select.select(self.sockets, self.sockets, [], timeout)
 
             for s in rr:
-                listener = self.sockets[s]
-                listener.on_readable(s)
+                listener = self.sockets.get(s)
+                if listener is not None:
+                    listener.on_readable(s)
 
             for s in rw:
-                listener = self.sockets[s]
-                listener.on_writeable(s)
+                listener = self.sockets.get(s)
+                if listener is not None:
+                    listener.on_writeable(s)
 
             for t in self.timers:
                 now = time.time()

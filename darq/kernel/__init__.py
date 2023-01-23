@@ -9,7 +9,7 @@
 # exposes a set of functions that _behave_ like system calls, and whose
 # implementation is hidden from application processes.
 
-from .ipc import ProcessRuntimeState, PortListener
+from .ipc import ProcessRuntimeState, EventListener
 from .loop import EventLoopInterface
 
 
@@ -27,6 +27,13 @@ _state = ProcessRuntimeState()
 def init(loop: EventLoopInterface):
     """Initialise the process' runtime state."""
     _state.loop = loop
+
+
+def init_callbacks(loop: EventLoopInterface, listener: EventListener):
+    """Initialise the process' runtime state, using the callback model."""
+    _state.loop = loop
+    _state.listener = listener
+    return
 
 
 def loop():
@@ -47,9 +54,6 @@ def close_port(port: int):
 
     :param port: Port number to be closed."""
 
-    # Send close_port request.
-    # Wait for response.
-    # Save state and return.
     return _state.close_port(port)
 
 

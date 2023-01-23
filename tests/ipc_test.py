@@ -9,30 +9,32 @@ def main():
     s.connect(('localhost', 11000))
 
     # Request port
-    fmt = '!BBBxL Q'
-    buf = struct.pack(fmt, 1, 8, 1, 16, 2917)
-    s.send(buf)
+    fmt = '!BBBxL LxxxxQ'
+    buf = struct.pack(fmt, 1, 8, 1, 24, 1, 2917)
+    s.sendall(buf)
     print("sent open_port")
 
     # open_port response.
     buf = s.recv(65535)
-    bits = struct.unpack('!BBBxL Q?', buf)
-    port = bits[4]
+    bits = struct.unpack('!BBBxL LBxxxQ', buf[:24])
+    request_id = bits[4]
     result = bits[5]
-    print(f'Result {result}, port {port}')
+    port = bits[6]
+
+    print(f'Request {request_id} result {result}, port {port}')
 
     # Send a message to myself
-    fmt = '!BBBxL QQL'
+    fmt = '!BBBxL QQLxxxx'
     body = "hello world".encode()
-    buf = struct.pack(fmt, 1, 8, 5, struct.calcsize(fmt) + len(body),
+    buf = struct.pack(fmt, 1, 8, 5, struct.calcsize(fmt) + len(body), # FIXME: padding
                       port, port, len(body))
     buf += body
-    # FIXME: pad final string?  no?
-    s.send(buf)
+    # FIXME: pad final string?
+    s.sendall(buf)
     print("Sent message")
 
     # Receive message
-    fmt = '!BBBxL QQL'
+    fmt = '!BBBxL QQLxxxx'
     header_len = struct.calcsize(fmt)
 
     buf = s.recv(65535)
@@ -50,6 +52,20 @@ def main():
     print(f'Received ver {pkt_ver}, hdr_len {pkt_hdr_len}, len {pkt_len}, '
           f'type {pkt_type}, src {pkt_src}, dst {pkt_dst}, '
           f'body_len {payload_len} -- [{payload}]')
+
+    # Close port.
+    fmt = '!BBBxL LxxxxQ'
+    buf = struct.pack(fmt, 1, 8, 3, 24, 2, 2917)
+    s.sendall(buf)
+    print("sent close_poer")
+
+    # close_port response.
+    buf = s.recv(65535)
+    bits = struct.unpack('!BBBxL LxxxxQ', buf[:24])
+    request_id = bits[4]
+    port = bits[5]
+    assert port == 2917
+    print("received port_closed")
 
     s.close()
 

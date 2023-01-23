@@ -89,9 +89,8 @@ class IPCClient:
 
         # FIXME: append to send buffer, and write async?
 
-        while len(data) > 0:
-            sent = self.socket.send(data)
-            data = data[sent:]
+        self.socket.sendall(data)
+        logging.info(f"Sent {len(data)} bytes to socket {self.socket.getpeername()}")
         return
 
     def on_readable(self, sock: socket.socket):
@@ -100,18 +99,18 @@ class IPCClient:
         try:
             recv_buf = self.socket.recv(65536)
         except ConnectionResetError:
-            logging.warning(f"IPC: Client connection reset.")
+            logging.warning(f"IPC: {self.name()} connection reset.")
             self.kernel.handle_disconnect(self)
             return
 
         if len(recv_buf) == 0:
-            logging.warning(f"IPC: Client connection closed.")
+            logging.debug(f"IPC: {self.name()} connection closed by peer.")
             self.kernel.handle_disconnect(self)
             return
 
         self.recv_buffer.append(recv_buf)
-        logging.debug(f"IPC: Client [{self.name()}] "
-                      f"delivering {len(recv_buf)} bytes")
+        logging.debug(f"IPC: {self.name()} "
+                      f"delivered {len(recv_buf)} bytes")
 
         self.kernel.dispatch(self)
         return

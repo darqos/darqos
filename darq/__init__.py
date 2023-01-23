@@ -22,12 +22,26 @@ from darq.runtime.type import Type
 
 # IPC
 from darq.kernel.ipc import EventLoopInterface
-from darq.kernel.ipc import PortListener
-from darq.kernel.ipc import register_event_loop
-from darq.kernel.ipc import open_port
-from darq.kernel.ipc import close_port
-from darq.kernel.ipc import send_chunk
-from darq.kernel.ipc import send_message
+from darq.kernel.ipc import EventListener
+#from darq.kernel.ipc import register_event_loop
+#from darq.kernel.ipc import open_port
+#from darq.kernel.ipc import close_port
+#from darq.kernel.ipc import send_chunk
+#from darq.kernel.ipc import send_message
+
+from darq.kernel import init
+from darq.kernel import init_callbacks
+from darq.kernel import loop
+from darq.kernel import open_port
+from darq.kernel import close_port
+from darq.kernel import send_message
+from darq.kernel import _state
+
+# Event loop.
+from darq.kernel.loop import SocketListener
+from darq.kernel.loop import TimerListener
+from darq.kernel.loop import SelectEventLoop
+from darq.kernel.loop import QtEventLoop
 
 
 # Globals

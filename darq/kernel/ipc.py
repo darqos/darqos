@@ -33,8 +33,8 @@ from .types import UInt8, UInt16, UInt32, UInt64
 # FIXME: make this a proper enum?
 MSG_OPEN_PORT_RQST = 1
 MSG_OPEN_PORT_RESP = 2
-MSG_REMOVE_PORT_RQST = 3
-MSG_REMOVE_PORT_RESP = 4
+MSG_CLOSE_PORT_RQST = 3
+MSG_CLOSE_PORT_RESP = 4
 MSG_SEND_MESSAGE = 5
 MSG_SEND_CHUNK = 6
 MSG_DELIVER_MESSAGE = 7
@@ -48,13 +48,28 @@ RECV_BUFLEN = 65535
 
 ########################################################################
 
-class MessageDecodingError(Exception):
+class DarqError(Exception):
+    """Base class for all Darq exceptions."""
+    pass
+
+
+class MessageDecodingError(DarqError):
     """Failed to decode a message from the supplied buffer."""
     pass
 
 
-class CannotAllocatePortError(Exception):
+class CannotAllocatePortError(DarqError):
     """The ephemeral port range is exhausted."""
+    pass
+
+
+class DuplicatePortError(DarqError):
+    """The requested port number is already in use."""
+    pass
+
+
+class NonExistentPortError(DarqError):
+    """The specified port does not exist."""
     pass
 
 
@@ -180,57 +195,222 @@ class Message:
         :param length: Total number of bytes in the message."""
         self.length = UInt32(length)
 
+    def encode(self) -> bytes:
+        """Encode message to wire format."""
+        buf = struct.pack(">BBBxL",
+                          self.version,
+                          self.header_length,
+                          self.type,
+                          self.length)
+        return buf
+
+    @staticmethod
+    def decode_type(buffer: bytes) -> int:
+        """Decode message type code from byte buffer."""
+        if len(buffer) < 8:
+            return 0
+
+        return buffer[2]
+
+    @staticmethod
+    def decode_length(buffer: bytes) -> int:
+        """Decode message legth from byte buffer."""
+        if len(buffer) < 8:
+            return 0
+
+        bits = struct.unpack(">xxxxL", buffer)
+        return bits[0]
+
+    def decode(self, buffer: bytes):
+        """Decode message from byte buffer."""
+        if len(buffer) < 8:
+            raise MessageDecodingError("buffer too short for header")
+
+        bits = struct.unpack(">BBBxL", buffer[:8])
+        self.version = bits[0]
+        self.header_length = bits[1]
+        self.type = bits[2]
+        self.length = bits[3]
+        return
+
 
 class OpenPortRequest(Message):
     """Message to request creation of a new port."""
-    def __init__(self, port: int = 0):
+    def __init__(self, request_id: int = 0, port: int = 0):
         """Request creation of new port.
 
+        :param request_id: Request identifier.
         :param port: Requested port number, or zero for default."""
         super().__init__(MSG_OPEN_PORT_RQST)
-        self.set_length(8 + 8)
+        self.set_length(self.header_length + 16)
+        self.request_id: UInt32 = UInt32(request_id)
         self.requested_port: UInt64 = UInt64(port)
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LxxxxQ", self.request_id, self.requested_port)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        bits = struct.unpack(">LxxxxQ", buffer[self.header_length:self.length])
+        self.request_id = bits[0]
+        self.requested_port = bits[1]
+        return
 
 
 class OpenPortResponse(Message):
     """Message to report result of port creation."""
-    def __init__(self, result: int = 0, port: int = 0):
+    def __init__(self, request_id: int = 0, result: int = 0, port: int = 0):
         """Report result of port creation.
 
         :param result: Zero means success, otherwise error code
         :param port: Created port number."""
         super().__init__(MSG_OPEN_PORT_RESP)
-        self.set_length(8 + 8 + 1)
-        self.port: UInt64 = UInt64(port)
+        self.set_length(self.header_length + 16)
+        self.request_id: UInt32 = UInt32(request_id)
         self.result: UInt8 = UInt8(result)
+        self.port: UInt64 = UInt64(port)
+        return
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LBxxxQ", self.request_id, self.result, self.port)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        buffer_tail = buffer[self.header_length:self.length]
+        bits = struct.unpack(">LBxxxQ", buffer_tail)
+        self.request_id = bits[0]
+        self.result = bits[1]
+        self.port = bits[2]
+        return
 
 
 class ClosePortRequest(Message):
-    def __init__(self):
-        super().__init__()
-        self.port: UInt64 = UInt64(0)
+    def __init__(self, request_id: int = 0, port: int = 0):
+        super().__init__(MSG_CLOSE_PORT_RQST)
+        self.set_length(self.header_length + 16)
+        self.request_id: UInt32 = UInt32(request_id)
+        self.port: UInt64 = UInt64(port)
+        return
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LxxxxQ", self.request_id, self.port)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        bits = struct.unpack(">LxxxxQ", buffer[self.header_length:self.length])
+        self.request_id = bits[0]
+        self.port = bits[1]
+        return
 
 
 class ClosePortResponse(Message):
     def __init__(self):
-        super().__init__()
+        super().__init__(MSG_CLOSE_PORT_RESP)
+        self.set_length(self.header_length + 16)
+        self.request_id: UInt32 = UInt32(0)
         self.port: UInt64 = UInt64(0)
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LxxxxQ", self.request_id, self.port)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        bits = struct.unpack(">LxxxxQ", buffer[self.header_length:self.length])
+        self.request_id = bits[0]
+        self.port = bits[1]
+        return
 
 
 class SendMessage(Message):
-    def __init__(self):
-        super().__init__()
-        self.source: UInt64 = UInt64(0)
-        self.destination: UInt64 = UInt64(0)
+    def __init__(self, source: int = 0, destination: int = 0):
+        super().__init__(MSG_SEND_MESSAGE)
+        self.set_length(self.header_length + 24)  # FIXME: doesn't include payload
+        self.source: UInt64 = UInt64(source)
+        self.destination: UInt64 = UInt64(destination)
         self.payload = b''
+
+    def set_payload(self, payload: bytes):
+        self.set_length(self.header_length + 24 + len(payload))
+        self.payload = payload
+
+    def get_length(self) -> int:
+        self.set_length(self.header_length + 24 + len(self.payload))  # FIXME: padding
+        return self.length
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">QQLxxxx", self.source, self.destination, len(self.payload))
+        buf += self.payload  # FIXME: padding
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        payload_start = self.header_length + 24
+        bits = struct.unpack(">QQLxxxx", buffer[self.header_length:payload_start])
+        self.source = bits[0]
+        self.destination = bits[1]
+        payload_length = bits[2]
+        self.payload = buffer[payload_start:payload_start+payload_length]
+        return
 
 
 class DeliverMessage(Message):
     def __init__(self):
-        super().__init__()
+        super().__init__(MSG_DELIVER_MESSAGE)
+        self.set_length(self.header_length + 24) ## FIXME: no payload
         self.source: UInt64 = UInt64(0)
         self.destination: UInt64 = UInt64(0)
         self.payload = b''
+
+    def set_payload(self, payload: bytes):
+        self.set_length(self.header_length + 24 + len(payload))
+        self.payload = payload
+
+    def get_length(self):
+        self.set_length(self.header_length + 24 + len(payload))
+        return self.length
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">QQLxxxx", self.source, self.destination, len(self.payload))
+        buf += self.payload  # FIXME: padding
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        bits = struct.unpack(">QQLxxxx", buffer[self.header_length:self.header_length+24])
+        self.source = bits[0]
+        self.destination = bits[1]
+        payload_length = bits[2]
+        payload_start = self.header_length + 24
+        self.payload = buffer[payload_start:payload_start + payload_length]
+        return
 
 
 class SendChunk(Message):
@@ -255,168 +435,37 @@ class Reboot(Message):
     def __init__(self):
         super().__init__()
 
+    def encode(self) -> bytes:
+        return super().encode()
+
+    def decode(self, buffer: bytes):
+        return super().decode(buffer)
+
 
 class Shutdown(Message):
     def __init__(self):
         super().__init__()
 
+    def encode(self) -> bytes:
+        return super().encode()
 
-########################################################################
-
-class Codec:
-    """Message encode/decoder."""
-    def __init__(self):
-        """Constructor."""
-        self.registry = {}
-        return
-
-    def register(self, message_type: int, klass):
-        """Register the class associated with a message type code."""
-        self.registry[message_type] = klass
-
-    @staticmethod
-    def pad_for_encode(buf: bytes, n: int):
-        buf += (n - len(buf) % n) * b'\x00'
-
-    @staticmethod
-    def pad_for_decode(offset: int, field_type) -> int:
-        """Return additional padding required to append typed value."""
-        # Type alignments.
-        if field_type in (bool, UInt8):
-            alignment = 1
-        elif field_type == UInt16:
-            alignment = 2
-        elif field_type in(bytes, UInt32):
-            alignment = 4
-        elif field_type == UInt64:
-            alignment = 8
-        else:
-            raise Exception("unknown field type")
-
-        # If current offset % alignment is zero, no padding required.
-        # Otherwise, pad to next multiple of alignment.
-        if (offset % alignment) == 0:
-            return 0
-
-        padding = alignment - (offset % alignment)
-        return padding
-
-    def decode(self, buf: Buffer):
-
-        # Get version.
-        if buf.length() < 1:
-            return None
-
-        version = buf[0]
-        if version != 1:
-            raise Exception("unhandled protocol version")
-
-        # Version 1
-        if buf.length() < 2:
-            return None
-
-        header_length = buf[1]
-        if buf.length() < header_length:
-            return None
-
-        type_code = buf[2]
-        message_type = self.registry.get(type_code)
-        if message_type is None:
-            raise Exception("unhandled message type")
-
-        message = message_type()
-        offset = 0
-        for name, value in message.__dict__.items():
-            ft = type(value)
-
-            if ft == UInt8:
-                raw = buf.peek_slice(offset, 1)
-                offset += 1
-                setattr(message, name, UInt8(raw[0]))
-            elif ft == UInt16:
-                offset += self.pad_for_decode(offset, ft)
-                raw = buf.peek_slice(offset, 2)
-                offset += 2
-                setattr(message, name, UInt16(struct.unpack('!S', raw)[0]))
-            elif ft == UInt32:
-                offset += self.pad_for_decode(offset, ft)
-                raw = buf.peek_slice(offset, 4)
-                offset += 4
-                setattr(message, name, UInt32(struct.unpack('!L', raw)[0]))
-            elif ft == UInt64:
-                offset += self.pad_for_decode(offset, ft)
-                raw = buf.peek_slice(offset, 8)
-                offset += 8
-                setattr(message, name, UInt64(struct.unpack('!Q', raw)[0]))
-            elif ft == bool:
-                raw = buf.peek_slice(offset, 1)
-                offset += 1
-                setattr(message, name, raw[0] == 1)
-            elif ft == bytes:
-                offset += self.pad_for_decode(offset, ft)
-                raw_length = buf.peek_slice(offset, 4)
-                string_length = struct.unpack('!L', raw_length)[0]
-                offset += 4
-                raw_string = buf.peek_slice(offset, string_length)
-                setattr(message, name, raw_string)
-                offset += string_length
-            else:
-                raise Exception('unhandled value type in message')
-
-        buf.consume(offset)
-        return message
-
-    def encode_uint8(self, value: int, buf: memoryview):
-        buf[0] = value
-        return 1
-
-    def encode_uint16(self, value: int, buf: memoryview):
-        buf[0:2] = value.to_bytes(2, byteorder='big', signed=False)
-        return 2
-
-    def encode_uint32(self, value: int, buf: memoryview) -> int:
-        buf[0:4] = value.to_bytes(4, byteorder='big', signed=False)
-        return 4
-
-    def encode_uint64(self, value: int, buf: memoryview) -> int:
-        buf[0:8] = value.to_bytes(8, byteorder='big', signed=False)
-        return 8
-
-    def encode_bool(self, value: bool, buf: memoryview) -> int:
-        buf[0] = 1 if value else 0
-        return 1
-
-    def encode_header(self, message: Message, buf: memoryview):
-        buf[0] = 1  # version
-        buf[1] = 8  # header length
-        buf[2] = message.type
-        buf[3] = 0  # always zero
-        buf[4:8] = message.length.to_bytes(4, byteorder='big', signed=False)
-        return 8
-
-    def encode_open_port_request(self, message: OpenPortRequest) -> bytes:
-        buf = bytearray(16)
-        offset = self.encode_header(message, memoryview(buf))
-        self.encode_uint64(message.requested_port, memoryview(buf)[offset:])
-        return buf
-
-    def encode_open_port_response(self, message:OpenPortResponse) -> bytes:
-        buf = bytearray()
-        return buf
-
-    def encode(self, message: 'Message') -> bytes:
-        """Encode the supplied message, and return a byte buffer."""
-
-        if message.type == MSG_OPEN_PORT_RQST:
-            return self.encode_open_port_request(typing.cast(OpenPortRequest, message))
-        elif message.type == MSG_OPEN_PORT_RESP:
-            return self.encode_open_port_response(typing.cast(OpenPortResponse, message))
+    def decode(self, buffer: bytes):
+        return super().decode(buffer)
 
 
 ########################################################################
 
-class PortListener:
-    """Interface required for applications to use the p-kernel IPC."""
+class EventListener:
+    """Interface required for asynchronous use of the p-Kernel API."""
+
+    def on_open_port(self, port: int):
+        pass
+
+    def on_close_port(self, port: int):
+        pass
+
+    def on_send_message(self, port: int, request_id: int):
+        pass
 
     def on_message(self, source: int, destination: int, message: bytes):
         """Handle a delivered message."""
@@ -426,12 +475,14 @@ class PortListener:
         """Handle a delivered stream chunk."""
         pass
 
-    def on_error(self, port: int, error: int, reason: str):
+    def on_error(self, request: int, error: int, reason: str):
         """Handle a reported communications error."""
         pass
 
+
 class PortState:
     """Process-side state for an open port."""
+
     def __init__(self, port_id: int):
         """Constructor.
 
@@ -440,10 +491,8 @@ class PortState:
         # Unique identifier for this port.
         self.port_id = port_id
 
+        # True if port is open.
         self.is_open: bool = False
-
-        # Reassembly buffer.
-        self.buffer = Buffer()
 
         # Queue of messages received for this port, but not yet
         # retrieved by the application.
@@ -452,12 +501,13 @@ class PortState:
 
     def append_bytes(self, buf: bytes):
         """Append received bytes to the reassembly buffer."""
-        return
+        return self.buffer.append(buf)
 
     def get_message(self) -> typing.Optional[Message]:
         """Return a queued, received Message, if one is available.
 
         :returns: a Message, or None if none is available."""
+
         return
 
 
@@ -471,97 +521,205 @@ class ProcessRuntimeState:
 
     def __init__(self):
         # Socket connected to p-kernel message router.
-        self.socket = None
+        self.socket: typing.Optional[socket.socket] = None
 
         # Set of local ports registered with p-kernel.
-        self.ports = {}
+        self.ports: typing.Dict[int, PortState] = {}
 
         # Transaction identifiers for p-kernel requests.
-        self.request_id = 0
+        self.request_id: int = 0
+
+        # Pending requests.
+        # FIXME: do I want a dedicated type here?
+        self.requests: typing.Dict[int, typing.Any] = {}
 
         # Re-assembly buffer.
         self.recv_buffer = Buffer()
 
-        # Protocol encoding.
-        self.codec = Codec()
-
         # Event loop.
-        self.loop = None
+        self.loop: typing.Optional[EventLoopInterface] = None
 
-    def connect_to_p_kernel(self) -> int:
+        # Event listener if runtime is in async mode.
+        self.listener: typing.Optional[EventListener] = None
+        return
+
+    def get_next_request_id(self) -> int:
+        self.request_id += 1
+        return self.request_id
+
+    def connect_to_p_kernel(self):
         """Establish the TCP connection to the p-kerenl."""
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.socket.connect(('localhost', IPC_PORT))
-        return 0
 
-    def send_to_p_kernel(self, message):
-        buffer = self.codec.encode(message)
+        self.loop.add_socket(self.socket, self)
+        return
+
+    def on_readable(self, sock: socket.socket):
+        print("Callback: socket is readable")
+
+        data = sock.recv(65536)
+        self.handle_bytes_from_p_kernel(data)
+
+    def on_writeable(self, sock: socket.socket):
+        #print("Callback: socket is writeable")
+        pass
+
+    def on_connected(self, sock: socket.socket):
+        print("Callback: socket is connected")
+        pass
+
+    def send_to_p_kernel(self, message: Message):
+        """Send a "syscall" message to the p-Kernel.
+
+        :param message: Message to send."""
+        buffer = message.encode()
+        # FIXME: in an async world, this should queue and return if it can't write immediately
         self.socket.sendall(buffer)
         return
 
     def handle_bytes_from_p_kernel(self, buffer: bytes):
-        pass
 
-    def run_until_response_from_p_kernel(self):
-        pass
+        # Append bytes to process-wide reassembly buffer.
+        self.recv_buffer.append(buffer)
 
-    def open_port(self, listener: PortListener, port: int = -1) -> int:
+        while True:
+            # Attempt to get message: if message is incomplete, just return.
+            if self.recv_buffer.length() < 8:
+                return
+
+            header_buf = self.recv_buffer.peek(8)  # FIXME: check version, etc, first.
+            message_length = Message.decode_length(header_buf)
+            if self.recv_buffer.length() < message_length:
+                # Wait for more data to be delivered so we can decode message.
+                return
+
+            message_buf = self.recv_buffer.peek(message_length)
+            self.recv_buffer.consume(message_length)  # FIXME: make this one operation
+            message_type = Message.decode_type(message_buf)
+
+            # Dispatch message to handlers.
+            if message_type == MSG_DELIVER_MESSAGE:
+                message = DeliverMessage()
+                message.decode(message_buf)
+                self.handle_deliver_message(message)
+
+            elif message_type == MSG_OPEN_PORT_RESP:
+                message = OpenPortResponse()
+                message.decode(message_buf)
+                self.handle_open_port_response(message)
+
+            elif message_type == MSG_CLOSE_PORT_RESP:
+                message = ClosePortResponse()
+                message.decode(message_buf)
+                self.handle_close_port_response(message)
+
+            else:
+                logging.warning(f"Unhandled message type: {message_type}")
+
+    def handle_deliver_message(self, message: DeliverMessage):
+        # Check destination.
+        if message.destination not in self.ports:
+            self.listener.on_error(0, 0, "Bad port")
+            return
+
+        self.listener.on_message(message.source, message.destination, message.payload)
+        return
+
+    def handle_open_port_response(self, message: OpenPortResponse):
+        # Look up the request.
+        request = self.requests.get(message.request_id)
+        if request is None:
+            self.listener.on_error(0, 0, "response to unknown request")
+            return
+
+        del self.requests[message.request_id]
+
+        # Check result: if error, discard state.
+        if message.result != 0:
+            if message.port in self.ports:
+                del self.ports[message.port]
+
+            self.listener.on_error(0, message.result, "p-Kernel error")
+            return
+
+        # Set or overwrite port state.
+        port_state = PortState(message.port)
+        port_state.is_open = True
+        self.ports[message.port] = port_state
+
+        self.listener.on_open_port(message.port)
+        return
+
+    def handle_close_port_response(self, message: ClosePortResponse):
+
+        assert message.port in self.ports
+
+        self.listener.on_close_port(message.port)
+
+        del self.ports[message.port]
+        del self.requests[message.request_id]
+        return
+
+    def open_port(self, port: int = -1):
         """Allocate a new port for communication from/to this application.
 
-        :param listener: Interface for reporting events on this port.
         :param port: Optional requested port number.
         :returns: Allocated port number."""
 
-        # FIXME: how should an error be reported?  Exception?
-
-        # FIXME: validate requested port number
-
         # If we don't have a p-kernel TCP session already, open one.
         if self.socket is None:
-            if result := self.connect_to_p_kernel():
-                return result
+            # FIXME: should be async
+            self.connect_to_p_kernel()
 
-        # Claim this port locally.
+        # Check this isn't a duplicate port number (locally).
+        if port in self.ports:
+            raise DuplicatePortError(port)
+
+        # Reserve this port locally.
         if port != 0:
-            self.ports[port] = PortState(port)
+            self.ports[port] = None  # FIXME
 
         # Send an open_port request to the p-Kernel.
-        request = OpenPortRequest(port)
+        request_id = self.get_next_request_id()
+        request = OpenPortRequest(request_id, port)
+        self.requests[request_id] = request
+        self.send_to_p_kernel(request)
+        return
+
+    def close_port(self, port: int):
+        """Close an existing port."""
+        port_state = self.ports.get(port)
+        if port_state is None:   # FIXME: need a better way to claim HALF_OPEN port numbers
+            raise NonExistentPortError(port)
+
+        port_state.is_open = False  # FIXME: need HALF_CLOSED here.
+
+        request_id = self.get_next_request_id()
+        request = ClosePortRequest(request_id, port)
+        self.requests[request_id] = request
+        self.send_to_p_kernel(request)
+        return
+
+    def send_message(self, source: int, destination: int, message: bytes):
+        """Send a message between ports.
+
+        :param source: Source (local) port.
+        :param destination: Destination (remote) port.
+        :param message: Payload to be delivered."""
+
+        # Validate source port.
+        if source not in self.ports:
+            raise NonExistentPortError(source)
+
+        request = SendMessage(source, destination)
+        request.set_payload(message)
+
         self.send_to_p_kernel(request)
 
-        # FIXME: what I *want* to do here is enter a nested event loop instance, blocking until we get a reply.
-        # FIXME: that'd need to work with Qt (for apps) and the service event loop (which we control).
-        # FIXME: is that possible with Qt?  Can we just call _exec() again?  Looks like yes: just create a QEventLoop.
-
-        # Wait for the response: ack or error.
-        message = _state.receive_from_port()
-        assert (message.type == MSG_OPEN_PORT_RESP)
-        response: OpenPortResponse = message
-
-        # FIXME: check errors
-        if response.result != 0:
-            return response.result
-
-        # FIXME: create local port state
-        _state.ports[response.port] = None
-
-        # FIXME: return port_id
-        return response.port
-
-    def receive_from_port(self, port: int) -> Message:
-        # Service a port, waiting for a reply, and delivering Messages
-        # and Chunks to their appropriate port queues.
-
-        # FIXME: need a switch here, because we could get deliveries.
-        # FIXME: handle C-c
-        # FIXME: handle zero-length recv
-        recv_buf = _state.socket.recv(RECV_BUFLEN)
-        _state.recv_buffer.append(recv_buf)
-
-        response = _state.codec.decode(_state.recv_buffer)
-
-        return response
-
+        # FIXME: once sending is properly async, this can be (re)moved.
+        self.listener.on_send_message(0, 0)  ## FIXME: these params make no sense
+        return
 

@@ -1,6 +1,6 @@
 #! /usr/bin/env python
 # darqos
-# Copyright (C) 2022 David Arnold
+# Copyright (C) 2022-2023 David Arnold
 
 # This file is the main executable of the network service that currently
 # provides the functionality expected to ultimately reside in the darqos
@@ -19,6 +19,8 @@
 # xxx
 
 import logging
+import random
+import select
 import subprocess
 import sys
 
@@ -26,8 +28,7 @@ from dataclasses import dataclass
 
 import darq
 from darq.kernel.ipc import *
-from darq.kernel.loop import SelectEventLoop
-from darq.kernel.message import *
+from darq.kernel.loop import SelectEventLoop, SocketListener, TimerListener
 
 from ipc import IPCClient
 
@@ -59,19 +60,19 @@ class ServiceState:
 
 
 SERVICES = [
-    ServiceInfo("storage", "services/storage/main.py"),
-    ServiceInfo("security", "services/security/main.py"),
-    ServiceInfo("type", "services/type/main.py"),
+    #ServiceInfo("storage", "services/storage/main.py"),
+    #ServiceInfo("security", "services/security/main.py"),
+    #ServiceInfo("type", "services/type/main.py"),
     # ServiceInfo("name", "service/name/name.py"),
-    ServiceInfo("index", "services/index/main.py"),
-    ServiceInfo("history", "services/history/main.py"),
-    ServiceInfo("metadata", "services/metadata/main.py"),
+    #ServiceInfo("index", "services/index/main.py"),
+    #ServiceInfo("history", "services/history/main.py"),
+    #ServiceInfo("metadata", "services/metadata/main.py"),
     # KB / things
-    ServiceInfo("terminal", "services/terminal/main.py")
+    #ServiceInfo("terminal", "services/terminal/main.py")
 ]
 
 
-class PseudoKernel(darq.Service):
+class PseudoKernel(darq.Service, SocketListener, TimerListener):
     """IPC message router."""
 
     def __init__(self):
@@ -93,16 +94,7 @@ class PseudoKernel(darq.Service):
         self.socket.setblocking(False)
         self.socket.bind(('0.0.0.0', 11000))
         self.socket.listen()
-
-        # Protocol codec.
-        # FIXME: move this somewhere to run at import time
-        self.codec = Codec()
-        self.codec.register(MSG_OPEN_PORT_RQST, OpenPortRequest)
-        self.codec.register(MSG_OPEN_PORT_RESP, OpenPortResponse)
-        self.codec.register(MSG_REMOVE_PORT_RQST, ClosePortRequest)
-        self.codec.register(MSG_REMOVE_PORT_RESP, ClosePortResponse)
-        self.codec.register(MSG_SEND_MESSAGE, SendMessage)
-        self.codec.register(MSG_DELIVER_MESSAGE, DeliverMessage)
+        self.loop.add_socket(self.socket, self)
 
         # Event loop.
 
@@ -113,10 +105,46 @@ class PseudoKernel(darq.Service):
     def get_name() -> str:
         return "IPC"
 
+    def on_readable(self, sock: socket.socket):
+        """Handle client offer socket readable event."""
+        if sock == self.socket:
+            # This is the server's listening socket.
+            client_socket, client_addr = self.socket.accept()
+            client = IPCClient(self, client_socket)
+            self.clients[client_socket] = client
+
+            self.loop.add_socket(client_socket, self)
+
+            logging.info(f"IPC: Socket [{client_socket.fileno()}] "
+                         f"connected from {client_addr}")
+            return
+
+        client = self.clients.get(sock)
+        if client is None:
+            logging.error(f"IPC: got read callback from unexpected "
+                          f"socket {sock.fileno()}.  Closing socket.")
+
+            self.loop.cancel_socket(sock)
+            sock.close()
+            return
+
+        client.on_readable(sock)
+        return
+
+    def on_writeable(self, sock: socket.socket):
+        # Ignore writeable events on offer socket.
+        pass
+
+    def on_timeout(self, timer_id: int, expiry: float, actual_time: float):
+        pass
+
     def run(self):
         """Main loop."""
 
         logging.info("IPC: Servicing requests.")
+        self.loop.run()
+        return
+
         while self.is_active:
             sl = [c.get_socket() for c in self.clients.values()]
             sl.append(self.socket)
@@ -125,7 +153,7 @@ class PseudoKernel(darq.Service):
 
             for s in ready_read:
                 if s == self.socket:
-                    self.handle_connect()
+                    self.on_readable(s)
                 else:
                     client = self.clients.get(s)
                     if not client:
@@ -144,35 +172,30 @@ class PseudoKernel(darq.Service):
                     client.on_writeable(s)
         return
 
-    def handle_connect(self):
-        """Handle a new connection request."""
-
-        client_socket, client_addr = self.socket.accept()
-        client = IPCClient(self, client_socket)
-        self.clients[client_socket] = client
-
-        logging.info(f"IPC: Client socket [{client_socket.fileno()}] "
-                     f"connected from {client_addr}")
-        return
-
     def handle_disconnect(self, client: IPCClient):
         """Handle disconnection of a client process.
 
         :param client: Client that has disconnected."""
+
+        # Cache name, because we need to use it a few times.
+        name = client.name()
 
         # Deregister ports.
         ports = client.get_ports()
         for port in ports:
             if port in self.fds:
                 del self.fds[port]
-                logging.debug(f"IPC: closed port {port}")
+                logging.debug(f"IPC: {name} closed port {port}")
 
         # Remove client.
         sock = client.get_socket()
         if sock in self.clients:
             del self.clients[sock]
 
-        logging.info(f"IPC: Client on socket [{sock.fileno()}] disconnected")
+        self.loop.cancel_socket(sock)
+        sock.close()
+
+        logging.info(f"IPC: {name} disconnected.")
         return
 
     def get_ephemeral_port(self):
@@ -226,11 +249,11 @@ class PseudoKernel(darq.Service):
                             f"No such port: {message.destination}")
             return
 
-        buf = self.codec.encode(message)
+        buf = message.encode()
         dest_client.send_data(buf)
         return
 
-    def handle_reboot(self, client: IPCClient, message):
+    def handle_reboot(self, client: IPCClient, message: Reboot):
         logging.info(f"System booting.")
 
         # Shutdown first.
@@ -239,7 +262,7 @@ class PseudoKernel(darq.Service):
         # Start services.
         self.do_boot()
 
-    def handle_shutdown(self, client: IPCClient, message):
+    def handle_shutdown(self, client: IPCClient, message: Shutdown):
         logging.info(f"System shutdown requested.")
 
         self.do_shutdown()
@@ -261,9 +284,12 @@ class PseudoKernel(darq.Service):
         """Start system services."""
         # Start list of configured services.
         for service_info in SERVICES:
+            logging.info(f"Starting {service_info.name} service.")
             p = subprocess.Popen(["python", service_info.path])
             s = ServiceState(name=service_info.name, process=p)
             self.services.append(s)
+
+        logging.info(f"Services started.")
         return
 
     def schedule_boot(self):
@@ -283,8 +309,9 @@ class PseudoKernel(darq.Service):
             if port <= 0:
                 logging.error("IPC: Ephemeral port overflow; request failed.")
                 self.send_open_port_response(client,
-                                             request.requested_port,
-                                             False)
+                                             request.request_id,
+                                             1,  # FIXME: better errno
+                                             request.requested_port)
                 return
 
         client.add_port(port)
@@ -295,7 +322,7 @@ class PseudoKernel(darq.Service):
                      f"assigned {port}.")
 
         logging.info(f"IPC: {client.name()} open_port({port}) succeeded")
-        self.send_open_port_response(client, port, True)
+        self.send_open_port_response(client, request.request_id, 0, port)
         return
 
     def handle_close_port_request(self,
@@ -314,7 +341,7 @@ class PseudoKernel(darq.Service):
         self.deregister_port(port, client)
 
         logging.info(f"IPC: {client.name()} close_port({port}) succeeded")
-        self.send_close_port_response(client, port, True)
+        self.send_close_port_response(client, request.request_id, 0, port)
         return
 
     def handle_send_message(self,
@@ -332,19 +359,14 @@ class PseudoKernel(darq.Service):
         # Look up destination.
         destination = self.fds.get(message.destination)
         if destination is None:
-            raise Exception("bad destination port in send")
+            raise Exception("bad destination port in send")  # FIXME: needs proper exception (and on_error)
 
         deliver = DeliverMessage()
-        deliver.set_version(1)
-        deliver.set_header_length(8)
-        deliver.set_type(MSG_DELIVER_MESSAGE)
-        deliver.set_length(8 + 20 + len(message.payload))
-
         deliver.source = message.source
         deliver.destination = message.destination
-        deliver.payload = message.payload
+        deliver.set_payload(message.payload)
 
-        buf = self.codec.encode(deliver)
+        buf = deliver.encode()
         destination.send_data(buf)
         logging.info(f"Sent deliver_message")
         return
@@ -361,29 +383,35 @@ class PseudoKernel(darq.Service):
 
     def send_open_port_response(self,
                                 client: IPCClient,
-                                port: UInt64,
-                                result: bool):
+                                request_id: int,
+                                result: int,
+                                port: UInt64):
         response = OpenPortResponse()
-        response.port = port
+        response.request_id = request_id
         response.result = result
-        buf = self.codec.encode(response)
+        response.port = port
+        buf = response.encode()
         client.send_data(buf)
-        logging.info(f"IPC: new_port response: result={result}, port={port}")
+        logging.info(f"IPC: open_port response: "
+                     f"request_id={request_id}, result={result}, port={port}")
         return
 
     def send_close_port_response(self,
                                  client: IPCClient,
-                                 port: UInt64,
-                                 result: bool):
+                                 request_id: int,
+                                 result: int,
+                                 port: UInt64):
         response = ClosePortResponse()
-        response.port = port
+        response.request_id = request_id
         response.result = result
-        buf = self.codec.encode(response)
+        response.port = port
+        buf = response.encode()
         client.send_data(buf)
-        logging.info(f"IPC: close_port response: port {port}")
+        logging.info(f"IPC: close_port response: "
+                     f"request_id={request_id}, result={result}, port={port}")
         return
 
-    def dispatch(self, client):
+    def dispatch(self, client: IPCClient):
         """Process data received from clients.
 
         :param client: Client connection that received data
@@ -391,40 +419,56 @@ class PseudoKernel(darq.Service):
         Handle received message, if buffer contains one."""
 
         # See if we have a header yet.
-        try:
-            message = self.codec.decode(client.get_buffer())
-        except Exception as e:
-            logging.warning(f"IPC: failed to decode received message: {e}")
+        buffer = client.get_buffer()
+        if buffer.length() < 8:
+            logging.debug(f"IPC: {client.name()} "
+                          f"Queued data ({buffer.length()} bytes) too s"
+                          f"mall for header (8 bytes).")
             return
 
-        if message is None:
+        message_type = Message.decode_type(buffer.peek(8))
+        message_length = Message.decode_length(buffer.peek(8))
+
+        if message_type == 0 or message_length > buffer.length():
             # Added more bytes, but total available doesn't yet constitute
             # a message.  This should only really happen in testing.
             logging.debug(f"IPC: {client.name()} "
-                          f"Queued received data too small for message")
+                          f"Queued data ({buffer.length()} bytes) "
+                          f"too small for message {message_type} "
+                          f"which expects {message_length} bytes.")
             return
 
-        if message.type == MSG_OPEN_PORT_RQST:
+        message_bytes = buffer.peek(message_length)
+        buffer.consume(message_length)  # FIXME: merge these two!
+
+        if message_type == MSG_OPEN_PORT_RQST:
+            message = OpenPortRequest()
+            message.decode(message_bytes)
             self.handle_open_port_request(client, message)
 
-        elif message.type == MSG_REMOVE_PORT_RQST:
+        elif message_type == MSG_CLOSE_PORT_RQST:
+            message = ClosePortRequest()
+            message.decode(message_bytes)
             self.handle_close_port_request(client, message)
 
-        elif message.type == MSG_SEND_MESSAGE:
+        elif message_type == MSG_SEND_MESSAGE:
+            message = SendMessage()
+            message.decode(message_bytes)
             self.handle_send_message(client, message)
 
-        elif message.type == MSG_SEND_CHUNK:
-            self.handle_send_chunk(client, message)
-
-        elif message.type == MSG_REBOOT:
+        elif message_type == MSG_REBOOT:
+            message = Reboot()
+            message.decode(message_bytes)
             self.handle_reboot(client, message)
 
-        elif message.type == MSG_SHUTDOWN:
+        elif message_type == MSG_SHUTDOWN:
+            message = Shutdown()
+            message.decode(message_bytes)
             self.handle_shutdown(client, message)
 
         else:
             logging.warning(f"IPC: {client.name()} Received message with "
-                            f"unexpected type code [{message.type}] "
+                            f"unexpected type code [{message_type}] "
                             "Ignoring message.")
         return
 
@@ -434,8 +478,10 @@ class PseudoKernel(darq.Service):
 if __name__ == "__main__":
     # FIXME: currently, just log to stderr.
     logging.basicConfig(stream=sys.stderr,
-                        format='%(asctime)s %(levelname)8s %(message)s',
+                        format='%(asctime)s p-Kernel %(levelname)8s %(message)s',
                         level=logging.DEBUG)
+
+    logging.info(f"Starting p-kernel.")
 
     # Create p-Kernel.
     service = PseudoKernel()
@@ -446,5 +492,5 @@ if __name__ == "__main__":
     # Run the event loop.
     service.run()
 
-    logging.info(f"Exiting kernel.")
+    logging.info(f"Exiting p-kernel.")
     sys.exit(0)
