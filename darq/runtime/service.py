@@ -1,15 +1,13 @@
 # DarqOS
-# Copyright (C) 2022 David Arnold
-
+# Copyright (C) 2022-2023 David Arnold
 
 import orjson
 import os
 
-from darq.kernel.ipc import PortListener, open_port, close_port, send_message
-from darq.kernel.loop import EventLoopInterface
+from ..kernel import EventLoopInterface, EventListener, open_port, close_port, send_message
 
 
-class Service(PortListener):
+class Service(EventListener):
     """Service base class."""
 
     def __init__(self, loop: EventLoopInterface, port: int = 0):
@@ -99,7 +97,7 @@ class Service(PortListener):
         reply["xid"] = request["xid"]
         buf = orjson.dumps(reply)
 
-        send_message(self.port, port, buf)
+        darq.send_message(self.port, port, buf)
         return
 
     def on_message(self, source: int, destination: int, buffer: bytes):
@@ -114,24 +112,21 @@ class Service(PortListener):
             pass
         pass
 
-    def on_chunk(self, source: int, destination: int, stream: int, offset: int, chunk: bytes):
-        """Handle a delivered stream chunk."""
-
-        # Streaming not used for base service.
-        pass
-
     def on_error(self, port: int, error: int, reason: str):
         """Handle a reported communications error."""
         # FIXME
         pass
 
 
-class ServiceAPI(PortListener):
+class ServiceAPI(EventListener):
     """Base class for runtime service APIs."""
 
     def __init__(self, port: int):
+        """Constructor.
+
+        :param port: Port ID for requests to this service"""
         self._service_port = port
-        self._port = open_port(self)
+        self._port = open_port()
 
     def rpc(self, request: dict) -> dict:
         """Send a server request, and await a reply."""

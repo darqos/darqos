@@ -3,8 +3,8 @@
 
 # Tools are application processes that are not a type implementation.
 
-from darq import PortListener
+from darq import EventListener
 
 
-class Tool(PortListener):
+class Tool(EventListener):
     pass
