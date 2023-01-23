@@ -1,17 +1,17 @@
 # IPC
 
-During its prototype phase, DarqOS is implemented as a runtime library
-and a collection of services, all communicating via message passing.
+In DarqOS, inter-process communication uses a kernel-provided IPC
+facility, similar in basic concept to many microkernels.  Processes
+can open a _port_, send, and receive messages.  At this stage, it is
+intended that message delivery is asynchronous: the caller is not
+blocked.
 
-It is possible, even likely, that this model will persist beyond the
-prototyping phase, following a similar path to systems such as CMU's
-Mach.
-
-The prototype IPC facility is implemented with some code in the runtime
-library, and a single "message broker" process, sometimes referred to as
-the pseudo-kernel, or p-kernel.  The use of the p-kernel enables 
-experimentation with means of addressing, and hides the underlying
-implementation from the service and application processes.
+During its prototype phase, the DarqOS kernel is implemented as a
+pseudo-kernel service, with a matching runtime library that presents
+the system call API to applications.  The runtime library communicates
+with the _pKernel_ service.  All inter-process communication is
+brokered by the p-kernel which internally maintains a collection of
+abstract ports.
 
 Communication between a process and the p-kernel uses TCP, in order to
 have reliable delivery, and a well-known port, avoiding a need to
@@ -19,10 +19,15 @@ bootstrap the connection and resolve addresses between processes.
 
 ## Messages
 
-Messages use a simple 32 bit framing header, with a consequent maximum
-message size of 4GB (which seems ample, but is it really?)
+Confusingly, there are two layers of messages in this design: the
+prototype-specific p-kernel messages, and the application-layer
+messages sent to and received from p-kernel-maintained ports.
 
-The p-kernel protocol consists of four messages:
+p-kernel messages use a simple 32 bit framing header, with a
+consequent maximum message size of 4GB (which seems ample, but is it
+really?)
+
+The p-kernel protocol consists of six messages:
 * OpenPort
 * OpenedPort
 * ClosePort
@@ -70,7 +75,7 @@ message is delivered (or the request times out).
 
 Future releases might add better support for multiple threads, and/or
 adopt a coroutine-style asynchronous model.  Depending on how that
-evolves, and explicit RPC structure might also be provided.
+evolves, an explicit RPC structure might also be provided.
 
 On the service side, the blocking dispatch loop model will be directly
 supported by the runtime.
