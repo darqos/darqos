@@ -23,7 +23,7 @@ systems:
 * it is not for everyone; it is not a general-purpose system
 * It is incomplete
 
-The goal of DarqOS is, somewhat grandly, augment human abilities.  This
+The goal of DarqOS is, somewhat grandly, to augment human abilities.  This
 is not a new notion for computers, but it's also something that's been
 more of a marketing ploy than an actual goal, at least for popular,
 modern systems.  That said, it's not a "bicycle for the mind" either:
@@ -37,9 +37,11 @@ currently a clean and efficient instantiation of its own design.
 
 ## Target Platforms
 
-The best way to try it is to use a Raspberry Pi with an HDMI monitor
-and a USB mouse and keyboard.  Both wired and wireless Ethernet are
-supported.  This is the primary development target.
+The best way to try it is to use a Raspberry Pi 400 with an HDMI monitor,
+a USB mouse and keyboard, and a USB "soundcard".  Both wired and 
+wireless Ethernet are supported.  This is the primary development target.
+
+A Raspberry Pi 4 will also work fine.
 
 It is also intended to work on tablets and mobile phones.  Some work
 has been done on the original PinePhone platform; this will likely
@@ -82,6 +84,7 @@ Tools and Types
 * [Books](doc/book.md)
 * [Music](doc/music-player.md)
 * [People](doc/pim.md)
+* [Calculations](doc/calculation.md)
 
 Details
 
