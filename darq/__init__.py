@@ -19,6 +19,7 @@ from darq.runtime.object import ObjectIdentifier, ObjectProxy
 from darq.runtime.service import Service
 from darq.runtime.service import ServiceAPI
 from darq.runtime.type import Type
+from darq.runtime.util import Facility, Level, log
 
 # IPC
 from darq.kernel.ipc import EventLoopInterface
