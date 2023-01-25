@@ -2,19 +2,7 @@
 # Copyright (C) 2023, David Arnold
 
 # Note that with systemd's journald, UDP to port 514 doesn't work, because
-# it doesn't even listen there.
-#
-# priority: int = (facility.value * 8) + level.value
-# now = time.time()
-# timestamp = time.strftime("%Y-%m-%dT%H:%M:%S.", time.gmtime(now))
-# timestamp += "%06uZ" % int((now % 1) * 1e6)
-# hostname = socket.gethostname()
-# appname = os.path.basename(sys.argv[0])
-# procid = os.getpid()
-# s = f"<{priority}> 1 {timestamp} {hostname} {appname} {procid} {message}"
-# sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-# sock.sendto(s.encode(), ("127.0.0.1", 514))
-
+# it doesn't even listen there.  Thank you, Lennart,
 
 import enum
 import syslog
