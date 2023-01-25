@@ -58,6 +58,8 @@ Existing kernels that might be useful:
   * SMP
   * Supports PinePhone
   * Does *NOT* support Raspberry Pi !? WTF?
+* Genode
+  * SculptOS 
 
 
 * Various notes:
