@@ -4,11 +4,14 @@
 # Copyright (C) 2022-2023 David Arnold
 ################################################################
 #
-# System bootstrap program, conceptually simpilar to init(8).
+# System bootstrap program, conceptually similar to init(8).
 #
-#
+# This file is executed by the p-Kernel once it has completed
+# its own bootstrap process, and is ready to begin serving
+# applications.
 #
 ################################################################
+
 import errno
 import os
 import signal
