@@ -3,7 +3,12 @@
 # darqos
 # Copyright (C) 2022-2023 David Arnold
 ################################################################
-
+#
+# System bootstrap program, conceptually simpilar to init(8).
+#
+#
+#
+################################################################
 import errno
 import os
 import signal
