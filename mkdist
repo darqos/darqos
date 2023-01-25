@@ -1,0 +1,74 @@
+#! /bin/bash
+# darqos
+# Copyright (C) 2023, David Arnold
+
+# Make a distribution snapshot
+
+rm -rf dist
+mkdir -p "dist/darq"
+
+root=$(pwd)
+destdir="$root/dist/darq"
+
+# p-Kernel.
+mkdir -p "$destdir/kernel"
+cp -p "$root"/kernel/*.py "$destdir/kernel/"
+
+# Libraries.
+mkdir -p "$destdir/lib"
+for f in `find "$root/darq" -name "*.py" -print` ; do
+  t=${f#"$root"}
+  mkdir -p `dirname $destdir/lib/$t`
+  cp -p $f $destdir/lib/$t
+  echo $t
+done
+
+# Services.
+mkdir -p "$destdir/services"
+for f in `find "$root/services" -name "*.py" -print`; do
+  t=${f#"$root"}
+  mkdir -p `dirname $destdir/$t`
+  cp -p $f $destdir/$t
+  echo $t
+done
+
+# Types.
+mkdir -p "$destdir/types"
+for f in `find "$root/types" -name "*.py" -print`; do
+  t=${f#"$root"}
+  mkdir -p `dirname $destdir/$t`
+  cp -p $f $destdir/$t
+  echo $t
+done
+
+# Lenses.
+mkdir -p "$destdir/lenses"
+for f in `find "$root/lenses" -name "*.py" -print`; do
+  t=${f#"$root"}
+  mkdir -p `dirname $destdir/$t`
+  cp -p $f $destdir/$t
+  echo $t
+done
+
+# System scripts.
+mkdir -p "$destdir/sys"
+for f in `find "$root/sys" -name "*" -print`; do
+  t=${f#"$root"}
+  mkdir -p `dirname $destdir/$t`
+  cp -p $f $destdir/$t
+  echo $t
+done
+
+
+# Make archive.
+name=darqos-1-snap`date +%Y%m%d`.tar
+rm -f $name.gz
+
+cd dist
+export COPYFILE_DISABLE=1
+tar cvf ../$name darq
+cd ..
+gzip -9 $name
+
+# Cleanup.
+rm -rf dist
