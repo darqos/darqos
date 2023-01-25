@@ -130,6 +130,7 @@ and the many and various equation structures (roots, limits, etc).
 * Equation Editors
   * https://github.com/Qt-Widgets/YAWYSIWYGEE-Qt-Equation-Editor-Widget
   * https://github.com/uwerat/qwt-mml-dev
+  * https://github.com/asciimath/asciimathml
   * Mathcha Notebook
 * Parsers 
   * https://tree-sitter.github.io/tree-sitter/

@@ -7,21 +7,25 @@
    * Suitable platform for future OS-level work
    * Trivially available Linux environment for prototyping
  * Maintain distribution as Git repo, with an install script to run on
-   the target device?
-   * Could fall back to a tarball too 
-   * Use a default Raspbian Lite as the base image
-   * Don't bother with packaging or anything
-   * Maybe use /darq as image root?
-     * /datq/src could be Git checkout
+   the target device
+   * Could fall back to a snapshot tarball too 
+   * Use *Raspberry Pi OS Lite* (64 bit) as the base image
+     * Use Mobian for PinePhone
+     * Use Debian Buster for development VMs
+   * Don't bother with packaging Darq
+   * Use `/darq` as the installed image root
+     * `/datq/dist` should be the Git checkout or snapshot
      * Other stuff as required
      * Balance between using Storage service vs. host files TBD
    * Install script could also work for hosted (macOS / Linux)
-     development too?
+     development too
    * Big things (eg. Qt) could be installed from binaries
  * Startup
    * p-Kernel
      * RPC-reachable pseudo-kernel
      * Prototype kernel API
+     * Started from systemd unit file (?)
+     * Once up and running, executes `/darq/sys/init` script
    * Storage
      * Server is a Unix daemon process, written in Python (for now).
      * Pass it the "device" info, in this case a Unix filesystem path
