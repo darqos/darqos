@@ -47,7 +47,12 @@ Existing kernels that might be useful:
   * u-kernel
 * QNX
   * Older, open source version?
-    * Is this even available? 
+    * Is this even available?
+  * https://github.com/vocho/openqnx/blob/master/trunk/lib/c/1/open.c
+  * https://www.qnx.com/legal/licensing/index.html
+  * http://www.qnx.com/news/pr_2471_1.html
+  * https://openqnx.com/node/471
+  * http://www.qnx.com/download/download.html?dlc=proc&newsearch=yes&searchme=non-commercial&p=1&sort=bydate&sorttype=desc&searchdate=alltime
 * Fuschia
 * Zircon (Google's Fuschia u-kernel)
 * managram
@@ -59,7 +64,7 @@ Existing kernels that might be useful:
   * Supports PinePhone
   * Does *NOT* support Raspberry Pi !? WTF?
 * Genode
-  * SculptOS 
+  * SculptOS
 
 
 * Various notes:
