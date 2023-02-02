@@ -13,10 +13,12 @@ in the system.
   * Should these be "owned" by the system, and not directly editable
     by an end user?
 * Object name (like, if you want a "filename")
+* Linkage between the object identifier and its storage, or its
+  knowledge base, for instance
 
 ## Implementation
 
-It'd be good to have strongly typed metadata: strings, integers, 
+It'd be good to have strongly typed metadata: strings, integers,
 datetimes, etc, so that makes the use of a SQL database a little
 fiddly.  Something like Mongo would work, but that's a big dependency
 to introduce.
@@ -40,7 +42,7 @@ Sigh.  Complicated.  What can I do *simply*, first?
 Can I store everything as text, but do something smart with dates and
 numbers?
 
-So, a table of object_id + tag + value, and maybe just text match?  
+So, a table of object_id + tag + value, and maybe just text match?
 
 ## API
 
@@ -62,3 +64,22 @@ So, a table of object_id + tag + value, and maybe just text match?
   * Return objects for which tag exists, and has a value matching any
     of the supplied values
 
+
+## Notes
+
+* It's really not clear to me yet how this should work, or precisely
+  what it should attempt to do.
+  * eg. for a book catalog entry object, should the properties be
+    stored marshalled into a storage blob?  Or should they just use
+    metadata?
+  * How should the namespace be managed?  Can end-users arbitrarily
+    add new keys?
+  * Does every "file" in the system have a metadata entry, which
+    records its dates, user tags, storage id, etc?
+
+* Schema:
+  * id
+  * key
+  * typed-value
+    * sucks for most SQL
+      * although, ironically, Sqlite3 will likely be just fine

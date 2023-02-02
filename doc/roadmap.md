@@ -10,7 +10,6 @@ these days.  I think continuous integration is probably a better
 approach, perhaps reflecting the Bell Labs approach of doing occasional
 snapshot “editions”.
 
-
 ## Deliverables
 * A statement of philosophy and goals, being an implicit motivation
   for the project also
@@ -36,7 +35,7 @@ and library software will have an "M" prefix.
 The goal of the first prototype milestone is to “boot” and get running
 with an identifiably different system, minimal aesthetics, minimal
 user functionality, but a viable target platform for further work.
-The (vast) majority of P0 work should be done in Python, to ensure
+The (vast) majority of 1ed work should be done in Python, to ensure
 it’s malleable.
 
 Infrastructure
@@ -46,12 +45,14 @@ Infrastructure
 * Manual stack
   * Markdown?
   * RST?
+  * AsciiDoc?
   * API reference generation and integration
   * HTML and PDF output
-  * man pages?
+  * man pages
+  * Sphinx?  pandoc? etc
 * Release process
   * Distribution formats
-    * tarball and/or git clone? 
+    * tarball and/or git clone?
   * Testing
 
 System
@@ -75,12 +76,12 @@ System
       * Something else?  GPB, Cap'n'proto, Avro, etc?
       * Does it need an IDL?
   * Do we need object/service activation?
-    * And if so, what's a good option?   
+    * And if so, what's a good option?
 * A collection of cooperating processes
   * Written in Python
   * Communicating using the selected IPC
 * GUI
-  * Full-screen window background, hiding all the host OS 
+  * Full-screen window background, hiding all the host OS
   * Use PyQt5 (and/or PyQt6) for Ubuntu/X11
     * Avoids getting bogged down widget libraries, etc.
     * For Raspberry Pi 4/400, use the EGL target of Qt (no X11, no Wayland)
@@ -117,9 +118,9 @@ Services
   * System-wide
   * Activity timeline
 * Security
-  * User authentication 
+  * User authentication
 * Type
-  * Registry 
+  * Registry
 * Terminal
   * Framebuffer(s)
     * Using Qt5 with a full-screen window, and Z-ordering of other
@@ -139,7 +140,7 @@ Services
     * History
     * Metadata
   * Events
-    * Universal inbox 
+    * Universal inbox
   * Clock
   * REPL?
 
@@ -155,7 +156,7 @@ Types
     * Installed as part of "root filesystem" during build?
       * ie. pre-installed into storage service database?
     * How about subsequent updates and new types?
-      * Check or register all type implementations during bootstrap? 
+      * Check or register all type implementations during bootstrap?
 * Text
   * CRUD
   * UTF8
@@ -174,7 +175,7 @@ Story
 * Boot device.
 * See login window.
   * No need to deal with initial account creation, etc, yet.
-    * Could do this via firstboot script? 
+    * But, could do this via firstboot script?
 * Log in with password.
   * No need for user -- there's only one
   * Should allow shutdown / reboot
@@ -222,6 +223,7 @@ Types
     * https://github.com/pymupdf/PyMuPDF
   * This might require some refactoring of the type/viewer design.
     * ie. what's the right API for a PDF object?
+      * See discussion under Book object type
 
 * HTML
   * Display-only
