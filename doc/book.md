@@ -170,7 +170,6 @@ sub-typing and specialized collections can work.
       * Is it possible to sort images by colour (surely, yes)?  How
         about by shape or object?  Maybe some ML involved there?
 
-
 * Add an e-book type
   * Basically the same data in type instance, but with the addition
     of a reference to the actual content in the storage server
