@@ -128,3 +128,76 @@ These relationships can be browsed by following links presented in
 the various type viewers for these types.  They should also populate
 the history service with events, and the index service with textual
 names, addresses, notes, etc.
+
+
+# Roadmap
+
+This is a very complex problem to resolve.
+
+Let's assume first that the KB service is implemented, and provides a
+data model along the lines of WikiData.  This leads to a scenario
+where we have schemas defined for all the PIM-relevant entity types,
+an ability to store instances of them, and some sort of search and
+retrieval capability.
+
+Assume too that we have a bunch of suitable Lenses defined for these
+entity types, and (perhaps most challengingly) an ability to embed
+those Lenses into other Lenses or Tools as required.
+
+How then do we provide PIM-like functionality, given this?
+* Universal search
+* Defined entity types and instances
+* Storage and retrieval
+* Suitable entity Lenses
+
+What are the use-contexts that constitute a "PIM"?  And what about
+other uses?
+
+So, some scenarios:
+* I want to send an email to someone, whose name I know
+  * Type their (optionally, partial) name into the search bar
+    * This would likely give numerous hits: emails, paper authorage,
+      source code commits, etc: how is it that the KB record gets
+      priority in the search results?
+    * What levels of indirection should be used, and (importantly)
+      when?
+      * If we search by name, and find an email header that matches:
+        * Did that email create a KB record when it was delivered, so
+          we don't *need* to search for the email itself?
+          * If so, does the indexing record the entity identifiers, or
+            the text name and address?
+      * If, say, we've searched the index and hit upon a KB person
+        entity that matches, but the user does not click on it
+        straight away ... what do we do?
+        * At what point do we decide to do an indirect search via the
+          email address associated with the person entity record in
+          KB?  And ditto phone number?
+        * At what point do we decide to do a web search as well?
+        * How are the results presented, and prioritised?
+* A new DarqOS user wants to import their existing contacts
+  * eg. a vObject file, or a link to Google, Apple, Microsoft, or
+    CardDAV
+  * Is this an isolated task?  Or is it best done in a broader context
+    of importing email and contacts and calendar as a bundle?
+  * How do we intgrate with social media accounts?  esp. LinkedIn and
+    Facebook, but also stuff like WhatsApp?
+    * I think ... we will need to have a daemon which pulls info from
+      the websites and updates our view of the world.  Probably one
+      per-site would make sense all-round.
+
+So, ok.
+* KB service and client library
+* Schemas for the relevant entity types
+* A basic single-person lens, looking like a business card-style view
+  of a person's attributes, with a bunch of links to
+  * Other people
+  * Places (addresses, etc)
+  * Companies / organisations
+* A basic "place" card Lens
+* A basic "company" card Lens
+* A vCard importer
+* A CardDAV synchroniser
+* Linkage to email
+* Linkage to Slack
+* Linkage to SMS
+* Linkage to Signal
