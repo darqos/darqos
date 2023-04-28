@@ -11,6 +11,7 @@ approach, perhaps reflecting the Bell Labs approach of doing occasional
 snapshot “editions”.
 
 ## Deliverables
+
 * A statement of philosophy and goals, being an implicit motivation
   for the project also
 * A statement of non-goals, for clarity, reducing incorrect assumptions
@@ -32,6 +33,7 @@ and library software will have an "M" prefix.
 
 
 ### First Edition
+
 The goal of the first prototype milestone is to “boot” and get running
 with an identifiably different system, minimal aesthetics, minimal
 user functionality, but a viable target platform for further work.
@@ -57,10 +59,12 @@ Infrastructure
 
 System
 * Host platform
-  * Ubuntu 22.04 LTS AMD64
-  * Raspberry Pi 4/400
+  * AMD64 VM
+  * Raspberry Pi 4
+  * Raspberry Pi 400
 * Host OS
-  * Unix: Ubuntu, Debian, or Raspbian
+  * Ubuntu 22.04 LTS
+  * Rasberry Pi OS Lite
 * IPC
   * API in Python runtime module
   * Use a single central message broker process to provide the shared
@@ -175,19 +179,27 @@ Story
 * Boot device.
 * See login window.
   * No need to deal with initial account creation, etc, yet.
-    * But, could do this via firstboot script?
+    * But, could do this via a firstboot script?
 * Log in with password.
   * No need for user -- there's only one
-  * Should allow shutdown / reboot
+  * Should allow shutdown / reboot from login screen
 * Get initial UI
-  * Search bar/object selector, object factory, etc
+  * Blank screen(s)
+  * System hotkeys:
+    * Factory (S-n)
+    * Search (S-space)
+    * Events (S-e)
+    * How does we lock / shutdown from here?
+    * Do these _replace_ each other on screen?  eg. S-n S-space will
+      pop the factory, then hide factory and pop search?
 * Create a new text document
 * Close the text viewer
 * Find document with search bar, and view it again
 * Logout
-
+  * How?
 
 ### Second Edition
+
 Support web browsing, and begin work on metadata/indexer support to
 make that experience better than on existing platforms.
 
@@ -199,6 +211,9 @@ System
   * Consider adding PinePhone
 
 Services
+* Knowledge Base
+  * Wikidata-like
+  * Key underlying service for a lot of the value-add types
 * URL fetcher
   * HTTP, HTTPS, FTP, SFTP, FTPS, etc
   * Not involved in WebSockets or WebRTC
@@ -215,16 +230,6 @@ Services
   * Part of Security service?
 
 Types
-* PDF
-  * Display only
-  * Possible vectors:
-    * https://github.com/Belval/pdf2image
-    * https://github.com/Zain-Bin-Arshad/PDF-Viewer
-    * https://github.com/pymupdf/PyMuPDF
-  * This might require some refactoring of the type/viewer design.
-    * ie. what's the right API for a PDF object?
-      * See discussion under Book object type
-
 * HTML
   * Display-only
   * HTML5/CSS3/ES7/SVG2/etc
@@ -234,11 +239,72 @@ Types
   * This might require some refactoring of the type/viewer design.
     * ie. what's the right API for a HTML object?
       * DOM?
+* PDF
+  * Display only
+  * Possible vectors:
+    * https://github.com/Belval/pdf2image
+    * https://github.com/Zain-Bin-Arshad/PDF-Viewer
+    * https://github.com/pymupdf/PyMuPDF
+  * This might require some refactoring of the type/viewer design.
+    * ie. what's the right API for a PDF object?
+      * See discussion under Book object type
+* BookRecord
+   * Could be for an eBook or a physical book
+   * Bunch of metadata, but mostly stored in KB
+   * Some similarities to music and video: there can be physical
+     entities that are cataloged with their metadata, but don’t have a
+     stored object underneath them.  They then have a collective
+     presentation that facilitates browsing in a type-appropriate way.
+   * Some metadata lookup/collection functionality here too (ie. ISBN
+     scan, and then lookup/fetch)
+   * Eg. Delicious Monster, Bookpedia, etc.
+* eBook
+   * RD+DM
+   * See Red Book pp46-47
+   * How is this related to the PDF viewer?  Or even the Document
+     viewer?
+      * Is there a different UI for “books” vs. “papers”?
+      * Is that difference something that should really just be
+        presentational affordances, driven by metadata?
+      * Does this end up implying that Document and Book are different
+        facets of the same thing, with a bunch of underlying converters
+        to port the content over?
 
 Story
-* tbd
+* Boot
+* Login
+* Look up a web page
+  * Open Search (S-space)
+  * Type in URL and hit enter
+  * Web page appears in new window (search panel goes away)
+  * Clicking on links in the page works as usual [Keyboard nav: next
+    link, cf eBook, Red Book p47]
+  * THe user tags a specific page for future reference [How?]
+  * Close the viewer [How?]
+* Open search
+  * Enter a word or phrase from one of the viewed pages
+    * Should show the page in the result set [How is it presented?]
+      * Open that page [How?  Mouse click?  Is there keyboard navigation?]
+        * Should load quickly (ie. from cache)
+      * Close page [How?]
+  * Enter one of the tags associated earlier
+    * How is the tag distinguished from a keyword?  #tag?
+    * Should show page in the result set
+    * Open, as above
+* Open search
+  * Enter URL: https://leanpub.com/user_dashboard/library
+  * Navigate to view the PDF file for this book
+  * Perform _save_ action [How?]
+    * Enter meta-data values as prompted
+  * Close viewer
+* Open search
+  * Find book in history
+  * Open it {should show in book-oriented view]
+* Logout
+
 
 ### Third Edition
+
 Programming, to the point of becoming self-hosting.
 
 Infrastructure
@@ -308,6 +374,7 @@ Story
 
 
 ### Fourth Edition
+
 PIM support: email, calendar, contacts, messaging, world clock.  This
 should be enough for daily driving with the exception of office and
 graphical work.
@@ -384,6 +451,7 @@ Types
    * Music plugin for selector/dashboard/HUD?
 
 ### Fifth Edition
+
 Office: word processor, spreadsheet, slides, vector drawing, pixel
 drawing
 
@@ -425,6 +493,7 @@ Types
    * Should support CAD formats for 3D printing
 
 ### Sixth Edition
+
 Fill out features for full daily-driver usage.
 
 Infrastructure
@@ -454,26 +523,6 @@ Types
    * Configuration
    * Preferences
    * AppStore
-* Book
-   * Could be an eBook, or an avatar for a physical book
-   * Bunch of metadata
-   * Some similarities to music and video: there can be physical
-     entities that are cataloged with their metadata, but don’t have a
-     stored object underneath them.  They then have a collective
-     presentation that facilitates browsing in a type-appropriate way.
-   * Some metadata lookup/collection functionality here too (ie. ISBN
-     scan, and then lookup/fetch)
-   * Eg. Delicious Monster, Bookpedia, etc.
-* eBook
-   * RD+DM
-   * How is this related to the PDF viewer?  Or even the Document
-     viewer?
-      * Is there a different UI for “books” vs. “papers”?
-      * Is that difference something that should really just be
-        presentational affordances, driven by metadata?
-      * Does this end up implying that Document and Book are different
-        facets of the same thing, with a bunch of underlying converters
-        to port the content over?
 * Bibliography
    * Again, a kind of specialised metadata collection, for mostly
      externally stored objects.
