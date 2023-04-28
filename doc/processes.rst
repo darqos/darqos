@@ -1,4 +1,6 @@
-# Processes
+Processes
+=========
+
 The prototype milestones are implemented as an overlay layer above an
 existing Unix system, using the Qt GUI toolkit to implement the user
 interface.
@@ -53,7 +55,7 @@ context, and another for a voice assistant context.
 While it hasn't been worked out yet, it's likely that multiple lenses
 might be observing the same type instance simultaneously.  Consequently,
 the lens implementation model cannot assume that it is the initiator of
-all events occurring for a type instance: it must be able to react to 
+all events occurring for a type instance: it must be able to react to
 asynchronous events.
 
 So, again, the best model for a lens implementation is probably an event
@@ -89,6 +91,3 @@ initialise the process, establish a connection with the p-kernel, and
 hand off execution to the `main` function (method).  It's possible that
 there will end up being only two base classes: asynchronous and
 synchronous, but for now we'll try the four.
-
-
-

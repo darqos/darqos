@@ -1,8 +1,10 @@
 Email
 =====
+
 Email, and email applications, has evolved to become a classic example
 of a "silo" application.  It includes both the viewing and composition
 of emails, but also,
+
 - a custom object-collection viewer
 - a custom structured filing system
 - a way of managing contacts, potentially both using a shared
@@ -32,9 +34,13 @@ document.
 
 Workflow
 --------
+
 There are a few different workflows for email:
+
 - Reading and processing a delivered message
+
   - Including storing important messages for easy future retrieval
+
 - Composing and sending a message
 - Forwarding a message, optionally with added content
 - Resending a message
@@ -42,6 +48,7 @@ There are a few different workflows for email:
 
 Reading
 ~~~~~~~
+
 For an end-user system, emails are usually delivered via IMAP4
 (RFC-9051), or possibly via POP3, using a pull model.  While connected
 to the server, an IMAP client can use the IDLE (RFC-2177) extension to

@@ -1,13 +1,14 @@
-# Input Events
+Input Events
+============
 
-The system will use a focus-follows-mouse model, with an option to raise 
+The system will use a focus-follows-mouse model, with an option to raise
 windows.  The window with focus will have a nicely composited fade to a
 translucent matte which de-emphasises the other windows.
 
 Keyboard and pointer (mouse) events will be delivered to the object with
 focus.  Events will be delivered as IPC messages.
 
-Objects will have their standard API exposed (via IPC messages), and 
+Objects will have their standard API exposed (via IPC messages), and
 keyboard and pointer actions should be bound to their API.  I think that
 means that we need a shim of some sort?
 

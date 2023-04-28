@@ -1,4 +1,5 @@
-# Bibliography
+Bibliography Type
+=================
 
 This is a type that, in fact, can overlap with the book catalog.
 

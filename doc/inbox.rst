@@ -16,16 +16,20 @@ QuickLook-style preview of each object.
 
 The user must have the ability to quickly process the inbox.  That
 should include:
+
 - a flag indicating that the object has been already "seen"
 - a quick removal from the inbox, without destroying the object
 - a combined removal from the inbox and destruction of the object
+
   - This should probably involve a "trash can" function to allow a
     limited time window in which to undo the operation
   - But aside from that, destroyed items would not "enter the system":
     no indexing, no history entry, etc.
+
 - open, but retain
 - open, and remove
 - add metadata, and remove
+
   - ie. tagging
 
 There's some inherent contradiction here that will likely give rise

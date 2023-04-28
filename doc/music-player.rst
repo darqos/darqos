@@ -1,4 +1,6 @@
-# Music Player
+Music Player
+============
+
 A music player is an interesting exploration of some modelling issues.
 
 * A simple player application (play, pause, ffw, rew, etc) for a single
@@ -19,12 +21,14 @@ A music player is an interesting exploration of some modelling issues.
 * "Dynamic playlists" are automatically generated sequences of tracks,
   chosen from a collection on an algorithmic basis.  They might have a
   fixed length, or continue to generate tracks indefinitely as more
-  are requested. 
-  
+  are requested.
+
 So ... given a system, with a bunch of stored sound objects, how should
 this music player functionality be implemented?
 
-## Albums
+Albums
+------
+
 An album could be derived completely from metadata, with each track
 simply duplicating the album's properties, and relying on the metadata
 system to record and find the tracks.  Album name, year, publisher,
@@ -38,19 +42,23 @@ basically a collection type within minimal behaviour beyond grouping
 its constituents.  Singles, EPs, LPs, etc, could all be variants of the
 basic "track collection" type.
 
-I _think_ I lean towards making albums a distinct type: that kinda
+I *think* I lean towards making albums a distinct type: that kinda
 models the reality most closely, I think.  And having a Type means that
 there's an implementation that can cleanly implement any useful
 behaviour (ie. "viewer" logic).
 
-## Playlists
+Playlists
+---------
+
 Similarly to albums, I think it makes sense to have playlists as a
 Type within the system.  A basic playlist is just a list of tracks,
 but it'd be relatively simple to have algorithmic generators provide
 a similar API too.
 
-## Searching for Music
-Selecting tracks to play has a specific UX that isn't met by the 
+Searching for Music
+-------------------
+
+Selecting tracks to play has a specific UX that isn't met by the
 standard object selector.  None of the usual indexing, history,
 or metadata searching is directly applicable here.
 
@@ -68,18 +76,20 @@ including for music.
 
 It makes far more sense to choose "music" as a type and then browse
 all your music files, than it does to do the same for Code or Document,
-for example.  I *think* it's unique in that way?  Although perhaps 
+for example.  I *think* it's unique in that way?  Although perhaps
 images or video might be similar?
 
-## System Sound Facilities
+System Sound Facilities
+-----------------------
+
 So, I've thus far been tacitly assuming that the system will have a
 means of delivering sound to an operators ears.  Weather that's an
-analog 3.5mm jack, a digital jack, Bluetooth, AirPlay, Chromecast, or 
+analog 3.5mm jack, a digital jack, Bluetooth, AirPlay, Chromecast, or
 whatever.
 
 In an ideal situation, in fact there might be multiple such outputs
 attached to the system.  They might be used individually, or in sets,
-each with their own volume, equalisation, delay, etc.  Each set 
+each with their own volume, equalisation, delay, etc.  Each set
 should support a queue of sound objects to be played.  And possibly
 even a mixer that allows multiple simultaneous sounds to be mixed onto
 the output.
@@ -100,14 +110,18 @@ work: I think ... I'm not sure you want to search of your volume knob
 like you do any other object?  Perhaps?  Does this mean it just lives
 on the "shelf" of docked objects in the selector?
 
-## Open Issues
+Open Issues
+-----------
+
 * Selection plugin?
 * System hardware/device configuration: how are these objects
   accessed?
 * Is there a distinction between sound and music objects?
 * How does the audio system deal with multi-channel sound?
+
   * Stereo, 5.1, 7.1, Atmos, etc
+
 * Can I leverage Jack for the audio system?
-* Is there any commonality between the audio system model, as 
+* Is there any commonality between the audio system model, as
   described above, and how the system should handle displays and
   input devices?

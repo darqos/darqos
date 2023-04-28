@@ -1,4 +1,5 @@
-# Security Service
+Security Service
+================
 
 The security system really only needs to authenticate users.  Once
 authenticated, a user will have some sort of token that can then be
@@ -11,10 +12,14 @@ a standard library that means they're managed in a consistent way, but
 without recourse to a central server?
 
 Let's consider the storage service.
+
 * It has blobs that are created by a particular user
 * That user might want to share access to an object with other users.
+
   * That could be done as an individual, or as a member of a group.
+
 * Different levels of access might be shared:
+
   * eg. read, write, delete, etc.
 
 So the storage service should maintain a list of permitted users and a

@@ -1,4 +1,5 @@
-# Terminal Service
+Terminal Service
+================
 
 The terminal service performs a role not unlike Unix getty or xdm:
 it exposes an abstraction of a user's screen, keyboard, mouse,
@@ -37,7 +38,8 @@ option as well, because eg. an SSH session has different needs to a
 GUI session.
 
 
-## 1st Edition Graphical Terminal
+1st Edition Graphical Terminal
+------------------------------
 
 The initial graphical terminal is implemented using PyQt5.  The
 primary benefit of this over eg. SDL2 is that it has a built-in widget
@@ -82,60 +84,65 @@ overview of the system controls.
 The default keymap will more-or-less replicate the PC105/Win95
 standard keyboard.  The RPi400 built-in keyboard will support the
 following mappings:
+
 - System : the Raspberry Pi key
 - Application : Alt_L
 - Control_L : Caps Lock
 - AltGr : Alt_R
 
 A standard PC keyboard will map:
+
 - System : the Windows key
 - Application : Alt_L
 - Control_L : Caps Lock
 - AltGr : Alt_R
 
 A standard Mac keyboard will map:
+
 - System : Option
 - Application : Command
 - Control_L : Caps Lock
 - AltFr : Option_R
 
-## Functions
+Functions
+---------
 
 The Terminal Service is repsonsible for providing several crucial
 functions of the user interface.  In 1st Edition, these will be:
 
-### New
+New
+~~~
 
 The new panel is the interface used to create new objects.
 
-The new panel is invoked with a _System-N_ shortcut.
+The new panel is invoked with a *System-N* shortcut.
 
-Objects are created by selecting a _type_ of object to create.  Object
+Objects are created by selecting a *type* of object to create.  Object
 types are implemented by installed code, more-or-less like
 applications in a traditional operating system.  Examples of object
 types might be "image", "document", "movie", etc.
 
-
-### Search
+Search
+~~~~~~
 
 The search panel is the central interface for locating objects of
 interest to the user.  It integrates access to all the searching
 abilities of DarqOS, plus access to Internet search.
 
-The search panel is invoked with a _System-S_ shortcut.
+The search panel is invoked with a *System-S* shortcut.
 
 Searching is driven via a seach-box style input field with slash
 commands.
 
-
-### Events
+Events
+~~~~~~
 
 The events panel is the central location for exposing to the user
 changes to the system state that occur asynchronously, without direct
 user control.  It encompasses the functionality of the system
 notification pane, email inbox, and messaging.
 
-The events panel is invoked with a _System-E_ shortcut.  When not
+The events panel is invoked with a *System-E* shortcut.  When not
 displayed, ephemeral event notifications can also be displayed
 overlaying the primary screen, alerting the user to their event's
 occurence. These notification should be largely unobtrusive: able to
@@ -147,9 +154,9 @@ This might take the form of an email sender and subject, or a chat
 message nick and first few words.  All events are shown with a
 timestamp.
 
-Each event in the list has two visible _states_: unacknowledged, and
-incomplete.  _Unacknowledged_ events are like unread emails:
-highlighted as being as yet "unseen".  _Incomplete_ events have been
+Each event in the list has two visible *states*: unacknowledged, and
+incomplete.  *Unacknowledged* events are like unread emails:
+highlighted as being as yet "unseen".  *Incomplete* events have been
 seen or read, but have not been dealt with.  The user can alter an
 event's state manually, or perform an action that caused it to be
 altered implicitly.
@@ -164,7 +171,8 @@ The set of slash-commands will be augmented over time.  1st Edition
 will provide a few basic operations.
 
 
-## Future Editions
+Future Editions
+---------------
 
 Future editions will move towards using a dedicated base OS, and
 consequently, most likely no longer using Qt.  It's likely that EGL

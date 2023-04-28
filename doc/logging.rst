@@ -1,4 +1,5 @@
-# Logging
+Logging
+=======
 
 DarqOS components currently log diagnostic messages via the
 standard _syslog_ protocol, using the `LOCAL*` facility
@@ -11,18 +12,29 @@ and the messages logged by Darq.
 
 Facilities are allocated as follows:
 - LOCAL0
+
   - kernel /  p-kernel
+
 - LOCAL1
+
   - OS runtime support libraries
+
 - LOCAL2
+
   - services
+
 - LOCAL3
+
   - types
+
 - LOCAL4
+
   - lenses
+
 - LOCAL5
-- LOVAL6
-- LOVAL7
+- LOCAL6
+- LOCAL7
+
   - as yet unused.
 
 It's likely that this will evolve in future to use an

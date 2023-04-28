@@ -1,4 +1,5 @@
-# IPC
+IPC
+===
 
 In DarqOS, inter-process communication uses a kernel-provided IPC
 facility, similar in basic concept to many microkernels.  Processes
@@ -17,7 +18,8 @@ Communication between a process and the p-kernel uses TCP, in order to
 have reliable delivery, and a well-known port, avoiding a need to
 bootstrap the connection and resolve addresses between processes.
 
-## Messages
+Messages
+--------
 
 Confusingly, there are two layers of messages in this design: the
 prototype-specific p-kernel messages, and the application-layer
@@ -28,6 +30,7 @@ consequent maximum message size of 4GB (which seems ample, but is it
 really?)
 
 The p-kernel protocol consists of six messages:
+
 * OpenPort
 * OpenedPort
 * ClosePort
@@ -53,7 +56,8 @@ point, they do not use an IDL, but rather are manually packed and
 unpacked by the process code.  It's possible that the runtime library
 will acquire some support for this encoding and decoding process.
 
-## Ports
+Ports
+-----
 
 At this point, ports are identified by small integer values.  There is
 not yet any provision to pass ports in messages, other than the source
@@ -62,7 +66,8 @@ port from which it was sent.
 This limitation has implications for a Mach-style capabilities
 architecture, and is subject to change in future.
 
-## Application Architecture
+Application Architecture
+------------------------
 
 Sending messages and chunks is a synchronous operation for the sending
 process: control flow blocks until the runtime library has enqueued
@@ -80,13 +85,15 @@ evolves, an explicit RPC structure might also be provided.
 On the service side, the blocking dispatch loop model will be directly
 supported by the runtime.
 
-## Establishing a Connection
+Establishing a Connection
+-------------------------
 
 There are two main scenarios in which the IPC mechanism is used:
 service-to-service communication, and application-to-service
 communication.
 
-### Service to Service Communication
+Service to Service Communication
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 During the prototype phase, services are host operating system
 processes.  They are started by the system boot process, or potentially
@@ -103,7 +110,8 @@ well-known port numbers, or the p-kernel could implement a name
 resolution service, but in either case, there is nothing to prevent
 an imposter registering as the service.
 
-### Application to Service Communication
+Application to Service Communication
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 A related problem exists for application code.  Given a long-lived
 object identifier, to _use_ that object, the appropriate type
@@ -130,17 +138,21 @@ We still have the problem of imposters, which is quite important,
 even if we do avoid answering it for now.
 
 The best bet here is probably:
+
 * Embed the type description in the object identifier.
+
   * Also, embed the location in the object identifier.
+
     * So, a three-part id?  `type:location:id`?
+
 * Have type implementations register themselves with the p-kernel
   so the runtime can look them up there, and be able to spawn them.
 * When resolving an object id:
+
   * Contact the p-kernel at the location
   * Activate the type implementation (subject to context)
   * Ask the type implementation for the specific object
-    * Does this end up being an _ephemeral_ port?
-  * Talk to the type implementation + object as required.
 
-----
-Next: [Runtime](runtime.md) | Up: [Overview](../README.md)
+    * Does this end up being an _ephemeral_ port?
+
+  * Talk to the type implementation + object as required.

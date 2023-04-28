@@ -1,4 +1,5 @@
-# Book Type
+Book Type
+=========
 
 There are several types of books supported by the book type, but they
 generally fall into the categories of paper book or e-book.
@@ -29,12 +30,15 @@ The metadata should include:
 * ISBN
 * URL (for ebooks)
 * Location (for paper books)
+
   * Is this a good place to use an encapsulated volumes model for
     physical locations?
   * It'd be good to have some sort of structure here, not just free
     form text
+
 * Notes
 * Type
+
   * Is there a hierarchy here?  Book, with sub-types for electronic
     and physical?
 
@@ -63,7 +67,8 @@ the presentation and links to the actual books?  Not sure that's a
 great UX though ... but certainly music, video and books should all be
 similarly implemented here.
 
-## Book-like objects
+Book-like objects
+-----------------
 
 An eBook reader, ignoring for a moment the collection interface, is
 really quite similar to a PDF viewer.  Books have structure (volumes,
@@ -80,11 +85,13 @@ manuals, the reading process is quite similar.
 I *think* it would make sense to combine these into a single viewer
 application, with (consequent) consistency of interaction.
 
-## Types of Book-like Objects
+Types of Book-like Objects
+--------------------------
 
 Well, in particular, book-like objects.
 
 * Start with "document"?
+
   * From there, there could reasonably a tree of descendants, both
     "plain" and "rich", with PDF amongst them.
   * But .. no-one actually _writes_ PDF documents: they're an output
@@ -94,19 +101,23 @@ Well, in particular, book-like objects.
     tool.  LaTeX documents, as an example, have a very different
     process.
     * Is this distinction to be reflected in the type system?
+
       * It's similar to an interpreter/compiler split in programming?
 
 * Examples that I care about:
+
   * Plain text
   * Markdown
   * Restructured Text
   * ASCIIdoc
-  * *roff
+  * \*roff
   * LaTeX / TeX
   * PDF
   * Word
+
     * .doc
     * .docx
+
   * _maybe_ ODF?
   * RTF
   * mobi
@@ -115,14 +126,18 @@ Well, in particular, book-like objects.
   * HTML (? eek ?)
 
 * But there are different axes here:
+
   * PDF vs. DOC vs. ROFF vs epub
   * Brochure vs. datasheet vs. research paper vs. book
   * Can UTI deal with this?
+
     * I think so
+
   * But, given an object whose metadata says "It's a paper, in markdown
     format", can I chose a type implementation using the multiple axes?
 
-## Implementation
+Implementation
+--------------
 
 I think books end up being a useful example of how objects work.
 
@@ -133,8 +148,11 @@ Take an e-book, let's say in ePub format.
 
 How does this _actually_ work?
 * Metadata has:
+
   * Object identifier
+
     * This is probably the primary key?
+
   * BLOB storage identifier
   * KB entity identifier
 
@@ -143,7 +161,8 @@ work?  The metadata service is basically the object name service,
 linking object identity with its other properties, and doing away with
 a name service on the side.
 
-## Roadmap
+Roadmap
+-------
 
 The Book type is a useful example of a category of types where it's
 necessary to have sub-type implementations.  On that basis, and given
@@ -152,13 +171,16 @@ makes sense to advance the Book type in the roadmap to explore how
 sub-typing and specialized collections can work.
 
 * Implement the basic physical book type
+
   * A simple collection of (meta)data about a specific book
   * Presentation like a card catalog, but with a cover picture?
   * Type constraints in the selector UI
 
 * Implement a specialized collection type for books.
+
   * Figure out how these will actually work
   * Come up with a nice UI
+
     * Incorporating cover art is probably the right approach here.
       Books can be quite distinctive, and it can be a searching
       strategy in itself.
@@ -166,31 +188,38 @@ sub-typing and specialized collections can work.
       books, but ... it would like work ok?
     * A 2D grid of covers, able to be zoomed in/out, might also be
       good?
+
       * And perhaps better than coverflow for rapid scanning?
       * Is it possible to sort images by colour (surely, yes)?  How
         about by shape or object?  Maybe some ML involved there?
 
 * Add an e-book type
+
   * Basically the same data in type instance, but with the addition
     of a reference to the actual content in the storage server
   * Figure out how to model adding a new e-book to the system vs.
     actually creating the e-book content
+
     * Since this is a bunch of UI work I don't want to get into yet
     * And I don't have a good handle on how it should be modelled
       either.
+
       * It's possibly the same model as songs and videos, where
         you create a record for the physical object, but don't
         create the object itself?
       * So perhaps the type should be called BookCatalog, not Book?
         * BookRecord?  BookDetails?  CatalogedBook?  BookInfo?
 
-## UI
+UI
+--
 
 Fields:
 * Cover image
+
   * Spine image?
   * Rear cover image?
   * Whatever the internal fancy front page thing is called?
+
 * Title
 * Series Title
 * Series Number
@@ -214,11 +243,10 @@ Fields:
 Notes:
 * Not every book will populate every field.
 * Title and Author should use a larger font, especially title.
-* It'd be good if authors, publishers, plaec published, etc, had
-  completion based on previous entries.
-* Should this be using the MARC21 (MARCXML, MARCJSON, ISO2709) standard
-  for bibliographic data?  it's potentially a good idea ...
+* It'd be good if authors, publishers, place published, etc, had completion based on previous entries.
+* Should this be using the MARC21 (MARCXML, MARCJSON, ISO2709) standard for bibliographic data?  it's potentially a good idea ...
 * Examples:
+
   * Books.app (macOS, was iBooks))
   * Calibre (macOS)
   * iTunes (macOS)
