@@ -3,33 +3,32 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-Welcome to DarqOS's documentation!
-==================================
-
 .. toctree::
-   :maxdepth: 4
-   :caption: Contents:
+   :maxdepth: 3
+   :caption: Contents
 
-   overview
-   kernel
-   runtime
-   rpi
+   Introduction <overview>
    distribution
-
-   bootstrap
+   p-kernel
+   runtime
    ipc
-   logging
    processes
+   bootstrap
+   logging
 
    input-events
    inbox
    repl
    ux
 
-   history
-   metadata
-   security
+   services
    terminal
+   security
+   storage
+   metadata
+   history
+   search
+   network
 
    types
    object
@@ -47,6 +46,9 @@ Welcome to DarqOS's documentation!
    ports
 
    roadmap
+
+   rpi
+   kernel
 
 
 Indices and tables

@@ -3,6 +3,7 @@ Document Type
 
 There are really multiple types of document I'd like to deal with, and I
 think they're actually different types:
+
 * Plain text
 * Rich media notes
 * Word processor / desktop publishing documents

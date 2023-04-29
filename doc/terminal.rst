@@ -1,7 +1,7 @@
 Terminal Service
 ================
 
-The terminal service performs a role not unlike Unix getty or xdm:
+The terminal service performs a role not unlike Unix `getty` or `xdm`:
 it exposes an abstraction of a user's screen, keyboard, mouse,
 microphone, speakers, camera, etc, to the system.
 
@@ -60,9 +60,9 @@ available screen, and display a full-screen root window on each of
 them.  There will be no support for multi-desk configuration: multiple
 screens will all be used by the one "terminal".
 
-Via PyQt5, libinput will be used to gather input from an attached USB
-keyboard and mouse, and either the RPi4's built-in audio I/O or a USB
-audio dongle will be used for the RPi400.  For starters, only a
+Via PyQt5, `libinput` will be used to gather input from an attached
+USB keyboard and mouse, and either the RPi4's built-in audio I/O or a
+USB audio dongle will be used for the RPi400.  For starters, only a
 default keymap will be supported.
 
 It would be good to have camera support, but ... maybe not for 1st
@@ -75,11 +75,12 @@ The login panel will accept a password in the usual way, and once
 authenticated, will remove the control and login panels, and enable
 the rest of the workspace.
 
-If _firstrun_ mode is active, the manpage reader application should be
-displayed, with the _intro_ page showing.  This will give the user an
+If *firstrun* mode is active, the manpage reader application should be
+displayed, with the *intro* page showing.  This will give the user an
 overview of the system controls.
 
-## Keyboard
+Keyboard
+~~~~~~~~
 
 The default keymap will more-or-less replicate the PC105/Win95
 standard keyboard.  The RPi400 built-in keyboard will support the

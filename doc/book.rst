@@ -20,6 +20,7 @@ formats?
   be a better basis, given how flakey Lector is?
 
 The metadata should include:
+
 * Title
 * Author(s)
 * Editor
@@ -100,6 +101,7 @@ Well, in particular, book-like objects.
   * Word docs, for instance, are edited and rendered in the same
     tool.  LaTeX documents, as an example, have a very different
     process.
+
     * Is this distinction to be reflected in the type system?
 
       * It's similar to an interpreter/compiler split in programming?
@@ -142,11 +144,13 @@ Implementation
 I think books end up being a useful example of how objects work.
 
 Take an e-book, let's say in ePub format.
+
 * A sequence of bytes
 * KB entities, for the paper, the authors, institutions, etc.
 * Metadata describing it's type(s), and maybe other stuff.
 
 How does this _actually_ work?
+
 * Metadata has:
 
   * Object identifier
@@ -208,12 +212,14 @@ sub-typing and specialized collections can work.
         you create a record for the physical object, but don't
         create the object itself?
       * So perhaps the type should be called BookCatalog, not Book?
+
         * BookRecord?  BookDetails?  CatalogedBook?  BookInfo?
 
 UI
 --
 
 Fields:
+
 * Cover image
 
   * Spine image?
@@ -241,10 +247,13 @@ Fields:
 * Location
 
 Notes:
+
 * Not every book will populate every field.
 * Title and Author should use a larger font, especially title.
-* It'd be good if authors, publishers, place published, etc, had completion based on previous entries.
-* Should this be using the MARC21 (MARCXML, MARCJSON, ISO2709) standard for bibliographic data?  it's potentially a good idea ...
+* It'd be good if authors, publishers, place published, etc, had
+  completion based on previous entries.
+* Should this be using the MARC21 (MARCXML, MARCJSON, ISO2709)
+  standard for bibliographic data?  it's potentially a good idea ...
 * Examples:
 
   * Books.app (macOS, was iBooks))

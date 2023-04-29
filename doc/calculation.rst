@@ -158,7 +158,8 @@ Roadmap
 
     * Lookup known formulae by name to initialise your calculation
 
-## Useful Prior Art
+Useful Prior Art
+----------------
 
 * Notebooks
 
@@ -191,7 +192,8 @@ datastructure.
 
 For v1:
 
-* expression: bracketed_expression | expression operator expression | value | unary_sign value
+* expression: bracketed_expression | expression operator expression |
+  value | unary_sign value
 * unary_sign: '+' | '-'
 * value: integer | float | sci_float
 * bracketed_expression: '(' expression ')'
