@@ -37,7 +37,7 @@
    calculation
    document-types
    email
-   music-player
+   audio
    pim
    project
 

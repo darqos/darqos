@@ -1,7 +1,7 @@
-Music Player
-============
+Audio
+=====
 
-A music player is an interesting exploration of some modelling issues.
+An audio player is an interesting exploration of some modelling issues.
 
 * A simple player application (play, pause, ffw, rew, etc) for a single
   mp3 or similar format object is relatively easy to conceive.  This fits
@@ -55,49 +55,108 @@ Type within the system.  A basic playlist is just a list of tracks,
 but it'd be relatively simple to have algorithmic generators provide
 a similar API too.
 
+Its possible that albums and playlists are the same type: they're both
+a collection of audio objects, together with some metadata (fairly
+minimal for playlists to be fair).
+
+In practice, queuing up a bunch of tracks to be played creates a
+transient playlist.
+
 Searching for Music
 -------------------
 
-Selecting tracks to play has a specific UX that isn't met by the
-standard object selector.  None of the usual indexing, history,
-or metadata searching is directly applicable here.
+With existing music player applications, the UX of browsing for tracks
+to play is fairly well established: you can typically browse by
+artist, album, or track, with a particular visual experience tied to
+each variant of the process.
 
-But ... what if it were possible to have a plugin for the selector that
-provided type(s)-specific searching UX?  It would become available if
-you specified a "music" type in the selector, giving perhaps even a
-CoverFlow-like UI with a tabular presentation of tracks and their
-metadata?
+In Darq, the standard system search and timeline UX could be used for
+music: you could filter by type and/or metadata attributes in a way
+that might be a reasonable equivakent?
 
-It's not clear (yet?) how the selector could switch between search,
-history, spatial and other plugins in a natural way.  Will need some
-thought and probably some experimentation.  But I like the idea of
-keeping the selector as the Only One Way To Do It for object selection
-including for music.
+Alternatively, it might be that a specific UI is needed.  This could
+perhaps be selected if a music type filter were chosen, and would look
+much like a contemporary music player application.
 
-It makes far more sense to choose "music" as a type and then browse
-all your music files, than it does to do the same for Code or Document,
-for example.  I *think* it's unique in that way?  Although perhaps
-images or video might be similar?
+This might apply also to searching, eg. video or book types?
+
+Some epxerimentation will be required here.  In first edition, no
+special behaviour will be implemented.
 
 System Sound Facilities
 -----------------------
 
-So, I've thus far been tacitly assuming that the system will have a
-means of delivering sound to an operators ears.  Weather that's an
-analog 3.5mm jack, a digital jack, Bluetooth, AirPlay, Chromecast, or
-whatever.
+The system architecture for sound is somewhat complicated.  The
+components are:
 
-In an ideal situation, in fact there might be multiple such outputs
-attached to the system.  They might be used individually, or in sets,
-each with their own volume, equalisation, delay, etc.  Each set
-should support a queue of sound objects to be played.  And possibly
-even a mixer that allows multiple simultaneous sounds to be mixed onto
-the output.
+Sinks
+    Typically, speakers or headphones.  But can also be a file, or a
+    device connected by a different protocol, eg. AirPlay, Chromecast, or
+    Bluetooth.
+
+    An output accepts a stream of input data in a negotiated audio
+    format.  It should probably use a simple IPC interface for this,
+    perhaps with each packet including format info, rather than having
+    stateful negotiation of the format up front?
+
+Mixers
+    A mixer has a single output stream, but multiple input streams.
+    The input streams are mixed together, with each input stream
+    having its own volume control.
+
+    Stuff that also could reasonably be built into the mixer might be
+    equalization and synchronisation delays, a global mute, etc.
+
+Queues
+    A *queue* converts an ordered collection of sound data objects
+    into a stream.
+
+Source
+    Anything that can produce a stream of audio data.  This might be a
+    streamer for stored objects, a translator for a network stream, or
+    a physical input device, eg. a line-in, or a microphone.
+
+In general, a terminal device will have an input-side mixer, and an
+output side sink.  The sink might be a local analog jack, USB
+soundcard, or nearby AirPlay device (for example): it doesn't matter
+what it is.  The mixer is always configured; the output device might
+not always be available.
+
+This raises the need for configuration.
+
+A DarqOS system can be configured with any number of:
+
+* Sinks, local or networked.
+* Mixers, in addition to the default mixer for a terminal.
+* Sources, and
+* Queues.
+
+Audio Player
+------------
+
+The *Audio* type implementation has a simple lens that supports:
+
+* Play/pause/skip back/skip forward/restart
+* Selection of an output mixer
+
+* Control of the mixer channel should probably be a different lens
+    for the mixer type implementation?
+
+Music Player
+------------
+
+The *Music*, *Album*, and *Playlist* type implementations have a
+richly functional lens that supports:
+
+* Basic audio controls
+* Metadata display
+* Support for album and playlist types
 
 In fact, each output should have an attached mixer.  A mixer can have
 any number of inputs, and a queue can have any number of outputs.  The
 attachment of a queue to a mixer might have volume, equalisation, and
 delay associated with the pairing.
+
 
 It might make sense to have sources other than queues too: live inputs
 for example.  And sinks other than those mentioned above, especially
@@ -113,7 +172,6 @@ on the "shelf" of docked objects in the selector?
 Open Issues
 -----------
 
-* Selection plugin?
 * System hardware/device configuration: how are these objects
   accessed?
 * Is there a distinction between sound and music objects?
@@ -121,7 +179,13 @@ Open Issues
 
   * Stereo, 5.1, 7.1, Atmos, etc
 
-* Can I leverage Jack for the audio system?
+* Can I leverage Pipewire or Jack for the audio system?
 * Is there any commonality between the audio system model, as
   described above, and how the system should handle displays and
   input devices?
+* How is the default mixer identified by the player application?
+
+  * Some sort of context from the terminal?
+
+    * How is that context located?
+    * What else is in it?
