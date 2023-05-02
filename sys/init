@@ -4,7 +4,7 @@
 # Copyright (C) 2022-2023 David Arnold
 ################################################################
 #
-# System bootstrap program, conceptually similar to init(8).
+# System bootstrap program, conceptually similar to Unix init(8).
 #
 # This file is executed by the p-Kernel once it has completed
 # its own bootstrap process, and is ready to begin serving
@@ -43,6 +43,7 @@ SERVICES = [
 
     # index-service
     # metadata-service
+    # history-service
     # security-service
 
     ServiceInfo("Terminal", "terminal/main.py", 0, 0),
