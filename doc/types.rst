@@ -9,7 +9,8 @@ generalisation of entire classes of entities.
 
 Example types are: text document, PNG image, ZIP file, etc.
 
-## Type Implementations
+Type Implementations
+--------------------
 
 Types are defined as part of the persistent state of the system.  This
 state is owned and managed by the Type Service.  Programs access the

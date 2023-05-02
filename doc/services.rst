@@ -15,3 +15,4 @@ In the first edition, the following services exist:
 * History
 * Index
 * Network
+* Configuration

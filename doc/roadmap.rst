@@ -71,14 +71,14 @@ System
 
 * Host platform
 
-  * AMD64 VM
-  * Raspberry Pi 4
   * Raspberry Pi 400
+  * Raspberry Pi 4
+  * AMD64 VM
 
 * Host OS
 
-  * Ubuntu 22.04 LTS
   * Rasberry Pi OS Lite
+  * Ubuntu 22.04 LTS
 
 * IPC
 
@@ -98,7 +98,7 @@ System
       * JSON?
       * Binary (struct)
       * Something else?  GPB, Cap'n'proto, Avro, etc?
-      * Does it need an IDL?
+      * Does it need an IDL?  Probably?
 
   * Do we need object/service activation?
 
@@ -118,9 +118,11 @@ System
     * For Raspberry Pi 4/400, use the EGL target of Qt (no X11, no
       Wayland)
 
+      * Does this work for CEF?
+
 * Bootstrap
 
-  * Untar / clone source into /darq/src
+  * Untar / clone source into `/darq/src`
   * Run install script, copying stuff into place
   * Run boot script, starting up Unix processes
 
@@ -211,6 +213,7 @@ Services
   * Events
 
     * Universal inbox
+    * History timeline
 
   * Clock
   * REPL?
@@ -269,6 +272,9 @@ Story
 * Get initial UI
 
   * Blank screen(s)
+
+    * Do we need some *firstrun* content?
+
   * System hotkeys:
 
     * Factory (S-n)
@@ -277,12 +283,14 @@ Story
     * How does we lock / shutdown from here?
     * Do these _replace_ each other on screen?  eg. S-n S-space will
       pop the factory, then hide factory and pop search?
+
 * Create a new text document
 * Close the text viewer
 * Find document with search bar, and view it again
 * Logout
 
   * How?
+
 
 Second Edition
 ~~~~~~~~~~~~~~
