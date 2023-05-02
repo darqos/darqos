@@ -61,7 +61,7 @@ done
 
 
 # Make archive.
-name=darqos-1-snap`date +%Y%m%d`.tar
+name=darqos-1ed-snap`date +%Y%m%d`.tar
 rm -f $name.gz
 
 cd dist
