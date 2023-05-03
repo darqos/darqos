@@ -1,9 +1,8 @@
-#! /usr/bin/env python3
 # darqos
-# Copyright (C) 2022 David Arnold
+# Copyright (C) 2022-2023 David Arnold
 
-from darq.rt.storage import Storage
-from darq.rt.type import Type
+from darq.runtime import storage
+from darq.runtime.type import Type
 
 import orjson
 import os
@@ -12,6 +11,10 @@ import sys
 import darq
 
 KEY = "darq.typeservice.db"
+
+
+# FIXME: clarify relationship between this and darq.runtime.type.Type
+# FIXME: figure out how type implementations register themselves here too
 
 
 class TypeDefinition:
@@ -55,11 +58,13 @@ class TypeService(darq.Service):
 
     def __init__(self):
         """Constructor."""
+
+        # FIXME: convert to IPC
         super().__init__("tcp://*:11006")
 
         # Look up database.
         self._db = {}
-        self._storage = Storage.api()
+        self._storage = storage.api()
         buf = self._storage.get(KEY)
 
         if len(buf) > 0:
@@ -93,6 +98,8 @@ class TypeService(darq.Service):
         td.uti = uti
         td.name = name
         td.description = description
+
+        # FIXME: should this be a host OS path, for now?
         td.implementation = url
 
         self._db[uti] = td
@@ -120,6 +127,8 @@ class TypeService(darq.Service):
         f.write(buf)
         f.close()
 
+        # FIXME: timing attach here: overwrite temporary file, given known name.
+
         pid = os.fork()
         if pid == 0:
             os.execv("python", [path])
@@ -128,6 +137,9 @@ class TypeService(darq.Service):
 
     def open(self, object_id: str):
         """Open an existing instance of a type."""
+
+        # FIXME: needs implementing!
+
         pass
 
     def handle_request(self, request: dict):
@@ -157,6 +169,9 @@ def initialize(service: TypeService):
     """Populate the 'hard-wired' types."""
 
     reg = service.register
+
+    # FIXME: add implementations of useful types here
+    # FIXME: add any DarqOS-specific types here too
 
     t = reg("public.item", "Item")
     t = reg("public.content", "Content")
@@ -240,4 +255,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
