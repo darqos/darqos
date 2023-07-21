@@ -1,0 +1,70 @@
+#! /bin/bash
+# DarqOS
+# Copyright (C) 2023 David Arnold
+
+
+# DarqOS Installer/Updater
+
+# This script is used for either the initial install or subsequent
+# update of a DarqOS image on a Raspberry Pi OS machine.
+#
+# It will attempt to download the latest available image (or
+# optionally, a specified image) from the repository, unpack it,
+# configure the host OS as required, and copy over items from the
+# image to the host system as needed.
+#
+# This whole process is kinda jank, but ... it's an easy way to start,
+# and can easily be refined later.  It cooperates with the `mkdist`
+# script that can be used to prepare images.
+
+DIST_FILE=darqos-latest.tar.gz
+DIST_BASE=https://www.0x1.org/d/darq
+
+
+# Check /darq exists
+if [ ! -d /darq]; then
+    mkdir /darq
+fi
+
+
+# Check raspi-config localisation defaults.
+# - Locale
+# - Timezone
+# - Keyboard layout
+
+# Check raspi-config set for auto-login
+
+# Check raspi-config SSH access is enabled (for now, at least).
+
+# Check raspi-config WiFi location?
+
+# Check raspi-config "overscan" display setting.
+
+# Update OS image.
+apt-get update
+apt-get -u dist-upgrade
+apt autoremove
+
+# Install X11 packages needed to run PyQt5 apps.
+apt-get install --no-install-recommends xserver-xorg x11-xserver-utils xinit
+
+# Fetch DarqOS tarball
+rm -rf /tmp/$DIST_FILE
+(cd /tmp; wget $DIST_BASE/$DIST_FILE)
+if [ ! -f /tmp/$DIST_FILE ]; then
+    echo "Error: couldn't download distribution" >&2
+    exit 1
+fi
+
+# Unpack tarball into /dist
+if [ ! -d /dist]; then
+    mkdir /dist
+fi
+
+cd /dist
+tar xf /tmp/$DIST_FILE
+
+# Run install script from dist
+if [ -x /dist/install ]; then
+    /dist/install
+fi
