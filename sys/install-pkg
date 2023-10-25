@@ -35,10 +35,10 @@ def install(package_file) -> bool:
 
     # Open executable file, ready to copy bytes to Storage service.
     # Connect to storage service.
-    darq.rt.Storage.set(exe_id, exe_buf)
+    darq.rt.StorageAPI.set(exe_id, exe_buf)
 
     # Create new entry and populate.
-    darq.rt.Storage.set(icon_id, icon_buf)
+    darq.rt.StorageAPI.set(icon_id, icon_buf)
 
     # Consider creating a class to handle the load, temp file, execute
     #  code for actually running executables for now?
