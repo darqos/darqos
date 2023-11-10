@@ -38,46 +38,54 @@ option as well, because eg. an SSH session has different needs to a
 GUI session.
 
 
-1st Edition Graphical Terminal
-------------------------------
+First Edition Graphical Terminal
+--------------------------------
 
-The initial graphical terminal is implemented using PyQt5.  The
-primary benefit of this over eg. SDL2 is that it has a built-in widget
-set, which means we don't need to implement our own.
+The initial graphical terminal is implemented using Wayland and
+PyQt5.
 
-For the RPi4 target, it uses the Qt EGLFS build, avoiding both X11 and
-Wayland but instead talking more-or-less directly to the GPU.  This
-will avoid some overhead, at the cost of introducing some constraints
-from the Qt EGL backend.  It seems like a reasonable starting point
-though.
+Wayland provides a display server: a process that controls access to
+the display hardware and allows multiple other processes to share
+it.  It's likely that we'll use the Weston compositor, although that
+will depend on experimentation: in general, we require few services
+beyond basic compositing.
 
-For the RPi4, the Terminal Service will manage: 1 or 2 HDMI screens, a
-USB keyboard, a USB mouse, stereo audio out, mono audio in, and a USB
-camera.  If using the RPi400, audio will need a USB audio dongle.
+PyQt5 (and/or PyQt6 or PySide6) offer one primary benefit: a
+pre-existing widget set, which avoids us having to implement our own.
+Longer term, a simpler widget set should be implemented, avoiding Qt's
+breadth and cross-platform support.
+
+For the RPi4 target, the Terminal Service will manage: 1 or 2 HDMI
+screens, a USB keyboard, a USB mouse, stereo audio out, mono audio in,
+and a USB camera.  If using the RPi400, audio will need a USB audio
+dongle.
+
+For the PC target, we'll support basically the same set of
+peripherals; in both cases, the camera is the lowest priority.
 
 On startup, the Terminal Service will use PyQt5 to identify all
-available screen, and display a full-screen root window on each of
-them.  There will be no support for multi-desk configuration: multiple
-screens will all be used by the one "terminal".
+available screen, and display a full-screen, most-distant Z-order root
+window on each of them.  There will be no support for multi-seat
+configuration: multiple screens will all be used by the one
+"terminal".
 
-Via PyQt5, `libinput` will be used to gather input from an attached
-USB keyboard and mouse, and either the RPi4's built-in audio I/O or a
-USB audio dongle will be used for the RPi400.  For starters, only a
-default keymap will be supported.
+For starters, only the default keymap provided by the Linux layer will
+be supported.
 
-It would be good to have camera support, but ... maybe not for 1st
-Edition.
+The Terminal Service will run as a Linux process.  It will use Wayland
+to direct user input (mouse/keyboard) to different processes running
+on the display server: it won't have any direct control over this
+process -- this is the domain of the Wayland compositor.
 
-Once all devices have been identified and initialised, the first
-screen will show both a sleep/power-off panel and a login panel.
+Once initialised, the terminal will display a lock screen with an
+authentication field, controls to sleep/reboot/shutdown the machine,
+and an output volume control with muting.
 
-The login panel will accept a password in the usual way, and once
-authenticated, will remove the control and login panels, and enable
-the rest of the workspace.
-
-If *firstrun* mode is active, the manpage reader application should be
-displayed, with the *intro* page showing.  This will give the user an
-overview of the system controls.
+Once authenticated, the Terminal will hide the lock screen.  At this
+point the main "desktop" functionality will be available.  If
+*firstrun* mode is active, the manpage reader application should be
+started to show the *intro* page, giving the user an overview of the
+system controls.
 
 Keyboard
 ~~~~~~~~
@@ -103,7 +111,7 @@ A standard Mac keyboard will map:
 - System : Option
 - Application : Command
 - Control_L : Caps Lock
-- AltFr : Option_R
+- AltGr : Option_R
 
 Functions
 ---------
@@ -126,9 +134,9 @@ types might be "image", "document", "movie", etc.
 Search
 ~~~~~~
 
-The search panel is the central interface for locating objects of
-interest to the user.  It integrates access to all the searching
-abilities of DarqOS, plus access to Internet search.
+The search panel is the central interface for locating existing
+objects of interest to the user.  It integrates access to all the
+searching abilities of DarqOS, plus access to Internet search.
 
 The search panel is invoked with a *System-S* shortcut.
 
@@ -171,6 +179,31 @@ string, plus slash command filtering parameters, like:
 The set of slash-commands will be augmented over time.  1st Edition
 will provide a few basic operations.
 
+Menu
+~~~~
+
+A system menu will be available at any time, accessed perhaps using
+the combination of the System key and a context-click (?) providing an
+alternative method of invoking the New, Search, or Event overlays,
+plus the ability to Lock, Logout, Reboot, or Shutdown the system.
+
+Switcher
+~~~~~~~~
+
+The Terminal service should provide a means of switching between open
+windows: the equivalent of Alt-Tab.  This might end up being
+implemented by Weston, initially.
+
+Object Properties
+~~~~~~~~~~~~~~~~~
+
+There should be a way to easily access the system information about an
+object.  This would include metadata, indexing, and history.  You
+should be able to edit the metadata -- eg. add a tag, view the
+history, and .. not sure about indexing?
+
+This might be another system-wide hotkey?
+
 
 Future Editions
 ---------------
@@ -178,6 +211,22 @@ Future Editions
 Future editions will move towards using a dedicated base OS, and
 consequently, most likely no longer using Qt.  It's likely that EGL
 will continue to be used as the abstraction for the underlying GPU,
-with a graphical toolkit overlying that.  On option would be to use a
-widget server model, perhaps similar to O/mero from PlanB.  Or it
-might be a more traditional library-based approach.
+with a display manager overlying that.  Type Lenses and Tools will use
+a standard widget set to provide UI elements.  One option would be to
+use a widget server model, perhaps similar to O/mero from PlanB.  Or
+it might be a more traditional library-based approach.
+
+It's also possible that we'll move away from Wayland and/or Weston to
+a dedicated display manager and compositor.
+
+
+Architecture
+------------
+
+The Terminal service will be implemented as a Linux Python process,
+using PyQt5 to provide the GUI, and a callback-based Qt event loop (as
+is used by various Qt-based type lenses).
+
+It will communicate using the system IPC with the p-kernel.  It will
+interact with other services to populate the New, Search, and Event
+overlays.
