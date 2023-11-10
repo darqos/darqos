@@ -10,28 +10,38 @@ Bootstrap
    * Suitable platform for future OS-level work
    * Trivially available Linux environment for prototyping
 
- * Maintain distribution as Git repo, with an install script to run on
-   the target device
+ * OS
 
-   * Could fall back to a snapshot tarball too
    * Use *Raspberry Pi OS Lite* (64 bit) as the base image
 
-     * Use Mobian for PinePhone
-     * Use Debian Buster for development VMs
+     * Based on Debian 12
+     * Configure with Wayland server, but no desktop environment
+       * Run Weston compositor, for now
+         * Needs configuration to avoid default panel, etc.
+     * auto-login into default user (`darq`, not `'pi`)
+       * Implemented via `getty@tty1` `systemd` service
+     * Install single `dui` script that can fetch/install Darq when
+       run as root.
 
-   * Don't bother with packaging Darq
-   * Use `/darq` as the installed image root
+   * Distribute Darq as tarballs, containing an install script to run on
+     the target device
 
-     * `/datq/dist` should be the Git checkout or snapshot
-     * Other stuff as required
-     * Balance between using Storage service vs. host files TBD
+   * Install Darq as a file tree, rooted at `/darq`
 
-   * Install script could also work for hosted (macOS / Linux)
-     development too
-   * Big things (eg. Qt) could be installed from binaries
+     * Use `dui` script to ensure the Linux configuration matches what's
+       required: installing appropriate packages, updating
+       configuration files, etc.
+     * Fetch tarball for darq
+     * Use `/dist` as staging area for updates, and then `/dist/install`
+       script to copy into `/darq` and activate
+     * Clean `/dist` once installed (?)
+     * Consider using eg. `rsync` to optimise this process later.
 
  * Startup
 
+   * Standard Linux boot to custom Wayland-based Qt UI
+   * All Darq services have a systemd unit, and use systemd
+     dependencies to control startup order.
    * p-Kernel
 
      * RPC-reachable pseudo-kernel
@@ -77,6 +87,10 @@ Bootstrap
 
        * Via ... ALSA?  Or PulseAudio?  Or Pipewire?
 
+         * I guess ideally Pipewire, but it'll depend on what's
+           available in the default OS image, cos I don't want to fuck
+           about too much.
+
      * Either provides or facilitates the Factory, Find, and Events
        UIs.
 
@@ -94,38 +108,9 @@ Bootstrap
          benefit?
 
      * Password collection
-     * This could all reasonably be a part of a "Settings" app?
+     * This could all reasonably be a part of a "Settings" tool?
 
- * Install systemd unit(s) for either
-
-   * A single init replacement
-
-     * A Python"agent"
-
-       * Needs a TCP API
-
-         * Reboot and shutdown actions
-
-       * Shutdown should be a script too
-
-         * Which just sends the right message to the agent
-
-       * Has a list of services to start, in order
-
-         * No dependencies (unless we really need them, static will
-           do)
-
-       * boot.py is parent process; all other spawn from it.
-
-         * Could do something with control groups later, if required
-
-       * Agent process should monitor services, and restart them on
-         exit
-
-   * Or just use systemd, with each long-running "daemon" process in
-     Darq?
-
- * Python3.10?
+ * Python3.11?
  * Qt5 LTS
  * PyQt5
 
@@ -148,3 +133,4 @@ nth Edition
  * Replace Qt with custom UI
 
    * Look into O/mero from PlanB
+   * Learn a lot more about what can be done with the GPU
