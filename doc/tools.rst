@@ -35,3 +35,35 @@ really has none.
 So ... where does it fit in?  Maybe it just hangs off the HUD?  I'd kinda
 like to minimise the members of this category, but I'm not really sure
 how many there will be.
+
+Clock
+-----
+
+A wall-time clock is a basic utility.  For a desktop system, it should
+probably just occupy a small area of the HUD, along with any other
+"systray"-style tools.
+
+For a phone, however, it should be a large-format display on the home
+screen.  It should show the local (or chosen) timezone in large font,
+and have the ability to show additional timezones in smaller font
+sizes.  Each time should include its local date too?
+
+It could conceivably be the entry point for an alarm facility, and/or
+a timer and/or stopwatch facilities.
+
+The basic clock would support either 12 or 24 hour times, a set of
+additional timezones, and conceivably things like Catholic day
+periods, Roman hours, ships bells, etc.
+
+I don't see any real need to theme or "complicate" the display.
+Possibly a choice between a digital or analogue display?
+
+It could possibly use side-swiping to switch between the timezones
+displayed in large format?
+
+The actual time service should use NTP to synchronise with upstream
+clocks, which should probably not rely on an NTP pool, but instead use
+a darqos name to enable it to be anycast, round-robined, etc, later.
+
+Think about the styling: is it largely transparent?  How does a
+FOS-style design look?
