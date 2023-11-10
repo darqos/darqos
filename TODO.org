@@ -1,0 +1,97 @@
+* TODO
+
+** First Edition
+
+- Test out installation of Wayland, and Python Qt support for Wayland,
+  on `darqvm` (in Parallels)
+  - Test out Weston compositor
+    - Does it do window decoration or controls that we don't want?
+    - Will need to (temporarily) install a few apps to test this
+  - Can we write (simple test) Qt apps that
+    - are full-screen
+    - are windows
+    - can have focus switched between them
+    - can overlay the other windows, with an animated shade, for the HUDs?
+  - Can we use `greetd` and either an existing or new "greeter" to get
+    the password-only login working and looking reasonable?
+    - Or should we just auto-login the user, and have the Terminal
+      manage the login?
+  - Does a simple `cefpython3` application work?
+- Redo Wayland tests on RPi
+  - Update RPi400 to Debian12
+  - Test
+- Redo Wayland tests on Pinephone
+  - Update Pinephone to Mobian 12
+  - Test
+- Resolve the API model for IPC
+  - Synchronous?
+    - Using a background thread?
+    - With a `select`-style queue checker/waiter?
+  - Non-blocking?
+    - Traditional Unix-style?
+    - Integrated with Qt event loop?
+  - Asynchronous?
+    - Using asyncio
+  - More than one?
+- Reconsider IPC mechanism
+  - Use an IDL and code generator to get interfaces without heaps of
+    manual work?
+  - Switch to using DBus?
+  - Switch to using Cap'n'Proto?
+- Implement Storage service
+- Implement History service
+- Implement Index service
+- Implement Metadata service
+- Implement Factory (New/Do) HUD
+- Implement Search HUD
+- Implement History/Events HUD
+- Implement Text type
+  - Use storage service underneath
+  - No need for file import/export in 1ed
+  - Basic viewing and editing API
+    - This isn't emacs
+  - Don't bother (yet) with a performant datatype: just load a bunch
+    of codepoints into memory
+  - Don't bother yet with CRDT for concurrent editing
+  - Think about granularity of history events
+    - We could save every API call
+    - We could keep every change as a diff, to enable total undo and
+      complete char-by-char history
+    - Or we could have snapshot points, maybe where you manually save
+      the doc?
+    - Or timed autosave?
+    - How much of this is in history vs. in the document storage itself?
+  - Need get(), insert(), delete() -- maybe that's it?
+- Implement GUI Text lens
+  - Do we want to separate viewing and editing modes?  Some sort of
+    confirmation before starting to change it?
+  - Not sure how to keep backend and widget in sync
+  - Emacs keybinds: C-f, C-b, M-f, M-b, C-d, C-a, C-e, C-k, C-t, M-d, etc
+  - Use this to start figuring out strategy for help: document it well
+  - Don't implement printing support yet
+- Package
+  - tarball
+  - unpack and run top-level script to install/update
+  - include ability to install (and remove?) OS packages
+- Documentation
+  - Define "manpage" format
+  - Write up complete docset:
+    - Introduction
+    - Goals and non-goals
+    - Overview
+    - Reference
+- Snapshot
+
+** Second Edition
+
+- Implement Knowledgebase service
+- Implement URL handling
+  - as a Type?
+  - as an object identifier?
+- Implement HTML type
+  - Using `cefpython3`, which is effectively Chrome
+  - Redirect all external URL fetching via system URL handling
+  - Start working out caching strategy for non-local objects
+- Implement PDF type
+- Implement BookRecord type
+- Implement eBook type
