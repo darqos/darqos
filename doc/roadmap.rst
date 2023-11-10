@@ -30,11 +30,6 @@ platform for experimentation primarily at the UX level.  In
 particular, these milestones will build upon existing kernels and
 language runtimes.
 
-These initial prototype milestones will have a "P" (for prototype)
-prefix.  Subsequent releases removing dependencies on existing kernels
-and library software will have an "M" prefix.
-
-
 First Edition
 ~~~~~~~~~~~~~
 
@@ -42,7 +37,7 @@ The goal of the first prototype milestone is to “boot” and get running
 with an identifiably different system, minimal aesthetics, minimal
 user functionality, but a viable target platform for further work.
 The (vast) majority of 1ed work should be done in Python, to ensure
-it’s malleable.
+it is easily malleable.
 
 Infrastructure
 
@@ -72,13 +67,13 @@ System
 * Host platform
 
   * Raspberry Pi 400
-  * Raspberry Pi 4
+  * Raspberry Pi 4B
   * AMD64 VM
 
 * Host OS
 
-  * Rasberry Pi OS Lite
-  * Ubuntu 22.04 LTS
+  * Raspberry Pi OS Lite
+  * Debian 12
 
 * IPC
 
@@ -111,14 +106,23 @@ System
 
 * GUI
 
-  * Full-screen window background, hiding all the host OS
-  * Use PyQt5 (and/or PyQt6) for Ubuntu/X11
+  * Wayland-based
+
+    * Modify / write a Wayland compositor to remove cruft, but provide
+      basic window management.
+    * The Terminal service might need to interact with the compositor
+      to manage the UI
+
+  * Use PyQt5 (and/or PyQt6) as base toolkit, to avoid rewriting all
+    that
 
     * Avoids getting bogged down widget libraries, etc.
-    * For Raspberry Pi 4/400, use the EGL target of Qt (no X11, no
-      Wayland)
+    * For AMD64, use Debian 12 with Wayland
+    * For Raspberry Pi 4/400, use Raspbery Pi OS with Wayland
 
       * Does this work for CEF?
+
+        * It appears to support Wayland and PyQt, so ... tentatively, yes.
 
 * Bootstrap
 
@@ -132,7 +136,8 @@ System
 
   * Storage backed by sqlite and Unix FS
   * Network shared with host OS
-  * Try to "take over" the device, hiding any of the host UI
+  * Disable any host GUI, other than Wayland itself, and some
+    compositor (perhaps built with Qt, if necessary)
 
 Services
 
@@ -181,7 +186,7 @@ Services
 
 * Terminal
 
-  * Framebuffer(s)
+  * Framebuffer(s) / Compositors
 
     * Using Qt5 with a full-screen window, and Z-ordering of other
       windows.
@@ -556,6 +561,7 @@ Services
 * Notifications
 
    * System-to-user communication
+   * Control over what events generate notifications
 
 * People
 
@@ -625,14 +631,22 @@ Types
 
       * They have Index, Metadata, and History (like all other objects),
         and so you don’t need folders
-      * Inbox is really just part of the Notification service
+      * Inbox is really just part of the History and Notification services
       * So there’s no special collection required for mail: just
         Notification and the type actions?
+
+        * And maybe an "unread" metadata tag?
 
 * Message
 
    * CRUD
    * Unified interface to multiple providers
+
+     * Signal
+     * iMessage (via gateway?)
+     * SMS (via gateway?)
+     * WhatsApp
+     * Slack
 
 * Event
 
@@ -812,7 +826,7 @@ System
 * Some sort of IPC
 
    * Kernel mediated
-   * Not DBus
+   * Not DBus?
    * Mach + MIG?
    * Protobuf / CapNProto / Thrift / Avro / etc
    * Is there a role for Elvin here?
