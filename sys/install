@@ -1,0 +1,55 @@
+#! /bin/bash
+# DarqOS
+# Copyright (C) 2023 David Arnold
+
+
+# This script will install an unpacked DarqOS distribution, typically
+# in the /dist directory, into the system directory, typically /darq.
+#
+# In addition, it will
+# - install any required Linux (Debian) packages
+# - create or update any required Linux configuration files
+# - create or update systemd units for Darq services
+#
+# After successful completion, the target system will be ready to
+# start (or restart) the updated Darq system.
+
+# Check and save unpacked distribution location.
+
+# Check existence of /darq, and create it if required.
+
+# Shut down DarqOS
+
+# Update Linux OS
+apt-get update
+apt-get -u dist-upgrade
+apt autoremove
+
+# Install any required Debian packages
+apt-get install \
+        foot \
+        python3.11 \
+        python3.11-venv \
+        qtwayland5 \
+        weston
+
+# Create virtual environment if it doesn't exist
+if test ! -d /darq/env; then
+    python3.11 -m venv env
+fi
+
+# Install or update Python modules
+. env/bin/activate
+pip install --upgrade \
+    PyQt5 \
+    orjson \
+    pillow \
+    pyqtdarktheme \
+    vobject
+
+# Create or update configuration files
+
+# Install all Darq files (copy?  or rsync?)
+
+# Restart DarqOS
+exec /darq/sys/init
