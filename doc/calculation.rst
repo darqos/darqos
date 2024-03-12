@@ -1,7 +1,7 @@
 Calculation
 ===========
 
-A colculaton is type that ranges from some calculator-style arithmetic,
+A _calculation_ is type that ranges from some calculator-style arithmetic,
 through to complex equations, Jupyter/Mathematica-style notebooks.  The
 intention is to have these calculations be accessible for both quick
 arithmetic like that of the macOS Spotlight search bar, through basic
@@ -15,6 +15,8 @@ given it doesn't have the Command-Space ease of Spotlight.
 To perform a new calculation, it'd be Sys-n, and then complete "Calculation"
 and hit enter.  It's a bit more cumbersome, for sure.  It'd certainly be
 possible to put a button on the HUD for it, but that doesn't save a lot.
+It system-wide hotkey would also work, but the what's the justification
+for this type, and not others?
 
 A new calculation will create a new object, stored in the storage service,
 unnamed, untagged, unlikely to have any meaningful index entries, but

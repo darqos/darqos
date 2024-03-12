@@ -13,7 +13,7 @@ The host OS should be one of:
 
 * Raspberry Pi OS Lite (64 bit) (https://www.raspberrypi.com/software/)
 * Mobian (https://mobian-project.org/)
-* Debian 11 *bullseye* AMD64 netinst (https://www.debian.org/download)
+* Debian 12 *bookworm* AMD64 netinst (https://www.debian.org/download)
 
 In all cases, the Darq distribution should be unpacked (or cloned)
 into `/darq/dist`.  The `/darq/dist/install` script should then be run
@@ -89,7 +89,7 @@ Image Layout
     * Installed location of any required Unix software that is not
       provided by the host OS.
 
-  * `/darq/var`
+  * `/darq/run`
 
     * Home for files that are modified at runtime by the installation.
       This will notably include the SQLite databases used by the

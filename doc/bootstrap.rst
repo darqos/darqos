@@ -14,10 +14,9 @@ Bootstrap
 
    * Use *Raspberry Pi OS Lite* (64 bit) as the base image
 
-     * Based on Debian 12
+     * Based on Debian 12 (Bookworm)
      * Configure with Wayland server, but no desktop environment
-       * Run Weston compositor, for now
-         * Needs configuration to avoid default panel, etc.
+       * Run Wayfire compositor, for now
      * auto-login into default user (`darq`, not `'pi`)
        * Implemented via `getty@tty1` `systemd` service
      * Install single `dui` script that can fetch/install Darq when
@@ -110,9 +109,8 @@ Bootstrap
      * Password collection
      * This could all reasonably be a part of a "Settings" tool?
 
- * Python3.11?
- * Qt5 LTS
- * PyQt5
+ * Python 3.11 (default on _Bookworm_)
+ * Qt5 LTS + PyQt5 (or Qt6 + PyQt6 or PySide6?)
 
 
 2nd Edition
@@ -129,7 +127,7 @@ nth Edition
 
  * Replace Linux with darq kernel
 
- * Replace X11/Wayland with direct GPU library
+ * Replace Wayland with direct GPU library
  * Replace Qt with custom UI
 
    * Look into O/mero from PlanB

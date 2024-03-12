@@ -43,7 +43,7 @@ Infrastructure
 
 * Repository (DONE)
 * Project structure
-* CI (GitLab-CI, I suppose?)
+* CI (GitHub-CI, I suppose?)
 * Manual stack
 
   * Markdown?
@@ -72,8 +72,8 @@ System
 
 * Host OS
 
-  * Raspberry Pi OS Lite
-  * Debian 12
+  * Raspberry Pi OS Lite (Bookworm)
+  * Debian 12 (Bookworm)
 
 * IPC
 
@@ -110,6 +110,7 @@ System
 
     * Modify / write a Wayland compositor to remove cruft, but provide
       basic window management.
+      * Can we use Waypipe?
     * The Terminal service might need to interact with the compositor
       to manage the UI
 
