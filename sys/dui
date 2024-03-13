@@ -1,54 +1,77 @@
 #! /bin/bash
 # DarqOS
-# Copyright (C) 2023 David Arnold
+# Copyright (C) 2023-2024 David Arnold
 
-
-# DarqOS Installer/Updater
+# DarqOS Updater/Installer
 
 # This script is used for either the initial install or subsequent
 # update of a DarqOS image on a Raspberry Pi OS machine.
 #
 # It will attempt to download the latest available image (or
 # optionally, a specified image) from the repository, unpack it,
-# configure the host OS as required, and copy over items from the
-# image to the host system as needed.
+# and launch the included install script.
 #
 # This whole process is kinda jank, but ... it's an easy way to start,
 # and can easily be refined later.  It cooperates with the `mkdist`
 # script that can be used to prepare images.
 
-DIST_FILE=darqos-latest.tar.gz
-DIST_BASE=https://www.0x1.org/d/darq
+# All events are logged to a file (for now), named with the datetime of
+# the install attempt.  This should be useful for debugging failed
+# executions.
 
+# Base variables.
 
-# Check /darq exists
-if [ ! -d /darq]; then
-    mkdir /darq
+if [ "x$DARQ" = x ]; then
+    DARQ=/darq
 fi
 
+if [ "x$DIST" = x ]; then
+    DIST=$DARQ/dist
+fi
 
-# Check raspi-config localisation defaults.
-# - Locale
-# - Timezone
-# - Keyboard layout
+if [ "x$DIST_FILE" = x ]; then
+    DIST_FILE=darqos-latest.tar.gz
+fi
 
-# Check raspi-config set for auto-login
+if [ "x$DIST_BASE" = x ]; then
+    DIST_BASE=https://www.0x1.org/d/darq
+fi
 
-# Check raspi-config SSH access is enabled (for now, at least).
+if [ "x$DARQ_USER" = x ]; then
+    DARQ_USER=darq
+fi
 
-# Check raspi-config WiFi location?
+# Check that we're running as root.
+if [ "`whoami`" != root ]; then
+    echo "Error: must run as root" >&2
+    exit 1
+fi
 
-# Check raspi-config "overscan" display setting.
+# Check or create darq user.
+if [ ! id $DARQ_USER >/dev/null 2>/dev/null ]; then
+    adduser darq
+fi
 
-# Update OS image.
-apt-get update
-apt-get -u dist-upgrade
-apt autoremove
+# Check $DARQ exists.
+if [ ! -d $DARQ ]; then
+    mkdir -p $DARQ
+    if [ ! -d $DARQ ]; then
+        echo "Error: unable to make $DARQ directory" >&2
+        exit 1
+    fi
+fi
 
-# Install X11 packages needed to run PyQt5 apps.
-apt-get install --no-install-recommends xserver-xorg x11-xserver-utils xinit
+# Remove old $DIST, if it exists.
+if [ -d $DIST ]; then
+    rm -rf $DIST
+fi
 
-# Fetch DarqOS tarball
+# Make new distribution directory.
+mkdir -p $DIST
+chown $DARQ_USER:$DARQ_USER $DIST
+cd $DIST
+
+# Fetch DarqOS tarball.
 rm -rf /tmp/$DIST_FILE
 (cd /tmp; wget $DIST_BASE/$DIST_FILE)
 if [ ! -f /tmp/$DIST_FILE ]; then
@@ -56,15 +79,24 @@ if [ ! -f /tmp/$DIST_FILE ]; then
     exit 1
 fi
 
-# Unpack tarball into /dist
-if [ ! -d /dist]; then
-    mkdir /dist
-fi
-
-cd /dist
+# Unpack distribution.
 tar xf /tmp/$DIST_FILE
 
-# Run install script from dist
-if [ -x /dist/install ]; then
-    /dist/install
+# Reset ownership.
+chown -R $DARQ_USER:$DARQ_USER $DARQ
+
+# Run install script from dist.
+if [ ! -f $DIST/darq/sys/install ]; then
+    echo "Error: install script $DIST/darq/sys/install does not exist" >&2
+    exit 1
 fi
+
+chmod +x $DIST/darq/sys/install
+$DIST/darq/sys/install
+
+# Remove distribution files
+rm -rf /tmp/$DIST_FILE
+rm -rf $DIST
+
+# Done.
+exit 0

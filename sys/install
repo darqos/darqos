@@ -1,47 +1,96 @@
 #! /bin/bash
 # DarqOS
-# Copyright (C) 2023 David Arnold
-
+# Copyright (C) 2023-2024 David Arnold
 
 # This script will install an unpacked DarqOS distribution, typically
-# in the /dist directory, into the system directory, typically /darq.
+# in the /darq/dist directory, into the system directory, typically /darq.
 #
 # In addition, it will
 # - install any required Linux (Debian) packages
 # - create or update any required Linux configuration files
 # - create or update systemd units for Darq services
+# - install all needed Python packages
 #
 # After successful completion, the target system will be ready to
 # start (or restart) the updated Darq system.
 
-# Check and save unpacked distribution location.
-
-# Check existence of /darq, and create it if required.
+# At this point, a new system version is available in /darq/dist.  We
+# need to copy its components into /darq proper, and restart anything
+# that needs to.
 
 # Shut down DarqOS
+# FIXME: what's actually needed here?
+# FIXME: use systemd target?
 
-# Update Linux OS
+# Check for raspi-conf utility.
+if [ ! -x /usr/bin/raspi-config ]; then
+    echo "Error: unable to find /usr/bin/raspi-config utility" >&2
+    exit 1
+fi
+
+# Check raspi-config localisation defaults.
+# - Locale
+sudo raspi-config nonint do_change_locale C.UTF-8
+
+# - Timezone
+sudo raspi-config nonint do_change_timezone Australia/Sydney
+
+# - Keyboard layout
+sudo raspi-config nonint do_configure_keyboard us
+
+# Check raspi-config set for auto-login
+# B1: console, login required
+# B2: console, login automatically
+# B3: GUI, login required
+# B4: GUI, login automatically
+sudo raspi-config nonint do_boot_behaviour B2
+
+# Disable splash screen on boot.
+sudo raspi-config nonint do_boot_splash 1
+
+# Disable screen blanking.
+sudo raspi-config nonint do_blanking 1
+
+# Check raspi-config SSH access is enabled (for now, at least).
+sudo raspi-config nonint do_ssh 0
+
+# Check raspi-config WiFi location?
+sudo raspi-config nonint do_wifi_country AU
+
+# Check raspi-config "overscan" display setting.
+sudo raspi-config nonint do_overscan_kms 1 0
+sudo raspi-config nonint do_overscan_kms 2 0
+
+# Enable Wayland
+sudo raspi-config nonint do_wayland W2
+
+# FIXME: network config is done via nmcli
+
+
+# Create darq:darq user and home directory.
+
+# Update OS.
+# NOTE: Assume we start from RasPiOS Lite image.
 apt-get update
-apt-get -u dist-upgrade
+apt-get -u -y dist-upgrade
 apt autoremove
 
 # Install any required Debian packages
 apt-get install \
-        foot \
-        python3.11 \
-        python3.11-venv \
-        qtwayland5 \
-        weston
+        foot \              # terminal emulator
+        pyqt5 \             # Qt5 for Python
+        python3.11-venv \   # Python venv support
+        qtwayland5 \        # Support for Qt5 on Wayland
+        wayfire             # Minimalist Wayland compositor
 
 # Create virtual environment if it doesn't exist
-if test ! -d /darq/env; then
+if [ ! -d /darq/env ]; then
     python3.11 -m venv env
 fi
 
 # Install or update Python modules
 . env/bin/activate
 pip install --upgrade \
-    PyQt5 \
     orjson \
     pillow \
     pyqtdarktheme \
@@ -50,6 +99,17 @@ pip install --upgrade \
 # Create or update configuration files
 
 # Install all Darq files (copy?  or rsync?)
+for f in LICENSE darq kernel lenses services sys tasks types; do
+    cp -pr $f /darq/
+    # FIXME: chown
+    # FIXME: chmod
+    # FIXME: use install instead of cp ?
+done
 
 # Restart DarqOS
-exec /darq/sys/init
+# FIXME: use systemd target?
+
+# FIXME: what needs to be restarted?
+# FIXME: OS? (in which case, don't worry about services)
+# FIXME: just services? (iterate over list, and restart them)
+
