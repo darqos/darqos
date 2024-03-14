@@ -64,23 +64,42 @@ fi
 # Remove old $DIST, if it exists.
 if [ -d $DIST ]; then
     rm -rf $DIST
+    echo "Ok: removed existing distribution files"
 fi
 
 # Make new distribution directory.
 mkdir -p $DIST
 chown $DARQ_USER:$DARQ_USER $DIST
-cd $DIST
+if [ -d $DIST ]; then
+    echo "Ok: created $DIST directory."
+else
+    echo "Error: $DIST directory does not exist after mkdir and chown" >&2
+    exit 1
+fi
 
 # Fetch DarqOS tarball.
-rm -rf /tmp/$DIST_FILE
-(cd /tmp; wget $DIST_BASE/$DIST_FILE)
-if [ ! -f /tmp/$DIST_FILE ]; then
-    echo "Error: couldn't download distribution" >&2
+cd /tmp
+rm -f $DIST_FILE
+wget $DIST_BASE/$DIST_FILE
+
+if [ -f /tmp/$DIST_FILE ]; then
+    echo "Ok: $DIST_FILE exists after wget"
+else
+    echo "Error: couldn't download distribution from $DIST_BASE/$DIST_FILE" >&2
     exit 1
 fi
 
 # Unpack distribution.
+cd $DIST
+echo "Ok: current directory is `pwd`"
+
 tar xf /tmp/$DIST_FILE
+if [ -d darq ]; then
+    echo "Ok: tarball extracted into $DIST"
+else
+    echo "Error: 'darq' directory does not exist after extraction" >&2
+    exit 1
+fi
 
 # Reset ownership.
 chown -R $DARQ_USER:$DARQ_USER $DARQ
@@ -92,11 +111,15 @@ if [ ! -f $DIST/darq/sys/install ]; then
 fi
 
 chmod +x $DIST/darq/sys/install
+
+echo "Ok: about to execute install script"
 $DIST/darq/sys/install
+echo "Ok: install script completed"
 
 # Remove distribution files
 rm -rf /tmp/$DIST_FILE
 rm -rf $DIST
 
 # Done.
+echo "Ok: done"
 exit 0
