@@ -3,12 +3,12 @@
 
 from typing import Optional
 
-from PyQt6.QtWidgets import QApplication, QWidget, QTextEdit, QMenu, QVBoxLayout
+from PyQt5.QtWidgets import QApplication, QWidget, QTextEdit, QMenu, QVBoxLayout
 
-from darq.rt.storage import Storage
-from darq.rt.history import History, Event
-from darq.rt.object import Object
-from darq.os.ipc import IpcNode
+from darq.services.storage import StorageAPI
+from darq.services.history import History, Event
+from darq.runtime.object import Object
+from darq.kernel.ipc import IpcNode
 
 import sys
 import uuid
