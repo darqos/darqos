@@ -116,7 +116,7 @@ A standard Mac keyboard will map:
 Functions
 ---------
 
-The Terminal Service is repsonsible for providing several crucial
+The Terminal Service is responsible for providing several crucial
 functions of the user interface.  In 1st Edition, these will be:
 
 New
@@ -192,7 +192,7 @@ Switcher
 
 The Terminal service should provide a means of switching between open
 windows: the equivalent of Alt-Tab.  This might end up being
-implemented by Weston, initially.
+implemented by Wayfire, initially.
 
 Object Properties
 ~~~~~~~~~~~~~~~~~
@@ -216,8 +216,8 @@ a standard widget set to provide UI elements.  One option would be to
 use a widget server model, perhaps similar to O/mero from PlanB.  Or
 it might be a more traditional library-based approach.
 
-It's also possible that we'll move away from Wayland and/or Weston to
-a dedicated display manager and compositor.
+It's also possible that we'll move away from Wayland and/or Wayfire to
+a dedicated compositor.
 
 
 Architecture

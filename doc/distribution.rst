@@ -16,8 +16,8 @@ The host OS should be one of:
 * Debian 12 *bookworm* AMD64 netinst (https://www.debian.org/download)
 
 In all cases, the Darq distribution should be unpacked (or cloned)
-into `/darq/dist`.  The `/darq/dist/install` script should then be run
-(as `root`) to install or update the local installation.  This will
+into `/darq/dist`.  The `/darq/dist/darq/sys/install` script should then
+be run (as `root`) to install or update the local installation.  This will
 install any required host OS packages, configure the system to run
 Darq, and then reboot.
 

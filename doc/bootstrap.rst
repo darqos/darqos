@@ -31,9 +31,10 @@ Bootstrap
        required: installing appropriate packages, updating
        configuration files, etc.
      * Fetch tarball for darq
-     * Use `/dist` as staging area for updates, and then `/dist/install`
-       script to copy into `/darq` and activate
-     * Clean `/dist` once installed (?)
+     * Use `/darq/dist` as staging area for updates, and then
+       `/darq/dist/darq/sys/install` script to copy into `/darq` and
+       activate
+     * Clean `/darq/dist` once installed
      * Consider using eg. `rsync` to optimise this process later.
 
  * Startup
@@ -41,11 +42,13 @@ Bootstrap
    * Standard Linux boot to custom Wayland-based Qt UI
    * All Darq services have a systemd unit, and use systemd
      dependencies to control startup order.
+   * Define a systemd target to enable all Darq services to be started
+     or stopped as a group
    * p-Kernel
 
      * RPC-reachable pseudo-kernel
      * Prototype kernel API
-     * Started from systemd unit file (?)
+     * Started from systemd unit file
      * Once up and running, executes `/darq/sys/init` script
 
    * Storage
@@ -73,22 +76,26 @@ Bootstrap
    * History
    * Terminal
 
-     * Server is Unix daemon process, running PyQt5
+     * Server is Unix daemon process, running PyQt5 (or 6?)
      * Create full-screen background window on all attached screen
        devices (from Qt).
+
+       * Maybe this can be done by Wayfire (compositor)?
+
      * Needs to have pointer & keyboard
 
        * Can we get enough control via Qt?  Worried about the stupid
          Command/Control mapping Qt does ...
        * If not Qt, maybe need to wrangle directly with Linux
 
+         * In the worst case, perhaps thd (trigger happy) will work
+
      * Also will need to provide audio I/O
 
-       * Via ... ALSA?  Or PulseAudio?  Or Pipewire?
+       * Via ... PulseAudio?  Or Pipewire?
 
-         * I guess ideally Pipewire, but it'll depend on what's
-           available in the default OS image, cos I don't want to fuck
-           about too much.
+         * I guess ideally Pipewire, but it'll depend on what
+           works for RPi 4 / RPi400
 
      * Either provides or facilitates the Factory, Find, and Events
        UIs.
@@ -96,11 +103,11 @@ Bootstrap
    * If first boot, run firstboot
 
      * WiFi SSID and password
-     * DHCP vs static network config
-     * Country / timezone
 
        * Also used to set WiFi locale?
 
+     * DHCP vs static network config
+     * Country / timezone
      * Add a single "user" user?
 
        * Could have firstrun set up a user account, but is there any

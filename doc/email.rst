@@ -72,7 +72,7 @@ it should be fetched for local storage.
 Let's assume for now that all emails are downloaded to local storage,
 and that's the canonical copy.
 
-Having fetched the email (in its entirity? Or just the RFC5322 body?)
+Having fetched the email (in its entirety? Or just the RFC5322 body?)
 it will be possible to index, history, etc, it.  This should be a
 standard pipeline for handling inbound objects, exposed as a
 system-wide inbox.

@@ -110,7 +110,9 @@ System
 
     * Modify / write a Wayland compositor to remove cruft, but provide
       basic window management.
-      * Can we use Waypipe?
+
+      * Can we use Wayfire?
+
     * The Terminal service might need to interact with the compositor
       to manage the UI
 
@@ -127,7 +129,7 @@ System
 
 * Bootstrap
 
-  * Untar / clone source into `/darq/src`
+  * Untar / clone source into `/darq/dist`
   * Run install script, copying stuff into place
   * Run boot script, starting up Unix processes
 
@@ -222,7 +224,7 @@ Services
     * History timeline
 
   * Clock
-  * REPL?
+  * REPL
 
 Runtime
 
@@ -286,6 +288,7 @@ Story
     * Factory (S-n)
     * Search (S-space)
     * Events (S-e)
+    * REPL (S-s)
     * How does we lock / shutdown from here?
     * Do these _replace_ each other on screen?  eg. S-n S-space will
       pop the factory, then hide factory and pop search?
