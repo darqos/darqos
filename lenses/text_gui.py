@@ -3,13 +3,13 @@
 
 from typing import Optional
 
-from PyQt6.QtWidgets import QApplication, QWidget, QTextEdit, QMenu, QVBoxLayout
-from PyQt6 import QtCore
-from PyQt6.QtGui import QColor, QKeySequence, QMouseEvent, QShortcut
+from PyQt5.QtWidgets import QApplication, QWidget, QTextEdit, QMenu, QVBoxLayout, QShortcut
+from PyQt5 import QtCore
+from PyQt5.QtGui import QColor, QKeySequence, QMouseEvent
 
-from darq.rt.storage import Storage
-from darq.rt.history import History, Event
-from darq.lens import Lens
+from darq.services import storage
+from darq.services.history import History, Event
+from darq.runtime.lens import Lens
 
 import sys
 import uuid
@@ -51,13 +51,13 @@ class DarqTextEdit(QTextEdit):
 
 ########################################################################
 
-class GuiTextLens(QWidget, Lens):
+class TextQtLens(QWidget, Lens):
     """GUI text type."""
 
     def __init__(self, url: str = None):
         """Constructor."""
 
-        self.storage = Storage.api()
+        self.storage = storage.api()
         self.history = History.api()
 
         # Load content.
@@ -178,7 +178,7 @@ def main():
         url = sys.argv[1]
 
     app = QApplication(sys.argv)
-    text = TextTypeView(url)
+    text = TextQtLens(url)
     sys.exit(app.exec())
 
 
