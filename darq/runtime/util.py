@@ -5,6 +5,8 @@
 # it doesn't even listen there.  Thank you, Lennart,
 
 import enum
+import logging
+import sys
 import syslog
 
 
@@ -71,7 +73,8 @@ def log(facility: Facility, level: Level, message: str):
     :param level: Severity of the message.
     :param message: Text of the message."""
 
-    syslog.syslog(facility.value * 8 + level.value, message)
+    #syslog.syslog(facility.value * 8 + level.value, message)
+    logging.log(level, f"{facility} {message}")
     return
 
 

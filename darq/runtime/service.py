@@ -4,23 +4,18 @@
 import orjson
 import os
 
+import darq
 from ..kernel import EventLoopInterface, EventListener, open_port, close_port, send_message
 
 
 class Service(EventListener):
     """Service base class."""
 
-    def __init__(self, loop: EventLoopInterface, port: int = 0):
+    def __init__(self, port: int = 0):
         """Constructor."""
-
-        # Save event loop access handle.
-        self.loop: EventLoopInterface = loop
 
         # Service port.
         self.port: int = port
-
-        # Active flag: if False, exist service loop and shut down.
-        self.active: bool = True
 
         # Write PID to run file.
         tmpdir = os.environ.get("TMPDIR", "/tmp")
@@ -33,27 +28,6 @@ class Service(EventListener):
     def get_name() -> str:
         """Return the service name."""
         return "service"
-
-    def run(self):
-        """Accept and dispatch service requests."""
-
-        # Register event loop.
-        # FIXME
-
-        # Open service port.
-        open_port(self, self.port)
-
-        # Receive and dispatch.
-        while self.active:
-            try:
-                self.loop.run()
-
-            except KeyboardInterrupt:
-                print("Ignore C-c")
-
-        # Clean up.
-        close_port(self.port)
-        return
 
     def handle_request(self, reply_port: int, request: dict):
         """Dispatch the requested method.
@@ -100,6 +74,20 @@ class Service(EventListener):
         darq.send_message(self.port, port, buf)
         return
 
+    def on_open_port(self, port: int):
+        print("on_open_port")
+
+        darq.log(darq.Facility.SERVICE, darq.Level.INFO.INFO,
+                 f"Listening for requests on port #{port}.")
+        return
+
+    def on_close_port(self, port: int):
+        print("on_close_port")
+
+        darq.log(darq.Facility.SERVICE, darq.Level.INFO,
+                 f"Closed listening port #{port}.")
+        return
+
     def on_message(self, source: int, destination: int, buffer: bytes):
         """Handle a delivered message."""
 
@@ -109,8 +97,10 @@ class Service(EventListener):
 
         else:
             # FIXME: deal with unhandled dest port
-            pass
-        pass
+            darq.log(darq.Facility.SERVICE, darq.Level.ERROR,
+                     f"Received message for unknown destination port: "
+                     f"source={source}, destionation={destination}")
+            return
 
     def on_error(self, port: int, error: int, reason: str):
         """Handle a reported communications error."""
@@ -119,13 +109,21 @@ class Service(EventListener):
 
 
 class ServiceAPI(EventListener):
-    """Base class for runtime service APIs."""
+    """Base class for runtime service APIs.
+
+    This is the client-side base class for all Service APIs.  Service
+    APIs send a message from a local IPC port to the service's IPC
+    port, and (typically) wait for a reply.  """
 
     def __init__(self, port: int):
         """Constructor.
 
         :param port: Port ID for requests to this service"""
+
+        # Remote port for service instance.
         self._service_port = port
+
+        # Local (ephemeral) port for receiving replies.
         self._port = open_port()
 
     def rpc(self, request: dict) -> dict:
@@ -160,3 +158,7 @@ class ServiceAPI(EventListener):
         """Handle a reported communications error."""
         # FIXME
         pass
+
+
+
+

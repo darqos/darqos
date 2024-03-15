@@ -3,6 +3,7 @@
 
 from typing import Union
 
+import darq
 from darq.runtime.service import ServiceAPI
 
 import base64
@@ -13,15 +14,12 @@ import base64
 # for now, just hack it up and we'll factor it out later.
 
 
-class Storage(ServiceAPI):
+class StorageAPI(ServiceAPI):
     """Interface to storage system."""
 
-    @staticmethod
-    def api() -> "Storage":
-        return Storage()
-
     def __init__(self):
-        super().__init__("tcp://localhost:11001")
+        """Constructor."""
+        super().__init__(11001)
         return
 
     def set(self, key: str, value: Union[bytes, bytearray]):
@@ -50,7 +48,7 @@ class Storage(ServiceAPI):
 
         return reply['result']
 
-    def get(self, key: str) -> bytearray:
+    def get(self, key: str) -> bytes:
         request = {"method": "get",
                    "xid": "xxx",
                    "key": key}
@@ -68,8 +66,13 @@ class Storage(ServiceAPI):
         return reply["result"]
 
 
+def api():
+    """Return a client API for the Storage service."""
+    return StorageAPI()
+
+
 def test():
-    s = Storage.api()
+    s = StorageAPI.api()
     assert not s.exists("foo")
     s.set("foo", b"bar")
     assert s.exists("foo")

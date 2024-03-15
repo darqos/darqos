@@ -1,5 +1,6 @@
 # darqos
 # Copyright (C) 2022-2023 David Arnold
+import typing
 
 # Implementation of the DarqOS kernel interface.
 #
@@ -37,17 +38,24 @@ def init_callbacks(loop: EventLoopInterface, listener: EventListener):
 
 
 def loop():
+    """Return a reference to the runtime event loop."""
     return _state.loop
 
 
-def open_port(port: int = -1) -> int:
-    """Allocate a new port for communication from/to this application.
+def open_port(port: int) -> int:
+    """Synchronously allocate a new port for communication.
 
-    :param port: Optional requested port number.
+    :param port: Requested port number; Zero requests ephemeral port.
     :returns: Allocated port number."""
 
     return _state.open_port(port)
 
+def open_port_a(port: int, cb: typing.Callable[[int, int], None]) -> None:
+    """Asynchronously allocate new port for communication.
+
+    :param port: Requested port number; Zero requests ephemeral port.
+    :param cb: Completion callback: cb(port, error_code)."""
+    pass
 
 def close_port(port: int):
     """Close a previously-allocated communication port.
@@ -102,4 +110,3 @@ def register_process(self, pid):
 #
 #     # Basically same as message, but extra chunky.
 #     pass
-

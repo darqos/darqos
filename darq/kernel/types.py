@@ -21,4 +21,12 @@ class UInt32(int):
 
 class UInt64(int):
     """64-bit unsigned integer field value type."""
-    pass
+
+    @staticmethod
+    def max():
+        return (2 ** 64) - 1
+
+    @staticmethod
+    def min():
+        return 0
+

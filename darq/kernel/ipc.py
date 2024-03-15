@@ -45,7 +45,6 @@ MSG_SHUTDOWN = 10
 IPC_PORT = 11000
 RECV_BUFLEN = 65535
 
-
 ########################################################################
 
 class DarqError(Exception):
@@ -73,7 +72,43 @@ class NonExistentPortError(DarqError):
     pass
 
 
+class PortNumberOutOfRange(DarqError):
+    """The specified port number is out of range."""
+    pass
+
+
+# FIXME
+EXCEPTION_MAP: dict[int, DarqError] = {}
+
+def get_exception(error_code:int) -> DarqError:
+    return EXCEPTION_MAP.get(error_code, DarqError)
+
 ########################################################################
+
+class PendingRequest:
+    def __init__(self, request_id: int, cb, request_message):
+        self.request_id = request_id
+        self.callback = cb
+        self.request_message = request_message
+        self.response_message = None
+        self.completed = False
+        self.result = 0
+
+    def is_sync(self):
+        return self.callback == None
+
+    def is_complete(self):
+        return True if self.completed else False
+
+    def is_success(self):
+        return self.result == 0
+
+    def complete(self, result, message):
+        self.result = result
+        self.completed = True
+        self.response_message = message
+        return
+
 
 class Buffer:
     """Basic byte buffer wrapper."""
@@ -248,6 +283,7 @@ class OpenPortRequest(Message):
 
     def encode(self) -> bytes:
         buf = super().encode()
+        print(f"request_id = {self.request_id}, requested_port = {self.requested_port}")
         buf += struct.pack(">LxxxxQ", self.request_id, self.requested_port)
         return buf
 
@@ -524,23 +560,20 @@ class ProcessRuntimeState:
         self.socket: typing.Optional[socket.socket] = None
 
         # Set of local ports registered with p-kernel.
-        self.ports: typing.Dict[int, PortState] = {}
+        self.ports: dict[int, PortState] = {}
 
         # Transaction identifiers for p-kernel requests.
         self.request_id: int = 0
 
         # Pending requests.
         # FIXME: do I want a dedicated type here?
-        self.requests: typing.Dict[int, typing.Any] = {}
+        self.requests: dict[int, PendingRequest] = {}
 
         # Re-assembly buffer.
         self.recv_buffer = Buffer()
 
         # Event loop.
         self.loop: typing.Optional[EventLoopInterface] = None
-
-        # Event listener if runtime is in async mode.
-        self.listener: typing.Optional[EventListener] = None
         return
 
     def get_next_request_id(self) -> int:
@@ -552,9 +585,8 @@ class ProcessRuntimeState:
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.socket.connect(('localhost', IPC_PORT))
-
         self.loop.add_socket(self.socket, self)
+        self.socket.connect(('localhost', IPC_PORT))
         return
 
     def on_readable(self, sock: socket.socket):
@@ -576,7 +608,9 @@ class ProcessRuntimeState:
 
         :param message: Message to send."""
         buffer = message.encode()
-        # FIXME: in an async world, this should queue and return if it can't write immediately
+
+        # FIXME: in an async world, this should queue and return if it can't
+        # write immediately
         self.socket.sendall(buffer)
         return
 
@@ -630,19 +664,22 @@ class ProcessRuntimeState:
 
     def handle_open_port_response(self, message: OpenPortResponse):
         # Look up the request.
-        request = self.requests.get(message.request_id)
-        if request is None:
+        pending_request = self.requests.get(message.request_id)
+        if pending_request is None:
             self.listener.on_error(0, 0, "response to unknown request")
             return
 
+        pending_request.complete(message.result, message)
         del self.requests[message.request_id]
 
         # Check result: if error, discard state.
-        if message.result != 0:
+        if not pending_request.is_success():
             if message.port in self.ports:
                 del self.ports[message.port]
 
-            self.listener.on_error(0, message.result, "p-Kernel error")
+            if not pending_request.is_sync():
+                # Report error via callback
+                pending_request.callback(pending_request.port, message.result)
             return
 
         # Set or overwrite port state.
@@ -650,29 +687,15 @@ class ProcessRuntimeState:
         port_state.is_open = True
         self.ports[message.port] = port_state
 
-        self.listener.on_open_port(message.port)
+        if not pending_request.is_sync():
+            pending_request.callback(message.port, 0)
         return
 
-    def handle_close_port_response(self, message: ClosePortResponse):
-
-        assert message.port in self.ports
-
-        self.listener.on_close_port(message.port)
-
-        del self.ports[message.port]
-        del self.requests[message.request_id]
-        return
-
-    def open_port(self, port: int = -1):
-        """Allocate a new port for communication from/to this application.
-
-        :param port: Optional requested port number.
-        :returns: Allocated port number."""
-
-        # If we don't have a p-kernel TCP session already, open one.
-        if self.socket is None:
-            # FIXME: should be async
-            self.connect_to_p_kernel()
+    def _open_port_request(self, port: int, callback) -> PendingRequest:
+        """(Internal)."""
+        # Validate requested port.
+        if port < UInt64.min() or port > UInt64.max():
+            raise PortNumberOutOfRange(port)
 
         # Check this isn't a duplicate port number (locally).
         if port in self.ports:
@@ -682,11 +705,52 @@ class ProcessRuntimeState:
         if port != 0:
             self.ports[port] = None  # FIXME
 
+        # If we don't have a p-kernel TCP session already, open one.
+        if self.socket is None:
+            # FIXME: should be async
+            self.connect_to_p_kernel()
+
         # Send an open_port request to the p-Kernel.
         request_id = self.get_next_request_id()
-        request = OpenPortRequest(request_id, port)
-        self.requests[request_id] = request
-        self.send_to_p_kernel(request)
+        request_message = OpenPortRequest(request_id, port)
+        pending = PendingRequest(request_id, callback, request_message)
+        self.requests[request_id] = pending
+        self.send_to_p_kernel(request_message)
+
+        return pending
+
+    def open_port_a(self, port: int, cb: typing.Callable[[int, int], None]):
+        self._open_port_request(port, cb)
+        return
+
+    def open_port_s(self, port: int) -> int:
+        """Allocate a new port for communication from/to this application.
+
+        :param port: Optional requested port number.  Zero means ephemeral port.
+        :returns: Allocated port number."""
+
+        pending_request = self._open_port_request(port, None)
+
+        # Call event loop.
+        # Dispatch events other than our response.
+        while True:
+            # Step event loop.
+            # Dispatch received event, if any.
+            # Check response.
+            if pending_request.is_complete():
+                if pending_request.is_success():
+                    return pending_request.result
+                else:
+                    raise get_exception(pending_request.result)
+
+    def handle_close_port_response(self, message: ClosePortResponse):
+
+        assert message.port in self.ports
+
+        self.listener.on_close_port(message.port)
+
+        del self.ports[message.port]
+        del self.requests[message.request_id]
         return
 
     def close_port(self, port: int):
@@ -722,4 +786,3 @@ class ProcessRuntimeState:
         # FIXME: once sending is properly async, this can be (re)moved.
         self.listener.on_send_message(0, 0)  ## FIXME: these params make no sense
         return
-

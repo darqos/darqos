@@ -1,7 +1,7 @@
 # darqos
-# Copyright (C) 2022 David Arnold
+# Copyright (C) 2022-2023 David Arnold
 
-# This package should entirely define the namespace used by client programs.
+# *** This module should entirely define the namespace used by client programs ***
 #
 # It does that by binding names from subsidiary packages, presenting the
 # various classes and functions as a unified API.
@@ -12,12 +12,14 @@ import uuid
 from typing import Optional, Union
 
 from darq.services.type import TypeServiceAPI
-from darq.services.storage import Storage
+from darq.services.storage import StorageAPI
+from darq.services.storage import api as storage_api
 from darq.services.history import History
 
 from darq.runtime.object import ObjectIdentifier, ObjectProxy
 from darq.runtime.service import Service
 from darq.runtime.service import ServiceAPI
+from darq.runtime.tool import Tool
 from darq.runtime.type import Type
 from darq.runtime.util import Facility, Level, log
 
@@ -53,6 +55,7 @@ from darq.kernel.loop import QtEventLoop
 # FIXME: make service APIs dynamic, such that they self-construct on use
 
 _local_context_id: str = ''
+
 #_type_api: TypeServiceAPI = TypeServiceAPI.api()
 _type_api = None
 

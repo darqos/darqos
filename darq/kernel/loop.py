@@ -188,34 +188,37 @@ class SelectEventLoop(EventLoopInterface):
         """Enter event loop and begin processing events."""
 
         self.active = True
-        listener = None
-
         while self.active:
-            if len(self.timers) > 0:
-                timeout = self.timers[0].expiry
-                for t in self.timers[1:]:
-                    # FIXMD: get next timer expiry time, or fallback timeout
-                    pass
-            else:
-                timeout = 30.0
+            self.next()
 
-            rr, rw, _ = select.select(self.sockets, self.sockets, [], timeout)
+    def next(self):
+        """Process the next event."""
 
-            for s in rr:
-                listener = self.sockets.get(s)
-                if listener is not None:
-                    listener.on_readable(s)
+        if len(self.timers) > 0:
+            timeout = self.timers[0].expiry
+            for t in self.timers[1:]:
+                # FIXME: get next timer expiry time, or fallback timeout
+                pass
+        else:
+            timeout = 10.0
 
-            for s in rw:
-                listener = self.sockets.get(s)
-                if listener is not None:
-                    listener.on_writeable(s)
+        rr, rw, _ = select.select(self.sockets, self.sockets, [], timeout)
 
-            for t in self.timers:
-                now = time.time()
-                if t.expiry < now:
-                    t.expiry += t.duration
-                    t.listener.on_timeout(t.timer_id, t.expiry, now)
+        for s in rr:
+            listener = self.sockets.get(s)
+            if listener is not None:
+                listener.on_readable(s)
+
+        for s in rw:
+            listener = self.sockets.get(s)
+            if listener is not None:
+                listener.on_writeable(s)
+
+        for t in self.timers:
+            now = time.time()
+            if t.expiry < now:
+                t.expiry += t.duration
+                t.listener.on_timeout(t.timer_id, t.expiry, now)
 
     def stop(self):
         """Exit event loop at next iteration."""
@@ -298,9 +301,13 @@ class QtEventLoop(EventLoopInterface):
 
     def run(self):
         """Enter event loop.  Run until stop() is called."""
-        loop = QEventLoop()
-        loop.run()
+        self.loop = QEventLoop()
+        self.loop.exec()
+
+    def next(self):
+        # FIXME FIXME FIXME
+        self.loop.processEvents(None, 10)
 
     def stop(self):
         """Exit inner-most event loop instance."""
-        loop.stop()
+        self.loop.exit(0)
