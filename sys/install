@@ -18,6 +18,32 @@
 # need to copy its components into /darq proper, and restart anything
 # that needs to.
 
+# At some point this needs to become more sophisticated.  It should
+# determine whether it's doing an update or an install, and alter its
+# behaviour.
+#
+# For an install, it should start up Wayland & Wayfire, and possibly
+# the storage service (?), and then start the GUI install program.  Or,
+# in the short term, start up a text-based installer?  Either way, it
+# needs to collect information about locale, keyboard layout, timezone,
+# WiFi, etc, and persist these somewhere (possibly a file, possibly in
+# storage).  For upgrades, this step should be skipped, and the persisted
+# values used instead.
+#
+# Similarly, for a new install, there's no need to stop running services.
+#
+# The various locations, install/update mode, and perhaps a "devmode"
+# flag should be passed from dui into install as command-line parameters.
+#
+# This script should also probably deal with the differences between
+# RPi4, RPi400, RPi5, and a Unix laptop (and maybe Mobian as well?).
+# That might require per-platform sub-scripts?  Or functions?  Something,
+# anyway.
+#
+# We also need to decide about logging.  It's bad enough that dui just
+# writes to stdout/stderr.  That's better than nothing though.
+
+
 # Shut down DarqOS
 # FIXME: what's actually needed here?
 # FIXME: use systemd target?
@@ -68,6 +94,7 @@ sudo raspi-config nonint do_wayland W2
 
 
 # Create darq:darq user and home directory.
+# FIXME: decide if this belongs in dui (so it can chown files?)
 
 # Update OS.
 # NOTE: Assume we start from RasPiOS Lite image.
@@ -81,7 +108,8 @@ apt-get install \
         pyqt5 \             # Qt5 for Python
         python3.11-venv \   # Python venv support
         qtwayland5 \        # Support for Qt5 on Wayland
-        wayfire             # Minimalist Wayland compositor
+        wayfire \           # Minimalist Wayland compositor
+        libgl1-mesa-dri     # Needed for Wayfire VC4 support
 
 # Create virtual environment if it doesn't exist
 if [ ! -d /darq/env ]; then
