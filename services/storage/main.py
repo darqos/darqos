@@ -30,7 +30,18 @@ class StorageService(darq.Service):
     set as required, rather than being completely loaded all at once."""
 
     def __init__(self, file: str = None):
-        super().__init__(darq.SelectEventLoop())
+        """Constructor.
+
+        :param file: Specify a file name for the blob starage."""
+
+        # Initialise runtime.
+        darq.init_callbacks(darq.SelectEventLoop(), self)
+
+        darq.log(darq.Facility.SERVICE, darq.Level.INFO,
+                 "Starting Storage service.")
+
+        # Initialise service.
+        super().__init__(11001)  # FIXME: hardcoded ports?!?
 
         if file is None:
             file = "storage.sqlite"
@@ -46,7 +57,12 @@ class StorageService(darq.Service):
         self.socket = None
         self.active = False
 
+        # Open port.
+        darq.open_port(self.port)
         return
+
+    def run(self):
+        return darq.loop().run()
 
     @staticmethod
     def get_name() -> str:
@@ -170,6 +186,8 @@ class StorageService(darq.Service):
         # Clean up database connection.
         self.db.close()
         self.db = None
+
+        super().handle_shutdown()
 
         print("Storage Service shutdown handled successfully.")
         return

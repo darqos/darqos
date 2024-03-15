@@ -1,7 +1,7 @@
 # darqos
 # Copyright (C) 2022-2023 David Arnold
 
-from darq.runtime import storage
+from darq.services import storage
 from darq.runtime.type import Type
 
 import orjson
@@ -59,8 +59,13 @@ class TypeService(darq.Service):
     def __init__(self):
         """Constructor."""
 
-        # FIXME: convert to IPC
-        super().__init__("tcp://*:11006")
+        # FIXME: use fixed port number for now.  What to do here?
+        darq.init_callbacks(darq.SelectEventLoop(), self)
+
+        darq.log(darq.Facility.SERVICE, darq.Level.INFO,
+                 "Starting Type service.")
+
+        super().__init__()
 
         # Look up database.
         self._db = {}
@@ -72,6 +77,8 @@ class TypeService(darq.Service):
             for type_data in typedefs:
                 typedef = TypeDefinition.from_dict(type_data)
                 self._db[typedef.get_uti()] = typedef
+
+        darq.open_port(self.port)
         return
 
     @staticmethod
@@ -162,7 +169,9 @@ class TypeService(darq.Service):
         return
 
     def handle_shutdown(self):
-        print("Type Service handled shutdown request.")
+        darq.log(darq.Facility.SERVICE, darq.Level.INFO,
+                 "Type Service handled shutdown request.")
+        return
 
 
 def initialize(service: TypeService):

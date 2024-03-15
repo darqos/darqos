@@ -201,7 +201,6 @@ class ObjectFactory(QWidget):
         self.object_table = QVBoxLayout()
         self.object_table.setContentsMargins(20, 20, 20, 20)
         for t in self.types.get_types():
-            print(t.name, t.icon)
             row = QLabel(t.name)
             self.object_table.addWidget(row)
         self.layout.addLayout(self.object_table)
@@ -304,7 +303,7 @@ class ObjectSelector(QWidget):
         self.setLayout(self.layout)
         self.hide()
 
-        # FIXME: self.history = History.api()
+        self.history = History.api()
         return
 
     def show(self):
@@ -473,7 +472,7 @@ def main():
                         format='%(asctime)s terminal %(levelname)8s %(message)s',
                         level=logging.DEBUG)
 
-    logging.info(f"Starting Terminal.")
+    logging.info(f"Starting Terminal service.")
 
     app = QApplication(sys.argv)
     qdarktheme.setup_theme()
