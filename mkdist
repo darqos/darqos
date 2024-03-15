@@ -1,8 +1,10 @@
 #! /bin/bash
 # darqos
-# Copyright (C) 2023, David Arnold
+# Copyright (C) 2023-2024, David Arnold
 
 # Make a distribution snapshot
+
+EDITION='1'
 
 rm -rf dist
 mkdir -p "dist/darq"
@@ -59,9 +61,8 @@ for f in `find "$root/sys" -name "*" -print`; do
   echo $t
 done
 
-
 # Make archive.
-name=darqos-1ed-snap`date +%Y%m%d`.tar
+name=darqos-${EDITION}ed-snap`date +%Y%m%d`.tar
 rm -f $name.gz
 
 cd dist
