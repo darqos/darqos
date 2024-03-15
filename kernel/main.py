@@ -19,6 +19,7 @@
 # xxx
 
 import logging
+import platform
 import random
 import select
 import subprocess
@@ -77,7 +78,15 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
 
     def __init__(self):
         """Constructor."""
-        super().__init__(SelectEventLoop(), 11000)
+
+        darq.init_callbacks(darq.SelectEventLoop(), self)
+        super().__init__()
+
+        self.host_os = ''
+        self.host_os_version = ''
+        self.python_version = ''
+        self.cpu = ''
+        self.device = ''
 
         self.services = []
         self.types = []
@@ -85,8 +94,15 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         self.lenses = []
 
         self.is_active: bool = True
+
+        # Map of socket to IPC client.
         self.clients: typing.Dict[socket.socket: IPCClient] = {}
+
+        # Map of file descriptor to IPC client.
         self.fds: typing.Dict[int, IPCClient] = {}
+
+        # Host platform.
+        self.platform = self.detect_platform()
 
         # Listening socket.
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -94,12 +110,11 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         self.socket.setblocking(False)
         self.socket.bind(('0.0.0.0', 11000))
         self.socket.listen()
-        self.loop.add_socket(self.socket, self)
-
-        # Event loop.
+        darq.loop().add_socket(self.socket, self)
 
         # Complete.
-        logging.info("IPC: service initialized.")
+        logging.info("Initialized.")
+        return
 
     @staticmethod
     def get_name() -> str:
@@ -113,18 +128,18 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
             client = IPCClient(self, client_socket)
             self.clients[client_socket] = client
 
-            self.loop.add_socket(client_socket, self)
+            darq.loop().add_socket(client_socket, self)
 
-            logging.info(f"IPC: Socket [{client_socket.fileno()}] "
+            logging.info(f"Socket [{client_socket.fileno()}] "
                          f"connected from {client_addr}")
             return
 
         client = self.clients.get(sock)
         if client is None:
-            logging.error(f"IPC: got read callback from unexpected "
+            logging.error(f"got read callback from unexpected "
                           f"socket {sock.fileno()}.  Closing socket.")
 
-            self.loop.cancel_socket(sock)
+            darq.loop().cancel_socket(sock)
             sock.close()
             return
 
@@ -141,9 +156,11 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
     def run(self):
         """Main loop."""
 
-        logging.info("IPC: Servicing requests.")
-        self.loop.run()
+        logging.info("Entering main loop.")
+        darq.loop().run()
         return
+
+        # FIXME: remove below, once darq loop is capable
 
         while self.is_active:
             sl = [c.get_socket() for c in self.clients.values()]
@@ -157,17 +174,17 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
                 else:
                     client = self.clients.get(s)
                     if not client:
-                        logging.warning(f"IPC: no client for socket")
+                        logging.warning(f"No client for socket.")   # FIXME: log socket details
                         continue
                     client.on_readable(s)
 
             for s in ready_write:
                 if s == self.socket:
-                    logging.debug("IPC: Listening socket returned writeable")
+                    logging.debug("Listening socket returned writeable")
                 else:
                     client = self.clients.get(s)
                     if not client:
-                        logging.warning(f"IPC: no client for socket")
+                        logging.warning(f"No client for socket")  # FIXME: log socket details
                         continue
                     client.on_writeable(s)
         return
@@ -185,17 +202,17 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         for port in ports:
             if port in self.fds:
                 del self.fds[port]
-                logging.debug(f"IPC: {name} closed port {port}")
+                logging.debug(f"{name} closed port {port}")
 
         # Remove client.
         sock = client.get_socket()
         if sock in self.clients:
             del self.clients[sock]
 
-        self.loop.cancel_socket(sock)
+        darq.loop().cancel_socket(sock)
         sock.close()
 
-        logging.info(f"IPC: {name} disconnected.")
+        logging.info(f"{name} disconnected.")
         return
 
     def get_ephemeral_port(self):
@@ -216,7 +233,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
     def register_port(self, port: int, client: IPCClient):
         """Record the association between a port and a client (socket)."""
         if port in self.fds:
-            logging.warning(f"IPC: register_port() error: "
+            logging.warning(f"register_port() error: "
                             f"port already registered: {port}")
             return False
 
@@ -226,13 +243,13 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
     def deregister_port(self, port: int, client: IPCClient):
         """Delete the association between a port and a client (socket)."""
         if port not in self.fds:
-            logging.warning(f"IPC: deregister_port() error: "
+            logging.warning(f"deregister_port() error: "
                             f"port not registered: {port}")
             return False
 
         registered_client = self.fds[port]
         if registered_client != client:
-            logging.warning(f"IPC: deregister_port() error: "
+            logging.warning(f"deregister_port() error: "
                             f"port ({port}, and client {client.name()}) "
                             f"doesn't match registered client "
                             f"{registered_client.name()}")
@@ -245,7 +262,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         """Deliver a received message to its destination port's client."""
         dest_client = self.fds.get(message.destination)
         if not dest_client:
-            logging.warning(f"IPC: Failed to deliver message. "
+            logging.warning(f"Failed to deliver message. "
                             f"No such port: {message.destination}")
             return
 
@@ -254,7 +271,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         return
 
     def handle_reboot(self, client: IPCClient, message: Reboot):
-        logging.info(f"System booting.")
+        logging.info(f"System rebooting.")
 
         # Shutdown first.
         self.do_shutdown()
@@ -283,18 +300,19 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
     def do_boot(self):
         """Start system services."""
         # Start list of configured services.
+        logging.info(f"Starting registered services.")
         for service_info in SERVICES:
             logging.info(f"Starting {service_info.name} service.")
             p = subprocess.Popen(["python", service_info.path])
             s = ServiceState(name=service_info.name, process=p)
             self.services.append(s)
 
-        logging.info(f"Services started.")
+        logging.info(f"Registered services started.")
         return
 
     def schedule_boot(self):
         """Schedule the boot process via the event loop."""
-        self.loop.add_deferred(self.do_boot)
+        darq.loop().add_deferred(self.do_boot)
         return
 
     def handle_open_port_request(self,
@@ -307,7 +325,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         if port == 0:
             port = self.get_ephemeral_port()
             if port <= 0:
-                logging.error("IPC: Ephemeral port overflow; request failed.")
+                logging.error("Ephemeral port overflow; request failed.")
                 self.send_open_port_response(client,
                                              request.request_id,
                                              1,  # FIXME: better errno
@@ -317,11 +335,11 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         client.add_port(port)
         self.register_port(port, client)
 
-        logging.info(f"IPC: {client.name()} new_port "
+        logging.info(f"{client.name()} new_port "
                      f"requested {request.requested_port}, "
                      f"assigned {port}.")
 
-        logging.info(f"IPC: {client.name()} open_port({port}) succeeded")
+        logging.info(f"{client.name()} open_port({port}) succeeded")
         self.send_open_port_response(client, request.request_id, 0, port)
         return
 
@@ -333,14 +351,14 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         port = request.port
 
         if port not in self.fds:
-            logging.warning(f"IPC: close_port({port}) failed: bad port")
+            logging.warning(f"close_port({port}) failed: bad port")
             self.send_close_port_response(client, port, False)
             return
 
         client.remove_port(port)
         self.deregister_port(port, client)
 
-        logging.info(f"IPC: {client.name()} close_port({port}) succeeded")
+        logging.info(f"{client.name()} close_port({port}) succeeded")
         self.send_close_port_response(client, request.request_id, 0, port)
         return
 
@@ -352,7 +370,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         :param source: Client session that received this message.
         :param message: Received message."""
 
-        logging.info(f"IPC: send_message: from {message.source}, "
+        logging.info(f"send_message: from {message.source}, "
                      f"to {message.destination}, "
                      f"[{message.payload}]")
 
@@ -392,7 +410,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         response.port = port
         buf = response.encode()
         client.send_data(buf)
-        logging.info(f"IPC: open_port response: "
+        logging.info(f"open_port response: "
                      f"request_id={request_id}, result={result}, port={port}")
         return
 
@@ -407,7 +425,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         response.port = port
         buf = response.encode()
         client.send_data(buf)
-        logging.info(f"IPC: close_port response: "
+        logging.info(f"close_port response: "
                      f"request_id={request_id}, result={result}, port={port}")
         return
 
@@ -421,7 +439,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         # See if we have a header yet.
         buffer = client.get_buffer()
         if buffer.length() < 8:
-            logging.debug(f"IPC: {client.name()} "
+            logging.debug(f"{client.name()} "
                           f"Queued data ({buffer.length()} bytes) too s"
                           f"mall for header (8 bytes).")
             return
@@ -432,7 +450,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         if message_type == 0 or message_length > buffer.length():
             # Added more bytes, but total available doesn't yet constitute
             # a message.  This should only really happen in testing.
-            logging.debug(f"IPC: {client.name()} "
+            logging.debug(f"{client.name()} "
                           f"Queued data ({buffer.length()} bytes) "
                           f"too small for message {message_type} "
                           f"which expects {message_length} bytes.")
@@ -467,21 +485,64 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
             self.handle_shutdown(client, message)
 
         else:
-            logging.warning(f"IPC: {client.name()} Received message with "
+            logging.warning(f"{client.name()} Received message with "
                             f"unexpected type code [{message_type}] "
                             "Ignoring message.")
         return
 
+    def detect_platform(self) -> str:
+        """Detect host platform."""
+
+        # Host OS (macOS, Linux, Darq)
+        system = platform.system()
+        if system == 'Darwin':
+            self.host_os = 'macOS'
+        elif system == 'Linux':
+            self.host_os = 'Linux'
+        else:
+            self.host_os = 'Unknown'
+
+        # OS Version
+        if system == 'Darwin':
+            mac_ver = platform.mac_ver()
+            self.host_os_version = mac_ver[0]
+        elif system == 'Linux':
+            linux_ver = platform.freedesktop_os_release()
+            self.host_os_version = linux_ver['PRETTY_NAME']
+        else:
+            self.host_os_version = 'Unknown'
+
+        # CPU architecture.
+        mach = platform.machine()
+        if system == 'Darwin':
+            self.cpu = mach
+        elif system == 'Linux':
+            self.cpu = mach
+        else:
+            self.cpu = 'Unknown'
+
+        # Python version.
+        self.python_version = platform.python_version()
+
+        # Hardware device.
+        if system == 'Darwin':
+            # FIXME: run CLI "system_profiler SPHardwareDataType" and parse the result
+            pass
+
+        if system == 'Linux':
+            # FIXME: /proc/cpuinfo reports the Raspberry Pi model (and serial#)
+            # FIXME: otherwise, dmidecode has some info?
+            pass
+        pass
 
 ################################################################
 
 if __name__ == "__main__":
-    # FIXME: currently, just log to stderr.
     logging.basicConfig(stream=sys.stderr,
                         format='%(asctime)s p-Kernel %(levelname)8s %(message)s',
                         level=logging.DEBUG)
 
-    logging.info(f"Starting p-kernel.")
+    logging.info("Starting p-kernel.")
 
     # Create p-Kernel.
     service = PseudoKernel()
@@ -492,5 +553,5 @@ if __name__ == "__main__":
     # Run the event loop.
     service.run()
 
-    logging.info(f"Exiting p-kernel.")
+    logging.info("Exiting p-Kernel.")
     sys.exit(0)
