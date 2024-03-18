@@ -1,0 +1,14 @@
+# DarqOS
+# Copyright (C) 2024, David Arnold
+
+[Unit]
+Description=DarqOS p-Kernel
+
+[Service]
+Type=simple
+ExecStart=/darq/kernel/darqos-pkernel
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=darqos.target

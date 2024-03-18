@@ -15,6 +15,8 @@ destdir="$root/dist/darq"
 # p-Kernel.
 mkdir -p "$destdir/kernel"
 cp -p "$root"/kernel/*.py "$destdir/kernel/"
+cp -p "$root"/kernel/darqos-pkernel "$destdir/kernel/"
+cp -p "$root"/kernel/darqos-pkernel.service "$destdir/kernel/"
 
 # Runtime package.
 rm -rf dist

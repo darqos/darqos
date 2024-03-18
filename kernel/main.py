@@ -1,6 +1,6 @@
 #! /usr/bin/env python
 # darqos
-# Copyright (C) 2022-2023 David Arnold
+# Copyright (C) 2022-2024 David Arnold
 
 # This file is the main executable of the network service that currently
 # provides the functionality expected to ultimately reside in the darqos
@@ -19,6 +19,7 @@
 # xxx
 
 import logging
+import os
 import platform
 import random
 import select
@@ -43,35 +44,6 @@ EPHEMERAL_PORT_START = 16384
 # End of auto-allocated IPC port numbers.
 EPHEMERAL_PORT_MAX = 2 ** 32
 
-# Services.
-#
-# For now, this is the registry of system services, started on boot.
-# Ideally, this might be outside the code, but, that can come later.
-# This list is ORDERED.
-
-@dataclass
-class ServiceInfo:
-    name: str
-    path: str
-
-@dataclass
-class ServiceState:
-    name: str
-    process: subprocess.Popen
-
-
-SERVICES = [
-    #ServiceInfo("storage", "services/storage/main.py"),
-    #ServiceInfo("security", "services/security/main.py"),
-    #ServiceInfo("type", "services/type/main.py"),
-    # ServiceInfo("name", "service/name/name.py"),
-    #ServiceInfo("index", "services/index/main.py"),
-    #ServiceInfo("history", "services/history/main.py"),
-    #ServiceInfo("metadata", "services/metadata/main.py"),
-    # KB / things
-    #ServiceInfo("terminal", "services/terminal/main.py")
-]
-
 
 class PseudoKernel(darq.Service, SocketListener, TimerListener):
     """IPC message router."""
@@ -79,6 +51,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
     def __init__(self):
         """Constructor."""
 
+        # Use the callbacks model for I/O.
         darq.init_callbacks(darq.SelectEventLoop(), self)
         super().__init__()
 
@@ -102,15 +75,21 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         self.fds: typing.Dict[int, IPCClient] = {}
 
         # Host platform.
-        self.platform = self.detect_platform()
+        self.detect_platform()
 
         # Listening socket.
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.socket.setblocking(False)
-        self.socket.bind(('0.0.0.0', 11000))
+        self.socket.bind(('0.0.0.0', TCP_PORT))
         self.socket.listen()
         darq.loop().add_socket(self.socket, self)
+
+        logging.info(f"Using {self.host_os} {self.host_os_version}")
+        logging.info(f"On a {self.device} ({self.cpu})")
+        logging.info(f"Running Python v{self.python_version}")
+        logging.info("")
+        logging.info(f"Listening for IPC sessions on {TCP_PORT}")
 
         # Complete.
         logging.info("Initialized.")
@@ -299,15 +278,12 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
 
     def do_boot(self):
         """Start system services."""
-        # Start list of configured services.
-        logging.info(f"Starting registered services.")
-        for service_info in SERVICES:
-            logging.info(f"Starting {service_info.name} service.")
-            p = subprocess.Popen(["python", service_info.path])
-            s = ServiceState(name=service_info.name, process=p)
-            self.services.append(s)
 
-        logging.info(f"Registered services started.")
+        logging.info(f"Starting bootstrap")
+
+        # FIXME: what needs to be done here?
+
+        logging.info(f"Completed bootstrap")
         return
 
     def schedule_boot(self):
@@ -490,7 +466,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
                             "Ignoring message.")
         return
 
-    def detect_platform(self) -> str:
+    def detect_platform(self):
         """Detect host platform."""
 
         # Host OS (macOS, Linux, Darq)
@@ -526,21 +502,66 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
 
         # Hardware device.
         if system == 'Darwin':
-            # FIXME: run CLI "system_profiler SPHardwareDataType" and parse the result
-            pass
+            f = os.popen("system_profiler SPHardwareDataType")
+            s = f.read()
+            f.close()
+
+            model_name = 'Unknown'
+            model_id = 'Unknown'
+
+            for line in s.split('\n'):
+                if ':' not in line:
+                    continue
+
+                key, value = line.split(':', 1)
+                key = key.strip()
+                value = value.strip()
+
+                if key == 'Model Name':
+                    model_name = value
+                elif key == 'Model Identifier':
+                    model_id = value
+
+            # FIXME: needs the "MacBook Pro Retina (late 2014)" here.
+            self.device = f"{model_name} ({model_id})"
 
         if system == 'Linux':
-            # FIXME: /proc/cpuinfo reports the Raspberry Pi model (and serial#)
             # FIXME: otherwise, dmidecode has some info?
-            pass
-        pass
+
+            f = open('/proc/cpuinfo')
+            s = f.read()
+            f.close()
+
+            model_name = 'Unknown'
+
+            for line in s.split('\n'):
+                if ':' not in line:
+                    continue
+
+                key, value = line.split(':', 1)
+                key = key.strip()
+                value = value.strip()
+
+                if key == 'Model':
+                    model_name = value
+
+            self.device = f"{model_name}"
+
+        return
 
 ################################################################
 
 if __name__ == "__main__":
-    logging.basicConfig(stream=sys.stderr,
-                        format='%(asctime)s p-Kernel %(levelname)8s %(message)s',
-                        level=logging.DEBUG)
+    if os.getenv("INVOCATION_ID") is not None:
+        # Running under systemd
+        logging.basicConfig(stream=sys.stdout,
+                            format='p-Kernel %(levelname)8s %(message)s',
+                            level=logging.DEBUG)
+    else:
+        # Likely being run manually
+        logging.basicConfig(stream=sys.stderr,
+                            format='%(asctime)s p-Kernel %(levelname)8s %(message)s',
+                            level=logging.DEBUG)
 
     logging.info("Starting p-kernel.")
 

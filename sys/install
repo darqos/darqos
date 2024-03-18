@@ -108,9 +108,7 @@ echo "Ok: enable video overscan"
 
 # FIXME: network config is done via nmcli
 
-
-# Create darq:darq user and home directory.
-# FIXME: decide if this belongs in dui (so it can chown files?)
+# FIXME: Create or update configuration files
 
 # Update OS.
 # NOTE: Assume we start from RasPiOS Lite image.
@@ -146,19 +144,13 @@ pip install --upgrade \
     vobject \
     $DIST/darq/lib/darq-0.1-py3-none-any.whl
 
-
-# Create or update configuration files
-
-# Install all runtime Darq files.
+# Install p-Kernel
 (
-    cd "$DIST/darq"
-    for f in LICENSE lib kernel lenses sys tasks types; do
-        cp -pr $f $DARQ/
-        # FIXME: chown
-        # FIXME: chmod
-        # FIXME: use install instead of cp ?
-        echo "Futzing with $f"
-    done
+    cd "$DIST/darq/kernel"
+    mkdir -p "$DARQ/kernel"
+    cp -p ./*.py "$DARQ/kernel/"
+    cp -p darqos-pkernel "$DARQ/kernel/"
+    cp -p darqos-pkernel.service "$DARQ/kernel/"
 )
 
 # Install services.
