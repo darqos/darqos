@@ -117,8 +117,8 @@ $DIST/darq/sys/install
 echo "Ok: install script completed"
 
 # Remove distribution files
-rm -rf /tmp/$DIST_FILE
-rm -rf $DIST
+#rm -rf /tmp/$DIST_FILE
+#rm -rf $DIST
 
 # Done.
 echo "Ok: done"

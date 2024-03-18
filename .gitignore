@@ -13,4 +13,5 @@ doc/make.bat
 venv*/
 .idea/
 *.sqlite
-darqos-*.tar.gz
+snapshots/darqos-*.tar.gz
+*.egg-info

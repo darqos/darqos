@@ -1,0 +1,14 @@
+# DarqOS
+# Copyright (C) 2024, David Arnold
+
+[Unit]
+Description=DarqOS Terminal Service
+
+[Service]
+Type=simple
+ExecStart=/darq/services/terminal/darqos-terminal
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=darqos.target

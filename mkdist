@@ -16,18 +16,16 @@ destdir="$root/dist/darq"
 mkdir -p "$destdir/kernel"
 cp -p "$root"/kernel/*.py "$destdir/kernel/"
 
-# Libraries.
+# Runtime package.
+rm -rf dist
+python -m build
 mkdir -p "$destdir/lib"
-for f in `find "$root/darq" -name "*.py" -print` ; do
-  t=${f#"$root"}
-  mkdir -p `dirname $destdir/lib/$t`
-  cp -p $f $destdir/lib/$t
-  echo $t
-done
+cp -p dist/darq-*-py3-none-any.whl "$destdir/lib/"
+echo "darq.whl"
 
 # Services.
 mkdir -p "$destdir/services"
-for f in `find "$root/services" -name "*.py" -print`; do
+for f in "$root"/services/*/*.py "$root"/services/*/darqos-* ; do
   t=${f#"$root"}
   mkdir -p `dirname $destdir/$t`
   cp -p $f $destdir/$t

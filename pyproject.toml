@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "darq"
+version = "0.1"
+dependencies = []
+
+[tool.setuptools]
+packages = ["darq", "darq.kernel", "darq.runtime", "darq.services", "darq.type"]

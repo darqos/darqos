@@ -1,0 +1,7 @@
+#! /bin/bash
+# DarqOS
+# Copyright (C) 2024 David Arnold
+
+cd /darq/services/storage
+source /darq/env/bin/activate
+python main.py
