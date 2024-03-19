@@ -1,8 +1,10 @@
 # DarqOS
 # Copyright (C) 2022-2023 David Arnold
 
-import orjson
+import logging
 import os
+
+import orjson
 
 import darq
 from ..kernel import EventLoopInterface, EventListener, open_port, close_port, send_message
@@ -17,11 +19,16 @@ class Service(EventListener):
         # Service port.
         self.port: int = port
 
-        # Write PID to run file.
-        tmpdir = os.environ.get("TMPDIR", "/tmp")
-        f = open(os.path.join(tmpdir, f"{self.get_name()}.pid"), "w")
-        f.write(f"{os.getpid()}\n")
-        f.close()
+        # Write PID to run file (unless managed by systemd).
+        if os.environ.get("INVOCATION_ID"):
+            logging.info("Managed by systemd")
+        else:
+            tmpdir = os.environ.get("TMPDIR", "/tmp")
+            pidfile = os.path.join(tmpdir, f"{self.get_name()}.pid")
+            f = open(pidfile, "w")
+            f.write(f"{os.getpid()}\n")
+            f.close()
+            logging.info(f"Wrote PID {os.getpid()} to {pidfile}")
         return
 
     @staticmethod
