@@ -3,6 +3,7 @@
 
 [Unit]
 Description=DarqOS Storage Service
+Requires=darqos-pkernel.service
 
 [Service]
 Type=simple
