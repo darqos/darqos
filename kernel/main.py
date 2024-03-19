@@ -61,7 +61,6 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         self.cpu = ''
         self.device = ''
 
-        self.services = []
         self.types = []
         self.tools = []
         self.lenses = []
@@ -136,7 +135,10 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         """Main loop."""
 
         logging.info("Entering main loop.")
-        darq.loop().run()
+        try:
+            darq.loop().run()
+        except KeyboardInterrupt:
+            self.do_shutdown()
         return
 
         # FIXME: remove below, once darq loop is capable
@@ -255,7 +257,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         # Shutdown first.
         self.do_shutdown()
 
-        # Start services.
+        # Then restart.
         self.do_boot()
 
     def handle_shutdown(self, client: IPCClient, message: Shutdown):
@@ -264,20 +266,17 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         self.do_shutdown()
 
     def do_shutdown(self):
+        logging.info(f"Starting shutdown")
+
         # Walk list of tools, and kill them all.
         # Walk list of lenses, and kill them all.
         # Walk list of types, and kill them all.
 
-        # Walk list of services, and kill them all.
-        service_state = self.services.pop()
-        while service_state:
-            service_state.process.terminate()
-            service_state = self.services.pop()
-
+        logging.info(f"Completed shutdown")
         return
 
     def do_boot(self):
-        """Start system services."""
+        """Start system."""
 
         logging.info(f"Starting bootstrap")
 
