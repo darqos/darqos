@@ -1,7 +1,5 @@
 # darqos
-# Copyright (C) 2022 David Arnold
-
-
+# Copyright (C) 2022-2024 David Arnold
 
 import logging
 import select
@@ -43,11 +41,16 @@ class EventLoopInterface:
         pass
 
     def run(self):
+        """Process events until stop() is called."""
         pass
 
     def stop(self):
+        """Stop the running event loop."""
         pass
 
+    def next(self):
+        """Process the next event only."""
+        pass
 
 class TimerListener:
     def on_timeout(self, timer_id: int, expiry_time: float, actual_time: float):

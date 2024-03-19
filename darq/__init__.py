@@ -1,5 +1,5 @@
 # darqos
-# Copyright (C) 2022-2023 David Arnold
+# Copyright (C) 2022-2024 David Arnold
 
 # *** This module should entirely define the namespace used by client programs ***
 #

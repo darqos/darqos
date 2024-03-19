@@ -45,7 +45,9 @@ MSG_SHUTDOWN = 10
 IPC_PORT = 11000
 RECV_BUFLEN = 65535
 
+
 ########################################################################
+
 
 class DarqError(Exception):
     """Base class for all Darq exceptions."""
@@ -634,24 +636,26 @@ class ProcessRuntimeState:
             self.recv_buffer.consume(message_length)  # FIXME: make this one operation
             message_type = Message.decode_type(message_buf)
 
-            # Dispatch message to handlers.
-            if message_type == MSG_DELIVER_MESSAGE:
-                message = DeliverMessage()
-                message.decode(message_buf)
-                self.handle_deliver_message(message)
+            self.dispatch(message_type, message_buf)
 
-            elif message_type == MSG_OPEN_PORT_RESP:
-                message = OpenPortResponse()
-                message.decode(message_buf)
-                self.handle_open_port_response(message)
+    def dispatch(self, message_type, message_buf):
+        if message_type == MSG_DELIVER_MESSAGE:
+            message = DeliverMessage()
+            message.decode(message_buf)
+            self.handle_deliver_message(message)
 
-            elif message_type == MSG_CLOSE_PORT_RESP:
-                message = ClosePortResponse()
-                message.decode(message_buf)
-                self.handle_close_port_response(message)
+        elif message_type == MSG_OPEN_PORT_RESP:
+            message = OpenPortResponse()
+            message.decode(message_buf)
+            self.handle_open_port_response(message)
 
-            else:
-                logging.warning(f"Unhandled message type: {message_type}")
+        elif message_type == MSG_CLOSE_PORT_RESP:
+            message = ClosePortResponse()
+            message.decode(message_buf)
+            self.handle_close_port_response(message)
+
+        else:
+            logging.warning(f"Unhandled message type: {message_type}")
 
     def handle_deliver_message(self, message: DeliverMessage):
         # Check destination.
@@ -729,19 +733,18 @@ class ProcessRuntimeState:
         :param port: Optional requested port number.  Zero means ephemeral port.
         :returns: Allocated port number."""
 
+        # Send the open port request.
         pending_request = self._open_port_request(port, None)
 
-        # Call event loop.
-        # Dispatch events other than our response.
-        while True:
-            # Step event loop.
-            # Dispatch received event, if any.
-            # Check response.
-            if pending_request.is_complete():
-                if pending_request.is_success():
-                    return pending_request.result
-                else:
-                    raise get_exception(pending_request.result)
+        # Run the event loop until the open port request is completed.
+        while not pending_request.is_complete():
+            self.loop.next()
+
+        # Check response.
+        if pending_request.is_success():
+            return pending_request.result
+        else:
+            raise get_exception(pending_request.result)
 
     def handle_close_port_response(self, message: ClosePortResponse):
 
