@@ -550,6 +550,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
 
 ################################################################
 
+
 if __name__ == "__main__":
     if os.getenv("INVOCATION_ID") is not None:
         # Running under systemd

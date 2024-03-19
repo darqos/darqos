@@ -3,6 +3,7 @@
 
 [Unit]
 Description=DarqOS p-Kernel
+Requires=multi-user.target
 
 [Service]
 Type=simple
