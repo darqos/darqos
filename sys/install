@@ -100,12 +100,6 @@ echo "Ok: enabled Wayland"
 sudo raspi-config nonint do_blanking 1
 echo "Ok: disabled screen blanking"
 
-# Check raspi-config "overscan" display setting.
-# FIXME: this appears to require xrandr, so ... for Wayland?
-sudo raspi-config nonint do_overscan_kms 1 0
-sudo raspi-config nonint do_overscan_kms 2 0
-echo "Ok: enable video overscan"
-
 # FIXME: network config is done via nmcli
 
 # FIXME: Create or update configuration files
@@ -141,8 +135,12 @@ pip install --upgrade \
     orjson \
     pillow \
     pyqtdarktheme \
-    vobject \
+    vobject
+echo "Ok: installed Python module dependencies"
+
+pip install --force-reinstall \
     $DIST/darq/lib/darq-0.1-py3-none-any.whl
+echo "Ok: installed darqos Python runtime"
 
 # Install p-Kernel
 (
@@ -150,11 +148,11 @@ pip install --upgrade \
     mkdir -p "$DARQ/kernel"
     cp -p ./*.py "$DARQ/kernel/"
     cp -p darqos-pkernel "$DARQ/kernel/"
-    chmod +x "$DARQ/kernel/darqos-kernel"
+    chmod +x "$DARQ/kernel/darqos-pkernel"
 
     cp -p darqos.target darqos-pkernel.service "$DARQ/kernel/"
+    systemctl link "$DARQ/kernel/darqos-pkernel.service"
     systemctl link "$DARQ/kernel/darqos.target"
-    systemctl link "$DARQ/kernel/darqos-kernel.service"
     echo "Installed p-Kernel"
 )
 
