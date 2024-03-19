@@ -12,18 +12,19 @@ mkdir -p "dist/darq"
 root=$(pwd)
 destdir="$root/dist/darq"
 
-# p-Kernel.
-mkdir -p "$destdir/kernel"
-cp -p "$root"/kernel/*.py "$destdir/kernel/"
-cp -p "$root"/kernel/darqos-pkernel "$destdir/kernel/"
-cp -p "$root"/kernel/darqos-pkernel.service "$destdir/kernel/"
-
 # Runtime package.
 rm -rf dist
 python -m build
 mkdir -p "$destdir/lib"
 cp -p dist/darq-*-py3-none-any.whl "$destdir/lib/"
 echo "darq.whl"
+
+# p-Kernel.
+mkdir -p "$destdir/kernel"
+cp -p "$root"/kernel/*.py "$destdir/kernel/"
+cp -p "$root"/kernel/darqos-pkernel "$destdir/kernel/"
+cp -p "$root"/kernel/darqos-pkernel.service "$destdir/kernel/"
+echo "kernel"
 
 # Services.
 mkdir -p "$destdir/services"

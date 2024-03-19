@@ -555,7 +555,7 @@ if __name__ == "__main__":
     if os.getenv("INVOCATION_ID") is not None:
         # Running under systemd
         logging.basicConfig(stream=sys.stdout,
-                            format='p-Kernel %(levelname)8s %(message)s',
+                            format='%(levelname)8s %(message)s',
                             level=logging.DEBUG)
     else:
         # Likely being run manually

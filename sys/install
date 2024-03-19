@@ -150,7 +150,12 @@ pip install --upgrade \
     mkdir -p "$DARQ/kernel"
     cp -p ./*.py "$DARQ/kernel/"
     cp -p darqos-pkernel "$DARQ/kernel/"
-    cp -p darqos-pkernel.service "$DARQ/kernel/"
+    chmod +x "$DARQ/kernel/darqos-kernel"
+
+    cp -p darqos.target darqos-pkernel.service "$DARQ/kernel/"
+    systemctl link "$DARQ/kernel/darqos.target"
+    systemctl link "$DARQ/kernel/darqos-kernel.service"
+    echo "Installed p-Kernel"
 )
 
 # Install services.
@@ -159,7 +164,7 @@ pip install --upgrade \
     for f in $SERVICES ; do
         mkdir -p "$DARQ/services/$f"
         cp -p "$f"/*.py "$f/darqos-$f" "$f/darqos-$f.service" "$DARQ/services/$f/"
-        chmod +x "$DARQ/services/$f/darqos-$f" "$DARQ/services/$f/darqos-$f.service"
+        chmod +x "$DARQ/services/$f/darqos-$f"
 
         systemctl link "$DARQ/services/$f/darqos-$f.service"
         echo "Installed service: darqos-$f"
