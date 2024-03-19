@@ -24,6 +24,7 @@ mkdir -p "$destdir/kernel"
 cp -p "$root"/kernel/*.py "$destdir/kernel/"
 cp -p "$root"/kernel/darqos-pkernel "$destdir/kernel/"
 cp -p "$root"/kernel/darqos-pkernel.service "$destdir/kernel/"
+cp -p "$root"/kernel/darqos.target "$destdir/kernel/"
 echo "kernel"
 
 # Services.
