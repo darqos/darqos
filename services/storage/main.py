@@ -15,6 +15,8 @@
 # For now, let's have a simple API, and a runtime library to match.
 
 import base64
+import logging
+import os
 import sqlite3
 import sys
 
@@ -37,8 +39,7 @@ class StorageService(darq.Service):
         # Initialise runtime.
         darq.init_callbacks(darq.SelectEventLoop(), self)
 
-        darq.log(darq.Facility.SERVICE, darq.Level.INFO,
-                 "Starting Storage service.")
+        logging.info("Starting Storage service.")
 
         # Initialise service.
         super().__init__(11001)  # FIXME: hardcoded ports?!?
@@ -91,7 +92,7 @@ class StorageService(darq.Service):
 
         If 'key' is not already set, return an error."""
 
-        print(f"update({key}, {value})")
+        logging.debug(f"update({key}, {value})")
 
         cursor = self.db.cursor()
         cursor.execute("update storage set value = ? where key = ?",
@@ -116,7 +117,7 @@ class StorageService(darq.Service):
         if row[0] != 1:
             key_exists = False
 
-        print(f"exists({key}) -> {key_exists}")
+        logging.debug(f"exists({key}) -> {key_exists}")
         return key_exists
 
     def get(self, key: str):
@@ -133,13 +134,13 @@ class StorageService(darq.Service):
             return None
         value = row[0]
 
-        print(f"get({key}) -> {value}")
+        logging.debug(f"get({key}) -> {value}")
         return value
 
     def delete(self, key: str):
         """Deletes the value for key."""
 
-        print(f"delete({key})")
+        logging.debug(f"delete({key})")
 
         cursor = self.db.cursor()
         cursor.execute("delete from storage where key = ?", (key,))
@@ -189,11 +190,26 @@ class StorageService(darq.Service):
 
         super().handle_shutdown()
 
-        print("Storage Service shutdown handled successfully.")
+        logging.info("Storage Service shutdown handled successfully.")
         return
 
 
 if __name__ == "__main__":
+    if os.getenv("INVOCATION_ID") is not None:
+        # Running under systemd
+        logging.basicConfig(stream=sys.stdout,
+                            format='%(levelname)8s %(message)s',
+                            level=logging.DEBUG)
+    else:
+        # Likely being run manually
+        logging.basicConfig(stream=sys.stderr,
+                            format='%(asctime)s p-Kernel %(levelname)8s %(message)s',
+                            level=logging.DEBUG)
+
+    logging.info("Starting storage service.")
+
     service = StorageService()
     result = service.run()
+
+    logging.info("Exiting storage service.")
     sys.exit(result)
