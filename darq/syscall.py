@@ -1,35 +1,52 @@
 # DarqOS
-# Copyright (C) 2022-2023 David Arnold
+# Copyright (C) 2022-2026 David Arnold
 
 # p-Kernel System Calls
 #
-# How this will work:
-# - There's a central router process that will ultimately be in the kernel
-#   of the OS: it's called the pseudo-kernel, or p-kernel.
+# How this works:
+# - There's a Unix process that provides the facilities to be provided
+#   eventually  by the Darq kernel.  It's called the Pseudo Kernel, or
+#   p-kernel.
 # - The p-kernel offers a single TCP endpoint on a well-known TCP port.
-# - Any process wanting to use Darq IPC establishes a TCP session to the
-#   p-kernel's TCP socket.
-# - Processes can then request a new port, close an existing port, and
-#   send and receive messages to/from those ports.
-# - Messages sent to the p-kernel using a simple framing header.
-# - LoginRqsuest / LoginReply / AddPort / RemovePort / Message / Chunk
-# - Chunk messages are used to deliver stream chunks: their header
-#   includes a stream identifier and offset.
-# - Messages delivered to a port include the source and destination
-#   port numbers, and total message size.
-# - Multicast ports are possible; maybe even using the existing AddPort
-#   API?
+# - When the p-kernel spawns an emulated Darq process (a pseudo-process,
+#   p-process, or pproc), it (the p-kernel) accepts a TCP session from
+#   the newly-spawned process, initiated by the language-specific runtime,
+# - Darq system calls are implemented in the p-kernel and p-processes by
+#   passing a message to the p-kernel via this TCP socket.  The system
+#   calls are exposed to application code via the darq namespace.
+# - Messages sent to the p-kernel using a simple framing header, a
+#   message header, and a basic binary structure for the syscall
+#   parameters.
+# - System calls can have synchronous and asynchronous variants.
+#   - Synchronous calls append a syscall object to a queue, and set an
+#     eventfd to wakeup the p-process' runtime event loop.  It then
+#     encodes the request messages and sends it to the p-kernel.
+#     - The application thread blocks an a threading.Event
+#     - When a response is received from the p-kernel, the runtime
+#       thread updates the syscall object with the response data, and
+#       sets the event, unblocking the application thread.
+#   - Asynchronous calls also append a syscall object to a queue, and
+#     set an eventfd to wakeup the p-process' runtime event loop.  It
+#     then encodes the request message and sends it to the p-kernel.
+#     - The application thread returns an awaitable loop.Future.
+#     - When a response is received from the p-kernel, the runtime
+#     thread updates the syscall object with the response data, and
+#     signals the Future.
 
 import logging
 import socket
 import struct
+import threading
 import typing
 
+from .errors import *
 from .loop import EventLoopInterface
-from .types import UInt8, UInt16, UInt32, UInt64
+from .common import Buffer, UInt8, UInt16, UInt32, UInt64, Message
 
+IPC_PORT = 11000
+RECV_BUFLEN = 65535
 
-# Message type codes.
+# p-call type codes.
 # FIXME: make this a proper enum?
 MSG_OPEN_PORT_RQST = 1
 MSG_OPEN_PORT_RESP = 2
@@ -41,49 +58,10 @@ MSG_DELIVER_MESSAGE = 7
 MSG_DELIVER_CHUNK = 8
 MSG_REBOOT = 9
 MSG_SHUTDOWN = 10
+MSG_GET_PID = 11
+MSG_KEEP_ALIVE = 12
+MSG_RUNNING = 13
 
-IPC_PORT = 11000
-RECV_BUFLEN = 65535
-
-
-########################################################################
-
-
-class DarqError(Exception):
-    """Base class for all Darq exceptions."""
-    pass
-
-
-class MessageDecodingError(DarqError):
-    """Failed to decode a message from the supplied buffer."""
-    pass
-
-
-class CannotAllocatePortError(DarqError):
-    """The ephemeral port range is exhausted."""
-    pass
-
-
-class DuplicatePortError(DarqError):
-    """The requested port number is already in use."""
-    pass
-
-
-class NonExistentPortError(DarqError):
-    """The specified port does not exist."""
-    pass
-
-
-class PortNumberOutOfRange(DarqError):
-    """The specified port number is out of range."""
-    pass
-
-
-# FIXME
-EXCEPTION_MAP: dict[int, DarqError] = {}
-
-def get_exception(error_code:int) -> DarqError:
-    return EXCEPTION_MAP.get(error_code, DarqError)
 
 ########################################################################
 
@@ -112,163 +90,46 @@ class PendingRequest:
         return
 
 
-class Buffer:
-    """Basic byte buffer wrapper."""
+class SystemCallState:
+    """State of a p-kernel request."""
 
-    def __init__(self, buffer: bytes = b''):
-        """Constructor.
+    def __init__(self, loop = None):
 
-        :param buffer: Optional initial contents."""
-        self.buffer = buffer
+        # Flag async syscall.
+        self._async = False
 
-    def peek(self, length: int) -> bytes:
-        """Return a copy of the start of the buffer.
+        # Syscall number.
+        self._type = 0
 
-        :param length: Number of bytes to return."""
-        return self.buffer[:length]
+        # Request message structure containing parameters.
+        self._request = None
 
-    def peek_slice(self, offset: int, length: int) -> bytes:
-        """Return a copy of a slice from the buffer.
+        # Response message structure containing results.
+        self._response = None
 
-        :param offset: Index of first byte to return
-        :param length: Number of bytes to return
-        :returns: Copied array of bytes."""
-        return self.buffer[offset: offset+length]
+        # Event on which a synchronous call will wait for a response.
+        self._sync_event = threading.Event()
 
-    def consume(self, length: int) -> int:
-        """Discard the start of the buffer.
+        # Future to be signaled when asynchronous call has a response.
+        if loop:
+            self._async_future = loop.Future(loop=loop)
 
-        :param length: Number of bytes to remove
-        :returns: Number of bytes remaining in buffer."""
-        self.buffer = self.buffer[length:]
-        return len(self.buffer)
+    def is_sync(self):
+        return not self._async
 
-    def append(self, buffer: bytes) -> int:
-        """Add more bytes to the end of the buffer.
+    def is_complete(self):
+        return self._response is not None
 
-        :param buffer: Bytes to add
-        :returns: Number of bytes now in buffer."""
-        self.buffer += buffer
-        return len(self.buffer)
+    def is_success(self):
+        return False # FIXME
 
-    def raw(self) -> bytes:
-        """Return reference to the internal assembly buffer.
-
-        :returns: Reference to internal buffer storage."""
-        return self.buffer
-
-    def length(self) -> int:
-        """Return count of bytes in the buffer.
-
-        :returns: Number of bytes in the buffer."""
-        return len(self.buffer)
-
-    def __getitem__(self, n: int) -> int:
-        """Return the integer value of the byte of offset.
-
-        :param n: Zero-based offset from start of buffer.
-        :returns: Integer value of byte at offset 'n'."""
-        return self.buffer[n]
-
-
-########################################################################
-
-class Message:
-    """Common header for all messages to/from the p-kernel."""
-
-    def __init__(self, message_type: int = 0):
-        """Constructor."""
-
-        # Message version.
-        self.version = UInt8(0)
-
-        # Length of header in bytes.
-        self.header_length = UInt8(8)
-
-        # Message type code.
-        self.type = UInt8(message_type)
-
-        # Padding.
-        self._hpad0 = UInt8(0)
-
-        # Message length, including header, in bytes.
-        self.length = UInt32(0)
-
-    def get_header_length(self) -> int:
-        """Return length of this message's header."""
-        return self.header_length
-
-    def init(self, base: 'Message'):
-        """Initialise this message from another.
-
-        :param base: Message to copy."""
-        self.version = base.version
-        self.header_length = base.header_length
-        self.type = base.type
-        self._hpad0 = 0
-        self.length = base.length
-
-    def set_version(self, version: int):
-        """Set the version number header field.
-
-        :param version: Integer version number for message format."""
-        self.version = UInt8(version)
-
-    def set_header_length(self, length: int):
-        """Set the header length field.
-
-        :param length: Number of bytes in the header."""
-        self.header_length = UInt8(length)
-
-    def set_type(self, type_code: int):
-        """Set the message type code.
-
-        :param type_code: Integer message type code."""
-        self.type = UInt8(type_code)
-
-    def set_length(self, length: int):
-        """Set the total message length.
-
-        :param length: Total number of bytes in the message."""
-        self.length = UInt32(length)
-
-    def encode(self) -> bytes:
-        """Encode message to wire format."""
-        buf = struct.pack(">BBBxL",
-                          self.version,
-                          self.header_length,
-                          self.type,
-                          self.length)
-        return buf
-
-    @staticmethod
-    def decode_type(buffer: bytes) -> int:
-        """Decode message type code from byte buffer."""
-        if len(buffer) < 8:
-            return 0
-
-        return buffer[2]
-
-    @staticmethod
-    def decode_length(buffer: bytes) -> int:
-        """Decode message legth from byte buffer."""
-        if len(buffer) < 8:
-            return 0
-
-        bits = struct.unpack(">xxxxL", buffer)
-        return bits[0]
-
-    def decode(self, buffer: bytes):
-        """Decode message from byte buffer."""
-        if len(buffer) < 8:
-            raise MessageDecodingError("buffer too short for header")
-
-        bits = struct.unpack(">BBBxL", buffer[:8])
-        self.version = bits[0]
-        self.header_length = bits[1]
-        self.type = bits[2]
-        self.length = bits[3]
+    def complete(self, result, message):
+        self.result = result
+        self.completed = True
+        self.response_message = message
         return
+
+
 
 
 class OpenPortRequest(Message):
@@ -789,3 +650,124 @@ class ProcessRuntimeState:
         # FIXME: once sending is properly async, this can be (re)moved.
         self.listener.on_send_message(0, 0)  ## FIXME: these params make no sense
         return
+
+
+# Process-wide IPC state.
+#
+# One of these is created if you import this module (darq.kernel).  This
+# should happen once per-process.
+
+# FIXME: do I need to do more to make this a safe singleton?
+_state = ProcessRuntimeState()
+
+
+# Visible "system call" functions.
+
+def init(event_loop: EventLoopInterface):
+    """Initialise the process' runtime state."""
+    _state.loop = event_loop
+
+
+def init_callbacks(event_loop: EventLoopInterface, listener: EventListener):
+    """Initialise the process' runtime state, using the callback model."""
+    _state.loop = event_loop
+    _state.listener = listener
+    return
+
+
+def loop():
+    """Return a reference to the runtime event loop."""
+    return _state.loop
+
+
+def open_port(port: int) -> int:
+    """Synchronously allocate a new port for communication.
+
+    :param port: Requested port number; Zero requests ephemeral port.
+    :returns: Allocated port number."""
+
+    return _state.open_port_s(port)
+
+
+def open_port_a(port: int, cb: typing.Callable[[int, int], None]) -> None:
+    """Asynchronously allocate new port for communication.
+
+    :param port: Requested port number; Zero requests ephemeral port.
+    :param cb: Completion callback: cb(port, error_code)."""
+    pass
+
+
+def close_port(port: int):
+    """Close a previously-allocated communication port.
+
+    :param port: Port number to be closed."""
+
+    return _state.close_port(port)
+
+
+def send_message(source: int, destination: int, message: bytes):
+    """Send a message to another port.
+
+    :param source: Sending port number.
+    :param destination: Target port number.
+    :param message: Buffer to be sent."""
+    return _state.send_message(source, destination, message)
+
+
+def receive_message(port: int, blocking: bool = True) -> bytes:
+    """Receive a message from a port."""
+    return _state.receive_message(port, blocking)
+
+
+def create_process():
+    return _state.create_process()
+
+
+def destroy_process():
+    return _state.destroy_process()
+
+
+def register_process(self, pid):
+    """Register an externally-created process.
+
+    For now, all darq processes are actually Unix processes, and in
+    some cases, they're created outside of darq's 'system calls'.
+    In order to enable darq to manage these processes, they need to
+    be registered, using this function."""
+
+    # FIXME!
+    pass
+
+
+# def send_chunk(self, source: int, destination: int, stream: int, offset: int, chunk: bytes):
+#     """Send a stream chunk to another port.
+#
+#     :param source: Sending port number.
+#     :param destination: Target port number.
+#     :param stream: Stream identifier.
+#     :param offset: Offset from start of stream for first byte of chunk.
+#     :param message: Buffer to be sent."""
+#
+#     # Basically same as message, but extra chunky.
+#     pass
+
+
+def spawn(exec_path: str) -> int:
+    """Spawn a darq process.
+
+    :param exec_path: Path to executable.
+    :returns: DPID of new process."""
+
+    # Create syscall state.
+    call_state = SystemCallState()
+
+    # Append to queue.
+    # Wake up event loop.
+    # Wait for response.
+    call_state._sync_event.wait()
+
+    return
+
+
+def get_dpid() ->  int:
+    """Return this process' DarqOS process identifier."""

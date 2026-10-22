@@ -1,15 +1,17 @@
 # darqos
-# Copyright (C) 2022-2024 David Arnold
-
-# *** This module should entirely define the namespace used by client programs ***
+# Copyright (C) 2022-2026 David Arnold
 #
-# It does that by binding names from subsidiary packages, presenting the
-# various classes and functions as a unified API.
+# This is the complete programming API for DarqOS programs:
+# services, types, lenses, tools, etc.  It includes the raw
+# system calls, as well as userland library code to facilitate
+# programming applications.
+#
+# Programs should `import darq` to import all DarqOS API elements.
 
 import os
 import uuid
 
-from typing import Optional, Union
+from typing import Union
 
 from darq.services.type import TypeServiceAPI
 from darq.services.storage import StorageAPI
@@ -24,33 +26,36 @@ from darq.runtime.type import Type
 from darq.runtime.util import Facility, Level, log
 
 # IPC
-from darq.kernel.ipc import EventLoopInterface
-from darq.kernel.ipc import EventListener
+from darq.syscall import EventLoopInterface
+from darq.syscall import EventListener
+from darq.syscall import spawn
 #from darq.kernel.ipc import register_event_loop
 #from darq.kernel.ipc import open_port
 #from darq.kernel.ipc import close_port
 #from darq.kernel.ipc import send_chunk
 #from darq.kernel.ipc import send_message
 
-from darq.kernel import init
-from darq.kernel import init_callbacks
-from darq.kernel import loop
-from darq.kernel import open_port
-from darq.kernel import close_port
-from darq.kernel import send_message
-from darq.kernel import _state
+from .syscall import init
+from .syscall import init_callbacks
+from .syscall import loop
+from .syscall import open_port
+from .syscall import close_port
+from .syscall import send_message
+from .syscall import _state
 
 # Event loop.
-from darq.kernel.loop import SocketListener
-from darq.kernel.loop import TimerListener
-from darq.kernel.loop import SelectEventLoop
-from darq.kernel.loop import QtEventLoop
+from darq.loop import SocketListener
+from darq.loop import TimerListener
+from darq.loop import SelectEventLoop
+from darq.loop import QtEventLoop
+
+from  .common import *
 
 
 # Globals
 #
 # These values represent the basic runtime state of the application
-# at the system level.  All applications have them.
+# process at the system level.  All applications have them.
 
 # FIXME: make service APIs dynamic, such that they self-construct on use
 
@@ -69,8 +74,13 @@ history = None
 
 
 ################################################################
-# Kernel API
+# Kernel API -- System calls
 ################################################################
+
+def getpid() -> int:
+    """Return the current DarqOS process identifier."""
+    return darq.getpid()
+
 
 def system_reboot():
     """Restart the system.

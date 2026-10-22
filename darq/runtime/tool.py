@@ -3,7 +3,9 @@
 
 # Tools are application processes that are not a Type or a Lens
 
-from ..kernel import EventListener, open_port
+from ..syscall import EventListener
+from ..syscall import open_port
+
 
 
 class Tool(EventListener):

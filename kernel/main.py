@@ -1,10 +1,10 @@
 #! /usr/bin/env python
 # darqos
-# Copyright (C) 2022-2024 David Arnold
+# Copyright (C) 2022-2026 David Arnold
 
-# This file is the main executable of the network service that currently
-# provides the functionality expected to ultimately reside in the darqos
-# kernel.
+# This file is the main executable of the Linux network service that
+# currently provides the functionality expected to ultimately reside
+# in the darqos kernel.
 #
 # Access to this functionality is via the system IPC mechanism, also
 # implemented by this service.  Consequently, every darqos process has a
@@ -23,16 +23,18 @@ import os
 import platform
 import random
 import select
+import socket
 import subprocess
 import sys
 
-from dataclasses import dataclass
+from typing import MutableSequence
 
 import darq
-from darq.kernel.ipc import *
-from darq.kernel.loop import SelectEventLoop, SocketListener, TimerListener
+from darq import Running
 
-from ipc import IPCClient
+from darq.syscall import *
+from darq.loop import SocketListener, TimerListener
+from enum import IntEnum
 
 
 # TCP listening port for connection of IPC clients.
@@ -44,9 +46,260 @@ EPHEMERAL_PORT_START = 16384
 # End of auto-allocated IPC port numbers.
 EPHEMERAL_PORT_MAX = 2 ** 32
 
+# Loader for Python executables.
+PYTHON_IMAGE_LOADER = "/home/d/proj/darqos/kernel/pystub"
+
+# Process status values.
+class KernelProcessStatus(IntEnum):
+    # Table entry created, but process not yet spawned.
+    ALLOCATED = 0
+
+    # Process spawned, but not yet received Running message.
+    SPAWNED = 1
+
+    # Process running.
+    RUNNING = 2
+
+    # Process has exited, but no-one has collected the exit status yet.
+    ZOMBIE = 3
+
+    # The p-call session to the process has closed unexpectedly.
+    LOST = 4
+
+
+
+class KernelPortState:
+    pass
+
+
+class KernelProcessState:
+    """Kernel state for a process."""
+
+    # The p-kernel provides facilities to create and destroy
+    # processes.  In the p-kernal, each DarqOS process is implemented
+    # by a Unix process: this is called the p-process.  That p-process
+    # must run a language-specific stub that connects to the p-kernel
+    # via TCP (or perhaps Unix domain?) socket, to implement the
+    # p-call mechanism for interaction with the p-kernel.
+    #
+    # The kernel-side state for each p-process consists of:
+    # - the Unix process PID
+    # - the terminating socket for the p-process
+    # - a table of ports created by the p-process
+    # - the executable item running in the process
+    #
+    # To actually start a process, the p-kernel execs the appropriate
+    # language stub executable, depending on the type of the
+    # executable image.  The most common image type for 1ed will be
+    # Python.  Python executable images consist of a zip file
+    # containing the Python code to be executed.  It is unzipped in a
+    # temporary directory.  The Python stub is executed, which invokes
+    # the interpreter.  The temporary directory is added to the system
+    # path, and the executable is loaded by importing and calling the
+    # default function: darq_main().
+    #
+    # The temporary directory containing the actual code is cached:
+    # multiple instances of the same executable share the same
+    # unpacked zip file.
+    
+
+    def __init__(self, kernel, dpid: int, image_path: str):
+        """Constructor.
+
+        :param kernel: Reference to owning p-kernel instance.
+        :param: sock: Accepted socket for this client."""
+
+        self._kernel = kernel
+
+        # FIXME: path to image files
+        self._image_path = image_path
+
+        # DarqOS PID.
+        self._dpid: int = dpid
+
+        # Host PID.
+        self._hpid: int = 0
+
+        # Parent DPID
+        self._parent_dpid: int = 0
+
+        # Process status.
+        self._status: KernelProcessStatus = KernelProcessStatus.ALLOCATED
+
+        # Port alias table for this process.
+        self._ports: dict[int, KernelPortState] = {}
+
+        # TCP socket once connected to p-process.
+        self._sock: socket.socket | None = None
+
+        # Outbound data queue.
+        self._send_buffer: bytes = b''
+
+        # Inbound data queue.
+        self._recv_buffer: Buffer = Buffer()
+
+
+    def name(self) -> str:
+        """(Internal) Log message prefix."""
+        return f'kproc [{self._dpid}]'
+
+    def get_socket(self) -> socket.socket | None:
+        """Return the TCP socket connected to this client."""
+        return self._sock
+
+    def set_dpid(self, dpid: int):
+        self._dpid = dpid
+
+    def get_dpid(self) -> int:
+        return self._dpid
+
+    def set_host_pid(self, host_pid: int):
+        self._hpid = host_pid
+
+    def get_host_pid(self) -> int:
+        return self._hpid
+
+    def set_parent_dpid(self, parent_dpid):
+        self._parent_dpid = parent_dpid
+
+    def get_parent_dpid(self) -> int:
+        return self._parent_dpid
+
+    def set_status(self, status: KernelProcessStatus):
+        """Set process status code."""
+        self._status = status
+
+    def get_status(self) -> KernelProcessStatus:
+        return self._status
+
+    # Ports
+
+    def add_port(self, port: KernelPortState):
+        """Add a port to this client's list.
+
+        :param port: Port number to add."""
+        self._ports.append(port)
+
+    def remove_port(self, port: UInt64):
+        """Remove a port from this client's list.
+
+        :param port: Port number to remove."""
+        self.ports.remove(port)
+
+    def get_ports(self) -> MutableSequence[UInt64]:
+        """Return the list of ports registered for this client."""
+        return self.ports
+
+    # p-call Session
+
+    def get_buffer(self) -> Buffer:
+        """Return reference to the receive buffer."""
+        return self._recv_buffer
+
+    def receive_data(self, buf: bytes):
+        """Process received TCP data.
+
+        :param buf: Byte buffer of received data.
+
+        Will append data to receive buffer, and inform kernel."""
+
+        self._recv_buffer.append(buf)
+        self._kernel.dispatch(self)
+        return
+
+    def send_data(self, data: bytes) -> int:
+        """Send a message to a connected client.
+
+        :param data: Byte buffer of data to send.
+        :returns: Number of bytes sent."""
+
+        # FIXME: append to send buffer, and write async?
+
+        if not self._sock:
+            return 0
+
+        self._sock.sendall(data)
+        logging.info(f"Sent {len(data)} bytes to socket {self._sock.getpeername()}")
+        return len(data)
+
+    def on_readable(self, sock: socket.socket):
+        """Handle data available to receive."""
+
+        try:
+            recv_buf = self._sock.recv(65536)
+        except ConnectionResetError:
+            logging.warning(f"IPC: {self.name()} connection reset.")
+            self._kernel.handle_disconnect(self)
+            return
+
+        if len(recv_buf) == 0:
+            logging.debug(f"IPC: {self.name()} connection closed by peer.")
+            self._kernel.handle_disconnect(self)
+            return
+
+        self._recv_buffer.append(recv_buf)
+        logging.debug(f"IPC: {self.name()} "
+                      f"delivered {len(recv_buf)} bytes")
+
+        self._kernel.dispatch(self)
+        return
+
+    def on_writeable(self, sock: socket.socket):
+        """Handle socket ready for send."""
+
+        # FIXME: unused yet
+
+        if len(self._send_buffer) > 0:
+            sent = self._sock.send(self._send_buffer)
+            if sent < len(self._send_buffer):
+                self._send_buffer = self._send_buffer[sent:]
+            else:
+                self._send_buffer = b''
+        return
+
+
+
+class TemporaryReader:
+    def __init__(self, kernel, sock: socket.socket):
+        self._kernel = kernel
+        self._sock = sock
+        self._recv_buffer = Buffer()
+
+    def name(self) -> str:
+        return f"sock  {self._sock.fileno()}"
+
+    def get_buffer(self) -> Buffer:
+        return self._recv_buffer
+
+    def get_socket(self) -> socket.socket | None:
+        """Return the TCP socket connected to this client."""
+        return self._sock
+
+    def on_readable(self, sock: socket.socket):
+        """Handle data available to receive."""
+
+        try:
+            recv_buf = self._sock.recv(65536)
+        except ConnectionResetError:
+            logging.warning(f"IPC: {self.name()} connection reset.")
+            self._kernel.handle_disconnect(self)
+            return
+
+        if len(recv_buf) == 0:
+            logging.debug(f"IPC: {self.name()} connection closed by peer.")
+            self._kernel.handle_disconnect(self)
+            return
+
+        self._recv_buffer.append(recv_buf)
+        logging.debug(f"IPC: {self.name()} "
+                      f"delivered {len(recv_buf)} bytes")
+
+        self._kernel.dispatch(self)
+        return
+
 
 class PseudoKernel(darq.Service, SocketListener, TimerListener):
-    """IPC message router."""
+    """Experimental implementation of kernel features."""
 
     def __init__(self):
         """Constructor."""
@@ -55,28 +308,41 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         darq.init_callbacks(darq.SelectEventLoop(), self)
         super().__init__()
 
+        # Platform details for logging.
         self.host_os = ''
         self.host_os_version = ''
         self.python_version = ''
         self.cpu = ''
         self.device = ''
 
+        # DarqOS Process IDentifier index.
+        self._next_dpid = 1
+
+        # Process table.
+        self._process_table: dict[int,  KernelProcessState] = {}
+
+        # Map of p-call sockets to process.
+        self._processes: dict[socket.socket, KernelProcessState] = {}
+
+        # Map of file descriptor to IPC client.
+        self.fds: dict[int, KernelProcessState] = {}
+
+        # Port table.
+        self._ports: dict[str, UInt64] = {}
+
+        # Registries.
         self.types = []
         self.tools = []
         self.lenses = []
 
+        self.incoming_connections = {}
+
         self.is_active: bool = True
-
-        # Map of socket to IPC client.
-        self.clients: typing.Dict[socket.socket: IPCClient] = {}
-
-        # Map of file descriptor to IPC client.
-        self.fds: typing.Dict[int, IPCClient] = {}
 
         # Host platform.
         self.detect_platform()
 
-        # Listening socket.
+        # p-call listening socket.
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.socket.setblocking(False)
@@ -84,6 +350,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         self.socket.listen()
         darq.loop().add_socket(self.socket, self)
 
+        # Log platform details for debugging.
         logging.info(f"Using {self.host_os} {self.host_os_version}")
         logging.info(f"On a {self.device} ({self.cpu})")
         logging.info(f"Running Python v{self.python_version}")
@@ -96,32 +363,38 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
 
     @staticmethod
     def get_name() -> str:
-        return "IPC"
+        return "p-kernel"
 
     def on_readable(self, sock: socket.socket):
         """Handle client offer socket readable event."""
         if sock == self.socket:
-            # This is the server's listening socket.
             client_socket, client_addr = self.socket.accept()
-            client = IPCClient(self, client_socket)
-            self.clients[client_socket] = client
-
+            self.incoming_connections[client_socket] = TemporaryReader(kernel=self, sock=client_socket)
             darq.loop().add_socket(client_socket, self)
-
             logging.info(f"Socket [{client_socket.fileno()}] "
                          f"connected from {client_addr}")
             return
 
-        client = self.clients.get(sock)
-        if client is None:
-            logging.error(f"got read callback from unexpected "
-                          f"socket {sock.fileno()}.  Closing socket.")
-
-            darq.loop().cancel_socket(sock)
-            sock.close()
+        incoming_connection = self.incoming_connections.get(sock)
+        if incoming_connection:
+            incoming_connection.on_readable(sock)
             return
 
-        client.on_readable(sock)
+        if 0:
+            buf = sock.recv(65536)
+            if len(buf) == 0:
+                logging.warning(f"Socket [{sock.fileno()}] disconnected waiting for RUNNING.")
+                darq.loop().cancel_socket(sock)
+                del self.incoming_connections[sock]
+                return
+
+
+        client = self._processes.get(sock)
+        if client:
+            client.on_readable(sock)
+            return
+
+        logging.warning(f"Socket [{sock.fileno()}] readable but unrecognized.")
         return
 
     def on_writeable(self, sock: socket.socket):
@@ -144,7 +417,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         # FIXME: remove below, once darq loop is capable
 
         while self.is_active:
-            sl = [c.get_socket() for c in self.clients.values()]
+            sl = [c.get_socket() for c in self._processes.values()]
             sl.append(self.socket)
 
             ready_read, ready_write, junk = select.select(sl, sl, [], 1.0)
@@ -153,7 +426,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
                 if s == self.socket:
                     self.on_readable(s)
                 else:
-                    client = self.clients.get(s)
+                    client = self._processes.get(s)
                     if not client:
                         logging.warning(f"No client for socket.")   # FIXME: log socket details
                         continue
@@ -163,35 +436,36 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
                 if s == self.socket:
                     logging.debug("Listening socket returned writeable")
                 else:
-                    client = self.clients.get(s)
+                    client = self._processes.get(s)
                     if not client:
                         logging.warning(f"No client for socket")  # FIXME: log socket details
                         continue
                     client.on_writeable(s)
         return
 
-    def handle_disconnect(self, client: IPCClient):
+    def handle_disconnect(self, process: KernelProcessState):
         """Handle disconnection of a client process.
 
-        :param client: Client that has disconnected."""
+        :param process: Client that has disconnected."""
 
         # Cache name, because we need to use it a few times.
-        name = client.name()
+        name = process.name()
 
         # Deregister ports.
-        ports = client.get_ports()
+        ports = process.get_ports()
         for port in ports:
             if port in self.fds:
                 del self.fds[port]
                 logging.debug(f"{name} closed port {port}")
 
         # Remove client.
-        sock = client.get_socket()
-        if sock in self.clients:
-            del self.clients[sock]
+        sock = process.get_socket()
+        if sock:
+            if sock in self._processes:
+                del self._processes[sock]
 
-        darq.loop().cancel_socket(sock)
-        sock.close()
+            darq.loop().cancel_socket(sock)
+            sock.close()
 
         logging.info(f"{name} disconnected.")
         return
@@ -211,17 +485,17 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         # FIXME: reused before it's registered.
         return port
 
-    def register_port(self, port: int, client: IPCClient):
+    def register_port(self, port: int, process: KernelProcessState):
         """Record the association between a port and a client (socket)."""
         if port in self.fds:
             logging.warning(f"register_port() error: "
                             f"port already registered: {port}")
             return False
 
-        self.fds[port] = client
+        self.fds[port] = process
         return True
 
-    def deregister_port(self, port: int, client: IPCClient):
+    def deregister_port(self, port: int, process: KernelProcessState):
         """Delete the association between a port and a client (socket)."""
         if port not in self.fds:
             logging.warning(f"deregister_port() error: "
@@ -229,9 +503,9 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
             return False
 
         registered_client = self.fds[port]
-        if registered_client != client:
+        if registered_client != process:
             logging.warning(f"deregister_port() error: "
-                            f"port ({port}, and client {client.name()}) "
+                            f"port ({port}, and client {process.name()}) "
                             f"doesn't match registered client "
                             f"{registered_client.name()}")
             return False
@@ -251,7 +525,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         dest_client.send_data(buf)
         return
 
-    def handle_reboot(self, client: IPCClient, message: Reboot):
+    def handle_reboot(self, process: KernelProcessState, message: Reboot):
         logging.info(f"System rebooting.")
 
         # Shutdown first.
@@ -260,7 +534,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         # Then restart.
         self.do_boot()
 
-    def handle_shutdown(self, client: IPCClient, message: Shutdown):
+    def handle_shutdown(self, process: KernelProcessState, message: Shutdown):
         logging.info(f"System shutdown requested.")
 
         self.do_shutdown()
@@ -281,6 +555,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         logging.info(f"Starting bootstrap")
 
         # FIXME: what needs to be done here?
+        self.do_spawn_process(None, "/home/d/proj/darqos/experiements/pystub")
 
         logging.info(f"Completed bootstrap")
         return
@@ -290,8 +565,81 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         darq.loop().add_deferred(self.do_boot)
         return
 
+    def handle_spawn_process(self,
+                             process: KernelProcessState,
+                             request: darq.SpawnRequest):
+        """Handle request to spawn a new user process."""
+        self.send_spawn_process_response(process, request, 0, 1)
+        return
+
+    def send_spawn_process_response(self, process: KernelProcessState, request: darq.SpawnRequest, dpid: int, result: int, error: str|None = None):
+        response = darq.SpawnResponse(request.request_id, result, dpid, error)
+        response.error = error if error else b''
+        buf = response.encode()
+        process.send_data(buf)
+        logging.info(f"spawn_process response: "
+                     f"request_id={request.request_id}, dpid={dpid}, result={result}, error={error}")
+        return
+
+    def get_next_dpid(self) -> int:
+        dpid = self._next_dpid
+        self._next_dpid += 1
+        return dpid
+
+
+    def do_spawn_process(self, parent: KernelProcessState, exec_path: str) -> int:
+        """Spawn a new user process.
+
+        :param parent: the process requesting the new process.
+        :param exec_path: the path to the executable.
+        :return: the DarqOS process identifier (DPID).
+        """
+        logging.info(f"do_spawn_process({exec_path})")
+
+        # Identify the type of the executable (FIXME: always Python for now)
+        # Create process table entry.
+        dpid = self.get_next_dpid()
+        entry = KernelProcessState(self, dpid, exec_path)
+        self._process_table[dpid] = entry  # No fd/socket yet
+
+        # Fork and exec the language stub
+        child = subprocess.Popen(f"{PYTHON_IMAGE_LOADER} {IPC_PORT} {dpid} {exec_path}",
+                                 close_fds=True,
+                                 shell=True,
+                                 cwd="/")  # FIXME: audit list, and add any more needed here
+        # Start error timer.
+        # FIXME
+
+        # That's it: when the stub starts, it'll connect and send a Running
+        # message, triggering the spawn_process_response.
+        return dpid
+
+    def handle_running(self, incoming_connection, message: darq.Running):
+        """Handle startup notification from newly-spawned user process."""
+        logging.info(f"Socket [{incoming_connection.get_socket().fileno()}] handle_running(dpid={message.dpid})")
+
+        # Remove incoming connection handler.
+        sock = incoming_connection.get_socket()
+        self.incoming_connections[sock] = message
+
+        # Add socket and fd table entries.
+        process = self._process_table.get(message.dpid)
+        if not process:
+            logging.error(f"WTF, no process table entry for RUNNING with DPID {message.dpid}")
+            sock.close()
+            return
+
+        self._processes[sock] = process
+        self.fds[sock] = process
+
+        # Update process table state.
+        process.set_status(KernelProcessStatus.RUNNING)
+        process.set_host_pid(42)   # FIXME
+        return
+
+
     def handle_open_port_request(self,
-                                 client: IPCClient,
+                                 process: KernelProcessState,
                                  request: OpenPortRequest):
         """Handle request for new port."""
         port = request.requested_port
@@ -301,25 +649,25 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
             port = self.get_ephemeral_port()
             if port <= 0:
                 logging.error("Ephemeral port overflow; request failed.")
-                self.send_open_port_response(client,
+                self.send_open_port_response(process,
                                              request.request_id,
                                              1,  # FIXME: better errno
                                              request.requested_port)
                 return
 
-        client.add_port(port)
-        self.register_port(port, client)
+        process.add_port(port)
+        self.register_port(port, process)
 
-        logging.info(f"{client.name()} new_port "
+        logging.info(f"{process.name()} new_port "
                      f"requested {request.requested_port}, "
                      f"assigned {port}.")
 
-        logging.info(f"{client.name()} open_port({port}) succeeded")
-        self.send_open_port_response(client, request.request_id, 0, port)
+        logging.info(f"{process.name()} open_port({port}) succeeded")
+        self.send_open_port_response(process, request.request_id, 0, port)
         return
 
     def handle_close_port_request(self,
-                                  client: IPCClient,
+                                  process: KernelProcessState,
                                   request: ClosePortRequest):
         """Handle request to close port."""
 
@@ -327,18 +675,18 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
 
         if port not in self.fds:
             logging.warning(f"close_port({port}) failed: bad port")
-            self.send_close_port_response(client, port, False)
+            self.send_close_port_response(process, port, False)
             return
 
-        client.remove_port(port)
-        self.deregister_port(port, client)
+        process.remove_port(port)
+        self.deregister_port(port, process)
 
-        logging.info(f"{client.name()} close_port({port}) succeeded")
-        self.send_close_port_response(client, request.request_id, 0, port)
+        logging.info(f"{process.name()} close_port({port}) succeeded")
+        self.send_close_port_response(process, request.request_id, 0, port)
         return
 
     def handle_send_message(self,
-                            source: IPCClient,
+                            source: KernelProcessState,
                             message: SendMessage):
         """Handle request to send message from connected client.
 
@@ -365,17 +713,17 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         return
 
     def handle_send_chunk(self,
-                          client: IPCClient,
+                          process: KernelProcessState,
                           message: SendChunk):
         logging.info("send_chunk")
 
     def handle_deliver_chunk(self,
-                             client: IPCClient,
+                             process: KernelProcessState,
                              message: DeliverChunk):
         logging.info("deliver_chunk")
 
     def send_open_port_response(self,
-                                client: IPCClient,
+                                process: KernelProcessState,
                                 request_id: int,
                                 result: int,
                                 port: UInt64):
@@ -384,13 +732,13 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         response.result = result
         response.port = port
         buf = response.encode()
-        client.send_data(buf)
+        process.send_data(buf)
         logging.info(f"open_port response: "
                      f"request_id={request_id}, result={result}, port={port}")
         return
 
     def send_close_port_response(self,
-                                 client: IPCClient,
+                                 process: KernelProcessState,
                                  request_id: int,
                                  result: int,
                                  port: UInt64):
@@ -399,22 +747,22 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         response.result = result
         response.port = port
         buf = response.encode()
-        client.send_data(buf)
+        process.send_data(buf)
         logging.info(f"close_port response: "
                      f"request_id={request_id}, result={result}, port={port}")
         return
 
-    def dispatch(self, client: IPCClient):
+    def dispatch(self, process: KernelProcessState):
         """Process data received from clients.
 
-        :param client: Client connection that received data
+        :param process: Client connection that received data
 
         Handle received message, if buffer contains one."""
 
         # See if we have a header yet.
-        buffer = client.get_buffer()
+        buffer = process.get_buffer()
         if buffer.length() < 8:
-            logging.debug(f"{client.name()} "
+            logging.debug(f"{process.name()} "
                           f"Queued data ({buffer.length()} bytes) too s"
                           f"mall for header (8 bytes).")
             return
@@ -425,7 +773,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         if message_type == 0 or message_length > buffer.length():
             # Added more bytes, but total available doesn't yet constitute
             # a message.  This should only really happen in testing.
-            logging.debug(f"{client.name()} "
+            logging.debug(f"{process.name()} "
                           f"Queued data ({buffer.length()} bytes) "
                           f"too small for message {message_type} "
                           f"which expects {message_length} bytes.")
@@ -434,33 +782,38 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         message_bytes = buffer.peek(message_length)
         buffer.consume(message_length)  # FIXME: merge these two!
 
-        if message_type == MSG_OPEN_PORT_RQST:
+        if message_type == darq.MessageType.OPEN_PORT_RQST:
             message = OpenPortRequest()
             message.decode(message_bytes)
-            self.handle_open_port_request(client, message)
+            self.handle_open_port_request(process, message)
 
-        elif message_type == MSG_CLOSE_PORT_RQST:
+        elif message_type == darq.MessageType.CLOSE_PORT_RQST:
             message = ClosePortRequest()
             message.decode(message_bytes)
-            self.handle_close_port_request(client, message)
+            self.handle_close_port_request(process, message)
 
-        elif message_type == MSG_SEND_MESSAGE:
+        elif message_type == darq.MessageType.SEND_MESSAGE:
             message = SendMessage()
             message.decode(message_bytes)
-            self.handle_send_message(client, message)
+            self.handle_send_message(process, message)
 
-        elif message_type == MSG_REBOOT:
+        elif message_type == darq.MessageType.REBOOT:
             message = Reboot()
             message.decode(message_bytes)
-            self.handle_reboot(client, message)
+            self.handle_reboot(process, message)
 
-        elif message_type == MSG_SHUTDOWN:
+        elif message_type == darq.MessageType.SHUTDOWN:
             message = Shutdown()
             message.decode(message_bytes)
-            self.handle_shutdown(client, message)
+            self.handle_shutdown(process, message)
+
+        elif message_type  == darq.MessageType.RUNNING:
+            message = darq.Running()
+            message.decode(message_bytes)
+            self.handle_running(process, message)
 
         else:
-            logging.warning(f"{client.name()} Received message with "
+            logging.warning(f"{process.name()} Received message with "
                             f"unexpected type code [{message_type}] "
                             "Ignoring message.")
         return

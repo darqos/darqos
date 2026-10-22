@@ -1,5 +1,5 @@
-# DarqOS
-# Copyright (C) 2022-2023 David Arnold
+# darqos
+# Copyright (C) 2022-2026 David Arnold
 
 import logging
 import os
@@ -7,7 +7,7 @@ import os
 import orjson
 
 import darq
-from ..kernel import EventLoopInterface, EventListener, open_port, close_port, send_message
+from darq.syscall import EventListener, open_port, close_port, send_message
 
 
 class Service(EventListener):
