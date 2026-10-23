@@ -57,3 +57,7 @@ history = None
 # Kernel API -- System calls
 ################################################################
 
+def get_state():
+    global _darq_process_state
+    return _darq_process_state
+

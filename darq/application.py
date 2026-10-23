@@ -19,7 +19,6 @@ from .loop import EventLoopInterface
 __all__ = [
     "EventListener",
     "PortState",
-    "ProcessRuntimeState",
     "SystemCallState",
 ]
 
@@ -94,33 +93,6 @@ class PortState:
 
         :returns: a Message, or None if none is available."""
 
-        return
-
-
-class ProcessRuntimeState:
-    """The process-side state for the p-Kernel.
-
-    This class maintains all the process-side state of the p-Kernel
-    interface.  The "system calls" provided by darq.kernel use this
-    state, plus interactions with the remote p-Kernel, to implement
-    their functionality."""
-
-    def __init__(self):
-        # Socket connected to p-kernel message router.
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-        # Set of local ports registered with p-kernel.
-        self.ports: dict[int, PortState] = {}
-
-        # Pending requests.
-        # FIXME: do I want a dedicated type here?
-        self.requests: dict[int, SystemCallState] = {}
-
-        # Re-assembly buffer.
-        self.recv_buffer = Buffer()
-
-        # Event loop.
-        self.loop: EventLoopInterface|None = None
         return
 
 

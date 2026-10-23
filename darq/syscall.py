@@ -5,9 +5,10 @@
 #
 # How this works:
 # - There's a Unix process that provides the facilities to be provided
-#   eventually  by the Darq kernel.  It's called the Pseudo Kernel, or
+#   eventually by the Darq kernel.  It's called the Pseudo Kernel, or
 #   p-kernel.
-# - The p-kernel offers a single TCP endpoint on a well-known TCP port.
+# - The p-kernel offers a single TCP endpoint on a well-known TCP port
+#   (IPC_PORT).
 # - When the p-kernel spawns an emulated Darq process (a pseudo-process,
 #   p-process, or pproc), it (the p-kernel) accepts a TCP session from
 #   the newly-spawned process, initiated by the language-specific runtime,
@@ -60,9 +61,7 @@ __all__ = [
 
 ########################################################################
 
-# FIXME: do I need to do more to make this a safe singleton?
-_darq_process_state = ProcessRuntimeState()
-
+#global _darq_process_state
 
 ########################################################################
 
@@ -175,7 +174,7 @@ def spawn(exec_path: str) -> int:
 
 def getpid() ->  int:
     """Return this process' DarqOS process identifier."""
-    pass
+    return _darq_process_state.getpid()
 
 
 def getppid() -> int:
