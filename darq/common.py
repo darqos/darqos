@@ -7,7 +7,6 @@
 
 import struct
 from enum import IntEnum
-from multiprocessing.context import SpawnProcess
 
 from .errors import MessageDecodingError
 
@@ -15,10 +14,17 @@ from .errors import MessageDecodingError
 # Control exports
 __all__ = [
     "Buffer",
-
+    "ClosePortRequest",
+    "ClosePortResponse",
+    "DeliverMessage",
+    "IPC_PORT",
     "Message",
     "MessageType",
+    "OpenPortRequest",
+    "OpenPortResponse",
+    "RECV_BUFLEN",
     "Running",
+    "SendMessage",
     "SpawnRequest",
     "SpawnResponse",
     "UInt8",
@@ -26,6 +32,10 @@ __all__ = [
     "UInt32",
     "UInt64",
 ]
+
+
+IPC_PORT = 11000
+RECV_BUFLEN = 65535
 
 
 ################################################################
@@ -240,6 +250,16 @@ class Message:
         self.length = bits[3]
         return
 
+    @staticmethod
+    def pad_string(raw_string: str) -> str:
+        pad_len = len(raw_string) % 4
+        padding = '' if pad_len == 0 else (4 - pad_len) * '\0'
+        return raw_string + padding
+
+    @staticmethod
+    def padded_length(raw_string: str) -> int:
+        pad_len = len(raw_string) % 4
+        return len(raw_string) if pad_len == 0 else len(raw_string) + 4 - pad_len
 
 ########################################################################
 # p-Call Messages
@@ -248,12 +268,13 @@ class Message:
 class Running(Message):
     def __init__(self, dpid: int = 0):
         super().__init__(MessageType.RUNNING)
-        self.set_length(self.header_length + 8)
-        self.dpid: UInt64 = dpid
+        self.set_length(self.header_length + 16)
+        self.dpid: int = dpid
+        self.host_pid: int = 0
 
     def encode(self) -> bytes:
         buf = super().encode()
-        buf += struct.pack(">Q", self.dpid)
+        buf += struct.pack(">QQ", self.dpid, self.host_pid)
         return buf
 
     def decode(self, buffer: bytes):
@@ -261,8 +282,9 @@ class Running(Message):
         if len(buffer) < self.length:
             raise MessageDecodingError("buffer too short for packet")
 
-        bits = struct.unpack(">Q", buffer[self.header_length:self.length])
+        bits = struct.unpack(">QQ", buffer[self.header_length:self.length])
         self.dpid = bits[0]
+        self.host_pid = bits[1]
         return
 
 
@@ -274,13 +296,13 @@ class SpawnRequest(Message):
         self.exec_path = exec_path
 
     def get_length(self) -> int:
-        self.set_length(self.header_length + 8 + len(self.exec_path))
+        self.set_length(self.header_length + 8 + self.padded_length(self.exec_path))
         return self.length
 
     def encode(self) -> bytes:
         buf = super().encode()
         buf += struct.pack(">LL", self.request_id, len(self.exec_path))
-        buf += self.exec_path  # FIXME: padding to 4/8 bytes?
+        buf += self.pad_string(self.exec_path)
         return buf
 
     def decode(self, buffer: bytes):
@@ -305,9 +327,14 @@ class SpawnResponse(Message):
         self.error = error
 
     def encode(self) -> bytes:
+        error_size = len(self.error) if self.error is not None else 0
+        pad_len = error_size % 4
+        padding = '' if pad_len == 0 else (4 - pad_len) * '\0'
+
         buf = super().encode()
-        buf += struct.pack(">LLQL", self.request_id, self.result, dpid, len(self.error))
-        buf += self.error  # FIXME: padding to 4/8 bytes
+        buf += struct.pack(">LLQL", self.request_id, self.result, self.dpid, error_size)
+        error_str = '' if self.error is None else self.error
+        buf += error_str + padding
         return buf
 
     def decode(self, buffer: bytes):
@@ -323,3 +350,225 @@ class SpawnResponse(Message):
         error_length = bits[3]
         self.error = buffer[error_start:error_start + error_length]
         return
+
+
+class OpenPortRequest(Message):
+    """Message to request creation of a new port."""
+    def __init__(self, request_id: int = 0, port: int = 0):
+        """Request creation of new port.
+
+        :param request_id: Request identifier.
+        :param port: Requested port number, or zero for default."""
+        super().__init__(MessageType.OPEN_PORT_RQST)
+        self.set_length(self.header_length + 16)
+        self.request_id: UInt32 = UInt32(request_id)
+        self.requested_port: UInt64 = UInt64(port)
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        print(f"request_id = {self.request_id}, requested_port = {self.requested_port}")
+        buf += struct.pack(">LxxxxQ", self.request_id, self.requested_port)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        bits = struct.unpack(">LxxxxQ", buffer[self.header_length:self.length])
+        self.request_id = bits[0]
+        self.requested_port = bits[1]
+        return
+
+
+class OpenPortResponse(Message):
+    """Message to report result of port creation."""
+    def __init__(self, request_id: int = 0, result: int = 0, port: int = 0):
+        """Report result of port creation.
+
+        :param result: Zero means success, otherwise error code
+        :param port: Created port number."""
+        super().__init__(MessageType.OPEN_PORT_RESP)
+        self.set_length(self.header_length + 16)
+        self.request_id: UInt32 = UInt32(request_id)
+        self.result: UInt8 = UInt8(result)
+        self.port: UInt64 = UInt64(port)
+        return
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LBxxxQ", self.request_id, self.result, self.port)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        buffer_tail = buffer[self.header_length:self.length]
+        bits = struct.unpack(">LBxxxQ", buffer_tail)
+        self.request_id = bits[0]
+        self.result = bits[1]
+        self.port = bits[2]
+        return
+
+
+class ClosePortRequest(Message):
+    def __init__(self, request_id: int = 0, port: int = 0):
+        super().__init__(MessageType.CLOSE_PORT_RQST)
+        self.set_length(self.header_length + 16)
+        self.request_id: UInt32 = UInt32(request_id)
+        self.port: UInt64 = UInt64(port)
+        return
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LxxxxQ", self.request_id, self.port)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        bits = struct.unpack(">LxxxxQ", buffer[self.header_length:self.length])
+        self.request_id = bits[0]
+        self.port = bits[1]
+        return
+
+
+class ClosePortResponse(Message):
+    def __init__(self):
+        super().__init__(MessageType.CLOSE_PORT_RESP)
+        self.set_length(self.header_length + 16)
+        self.request_id: UInt32 = UInt32(0)
+        self.port: UInt64 = UInt64(0)
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LxxxxQ", self.request_id, self.port)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        bits = struct.unpack(">LxxxxQ", buffer[self.header_length:self.length])
+        self.request_id = bits[0]
+        self.port = bits[1]
+        return
+
+
+class SendMessage(Message):
+    def __init__(self, source: int = 0, destination: int = 0):
+        super().__init__(MessageType.SEND_MESSAGE)
+        self.set_length(self.header_length + 24)  # FIXME: doesn't include payload
+        self.source: UInt64 = UInt64(source)
+        self.destination: UInt64 = UInt64(destination)
+        self.payload = b''
+
+    def set_payload(self, payload: bytes):
+        self.set_length(self.header_length + 24 + len(payload))
+        self.payload = payload
+
+    def get_length(self) -> int:
+        self.set_length(self.header_length + 24 + len(self.payload))  # FIXME: padding
+        return self.length
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">QQLxxxx", self.source, self.destination, len(self.payload))
+        buf += self.payload  # FIXME: padding
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        payload_start = self.header_length + 24
+        bits = struct.unpack(">QQLxxxx", buffer[self.header_length:payload_start])
+        self.source = bits[0]
+        self.destination = bits[1]
+        payload_length = bits[2]
+        self.payload = buffer[payload_start:payload_start+payload_length]
+        return
+
+
+class DeliverMessage(Message):
+    def __init__(self):
+        super().__init__(MessageType.DELIVER_MESSAGE)
+        self.set_length(self.header_length + 24) ## FIXME: no payload
+        self.source: UInt64 = UInt64(0)
+        self.destination: UInt64 = UInt64(0)
+        self.payload = b''
+
+    def set_payload(self, payload: bytes):
+        self.set_length(self.header_length + 24 + len(payload))
+        self.payload = payload
+
+    def get_length(self):
+        self.set_length(self.header_length + 24 + len(self.payload))
+        return self.length
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">QQLxxxx", self.source, self.destination, len(self.payload))
+        buf += self.payload  # FIXME: padding
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        bits = struct.unpack(">QQLxxxx", buffer[self.header_length:self.header_length+24])
+        self.source = bits[0]
+        self.destination = bits[1]
+        payload_length = bits[2]
+        payload_start = self.header_length + 24
+        self.payload = buffer[payload_start:payload_start + payload_length]
+        return
+
+
+
+
+class SendChunk(Message):
+    def __init__(self):
+        super().__init__()
+        self.source: UInt64 = UInt64(0)
+        self.destination: UInt64 = UInt64(0)
+        self.offset: UInt64 = UInt64(0)
+        self.payload = b''
+
+
+class DeliverChunk(Message):
+    def __init__(self):
+        super().__init__()
+        self.source: UInt64 = UInt64(0)
+        self.destination: UInt64 = UInt64(0)
+        self.offset: UInt64 = UInt64(0)
+        self.payload = b''
+
+
+class Reboot(Message):
+    def __init__(self):
+        super().__init__()
+
+    def encode(self) -> bytes:
+        return super().encode()
+
+    def decode(self, buffer: bytes):
+        return super().decode(buffer)
+
+
+class Shutdown(Message):
+    def __init__(self):
+        super().__init__()
+
+    def encode(self) -> bytes:
+        return super().encode()
+
+    def decode(self, buffer: bytes):
+        return super().decode(buffer)

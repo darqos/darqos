@@ -634,7 +634,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
 
         # Update process table state.
         process.set_status(KernelProcessStatus.RUNNING)
-        process.set_host_pid(42)   # FIXME
+        process.set_host_pid(message.host_pid)
         return
 
 

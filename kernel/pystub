@@ -16,6 +16,7 @@
 
 import logging
 import os
+import setproctitle
 import socket
 import sys
 import time
@@ -30,6 +31,9 @@ class PythonPProcess:
         self._exec_path = exec_path
 
         self._pkernel_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+        setproctitle.setproctitle(f"pyloader-{self._dpid}")
+        return
         
     
     def connect(self):
@@ -40,8 +44,10 @@ class PythonPProcess:
             logging.error(f"Failed to connect to p-kernel at port [{self._pkernel_port}]")
             sys.exit(42)
 
-        # Send ping to p-kernel?
-        message = darq.Running(self._dpid)
+        # Send startup confirmation to p-kernel.
+        message = darq.Running()
+        message.dpid = self._dpid
+        message.host_pid = os.getpid()
         buf = message.encode()
         self._pkernel_sock.sendall(buf)
         return
@@ -57,10 +63,17 @@ class PythonPProcess:
         
 
     def start_app(self):
-        # Create namespace for 
-        # Add executable path to system path
-        # Import application module
+        # Create namespace for application code.
+        app_globals = {}
+
+        # Add executable path to system path.
+        exec(f"import sys; sys.path.insert(0, '{self._exec_path}')", globals=app_globals)
+
+        # Import application module.
+        exec("import main", globals=app_globals)
+
         # Spawn thread calling darq_main
+        exec("import threading; t = threading.Thread(target=main.darq_main); t.start()", globals=app_globals)
         pass
 
     def kill_app(self):
@@ -73,7 +86,7 @@ class PythonPProcess:
         # Confirm death to p-kernel
         # Flush p-session buffers & closee connection
         # Exit process
-        pass
+        pass1
         
 
     def send_pmsg(self):
@@ -132,7 +145,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     if len(sys.argv) != 4:
-        logging.error(f"pystub expecting 4 params, received {len(sys.argv)}")
+        logging.error(f"Expecting 4 params, received {len(sys.argv)}")
         sys.exit(42)
 
     pkernel_port = int(sys.argv[1])
