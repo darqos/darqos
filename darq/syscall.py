@@ -34,10 +34,12 @@
 #     signals the Future.
 
 import logging
+import os
 import socket
 import struct
 import threading
 import typing
+import uuid
 
 from .application import *
 from .common import *
@@ -47,43 +49,19 @@ from .loop import EventLoopInterface
 
 # Default exported symbols.
 __all__ = [
+    "get_loop",
     "getpid",
     "getppid",
+    "init",
+    "init_a",
+    "init_cb",
 ]
 
 
 ########################################################################
 
-class PendingRequest:
-    def __init__(self, request_id: int, cb, request_message):
-        self.request_id = request_id
-        self.callback = cb
-        self.request_message = request_message
-        self.response_message = None
-        self.completed = False
-        self.result = 0
-
-    def is_sync(self):
-        return self.callback == None
-
-    def is_complete(self):
-        return True if self.completed else False
-
-    def is_success(self):
-        return self.result == 0
-
-    def complete(self, result, message):
-        self.result = result
-        self.completed = True
-        self.response_message = message
-        return
-
-
-# One of these is created if you import this module (darq.kernel).  This
-# should happen once per-process.
-
 # FIXME: do I need to do more to make this a safe singleton?
-_state = ProcessRuntimeState()
+_darq_process_state = ProcessRuntimeState()
 
 
 ########################################################################
@@ -94,19 +72,23 @@ _state = ProcessRuntimeState()
 
 def init(event_loop: EventLoopInterface):
     """Initialise the process' runtime state."""
-    _state.loop = event_loop
+    _darq_process_state.loop = event_loop
 
 
-def init_callbacks(event_loop: EventLoopInterface, listener: EventListener):
+def init_a(event_loop: EventLoopInterface):
+    _darq_process_state.loop = event_loop
+
+
+def init_cb(event_loop: EventLoopInterface, listener: EventListener):
     """Initialise the process' runtime state, using the callback model."""
-    _state.loop = event_loop
-    _state.listener = listener
+    _darq_process_state.loop = event_loop
+    _darq_process_state.listener = listener
     return
 
 
-def loop():
+def get_loop():
     """Return a reference to the runtime event loop."""
-    return _state.loop
+    return _darq_process_state.loop
 
 
 def open_port(port: int) -> int:
@@ -115,11 +97,11 @@ def open_port(port: int) -> int:
     :param port: Requested port number; Zero requests ephemeral port.
     :returns: Allocated port number."""
 
-    return _state.open_port_s(port)
+    return _darq_process_state.open_port_s(port)
 
 
 async def open_port_a(port: int) -> int:
-    return await _state.open_port_a(port)
+    return await _darq_process_state.open_port_a(port)
 
 
     """Synchronously allocate a new port for communication."""
@@ -136,7 +118,7 @@ def close_port(port: int):
 
     :param port: Port number to be closed."""
 
-    return _state.close_port(port)
+    return _darq_process_state.close_port(port)
 
 
 def send_message(source: int, destination: int, message: bytes):
@@ -145,20 +127,20 @@ def send_message(source: int, destination: int, message: bytes):
     :param source: Sending port number.
     :param destination: Target port number.
     :param message: Buffer to be sent."""
-    return _state.send_message(source, destination, message)
+    return _darq_process_state.send_message(source, destination, message)
 
 
 def receive_message(port: int, blocking: bool = True) -> bytes:
     """Receive a message from a port."""
-    return _state.receive_message(port, blocking)
+    return _darq_process_state.receive_message(port, blocking)
 
 
 def create_process():
-    return _state.create_process()
+    return _darq_process_state.create_process()
 
 
 def destroy_process():
-    return _state.destroy_process()
+    return _darq_process_state.destroy_process()
 
 
 # def send_chunk(self, source: int, destination: int, stream: int, offset: int, chunk: bytes):
@@ -195,7 +177,143 @@ def getpid() ->  int:
     """Return this process' DarqOS process identifier."""
     pass
 
+
 def getppid() -> int:
     """Return this process' parent's DarqOS process identifier."""
     pass
 
+
+def shutdown():
+    """Shyt down the system."""
+
+    #darq.os.shutdown()
+    pass
+
+
+def reboot():
+    """Restart the system.
+
+    All active services, tools, lens, etc, are shutdown.  Once these
+    shutdown processes are complete, the system will re-initialise,
+    as if starting afresh.
+
+    M0_NOTE:
+    The boot process is managed by a Python function, which
+    spawns all DarqOS entities as processes, managed by the boot process.
+    A restart will kill all those processes, before spawning a new boot
+    process and then exiting."""
+
+    #darq.os.reboot()
+    pass
+
+
+def get_local_context() -> str:
+    """Return the name of the local context."""
+
+    # FIXME: it needs to be persistent, so should come from storage
+
+    global _local_context_id
+    context_path = os.path.expanduser("~/.darq-context-id")
+
+    # Return cached value, if set.
+    if _local_context_id:
+        return _local_context_id
+
+    # Load saved value, if it exists.
+    if os.path.exists(context_path):
+        f = open(context_path)
+        s = f.read()
+        f.close()
+
+        _local_context_id = s.strip()
+        return _local_context_id
+
+    # Generate a unique context name, save it, and cache it.
+    _local_context_id = uuid.uuid4().hex
+
+    f = open(context_path, "w")
+    f.write(_local_context_id + "\n")
+    f.close()
+
+    return _local_context_id
+
+
+class Object:
+    pass
+
+class ObjectIdentifier:
+    pass
+
+class ObjectProxy:
+    pass
+
+class Type:
+    pass
+
+def create_type(type_id: str, name: str):
+    """Create a new Type.
+
+    :param type_id:
+    :param name:
+
+    The created Type is transient and inaccessible until registered with
+    register_type(), which persists the information, and adds it to the
+    runtime type registry."""
+
+    #return Type(type_id, name)
+    pass
+
+
+def register_type(typedef: Type):
+    # FIXME: see darq.rt.type.TypeRegistry.register()
+    #return _type_api.register(typedef)
+    pass
+
+def deregister_type(type_id: str):
+    #return _type_api.deregister(type_id)
+    pass
+
+def get_type(type_id: str):
+    """Look up a Type definition by its UTI.
+
+    :param type_id: Uniform Type Identifier for the requested type."""
+
+    #return _type_api.get(type_id)
+    pass
+
+def create_object(type_id: str, is_transient: bool = False) -> ObjectProxy:
+    """Create a new object.
+
+    :param type_id: Identifier for the new object's Type, as registered with
+    the Type Service.
+    :param is_transient: if True, do not persist the Object's state.
+    :returns: Proxy for newly-created Object."""
+
+    # Check type_id is legit or error.
+    # Have type implementation create new instance.
+    # If not transient, persist newly-created instance.
+    # Create proxy for instance and return to caller.
+    pass
+
+
+def lookup_object(object_id: typing.Union[str, ObjectIdentifier]) -> ObjectProxy:
+    """Obtain a proxy for an existing object.
+
+    If the specified Object identifier is unknown, return an error.
+
+    :object_id: Object's unique identifier."""
+
+    # If object_id is a string, convert it to structured form.
+
+    # Check context
+    # If context is unknown, look it up
+    # If context is known, but remote, lookup object_id remotely
+
+    # Lookup type_id.  If unknown, raise an error: we can't deal with
+    # this type of object.
+
+    # Get endpoint for type implementation from type service.
+
+    # Ask type implementation to activate the object, and return a
+    # proxy.
+    pass
