@@ -36,9 +36,6 @@
 
 import logging
 import os
-import socket
-import struct
-import threading
 import typing
 import uuid
 
@@ -60,12 +57,22 @@ __all__ = [
 
 
 ########################################################################
+# Application process global state.
+########################################################################
+# Help Python's edit-time type-checking with an annotation on the
+# injected name.
+#
+# This name is injected by pyloader, into darq.syscall.__dict__, as
+# part of spawning a new process.  See pyloader.PythonPProcecss.start_app
+# for the details.
 
-#global _darq_process_state
+if typing.TYPE_CHECKING:
+    _darq_process_state: "PythonPProcess|None" = None
+
 
 ########################################################################
-
 # Application Support API.
+########################################################################
 #
 # Visible "system call" functions.
 

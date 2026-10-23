@@ -306,6 +306,7 @@ class PythonPProcess:
 
         # Add executable path to system path.
         launcher = \
+            "# language=Python\n" \
             "import logging\n" \
             "import sys\n" \
             "import threading\n" \
@@ -360,8 +361,8 @@ if __name__ == "__main__":
     # - executable path
     #
     # Within the executable path, there must be a Python file (module)
-    # called pkernel.  In that file must be a function called
-    # darq_main().
+    # called 'main.py'.  In that file must be a function called
+    # 'darq_main', which is called with no parameters.
 
     if len(sys.argv) == 2 and sys.argv[1] in ('help', '-h', '-?' '--help'):
         sys.stdout.write(f"Usage: {os.path.basename(sys.argv[0])} p-kernel-port darq-process-id executable-path\n\n")
@@ -377,15 +378,26 @@ if __name__ == "__main__":
                         level=logging.DEBUG)
     logging.info("Starting pyloader.")
 
+    # Process arguments.
     pkernel_port = int(sys.argv[1])
     dpid = int(sys.argv[2])
     exec_path = sys.argv[3]
-    
+
+    # Create local process state.
     pproc = PythonPProcess(pkernel_port, dpid, exec_path)
+
+    # Connect to p-kernel.
     pproc.connect()
+
+    # Start the application code in a new thread.
     pproc.start_app()
+
+    # Wait for events, either from app code, or from p-kernel.
     pproc.run()
+
+    # Disconnect (nicely) from p-kernel.
     pproc.disconnect()
 
+    # Exit.
     logging.info("Exiting.")
     sys.exit(0)
