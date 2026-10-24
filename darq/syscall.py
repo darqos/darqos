@@ -53,6 +53,15 @@ __all__ = [
     "init",
     "init_a",
     "init_cb",
+    "open_port",
+    "open_port_cb",
+    "close_port",
+    "close_port_cb",
+    "send_message",
+    "spawn",
+    "spawn_cb",
+    "shutdown",
+    "reboot",
 ]
 
 
@@ -103,7 +112,25 @@ def open_port(port: int) -> int:
     :param port: Requested port number; Zero requests ephemeral port.
     :returns: Allocated port number."""
 
-    return _darq_process_state.open_port_s(port)
+    # Get a SystemCallState
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.SYNC)
+
+    # Populate the request message
+    request = OpenPortRequest()
+    request.request_id = _darq_process_state.get_next_request_id()
+    request.requested_port = UInt64(port)
+    syscall.set_request(request)
+
+    # Enqueue.
+    _darq_process_state.queue_new_syscall(syscall)
+
+    # Wait for response.
+    syscall.sync_wait()
+
+    # Extract result.
+    allocated_port = syscall.get_response().port
+    return allocated_port
 
 
 async def open_port_a(port: int) -> int:
@@ -111,12 +138,27 @@ async def open_port_a(port: int) -> int:
 
 
     """Synchronously allocate a new port for communication."""
-def open_port_cb(port: int, cb: typing.Callable[[int, int], None]) -> None:
+def open_port_cb(port: int, loop: EventLoopInterface, cb: typing.Callable[[int, int], None]) -> None:
     """Asynchronously allocate new port for communication.
 
     :param port: Requested port number; Zero requests ephemeral port.
+    :param loop: Event loop in which the callable should be invoked.
     :param cb: Completion callback: cb(port, error_code)."""
-    pass
+
+    # Get a SystemCallState
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.CALLBACK)
+
+    # Populate the request message
+    request = OpenPortRequest()
+    request.request_id = _darq_process_state.get_next_request_id()
+    request.requested_port = UInt64(port)
+    syscall.set_request(request)
+    syscall.set_callback(loop, cb)
+
+    # Enqueue.
+    _darq_process_state.queue_new_syscall(syscall)
+    return
 
 
 def close_port(port: int):
@@ -124,7 +166,45 @@ def close_port(port: int):
 
     :param port: Port number to be closed."""
 
-    return _darq_process_state.close_port(port)
+    # Get a SystemCallState
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.SYNC)
+
+    # Populate the request message
+    request = ClosePortRequest()
+    request.request_id = _darq_process_state.get_next_request_id()
+    request.port = UInt64(port)
+    syscall.set_request(request)
+
+    # Enqueue.
+    _darq_process_state.queue_new_syscall(syscall)
+
+    # Wait for response.
+    syscall.sync_wait()
+    return
+
+
+def close_port_cb(port: int, loop: EventLoopInterface, cb: typing.Callable[[int, int], None]) -> None:
+    """Asynchronously close a previously-allocated communication port.
+
+    :param port: Port number to be closed.
+    :param loop: Event loop in which the callable should be invoked.
+    :param cb: Completion callback: cb(port, error_code)."""
+
+    # Get a SystemCallState
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.CALLBACK)
+
+    # Populate the request message
+    request = ClosePortRequest()
+    request.request_id = _darq_process_state.get_next_request_id()
+    request.port = UInt64(port)
+    syscall.set_request(request)
+    syscall.set_callback(loop, cb)
+
+    # Enqueue.
+    _darq_process_state.queue_new_syscall(syscall)
+    return
 
 
 def send_message(source: int, destination: int, message: bytes):
@@ -133,7 +213,19 @@ def send_message(source: int, destination: int, message: bytes):
     :param source: Sending port number.
     :param destination: Target port number.
     :param message: Buffer to be sent."""
-    return _darq_process_state.send_message(source, destination, message)
+
+    # Get a SystemCallState
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.SYNC)
+
+    # Populate the request message
+    request = SendMessage(source, destination)
+    request.set_payload(message)
+    syscall.set_request(request)
+
+    # Enqueue.  There's no response to a SendMessage, so don't wait.
+    _darq_process_state.queue_new_syscall(syscall)
+    return
 
 
 def receive_message(port: int, blocking: bool = True) -> bytes:
@@ -168,14 +260,43 @@ def spawn(exec_path: str) -> int:
     :param exec_path: Path to executable.
     :returns: DPID of new process."""
 
-    # Create syscall state.
-    call_state = SystemCallState()
+    # Get a SystemCallState
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.SYNC)
 
-    # Append to queue.
-    # Wake up event loop.
+    # Populate the request message
+    request = SpawnRequest(_darq_process_state.get_next_request_id(), exec_path)
+    syscall.set_request(request)
+
+    # Enqueue.
+    _darq_process_state.queue_new_syscall(syscall)
+
     # Wait for response.
-    call_state._sync_event.wait()
+    syscall.sync_wait()
 
+    # Extract result.
+    dpid = syscall.get_response().dpid
+    return dpid
+
+
+def spawn_cb(exec_path: str, loop: EventLoopInterface, cb: typing.Callable[[int, int], None]) -> None:
+    """Asynchronously spawn a darq process.
+
+    :param exec_path: Path to executable.
+    :param loop: Event loop in which the callable should be invoked.
+    :param cb: Completion callback: cb(dpid, error_code)."""
+
+    # Get a SystemCallState
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.CALLBACK)
+
+    # Populate the request message
+    request = SpawnRequest(_darq_process_state.get_next_request_id(), exec_path)
+    syscall.set_request(request)
+    syscall.set_callback(loop, cb)
+
+    # Enqueue.
+    _darq_process_state.queue_new_syscall(syscall)
     return
 
 
@@ -190,10 +311,19 @@ def getppid() -> int:
 
 
 def shutdown():
-    """Shyt down the system."""
+    """Shut down the system."""
 
-    #darq.os.shutdown()
-    pass
+    # Get a SystemCallState
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.SYNC)
+
+    # Populate the request message
+    request = Shutdown()
+    syscall.set_request(request)
+
+    # Enqueue.  There's no response to a Shutdown, so don't wait.
+    _darq_process_state.queue_new_syscall(syscall)
+    return
 
 
 def reboot():
@@ -209,8 +339,17 @@ def reboot():
     A restart will kill all those processes, before spawning a new boot
     process and then exiting."""
 
-    #darq.os.reboot()
-    pass
+    # Get a SystemCallState
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.SYNC)
+
+    # Populate the request message
+    request = Reboot()
+    syscall.set_request(request)
+
+    # Enqueue.  There's no response to a Reboot, so don't wait.
+    _darq_process_state.queue_new_syscall(syscall)
+    return
 
 
 def get_local_context() -> str:

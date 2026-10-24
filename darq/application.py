@@ -11,6 +11,9 @@ import socket
 import threading
 import typing
 
+from enum import IntEnum
+from warnings import deprecated
+
 from .common import *
 from .errors import *
 from .loop import EventLoopInterface
@@ -20,18 +23,32 @@ __all__ = [
     "EventListener",
     "PortState",
     "SystemCallState",
+    "SystemCallMode"
 ]
 
 
 ########################################################################
+
+class SystemCallMode(IntEnum):
+    """Interaction model flag."""
+
+    # Synchronous, blocking model.
+    SYNC = 1
+
+    # Asynchronous, awaitable model, returning a future.
+    ASYNC = 2
+
+    # Asynchronous, callback supplied.
+    CALLBACK = 3
+
 
 class SystemCallState:
     """State of a p-kernel request."""
 
     def __init__(self, loop = None):
 
-        # Flag async syscall.
-        self._async = False
+        # Flag interaction mode.
+        self._mode = SystemCallMode.SYNC
 
         # Syscall number.
         self._type = 0
@@ -49,20 +66,59 @@ class SystemCallState:
         if loop:
             self._async_future = loop.Future(loop=loop)
 
+        # Callback, for CALLBACK mode.
+        self._callback: typing.Callable|None = None
+
+        self._loop: EventLoopInterface|None =  None
+
+
+    def set_mode(self, mode: SystemCallMode):
+        self._mode = mode
+
+    def get_mode(self) -> SystemCallMode:
+        return self._mode
+
+    def set_request(self, request: Message):
+        self._request = request
+
+    def get_request(self) -> Message:
+        return self._request
+
+    def set_response(self, response: Message):
+        self._response = response
+
+    def get_response(self)  -> Message:
+        return self._response
+
+    def set_callback(self, loop: EventLoopInterface, cb: typing.Callable):
+        self._callback = cb
+
+    def get_callback(self) -> tuple[EventLoopInterface|None, typing.Callable|None]:
+        return tuple(self._loop, self._callback)
+
+    @deprecated("Use get_mode() instead")
     def is_sync(self):
         return not self._async
 
+    @deprecated("Shouldn't need this?")
     def is_complete(self):
         return self._response is not None
 
+    @deprecated("Access request result")
     def is_success(self):
         return False # FIXME
 
+    @deprecated("Do this manually?")
     def complete(self, result, message):
         self.result = result
         self.completed = True
         self.response_message = message
         return
+
+    def sync_wait(self):
+        # FIXME: should I put a timeout here, and actually have the syscall fail if it takes too long?
+        self._sync_event.wait()
+
 
 
 class PortState:

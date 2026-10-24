@@ -9,3 +9,7 @@ dependencies = []
 
 [tool.setuptools]
 packages = ["darq", "darq.kernel", "darq.runtime", "darq.services", "darq.type"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

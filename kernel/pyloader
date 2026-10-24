@@ -45,7 +45,10 @@ class PythonPProcess:
         self._requests = queue.Queue()
 
         # Event loop wakeup mechanism for p-call request queue.
-        self._pipe_reader, self._pipe_writer = os.pipe()
+        self._queue_pipe_reader, self._queue_pipe_writer = os.pipe()
+
+        # Thread exit notification pipe.
+        self._exit_pipe_reader, self._exit_pipe_writer = os.pipe()
 
         # Transaction identifiers for p-kernel requests.
         self.request_id: int = 0
@@ -64,6 +67,22 @@ class PythonPProcess:
         self.request_id += 1
         return self.request_id
 
+    def queue_new_syscall(self, syscall_state: darq.SystemCallState):
+        """Queue a system call to be sent to the p-kernel."""
+        self._requests.put(syscall_state)
+
+        written = os.write(self._queue_pipe_writer, b'X')
+        if written != 1:
+            raise Exception("failed to write byte to the queue pipe !?")
+        return
+
+    def signal_app_thread_exit(self):
+        """Call to signal loader that the user thread target function has exited."""
+        written = os.write(self._exit_pipe_writer, b'X')
+        if written != 1:
+            raise Exception("failed to write byte to thread exit pipe")
+        return
+
     def connect_to_p_kernel(self):
         """Establish the TCP connection to the p-kernel."""
 
@@ -79,7 +98,7 @@ class PythonPProcess:
         self.handle_bytes_from_p_kernel(data)
 
     def on_writeable(self, sock: socket.socket):
-        logging.debug("Callback: socket is writeable")
+        #logging.debug("Callback: socket is writeable")
         pass
 
     def on_connected(self, sock: socket.socket):
@@ -138,24 +157,6 @@ class PythonPProcess:
         else:
             logging.warning(f"Unhandled message type: {message_type}")
 
-
-    def connect(self):
-        # Attempt to connect to p-kernel.
-        try:
-            self._pkernel_sock.connect(("localhost", self._pkernel_port))
-        except Exception as e:
-            logging.error(f"Failed to connect to p-kernel at port [{self._pkernel_port}]")
-            sys.exit(42)
-
-        # Send startup confirmation to p-kernel.
-        message = darq.Running()
-        message.dpid = self._dpid
-        message.host_pid = os.getpid()
-        buf = message.encode()
-        self._pkernel_sock.sendall(buf)
-        return
-
- 
     def disconnect(self):
 
         # Send exit message to p-kernel?
@@ -164,6 +165,13 @@ class PythonPProcess:
         self._pkernel_sock.close()
         self._pkernel_sock = None
 
+    def send_running_message(self):
+        # Send startup confirmation to p-kernel.
+        message = darq.Running()
+        message.dpid = self._dpid
+        message.host_pid = os.getpid()
+        self.send_to_p_kernel(message)
+        return
 
     def handle_deliver_message(self, message: darq.DeliverMessage):
         # Check destination.
@@ -205,7 +213,22 @@ class PythonPProcess:
         return
 
     def _open_port_request(self, port: int, callback) -> darq.SystemCallState:
-        """(Internal)."""
+        """(Internal) Create state for open_port syscall and queue."""
+        #
+        # User code calls open_port, open_port_a, or open_port_cb, all
+        # of which in turn call this function.  It creates and populates
+        # the SystemCallState.
+        #
+        # So the flow is:
+        # - Application calls open_port/open_port_a/open_port_cb
+        # - API functions call _open_port_request-
+        # - _open_port_request calls queue_new_syscall, which signals pipe
+        # - Event loop calls handle_syscall_queue_event, which dispatches on message_type
+        # - Dispatcher calls handle_open_port_request
+        # - handle_open_port_request does Validation of parameters
+        # - And then, send_to p-kernel
+
+
         # Validate requested port.
         if port < darq.UInt64.min() or port > darq.UInt64.max():
             raise darq.PortNumberOutOfRange(port)
@@ -321,9 +344,12 @@ class PythonPProcess:
             "import darq; darq.syscall.__dict__['_darq_process_state'] = _darq_process_state\n" \
             "\n" \
             "# Start the application's main function in a new thread.\n" \
-            "t = threading.Thread(target=main.darq_main)\n" \
-            "logging.debug('Starting application thread.')\n" \
-            "t.start()\n"
+            "try:\n" \
+            "    t = threading.Thread(target=main.darq_main)\n" \
+            "    logging.debug('Starting application thread.')\n" \
+            "    t.start()\n" \
+            "finally:\n" \
+            "    pass #_darq_process_state\n"
         exec(launcher, app_globals)
         return
 
@@ -387,7 +413,8 @@ if __name__ == "__main__":
     pproc = PythonPProcess(pkernel_port, dpid, exec_path)
 
     # Connect to p-kernel.
-    pproc.connect()
+    pproc.connect_to_p_kernel()
+    pproc.send_running_message()
 
     # Start the application code in a new thread.
     pproc.start_app()

@@ -295,15 +295,14 @@ class TemporaryReader:
         return
 
 
-class PseudoKernel(darq.Service, SocketListener, TimerListener):
+class PseudoKernel(SocketListener, TimerListener):
     """Experimental implementation of kernel features."""
 
     def __init__(self):
         """Constructor."""
 
-        # Use the callbacks model for I/O.
-        darq.init_cb(darq.SelectEventLoop(), self)
-        super().__init__()
+        # Event loop, using the callbacks model for I/O.
+        self._loop = darq.SelectEventLoop()
 
         # Platform details for logging.
         self.host_os = ''
@@ -345,7 +344,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         self.socket.setblocking(False)
         self.socket.bind(('0.0.0.0', TCP_PORT))
         self.socket.listen()
-        darq.get_loop().add_socket(self.socket, self)
+        self._loop.add_socket(self.socket, self)
 
         # Log platform details for debugging.
         logging.info(f"Using {self.host_os} {self.host_os_version}")
@@ -367,7 +366,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
         if sock == self.socket:
             client_socket, client_addr = self.socket.accept()
             self.incoming_connections[client_socket] = TemporaryReader(kernel=self, sock=client_socket)
-            darq.get_loop().add_socket(client_socket, self)
+            self._loop.add_socket(client_socket, self)
             logging.info(f"Socket [{client_socket.fileno()}] "
                          f"connected from {client_addr}")
             return
@@ -381,7 +380,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
             buf = sock.recv(65536)
             if len(buf) == 0:
                 logging.warning(f"Socket [{sock.fileno()}] disconnected waiting for RUNNING.")
-                darq.loop().cancel_socket(sock)
+                self._loop.cancel_socket(sock)
                 del self.incoming_connections[sock]
                 return
 
@@ -406,7 +405,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
 
         logging.info("Entering main loop.")
         try:
-            darq.get_loop().run()
+            self._loop.run()
         except KeyboardInterrupt:
             self.do_shutdown()
         return
@@ -461,7 +460,7 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
             if sock in self._processes:
                 del self._processes[sock]
 
-            darq.loop().cancel_socket(sock)
+            self._loop.cancel_socket(sock)
             sock.close()
 
         logging.info(f"{name} disconnected.")
@@ -549,17 +548,37 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
     def do_boot(self):
         """Start system."""
 
+        # In a Unix system, two things are relevant: the filesystem
+        # driver is built into the kernel, so at boot time, there is
+        # persistent storage available.  And, operators are typically
+        # either practically unable or at least unwilling, to edit
+        # the kernel code, so configuring what things should start
+        # at boot time is done via init, inittab, and systemd (or
+        # launchd, sysvinit, rc, etc, etc).
+        #
+        # In this case, the persistent storage driver is not
+        # necessarily part of the kernel, and, customizing the code
+        # to start a new service is not terribly difficult.  So
+        # I'm going to skip an init system for now, and likely
+        # forever.
+
         logging.info(f"Starting bootstrap")
 
-        # FIXME: what needs to be done here?
-        self.do_spawn_process(None, "/home/d/proj/darqos/experiements/pyloader")
+        #self.do_spawn_process(None, "/home/d/proj/darqos/experiements/pyloader")
+
+        # Start system services.
+        # Storage
+        # Index
+        # Type
+        # History
+        # etc
 
         logging.info(f"Completed bootstrap")
         return
 
     def schedule_boot(self):
         """Schedule the boot process via the event loop."""
-        darq.get_loop().add_deferred(self.do_boot)
+        self._loop.add_deferred(self.do_boot)
         return
 
     def handle_spawn_process(self,
@@ -571,7 +590,6 @@ class PseudoKernel(darq.Service, SocketListener, TimerListener):
 
     def send_spawn_process_response(self, process: KernelProcessState, request: darq.SpawnRequest, dpid: int, result: int, error: str|None = None):
         response = darq.SpawnResponse(request.request_id, result, dpid, error)
-        response.error = error if error else b''
         buf = response.encode()
         process.send_data(buf)
         logging.info(f"spawn_process response: "
