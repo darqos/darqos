@@ -4,7 +4,7 @@ Bootstrap
 1st Edition
 -----------
 
- * Raspberry Pi 4 / 400 platform
+ * Lenovo MiniPCR platform
 
    * Nicely self-contained
    * Suitable platform for future OS-level work
@@ -12,12 +12,11 @@ Bootstrap
 
  * OS
 
-   * Use *Raspberry Pi OS Lite* (64 bit) as the base image
+   * Use *Debian* (64 bit) as the base image
 
-     * Based on Debian 12 (Bookworm)
      * Configure with Wayland server, but no desktop environment
        * Run Wayfire compositor, for now
-     * auto-login into default user (`darq`, not `'pi`)
+     * auto-login into default user (`darq`)
        * Implemented via `getty@tty1` `systemd` service
      * Install single `dui` script that can fetch/install Darq when
        run as root.
@@ -39,21 +38,16 @@ Bootstrap
 
  * Startup
 
-   * Standard Linux boot to custom Wayland-based Qt UI
-   * All Darq services have a systemd unit, and use systemd
-     dependencies to control startup order.
-   * Define a systemd target to enable all Darq services to be started
-     or stopped as a group
+   * Standard Linux systemd boot to multi-user target
    * p-Kernel
 
-     * RPC-reachable pseudo-kernel
-     * Prototype kernel API
-     * Started from systemd unit file
-     * Once up and running, executes `/darq/sys/init` script
+     * p-kernel systemd unit is automatically started
+     * p-kernel will spawn system services
 
    * Storage
 
-     * Server is a Unix daemon process, written in Python (for now).
+     * Service is Darq Python app, and spawned as a p-process from the
+       p-kernel as part of the bootstrap process.
      * Pass it the "device" info, in this case a Unix filesystem path
      * The storage service registers itself with the kernel service, thus
        making itself available to its clients.
@@ -76,17 +70,15 @@ Bootstrap
    * History
    * Terminal
 
-     * Server is Unix daemon process, running PyQt5 (or 6?)
-     * Create full-screen background window on all attached screen
-       devices (from Qt).
-
-       * Maybe this can be done by Wayfire (compositor)?
-
+     * Service is a Darq Python app, spawned as a p-process from the
+       p-kernel as part of the bootstrap process.
+     * Running PyQt5 (or 6?)
+     * Spawns Wayfire compositor to manage windows
      * Needs to have pointer & keyboard
 
        * Can we get enough control via Qt?  Worried about the stupid
          Command/Control mapping Qt does ...
-       * If not Qt, maybe need to wrangle directly with Linux
+       * If not Qt, maybe need to wrangle directly with Linux evdev?
 
          * In the worst case, perhaps thd (trigger happy) will work
 
@@ -95,7 +87,7 @@ Bootstrap
        * Via ... PulseAudio?  Or Pipewire?
 
          * I guess ideally Pipewire, but it'll depend on what
-           works for RPi 4 / RPi400
+           works for the MiniPC / Debian
 
      * Either provides or facilitates the Factory, Find, and Events
        UIs.
@@ -116,7 +108,7 @@ Bootstrap
      * Password collection
      * This could all reasonably be a part of a "Settings" tool?
 
- * Python 3.11 (default on _Bookworm_)
+ * Python 3.13 (default on _Trixie_)
  * Qt5 LTS + PyQt5 (or Qt6 + PyQt6 or PySide6?)
 
 

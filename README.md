@@ -37,22 +37,21 @@ currently a clean and efficient instantiation of its own design.
 
 ## Target Platforms
 
-The best way to try it is to use a Raspberry Pi 400 with an HDMI monitor,
-a USB mouse and keyboard, and a USB "soundcard".  Both wired and 
-wireless Ethernet are supported.  This is the primary development target.
-
-A Raspberry Pi 4 will also work fine.
+The best way to try it is to use a secondhand Lenovo MiniPC with an
+HDMI monitor, a USB mouse and USB keyboard.  Both wired and wireless
+Ethernet are supported.  This is the primary development target.
 
 It is also intended to work on tablets and mobile phones.  Some work
 has been done on the original PinePhone platform; this will likely
 not be an ongoing target platform, but it's a useful experimental
 device for now.
 
-At some point, it will begin to target laptops and desktop PCs.  From
-the DarqOS point of view, these are more-or-less just bigger and
-faster versions of a Raspberry Pi, with lots of diversity in their
-I/O devices.  It's pretty likely that support will target very specific
-models and configurations when it happens.
+At some point, it might begin to target a wider range of desktop and
+laptop hardware.  From the DarqOS point of view, these are
+more-or-less just different versions of the Lenovo MiniPC, with lots
+of diversity in their I/O devices.  It's pretty likely that support
+will target very specific models and configurations if and when it
+happens.
 
 ## Further Reading
 
@@ -95,4 +94,4 @@ Details
 At some point, I'll set up something.  Until then, email d+darq@0x1.org
 
 
-Copyright (C) 2022, David Arnold
+Copyright (C) 2022-2026, David Arnold

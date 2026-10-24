@@ -19,6 +19,8 @@ __all__ = [
     "DeliverChunk",
     "DeliverMessage",
     "IPC_PORT",
+    "KillProcessRequest",
+    "KillProcessResponse",
     "Message",
     "MessageType",
     "OpenPortRequest",
@@ -29,8 +31,8 @@ __all__ = [
     "SendChunk",
     "SendMessage",
     "Shutdown",
-    "SpawnRequest",
-    "SpawnResponse",
+    "SpawnProcessRequest",
+    "SpawnProcessResponse",
     "UInt8",
     "UInt16",
     "UInt32",
@@ -62,6 +64,8 @@ class MessageType(IntEnum):
     RUNNING = 13
     SPAWN_PROCESS_RQST = 14
     SPAWN_PROCESS_RESP = 15
+    KILL_PROCESS_RQST = 16
+    KILL_PROCESS_RESP = 17
 
 
 ################################################################
@@ -297,7 +301,7 @@ class Running(Message):
         return
 
 
-class SpawnRequest(Message):
+class SpawnProcessRequest(Message):
     def __init__(self, request_id: int, exec_path: str):
         """Constructor."""
         super().__init__(MessageType.SPAWN_PROCESS_RQST)
@@ -327,7 +331,7 @@ class SpawnRequest(Message):
         return
 
 
-class SpawnResponse(Message):
+class SpawnProcessResponse(Message):
     def __init__(self, request_id: int, result: int, dpid: int,  error: str|None):
         super().__init__(MessageType.SPAWN_PROCESS_RESP)
         self.request_id = request_id
@@ -442,6 +446,54 @@ class ClosePortRequest(Message):
         bits = struct.unpack(">LxxxxQ", buffer[self.header_length:self.length])
         self.request_id = bits[0]
         self.port = bits[1]
+        return
+
+
+class KillProcessRequest(Message):
+    def __init__(self, request_id: int = 0, dpid: int = 0):
+        super().__init__(MessageType.KILL_PROCESS_RQST)
+        self.set_length(self.header_length + 16)
+        self.request_id: UInt32 = UInt32(request_id)
+        self.dpid: UInt64 = UInt64(dpid)
+        return
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LxxxxQ", self.request_id, self.dpid)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        bits = struct.unpack(">LxxxxQ", buffer[self.header_length:self.length])
+        self.request_id = bits[0]
+        self.dpid = bits[1]
+        return
+
+
+class KillProcessResponse(Message):
+    def __init__(self, request_id: int = 0, result: int = 0):
+        super().__init__(MessageType.KILL_PROCESS_RESP)
+        self.set_length(self.header_length + 8)
+        self.request_id: UInt32 = UInt32(request_id)
+        self.result: UInt32 = UInt32(result)
+        return
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LL", self.request_id, self.result)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        bits = struct.unpack(">LL", buffer[self.header_length:self.length])
+        self.request_id = bits[0]
+        self.result = bits[1]
         return
 
 

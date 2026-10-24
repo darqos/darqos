@@ -24,22 +24,26 @@ libraries and the *p-kernel* Linux process.
 Python
 ~~~~~~
 
-Within the Python runtime library, a background thread is spawned to
-manage the connection to the p-kernel.  The application thread(s)
-interact with the runtime library API, which in turn passes messages
-to and from the background thread, which manages the TCP connection to
-the p-kernel.
+A Darq Python application is launched by the p-kernel starting the
+`pyloader` Linux executable as a new Linux process.
 
-The base runtime library API is comprised of functions that emulate
-kernel system calls.  These pseudo system calls, or *p-calls* fall
-into two general types: those requests that require a request to the
-p-kernel for resources or functionality, and those that can operate
-solely on local (process) resources.
+The main thread of the `pyloader` process runs an event loop handling
+messages to and from the p-kernel.  It also spawns a second thread for
+the application code, starting the `darq_main` function in the
+application's `main` module as its entry point.
+
+The runtime library API is comprised of functions that emulate kernel
+system calls.  These pseudo system calls, or *p-calls* fall into two
+general types: those requests that require a request to the p-kernel
+for resources or functionality, and those that can operate solely on
+local (process) resources.
 
 p-calls that require a request/response cycle from the p-kernel block
 the calling thread until they're unblocked by the background thread
 following the delivery of the response to their request.  In this way,
-they behave similarly to a standard Unix system call.
+they behave similarly to a standard Unix system call.  Also supported
+are an await-able async model, and a traditional Unix-style callback
+model.
 
 Communication between the application thread(s) and the background
 p-kernel thread is via a _queue_, and an associated socketpair that
@@ -56,10 +60,10 @@ In the case of the IPC messaging system, messages are routed via the
 p-kernel.  The p-calls pass sent messages to the background thread, which
 queues and then sends them to the p-kernel.  The p-kernel distributes
 these messages to their destination processes, where they are delivered
-to the background thread.
+to the application thread.
 
-Like Unix, delivered messages are queued for delivery.  A call to recv()
-will can either return an error or block if there are no messages pending
+Like Unix, delivered messages are queued.  A call to recv()
+will either return an error or block if there are no messages pending
 for a port.  Some equivalent of select/poll will be needed to enable
 CPU-efficient waiting for messages to arrive from multiple ports.
 

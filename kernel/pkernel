@@ -23,6 +23,7 @@ import os
 import platform
 import random
 import select
+import signal
 import socket
 import subprocess
 import sys
@@ -43,11 +44,17 @@ EPHEMERAL_PORT_START = 16384
 # End of auto-allocated IPC port numbers.
 EPHEMERAL_PORT_MAX = 2 ** 32
 
-# Loader for Python executables.
-PYTHON_IMAGE_LOADER = "/home/d/proj/darqos/kernel/pyloader"
+# Loader for Python executables, installed alongside the p-kernel.
+PYTHON_IMAGE_LOADER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pyloader")
 
-# Process status values.
+# Directory containing the darq package this p-kernel is using, so the
+# loader can import the same one.
+DARQ_PYTHON_PATH = os.path.dirname(os.path.dirname(os.path.abspath(darq.__file__)))
+
+
 class KernelProcessStatus(IntEnum):
+    """Process statuses."""
+
     # Table entry created, but process not yet spawned.
     ALLOCATED = 0
 
@@ -62,7 +69,6 @@ class KernelProcessStatus(IntEnum):
 
     # The p-call session to the process has closed unexpectedly.
     LOST = 4
-
 
 
 class KernelPortState:
@@ -99,16 +105,17 @@ class KernelProcessState:
     # multiple instances of the same executable share the same
     # unpacked zip file.
     
-
     def __init__(self, kernel, dpid: int, image_path: str):
         """Constructor.
 
         :param kernel: Reference to owning p-kernel instance.
-        :param: sock: Accepted socket for this client."""
+        :param dpid: DarqOS process identifier for this process.
+        :param image_path: Path to the image for this process."""
 
         self._kernel = kernel
 
-        # FIXME: path to image files
+        # Directory path containing the "image" (tree of Python files) for this process.
+        # FIXME: this should become a zip file, and ultimately a zip-format blob loaded from the storage service.
         self._image_path = image_path
 
         # DarqOS PID.
@@ -126,14 +133,23 @@ class KernelProcessState:
         # Port alias table for this process.
         self._ports: dict[int, KernelPortState] = {}
 
-        # TCP socket once connected to p-process.
+        # Socket for this p-process' connection to the p-kernel.
         self._sock: socket.socket | None = None
 
-        # Outbound data queue.
+        # Outbound (to p-process) data queue.
         self._send_buffer: bytes = b''
 
-        # Inbound data queue.
+        # Inbound (from p-process) data queue.
         self._recv_buffer = darq.Buffer()
+
+        # Kill requests awaiting this process' exit: (requester, request_id).
+        self._kill_requests: list[tuple["KernelProcessState", int]] = []
+
+        # Spawn request awaiting this process' Running message, if any.
+        self._spawn_request: tuple["KernelProcessState", int] | None = None
+
+        # Host process running the language stub (see also _hpid).
+        self._child: subprocess.Popen | None = None
 
 
     def name(self) -> str:
@@ -143,6 +159,9 @@ class KernelProcessState:
     def get_socket(self) -> socket.socket | None:
         """Return the TCP socket connected to this client."""
         return self._sock
+
+    def set_socket(self, sock: socket.socket | None):
+        self._sock = sock
 
     def set_dpid(self, dpid: int):
         self._dpid = dpid
@@ -171,21 +190,53 @@ class KernelProcessState:
 
     # Ports
 
-    def add_port(self, port: KernelPortState):
+    def add_port(self, port: int):
         """Add a port to this client's list.
 
         :param port: Port number to add."""
-        self._ports.append(port)
+        self._ports[port] = KernelPortState()
 
     def remove_port(self, port: darq.UInt64):
         """Remove a port from this client's list.
 
         :param port: Port number to remove."""
-        self.ports.remove(port)
+        self._ports.pop(port, None)
 
     def get_ports(self) -> MutableSequence[darq.UInt64]:
         """Return the list of ports registered for this client."""
-        return self.ports
+        return list(self._ports)
+
+    def set_child(self, child: subprocess.Popen):
+        """Record the Popen object for this p-process."""
+        self._child = child
+
+    def get_child(self) -> subprocess.Popen | None:
+        """Retrieve the Popen object for this p-process"""
+        return self._child
+
+    # Spawn request
+
+    def set_spawn_request(self, requester: "KernelProcessState", request_id: int):
+        """Record the request that spawned this process, to be answered once running."""
+        self._spawn_request = (requester, request_id)
+
+    def take_spawn_request(self) -> tuple["KernelProcessState", int] | None:
+        """Return and clear the pending spawn request for this process."""
+        request = self._spawn_request
+        self._spawn_request = None
+        return request
+
+    # Kill requests
+
+    def add_kill_request(self, requester: "KernelProcessState", request_id: int):
+        """Record a request to kill this process, to be answered on exit."""
+        self._kill_requests.append((requester, request_id))
+
+    def take_kill_requests(self) -> list[tuple["KernelProcessState", int]]:
+        """Return and clear the pending kill requests for this process."""
+        requests = self._kill_requests
+        self._kill_requests = []
+        return requests
 
     # p-call Session
 
@@ -311,10 +362,10 @@ class PseudoKernel(SocketListener, TimerListener):
         self.cpu = ''
         self.device = ''
 
-        # DarqOS Process IDentifier index.
+        # DarqOS Process IDentifier allocator.
         self._next_dpid = 1
 
-        # Process table.
+        # Process table, keyed by dpid.
         self._process_table: dict[int,  KernelProcessState] = {}
 
         # Map of p-call sockets to process.
@@ -331,9 +382,9 @@ class PseudoKernel(SocketListener, TimerListener):
         self.tools = []
         self.lenses = []
 
+        # Map of accepted sockets, not yet associated with a
+        # KernelProcessState (awaiting their RUNNING message).
         self.incoming_connections = {}
-
-        self.is_active: bool = True
 
         # Host platform.
         self.detect_platform()
@@ -345,6 +396,15 @@ class PseudoKernel(SocketListener, TimerListener):
         self.socket.bind(('0.0.0.0', TCP_PORT))
         self.socket.listen()
         self._loop.add_socket(self.socket, self)
+
+        # Child process exit notification.  SIGCHLD writes a byte to this
+        # socket pair, waking the event loop to reap exited children.
+        self._sigchld_reader, self._sigchld_writer = socket.socketpair()
+        self._sigchld_reader.setblocking(False)
+        self._sigchld_writer.setblocking(False)
+        signal.signal(signal.SIGCHLD, lambda signum, frame: None)
+        signal.set_wakeup_fd(self._sigchld_writer.fileno())
+        self._loop.add_socket(self._sigchld_reader, self)
 
         # Log platform details for debugging.
         logging.info(f"Using {self.host_os} {self.host_os_version}")
@@ -361,8 +421,26 @@ class PseudoKernel(SocketListener, TimerListener):
     def get_name() -> str:
         return "p-kernel"
 
+    def close(self):
+        """Release the p-call socket and child exit notification."""
+        signal.set_wakeup_fd(-1)
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+        self._sigchld_reader.close()
+        self._sigchld_writer.close()
+        self.socket.close()
+        return
+
     def on_readable(self, sock: socket.socket):
         """Handle client offer socket readable event."""
+        if sock is self._sigchld_reader:
+            try:
+                while self._sigchld_reader.recv(4096):
+                    pass
+            except BlockingIOError:
+                pass
+            self.reap_children()
+            return
+
         if sock == self.socket:
             client_socket, client_addr = self.socket.accept()
             self.incoming_connections[client_socket] = TemporaryReader(kernel=self, sock=client_socket)
@@ -410,35 +488,6 @@ class PseudoKernel(SocketListener, TimerListener):
             self.do_shutdown()
         return
 
-        # FIXME: remove below, once darq loop is capable
-
-        while self.is_active:
-            sl = [c.get_socket() for c in self._processes.values()]
-            sl.append(self.socket)
-
-            ready_read, ready_write, junk = select.select(sl, sl, [], 1.0)
-
-            for s in ready_read:
-                if s == self.socket:
-                    self.on_readable(s)
-                else:
-                    client = self._processes.get(s)
-                    if not client:
-                        logging.warning(f"No client for socket.")   # FIXME: log socket details
-                        continue
-                    client.on_readable(s)
-
-            for s in ready_write:
-                if s == self.socket:
-                    logging.debug("Listening socket returned writeable")
-                else:
-                    client = self._processes.get(s)
-                    if not client:
-                        logging.warning(f"No client for socket")  # FIXME: log socket details
-                        continue
-                    client.on_writeable(s)
-        return
-
     def handle_disconnect(self, process: KernelProcessState):
         """Handle disconnection of a client process.
 
@@ -446,6 +495,18 @@ class PseudoKernel(SocketListener, TimerListener):
 
         # Cache name, because we need to use it a few times.
         name = process.name()
+
+        if isinstance(process, KernelProcessState):
+            # Answer anyone waiting for this process to be killed.
+            kill_requests = process.take_kill_requests()
+            for requester, request_id in kill_requests:
+                if requester is not process:
+                    self.send_kill_process_response(requester, request_id, 0)
+
+            if kill_requests:
+                process.set_status(KernelProcessStatus.ZOMBIE)
+            else:
+                process.set_status(KernelProcessStatus.LOST)
 
         # Deregister ports.
         ports = process.get_ports()
@@ -462,6 +523,9 @@ class PseudoKernel(SocketListener, TimerListener):
 
             self._loop.cancel_socket(sock)
             sock.close()
+
+        if isinstance(process, KernelProcessState):
+            process.set_socket(None)
 
         logging.info(f"{name} disconnected.")
         return
@@ -583,17 +647,103 @@ class PseudoKernel(SocketListener, TimerListener):
 
     def handle_spawn_process(self,
                              process: KernelProcessState,
-                             request: darq.SpawnRequest):
-        """Handle request to spawn a new user process."""
-        self.send_spawn_process_response(process, request, 0, 1)
+                             request: darq.SpawnProcessRequest):
+        """Handle request to spawn a new user process.
+
+        The request is answered once the new process reports that it's
+        running, or immediately if it couldn't be started."""
+
+        exec_path = request.get_exec_path()
+        if not os.path.isfile(os.path.join(exec_path, "main.py")):
+            logging.warning(f"{process.name()} spawn_process({exec_path}) "
+                            f"failed: no main.py")
+            self.send_spawn_process_response(process, request.request_id, 0,
+                                             1,  # FIXME: better errno
+                                             f"no main.py in {exec_path}")
+            return
+
+        try:
+            dpid = self.do_spawn_process(process, exec_path)
+        except OSError as e:
+            logging.warning(f"{process.name()} spawn_process({exec_path}) "
+                            f"failed: {e}")
+            self.send_spawn_process_response(process, request.request_id, 0,
+                                             1,  # FIXME: better errno
+                                             str(e))
+            return
+
+        self._process_table[dpid].set_spawn_request(process, request.request_id)
         return
 
-    def send_spawn_process_response(self, process: KernelProcessState, request: darq.SpawnRequest, dpid: int, result: int, error: str|None = None):
-        response = darq.SpawnResponse(request.request_id, result, dpid, error)
+    def send_spawn_process_response(self,
+                                    process: KernelProcessState,
+                                    request_id: int,
+                                    dpid: int,
+                                    result: int,
+                                    error: str|None = None):
+        response = darq.SpawnProcessResponse(request_id, result, dpid, error)
         buf = response.encode()
         process.send_data(buf)
         logging.info(f"spawn_process response: "
-                     f"request_id={request.request_id}, dpid={dpid}, result={result}, error={error}")
+                     f"request_id={request_id}, dpid={dpid}, result={result}, error={error}")
+        return
+
+    def handle_kill_process_request(self,
+                                    process: KernelProcessState,
+                                    request: darq.KillProcessRequest):
+        """Handle request to kill a user process.
+
+        The request is forwarded to the target process, and answered
+        once the target's p-call session closes."""
+
+        target = self._process_table.get(request.dpid)
+        if target is None or target.get_status() != KernelProcessStatus.RUNNING:
+            logging.warning(f"{process.name()} kill_process({request.dpid}) "
+                            f"failed: no such running process")
+            self.send_kill_process_response(process, request.request_id,
+                                            1)  # FIXME: better errno
+            return
+
+        logging.info(f"{process.name()} kill_process({request.dpid})")
+        target.add_kill_request(process, request.request_id)
+        target.send_data(darq.KillProcessRequest(0, request.dpid).encode())
+        return
+
+    def send_kill_process_response(self,
+                                   process: KernelProcessState,
+                                   request_id: int,
+                                   result: int):
+        response = darq.KillProcessResponse(request_id, result)
+        process.send_data(response.encode())
+        logging.info(f"kill_process response: "
+                     f"request_id={request_id}, result={result}")
+        return
+
+    def reap_children(self):
+        """Collect the exit status of any exited child processes."""
+        for process in self._process_table.values():
+            child = process.get_child()
+            if child is None or child.returncode is not None:
+                continue
+
+            status = child.poll()
+            if status is None:
+                continue
+
+            logging.info(f"{process.name()} host process [{child.pid}] "
+                         f"exited with status {status}")
+
+            # A process that exits before it's running won't disconnect,
+            # so its spawn request must be answered here.
+            if process.get_status() == KernelProcessStatus.SPAWNED:
+                process.set_status(KernelProcessStatus.ZOMBIE)
+                spawn_request = process.take_spawn_request()
+                if spawn_request is not None:
+                    requester, request_id = spawn_request
+                    self.send_spawn_process_response(
+                        requester, request_id, 0,
+                        1,  # FIXME: better errno
+                        f"process exited with status {status} before running")
         return
 
     def get_next_dpid(self) -> int:
@@ -602,26 +752,46 @@ class PseudoKernel(SocketListener, TimerListener):
         return dpid
 
 
-    def do_spawn_process(self, parent: KernelProcessState, exec_path: str) -> int:
+    @staticmethod
+    def get_loader_environment() -> dict[str, str]:
+        """Return the environment for a language stub process.
+
+        It's this process' environment, with the darq package's location
+        prepended to PYTHONPATH."""
+        env = dict(os.environ)
+        paths = [DARQ_PYTHON_PATH]
+        if env.get("PYTHONPATH"):
+            paths.append(env["PYTHONPATH"])
+        env["PYTHONPATH"] = os.pathsep.join(paths)
+        return env
+
+    def do_spawn_process(self, parent: KernelProcessState | None, exec_path: str) -> int:
         """Spawn a new user process.
 
-        :param parent: the process requesting the new process.
+        :param parent: the process requesting the new process, if any.
         :param exec_path: the path to the executable.
         :return: the DarqOS process identifier (DPID).
-        """
+        :raises OSError: if the language stub can't be started."""
         logging.info(f"do_spawn_process({exec_path})")
 
         # Identify the type of the executable (FIXME: always Python for now)
-        # Create process table entry.
         dpid = self.get_next_dpid()
+        parent_dpid = parent.get_dpid() if parent is not None else 0
+
+        # Fork and exec the language stub.  The path comes from the
+        # requesting process, so it's passed as an argument, not via a shell.
+        child = subprocess.Popen([PYTHON_IMAGE_LOADER, str(self.socket.getsockname()[1]), str(dpid), str(parent_dpid), exec_path],
+                                 close_fds=True,
+                                 cwd="/",
+                                 env=self.get_loader_environment())  # FIXME: audit list, and add any more needed here
+
+        # Create process table entry.
         entry = KernelProcessState(self, dpid, exec_path)
+        entry.set_child(child)
+        entry.set_status(KernelProcessStatus.SPAWNED)
+        entry.set_parent_dpid(parent_dpid)
         self._process_table[dpid] = entry  # No fd/socket yet
 
-        # Fork and exec the language stub
-        child = subprocess.Popen(f"{PYTHON_IMAGE_LOADER} {darq.IPC_PORT} {dpid} {exec_path}",
-                                 close_fds=True,
-                                 shell=True,
-                                 cwd="/")  # FIXME: audit list, and add any more needed here
         # Start error timer.
         # FIXME
 
@@ -635,7 +805,7 @@ class PseudoKernel(SocketListener, TimerListener):
 
         # Remove incoming connection handler.
         sock = incoming_connection.get_socket()
-        self.incoming_connections[sock] = message
+        del self.incoming_connections[sock]
 
         # Add socket and fd table entries.
         process = self._process_table.get(message.dpid)
@@ -646,10 +816,18 @@ class PseudoKernel(SocketListener, TimerListener):
 
         self._processes[sock] = process
         self.fds[sock] = process
+        process.set_socket(sock)
 
         # Update process table state.
         process.set_status(KernelProcessStatus.RUNNING)
         process.set_host_pid(message.host_pid)
+
+        # Answer the request that spawned this process.
+        spawn_request = process.take_spawn_request()
+        if spawn_request is not None:
+            requester, request_id = spawn_request
+            self.send_spawn_process_response(requester, request_id,
+                                             process.get_dpid(), 0)
         return
 
 
@@ -811,6 +989,16 @@ class PseudoKernel(SocketListener, TimerListener):
             message = darq.SendMessage()
             message.decode(message_bytes)
             self.handle_send_message(process, message)
+
+        elif message_type == darq.MessageType.SPAWN_PROCESS_RQST:
+            message = darq.SpawnProcessRequest(0, "")
+            message.decode(message_bytes)
+            self.handle_spawn_process(process, message)
+
+        elif message_type == darq.MessageType.KILL_PROCESS_RQST:
+            message = darq.KillProcessRequest()
+            message.decode(message_bytes)
+            self.handle_kill_process_request(process, message)
 
         elif message_type == darq.MessageType.REBOOT:
             message = darq.Reboot()

@@ -2,15 +2,27 @@ IPC
 ===
 
 In DarqOS, inter-process communication uses a kernel-provided IPC
-facility, similar in basic concept to many microkernels.  Processes
-can open a _port_, send, and receive messages.  At this stage, it is
-intended that message delivery is asynchronous: the caller is not
-blocked.
+facility, similar in basic concept to many microkernels.  For clarity,
+this is referred to as Darq Inter Process Communication (DIPC).
+
+Processes can open a _port_, and using it, send, and receive messages.  Because it
+enables some significant performance optimisations, both asynchronous
+(one-way) messages and synchronous (request-response, RPC) messaging
+are supported.
+
+For best performance of RPCs, the receiver should "take over" the
+sender's scheduler quantum, and the message should be transferred in a
+shared memory segment if it doesn't fit in processor registers.
+Ideally, there's no need to spill registers, and no waiting for
+scheduling: the request is made, fulfilled, and result returned all
+within the active scheduler quantum across the two threads, and no
+data copying is required.  This requires an API distinction between a
+one-way message and an RPC.
 
 During its prototype phase, the DarqOS kernel is implemented as a
 pseudo-kernel service, with a matching runtime library that presents
 the system call API to applications.  The runtime library communicates
-with the _pKernel_ service.  All inter-process communication is
+with the p-kernel service.  All inter-process communication is
 brokered by the p-kernel which internally maintains a collection of
 abstract ports.
 
@@ -29,42 +41,41 @@ p-kernel messages use a simple 32 bit framing header, with a
 consequent maximum message size of 4GB (which seems ample, but is it
 really?)
 
-The p-kernel protocol consists of six messages:
+The p-kernel protocol consists of request and response messages for
+the pKernel emulated system calls.
 
-* OpenPort
-* OpenedPort
-* ClosePort
-* ClosedPort
-* Message
-* Chunk
+* OpenPortRequest
+* OpenPortResponse
+* ClosePortRequest
+* ClosePortResponse
+* SendMessage
+* DeliverMessage
+* SendChunk
+* DeliverChunk
 
 A process can register zero or more _ports_, which act as the source
-and destination of messages.  `OpenPort` requests the allocation of a
-new port, and `OpenedPort` confirms the allocation, and returns the new
-port's identifier.  `ClosePort` requests destruction of a port, and
-`ClosedPort` confirms it.
+and destination of messages.  `OpenPortRequest` requests the
+allocation of a new port, and `OpenPortResponse` confirms the
+allocation, and returns the new port's identifier.  `ClosePortRequest`
+requests destruction of a port, and `ClosePortResponse` confirms it.
 
-`Message` is used to both send a message from a process to the p-kernel,
-and to deliver a message from the p-kernel to a process.  It contains
-a short hader, identifying the source and destination ports, followed
-by the payload.  `Chunk` is similar to `Message`, but is used for
-streaming data, and includes ordering and positioning data within the
-stream.
+`SendMessage` is used to send a message from a process to the
+p-kernel, and `DeliverMessage` to deliver it from the p-kernel to a
+process.  THey contain a short hader, identifying the source and
+destination ports, followed by the payload.  `SendChunk`and
+`DeliverChunk` are similar, but are used for streaming data, and
+includes ordering and positioning data within the stream.
 
-Both message and chunk payloads are structured binary data.  At this
-point, they do not use an IDL, but rather are manually packed and
-unpacked by the process code.  It's possible that the runtime library
-will acquire some support for this encoding and decoding process.
+Both message and chunk payloads are structured binary data, managed by
+generated functions derived from an IDL.
 
 Ports
 -----
 
-At this point, ports are identified by small integer values.  There is
-not yet any provision to pass ports in messages, other than the source
-port from which it was sent.
+Ports are identified by small integer values.  There is not yet any
+provision to pass ports in messages, other than the source port from
+which it was sent, but this will likely be needed soon.
 
-This limitation has implications for a Mach-style capabilities
-architecture, and is subject to change in future.
 
 Application Architecture
 ------------------------
@@ -122,7 +133,7 @@ This implies some sort of activation functionality that either locates
 an existing type implementation instance or starts a new one, and
 passes the service port identifier to the requestor.
 
-This is related to eg. DBus activation, which uses reersed domain
+This is related to eg. DBus activation, which uses reversed domain
 name strings as the rendezvous and an application-specific
 configuration file to specify how to start it.  In that case though,
 the activation name and the port name are the same: there's no need
@@ -156,3 +167,31 @@ The best bet here is probably:
     * Does this end up being an _ephemeral_ port?
 
   * Talk to the type implementation + object as required.
+
+
+IDL
+---
+
+DIPC messages are defined using a typical IDL syntax, called Darq
+Interface Definition Language (DIDL).  A short header will identify
+the message to the receiver: this is an integer, valid only across a
+single system where the register of message types uses a common index.
+
+
+
+IDL Compiler
+------------
+
+The IDL compiler takes a description of one or more messages, and
+generates suitable code in a specified programming language to read
+and write messages using that structure.
+
+The compiler is not a type implementation.  It could perhaps be seen
+as representing the type of the interface definition, but that's
+stretching the metaphor a bit (I think?)  It's not a view (once could
+argue that the generated code is a view of the IDL, perhaps, but
+again, I think that's pushing things a bit far).  So, it's probably
+best as a service, with an API that allows you to request the
+generation of stubs in language X.  Perhaps a syntax check on the IDL
+without generation?  Does it make sense to have it be an LSP for the
+IDL too?

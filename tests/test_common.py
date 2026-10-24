@@ -16,6 +16,8 @@ from darq.common import (
     ClosePortResponse,
     DeliverChunk,
     DeliverMessage,
+    KillProcessRequest,
+    KillProcessResponse,
     Message,
     MessageType,
     OpenPortRequest,
@@ -25,8 +27,8 @@ from darq.common import (
     SendChunk,
     SendMessage,
     Shutdown,
-    SpawnRequest,
-    SpawnResponse,
+    SpawnProcessRequest,
+    SpawnProcessResponse,
     UInt64,
 )
 from darq.errors import MessageDecodingError
@@ -209,6 +211,42 @@ class TestClosePortResponse:
             ClosePortResponse().decode(buf[:-1])
 
 
+class TestKillProcessRequest:
+    def test_roundtrip(self):
+        m = KillProcessRequest(request_id=11, dpid=UInt64.max())
+        buf = m.encode()
+        check_header(buf, MessageType.KILL_PROCESS_RQST)
+        assert len(buf) == HEADER_LENGTH + 16
+
+        d = KillProcessRequest()
+        d.decode(buf)
+        assert d.request_id == 11
+        assert d.dpid == UInt64.max()
+
+    def test_truncated_raises(self):
+        buf = KillProcessRequest(1, 2).encode()
+        with pytest.raises(MessageDecodingError):
+            KillProcessRequest().decode(buf[:-1])
+
+
+class TestKillProcessResponse:
+    def test_roundtrip(self):
+        m = KillProcessResponse(request_id=11, result=3)
+        buf = m.encode()
+        check_header(buf, MessageType.KILL_PROCESS_RESP)
+        assert len(buf) == HEADER_LENGTH + 8
+
+        d = KillProcessResponse()
+        d.decode(buf)
+        assert d.request_id == 11
+        assert d.result == 3
+
+    def test_truncated_raises(self):
+        buf = KillProcessResponse(1, 0).encode()
+        with pytest.raises(MessageDecodingError):
+            KillProcessResponse().decode(buf[:-1])
+
+
 ################################################################
 # Variable-length messages
 ################################################################
@@ -259,35 +297,35 @@ def test_send_message_constructor_ports():
     assert (d.source, d.destination) == (1, 2)
 
 
-class TestSpawnRequest:
+class TestSpawnProcessRequest:
     @pytest.mark.parametrize("path", ["/a", "/darq/bin/init", "/abc"])
     def test_roundtrip(self, path):
-        m = SpawnRequest(request_id=5, exec_path=path)
+        m = SpawnProcessRequest(request_id=5, exec_path=path)
         buf = m.encode()
         check_header(buf, MessageType.SPAWN_PROCESS_RQST)
 
-        d = SpawnRequest(0, "")
+        d = SpawnProcessRequest(0, "")
         d.decode(buf)
         assert d.request_id == 5
         assert d.get_exec_path() == path
 
     def test_length_set_on_construction(self):
-        m = SpawnRequest(request_id=5, exec_path="/darq/bin/init")
+        m = SpawnProcessRequest(request_id=5, exec_path="/darq/bin/init")
         assert m.length == HEADER_LENGTH + 8 + 16
 
     def test_get_length(self):
-        m = SpawnRequest(request_id=5, exec_path="/darq/bin/init")
+        m = SpawnProcessRequest(request_id=5, exec_path="/darq/bin/init")
         assert m.get_length() == HEADER_LENGTH + 8 + 16
 
 
-class TestSpawnResponse:
+class TestSpawnProcessResponse:
     @pytest.mark.parametrize("error", [None, "", "E", "ENOENT", "no such file"])
     def test_roundtrip(self, error):
-        m = SpawnResponse(request_id=5, result=0, dpid=17, error=error)
+        m = SpawnProcessResponse(request_id=5, result=0, dpid=17, error=error)
         buf = m.encode()
         check_header(buf, MessageType.SPAWN_PROCESS_RESP)
 
-        d = SpawnResponse(0, 0, 0, None)
+        d = SpawnProcessResponse(0, 0, 0, None)
         d.decode(buf)
         assert d.request_id == 5
         assert d.result == 0
@@ -295,7 +333,7 @@ class TestSpawnResponse:
         assert d.get_error() == (error or "")
 
     def test_length_set_on_construction(self):
-        m = SpawnResponse(request_id=5, result=0, dpid=17, error=None)
+        m = SpawnProcessResponse(request_id=5, result=0, dpid=17, error=None)
         assert m.length == HEADER_LENGTH + 20
 
 

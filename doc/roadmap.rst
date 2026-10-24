@@ -36,8 +36,8 @@ First Edition
 The goal of the first prototype milestone is to “boot” and get running
 with an identifiably different system, minimal aesthetics, minimal
 user functionality, but a viable target platform for further work.
-The (vast) majority of 1ed work should be done in Python, to ensure
-it is easily malleable.
+The vast majority, or perhaps all, of the 1ed work should be done in
+Python, to ensure it is easily malleable.
 
 Infrastructure
 
@@ -46,13 +46,27 @@ Infrastructure
 * CI (GitHub-CI, I suppose?)
 * Manual stack
 
-  * Markdown?
-  * RST?
-  * AsciiDoc?
-  * API reference generation and integration
-  * HTML and PDF output
-  * man pages
-  * Sphinx?  pandoc? etc
+  * All system documentation:
+    
+    * Long-form guide and reference documents
+    * Motivational and positional papers
+    * Manual pages
+    * Online help
+
+  * Markup and rendering
+
+    * On-screen
+    * PDF for printing/sharing
+    * HTML for external access
+
+  * Syntax
+
+    * org-mode?
+    * Markdown?
+    * RST?
+    * AsciiDoc?
+    * Texinfo?
+    * mdoc/mm/mom (roff) ?
 
 * Release process
 
@@ -66,14 +80,13 @@ System
 
 * Host platform
 
-  * Raspberry Pi 400
-  * Raspberry Pi 4B
+  * Lenovo MiniPC
   * AMD64 VM
 
 * Host OS
 
-  * Raspberry Pi OS Lite (Bookworm)
-  * Debian 12 (Bookworm)
+  * Debian?
+  * NetBSD?
 
 * IPC
 
@@ -88,12 +101,11 @@ System
 
     * Processes communicate with the broker over TCP.
     * Runtime-to-broker messages marshalled with Python struct
-    * Process-to-process message marshalling TBC
 
-      * JSON?
-      * Binary (struct)
-      * Something else?  GPB, Cap'n'proto, Avro, etc?
-      * Does it need an IDL?  Probably?
+  * IDL and stub compiler
+
+    * Process-to-process message marshalling
+    * Stub generation for Python
 
   * Do we need object/service activation?
 
@@ -102,7 +114,7 @@ System
 * A collection of cooperating processes
 
   * Written in Python
-  * Communicating using the selected IPC
+  * Communicating using the system IPC
 
 * GUI
 
@@ -120,8 +132,6 @@ System
     that
 
     * Avoids getting bogged down widget libraries, etc.
-    * For AMD64, use Debian 12 with Wayland
-    * For Raspberry Pi 4/400, use Raspbery Pi OS with Wayland
 
       * Does this work for CEF?
 
@@ -189,11 +199,15 @@ Services
 
 * Terminal
 
-  * Framebuffer(s) / Compositors
+  * Puts windows onto screen
+  * Delivers keystrokes and mouse movements to views
+  * Handles login/logout, locking, and reboot/shutdown
+  * Like X11, does window decorations (if any?)
+    
+  * Compositor
 
-    * Using Qt5 with a full-screen window, and Z-ordering of other
-      windows.
-    * Remove all the OS decoration on windows
+    * Basically, a window manager
+    * Maybe Wayfire-based?
 
   * Keyboard
 
@@ -277,6 +291,8 @@ Story
   * No need for user -- there's only one
   * Should allow shutdown / reboot from login screen
 
+    * That should be a function of the Terminal service, I think?
+
 * Get initial UI
 
   * Blank screen(s)
@@ -298,7 +314,16 @@ Story
 * Find document with search bar, and view it again
 * Logout
 
-  * How?
+  * Possibly a system hotkey?
+  * Ultimately, has to be a kernel function (syscall)
+
+* Keyboard
+
+  * Do I want a custom keyboard for the first edition?
+  * Custom plate
+  * Custom PCB
+  * Controller and firmware
+  * Switches and keycaps
 
 
 Second Edition

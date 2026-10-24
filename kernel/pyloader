@@ -14,6 +14,7 @@
 # thread is spawned by the main thread, to execute the darq_main()
 # function from the default module of the specified executable.
 
+import ctypes
 import logging
 import os
 import queue
@@ -28,11 +29,12 @@ import darq
 
 
 class PythonPProcess:
-    def __init__(self, pkernel_port: int, dpid: int, exec_path: str):
-        logging.info(f"Darq PID [{dpid}], host PID [{os.getpid()}] from [{exec_path}]")
+    def __init__(self, pkernel_port: int, dpid: int, parent_dpid: int, exec_path: str):
+        logging.info(f"Darq PID [{dpid}], parent [{parent_dpid}], host PID [{os.getpid()}] from [{exec_path}]")
 
         self._pkernel_port = pkernel_port
         self._dpid = dpid
+        self._parent_dpid = parent_dpid
         self._exec_path = exec_path
 
         # Set host process title to assist with debugging.
@@ -44,26 +46,48 @@ class PythonPProcess:
         # p-Call request queue from application threads (queue is thread-safe).
         self._requests = queue.Queue()
 
-        # Event loop wakeup mechanism for p-call request queue.
-        self._queue_pipe_reader, self._queue_pipe_writer = os.pipe()
+        # Event loop wakeup mechanism for p-call request queue.  This is a
+        # socket pair, rather than a pipe, so the event loop can monitor it.
+        self._queue_wakeup_reader, self._queue_wakeup_writer = socket.socketpair()
+        self._queue_wakeup_reader.setblocking(False)
+
+        # p-Calls sent to the p-kernel and awaiting a response, by request_id.
+        # Only accessed from the main thread.
+        self._pending: dict[int, darq.SystemCallState] = {}
+
+        # Open ports, by port number.
+        self.ports: dict[int, darq.PortState] = {}
 
         # Thread exit notification pipe.
         self._exit_pipe_reader, self._exit_pipe_writer = os.pipe()
 
-        # Transaction identifiers for p-kernel requests.
+        # Transaction identifiers for p-kernel requests.  Only accessed from
+        # the main thread.
         self.request_id: int = 0
 
         # Re-assembly buffer.
         self.recv_buffer = darq.Buffer()
 
+        # Thread running the application's darq_main().
+        self._app_thread: threading.Thread | None = None
+
         # Event loop.
         self.loop = darq.SelectEventLoop()
+        self.loop.add_socket(self._queue_wakeup_reader, self)
         return
         
     def getpid(self) -> int:
+        """Return the DarqOS process identifier for this p-process."""
         return self._dpid
 
+    def getppid(self) -> int:
+        """Return the DarqOS process identifier for the parent of this p-process."""
+        return self._parent_dpid
+
     def get_next_request_id(self) -> int:
+        """Return the next unused request identifier for this p-process.
+
+        """
         self.request_id += 1
         return self.request_id
 
@@ -71,10 +95,57 @@ class PythonPProcess:
         """Queue a system call to be sent to the p-kernel."""
         self._requests.put(syscall_state)
 
-        written = os.write(self._queue_pipe_writer, b'X')
+        written = self._queue_wakeup_writer.send(b'X')
         if written != 1:
-            raise Exception("failed to write byte to the queue pipe !?")
+            raise Exception("failed to write byte to the queue wakeup socket !?")
         return
+
+    def handle_syscall_queue(self):
+        """Send queued p-calls from the application thread to the p-kernel."""
+
+        # Drain the wakeup socket.
+        try:
+            while self._queue_wakeup_reader.recv(4096):
+                pass
+        except BlockingIOError:
+            pass
+
+        while True:
+            try:
+                syscall = self._requests.get_nowait()
+            except queue.Empty:
+                return
+
+            # Requests with a request_id expect a response: assign the
+            # identifier, and record them before sending, so the response
+            # can be matched.
+            request = syscall.get_request()
+            if hasattr(request, "request_id"):
+                request.request_id = self.get_next_request_id()
+                self._pending[request.request_id] = syscall
+
+            self.send_to_p_kernel(request)
+
+    def complete_syscall(self, response) -> darq.SystemCallState | None:
+        """Match a p-kernel response to its pending p-call, and complete it.
+
+        :param response: Decoded response message, with a request_id.
+        :returns: The completed p-call state, or None if unknown."""
+
+        syscall = self._pending.pop(response.request_id, None)
+        if syscall is None:
+            logging.warning(f"Response to unknown request {response.request_id}")
+            return None
+
+        syscall.set_response(response)
+
+        if syscall.get_mode() == darq.SystemCallMode.SYNC:
+            syscall.notify()
+        else:
+            # FIXME: callbacks must run on the application's loop, which
+            # needs a thread-safe way to post to it.
+            logging.warning(f"Mode {syscall.get_mode()} completion not implemented")
+        return syscall
 
     def signal_app_thread_exit(self):
         """Call to signal loader that the user thread target function has exited."""
@@ -88,11 +159,15 @@ class PythonPProcess:
 
         self._pkernel_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.loop.add_socket(self._pkernel_sock, self)
-        self._pkernel_sock.connect(('localhost', darq.IPC_PORT))
+        self._pkernel_sock.connect(('localhost', self._pkernel_port))
         return
 
     def on_readable(self, sock: socket.socket):
         logging.debug("Callback: socket is readable")
+
+        if sock is self._queue_wakeup_reader:
+            self.handle_syscall_queue()
+            return
 
         data = sock.recv(65536)
         self.handle_bytes_from_p_kernel(data)
@@ -154,6 +229,21 @@ class PythonPProcess:
             message.decode(message_buf)
             self.handle_close_port_response(message)
 
+        elif message_type == darq.MessageType.SPAWN_PROCESS_RESP:
+            message = darq.SpawnProcessResponse(0, 0, 0, None)
+            message.decode(message_buf)
+            self.complete_syscall(message)
+
+        elif message_type == darq.MessageType.KILL_PROCESS_RQST:
+            message = darq.KillProcessRequest()
+            message.decode(message_buf)
+            self.handle_kill_process_request(message)
+
+        elif message_type == darq.MessageType.KILL_PROCESS_RESP:
+            message = darq.KillProcessResponse()
+            message.decode(message_buf)
+            self.complete_syscall(message)
+
         else:
             logging.warning(f"Unhandled message type: {message_type}")
 
@@ -184,142 +274,21 @@ class PythonPProcess:
 
 
     def handle_open_port_response(self, message: darq.OpenPortResponse):
-        # Look up the request.
-        pending_request = self.requests.get(message.request_id)
-        if pending_request is None:
-            self.listener.on_error(0, 0, "response to unknown request")
+        if self.complete_syscall(message) is None:
             return
 
-        pending_request.complete(message.result, message)
-        del self.requests[message.request_id]
-
-        # Check result: if error, discard state.
-        if not pending_request.is_success():
-            if message.port in self.ports:
-                del self.ports[message.port]
-
-            if not pending_request.is_sync():
-                # Report error via callback
-                pending_request.callback(pending_request.port, message.result)
-            return
-
-        # Set or overwrite port state.
-        port_state = darq.PortState(message.port)
-        port_state.is_open = True
-        self.ports[message.port] = port_state
-
-        if not pending_request.is_sync():
-            pending_request.callback(message.port, 0)
+        # Record the newly-opened port.
+        if message.result == 0:
+            port_state = darq.PortState(message.port)
+            port_state.is_open = True
+            self.ports[message.port] = port_state
         return
-
-    def _open_port_request(self, port: int, callback) -> darq.SystemCallState:
-        """(Internal) Create state for open_port syscall and queue."""
-        #
-        # User code calls open_port, open_port_a, or open_port_cb, all
-        # of which in turn call this function.  It creates and populates
-        # the SystemCallState.
-        #
-        # So the flow is:
-        # - Application calls open_port/open_port_a/open_port_cb
-        # - API functions call _open_port_request-
-        # - _open_port_request calls queue_new_syscall, which signals pipe
-        # - Event loop calls handle_syscall_queue_event, which dispatches on message_type
-        # - Dispatcher calls handle_open_port_request
-        # - handle_open_port_request does Validation of parameters
-        # - And then, send_to p-kernel
-
-
-        # Validate requested port.
-        if port < darq.UInt64.min() or port > darq.UInt64.max():
-            raise darq.PortNumberOutOfRange(port)
-
-        # Check this isn't a duplicate port number (locally).
-        if port in self.ports:
-            raise darq.DuplicatePortError(port)
-
-        # Reserve this port locally.
-        if port != 0:
-            self.ports[port] = None  # FIXME
-
-        # If we don't have a p-kernel TCP session already, open one.
-        if self.socket is None:
-            # FIXME: should be async
-            self.connect_to_p_kernel()
-
-        # Send an open_port request to the p-Kernel.
-        request_id = self.get_next_request_id()
-        request_message = darq.OpenPortRequest(request_id, port)
-        pending = darq.SystemCallState(request_id, callback, request_message)
-        self.requests[request_id] = pending
-        self.send_to_p_kernel(request_message)
-
-        return pending
-
-    def open_port_a(self, port: int, cb: typing.Callable[[int, int], None]):
-        self._open_port_request(port, cb)
-        return
-
-    def open_port_s(self, port: int) -> int:
-        """Allocate a new port for communication from/to this application.
-
-        :param port: Optional requested port number.  Zero means ephemeral port.
-        :returns: Allocated port number."""
-
-        # Send the open port request.
-        pending_request = self._open_port_request(port, None)
-
-        # Run the event loop until the open port request is completed.
-        while not pending_request.is_complete():
-            self.loop.next()
-
-        # Check response.
-        if pending_request.is_success():
-            return pending_request.result
-        else:
-            raise darq.get_exception(pending_request.result)
 
     def handle_close_port_response(self, message: darq.ClosePortResponse):
+        if self.complete_syscall(message) is None:
+            return
 
-        assert message.port in self.ports
-
-        self.listener.on_close_port(message.port)
-
-        del self.ports[message.port]
-        del self.requests[message.request_id]
-        return
-
-    def close_port(self, port: int):
-        """Close an existing port."""
-        port_state = self.ports.get(port)
-        if port_state is None:   # FIXME: need a better way to claim HALF_OPEN port numbers
-            raise darq.NonExistentPortError(port)
-
-        port_state.is_open = False  # FIXME: need HALF_CLOSED here.
-
-        request_id = self.get_next_request_id()
-        request = darq.ClosePortRequest(request_id, port)
-        self.requests[request_id] = request
-        self.send_to_p_kernel(request)
-        return
-
-    def send_message(self, source: int, destination: int, message: bytes):
-        """Send a message between ports.
-
-        :param source: Source (local) port.
-        :param destination: Destination (remote) port.
-        :param message: Payload to be delivered."""
-
-        # Validate source port.
-        if source not in self.ports:
-            raise darq.NonExistentPortError(source)
-
-        request = darq.SendMessage(source, destination)
-        request.set_payload(message)
-
-        self.send_to_p_kernel(request)
-
-        # FIXME: once sending is properly async, this can be (re)moved.
-        self.listener.on_send_message(0, 0)  ## FIXME: these params make no sense
+        self.ports.pop(message.port, None)
         return
 
     def start_app(self):
@@ -343,35 +312,79 @@ class PythonPProcess:
             "# Inject the process state structure into the syscall module.\n" \
             "import darq; darq.syscall.__dict__['_darq_process_state'] = _darq_process_state\n" \
             "\n" \
+            "# Run the application's main function, exiting quietly when\n" \
+            "# killed (see PythonPProcess.kill_app).\n" \
+            "def run_darq_main():\n" \
+            "    try:\n" \
+            "        main.darq_main()\n" \
+            "    except SystemExit:\n" \
+            "        logging.debug('Application thread killed.')\n" \
+            "\n" \
             "# Start the application's main function in a new thread.\n" \
             "try:\n" \
-            "    t = threading.Thread(target=main.darq_main)\n" \
+            "    t = threading.Thread(target=run_darq_main, name='darq_main')\n" \
             "    logging.debug('Starting application thread.')\n" \
             "    t.start()\n" \
             "finally:\n" \
             "    pass #_darq_process_state\n"
         exec(launcher, app_globals)
+        self._app_thread = app_globals["t"]
         return
 
-    def kill_app(self):
-        # Kill thread running darq_main
-        # Check it's dead
-        # Call end_proc()
-        pass
+    def handle_kill_process_request(self, message: darq.KillProcessRequest):
+        """Handle the p-kernel's request to kill this process."""
+        if message.dpid != self._dpid:
+            logging.warning(f"Kill request for DPID [{message.dpid}] ignored")
+            return
+
+        logging.info("Killed by p-kernel.")
+        self.kill_app()
+        self._end_app()
+        return
+
+    def kill_app(self, timeout: float = 1.0) -> bool:
+        """Kill the application thread.
+
+        :param timeout: Seconds to wait for the thread to exit.
+        :returns: True if the thread has exited."""
+
+        thread = self._app_thread
+        if thread is None or not thread.is_alive():
+            return True
+
+        # Raise SystemExit in the application thread.  Python delivers it
+        # when the thread next executes bytecode, so it won't interrupt a
+        # thread blocked in native code.
+        ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(thread.ident),
+                                                   ctypes.py_object(SystemExit))
+
+        # Wake any p-calls the thread is blocked on, so it sees the exception.
+        while True:
+            try:
+                self._requests.get_nowait().notify()
+            except queue.Empty:
+                break
+
+        for syscall in self._pending.values():
+            syscall.notify()
+        self._pending.clear()
+
+        thread.join(timeout)
+        return not thread.is_alive()
 
     def _end_app(self):
-        # Confirm death to p-kernel
-        # Flush p-session buffers & closee connection
-        # Exit process
-        pass
+        """End this process, once the application thread is dead."""
 
-    def send_pmsg(self):
-        """Send a message from the application to the p-kernel."""
-        pass
+        # FIXME: confirm death to p-kernel.
 
-    def deliver_pmsg(self):
-        """Deliver a message from the p-kernel to the application."""
-        pass
+        if self._app_thread is not None and self._app_thread.is_alive():
+            # Stuck in native code: the interpreter won't exit while it runs.
+            logging.error("Application thread did not exit: exiting forcibly.")
+            os._exit(1)
+
+        # Leave the event loop: the main thread then disconnects and exits.
+        self.loop.stop()
+        return
 
     def run(self):
         """Loop, handling p-kernel messages and application events."""
@@ -383,19 +396,20 @@ class PythonPProcess:
 if __name__ == "__main__":
     # Expecting parameters on Unix command line:
     # - loopback port number for p-kernel control session
-    # - pseudo process identifier (ppid)
+    # - DarqOS process identifier (dpid)
+    # - parent's DarqOS process identifier (zero if started by the p-kernel)
     # - executable path
     #
     # Within the executable path, there must be a Python file (module)
     # called 'main.py'.  In that file must be a function called
     # 'darq_main', which is called with no parameters.
 
-    if len(sys.argv) == 2 and sys.argv[1] in ('help', '-h', '-?' '--help'):
-        sys.stdout.write(f"Usage: {os.path.basename(sys.argv[0])} p-kernel-port darq-process-id executable-path\n\n")
+    if len(sys.argv) == 2 and sys.argv[1] in ('help', '-h', '-?', '--help'):
+        sys.stdout.write(f"Usage: {os.path.basename(sys.argv[0])} p-kernel-port darq-process-id parent-darq-process-id executable-path\n\n")
         sys.exit(1)
 
-    if len(sys.argv) != 4:
-        logging.error(f"Expecting 4 params, received {len(sys.argv)}")
+    if len(sys.argv) != 5:
+        logging.error(f"Expecting 5 params, received {len(sys.argv)}")
         sys.exit(42)
 
     # Configure logging.
@@ -407,10 +421,11 @@ if __name__ == "__main__":
     # Process arguments.
     pkernel_port = int(sys.argv[1])
     dpid = int(sys.argv[2])
-    exec_path = sys.argv[3]
+    parent_dpid = int(sys.argv[3])
+    exec_path = sys.argv[4]
 
     # Create local process state.
-    pproc = PythonPProcess(pkernel_port, dpid, exec_path)
+    pproc = PythonPProcess(pkernel_port, dpid, parent_dpid, exec_path)
 
     # Connect to p-kernel.
     pproc.connect_to_p_kernel()

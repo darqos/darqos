@@ -19,6 +19,8 @@
 #   message header, and a basic binary structure for the syscall
 #   parameters.
 # - System calls can have synchronous and asynchronous variants.
+# - Request identifiers are assigned by the runtime thread when it
+#   takes a request from the queue, not by the application thread.
 #   - Synchronous calls append a syscall object to a queue, and set an
 #     eventfd to wakeup the p-process' runtime event loop.  It then
 #     encodes the request messages and sends it to the p-kernel.
@@ -58,8 +60,10 @@ __all__ = [
     "close_port",
     "close_port_cb",
     "send_message",
-    "spawn",
-    "spawn_cb",
+    "spawn_process",
+    "spawn_process_cb",
+    "kill_process",
+    "kill_process_cb",
     "shutdown",
     "reboot",
 ]
@@ -118,7 +122,6 @@ def open_port(port: int) -> int:
 
     # Populate the request message
     request = OpenPortRequest()
-    request.request_id = _darq_process_state.get_next_request_id()
     request.requested_port = UInt64(port)
     syscall.set_request(request)
 
@@ -151,7 +154,6 @@ def open_port_cb(port: int, loop: EventLoopInterface, cb: typing.Callable[[int, 
 
     # Populate the request message
     request = OpenPortRequest()
-    request.request_id = _darq_process_state.get_next_request_id()
     request.requested_port = UInt64(port)
     syscall.set_request(request)
     syscall.set_callback(loop, cb)
@@ -172,7 +174,6 @@ def close_port(port: int):
 
     # Populate the request message
     request = ClosePortRequest()
-    request.request_id = _darq_process_state.get_next_request_id()
     request.port = UInt64(port)
     syscall.set_request(request)
 
@@ -197,7 +198,6 @@ def close_port_cb(port: int, loop: EventLoopInterface, cb: typing.Callable[[int,
 
     # Populate the request message
     request = ClosePortRequest()
-    request.request_id = _darq_process_state.get_next_request_id()
     request.port = UInt64(port)
     syscall.set_request(request)
     syscall.set_callback(loop, cb)
@@ -233,14 +233,6 @@ def receive_message(port: int, blocking: bool = True) -> bytes:
     return _darq_process_state.receive_message(port, blocking)
 
 
-def create_process():
-    return _darq_process_state.create_process()
-
-
-def destroy_process():
-    return _darq_process_state.destroy_process()
-
-
 # def send_chunk(self, source: int, destination: int, stream: int, offset: int, chunk: bytes):
 #     """Send a stream chunk to another port.
 #
@@ -254,7 +246,7 @@ def destroy_process():
 #     pass
 
 
-def spawn(exec_path: str) -> int:
+def spawn_process(exec_path: str) -> int:
     """Spawn a darq process.
 
     :param exec_path: Path to executable.
@@ -265,7 +257,7 @@ def spawn(exec_path: str) -> int:
     syscall.set_mode(SystemCallMode.SYNC)
 
     # Populate the request message
-    request = SpawnRequest(_darq_process_state.get_next_request_id(), exec_path)
+    request = SpawnProcessRequest(0, exec_path)
     syscall.set_request(request)
 
     # Enqueue.
@@ -279,7 +271,7 @@ def spawn(exec_path: str) -> int:
     return dpid
 
 
-def spawn_cb(exec_path: str, loop: EventLoopInterface, cb: typing.Callable[[int, int], None]) -> None:
+def spawn_process_cb(exec_path: str, loop: EventLoopInterface, cb: typing.Callable[[int, int], None]) -> None:
     """Asynchronously spawn a darq process.
 
     :param exec_path: Path to executable.
@@ -291,7 +283,51 @@ def spawn_cb(exec_path: str, loop: EventLoopInterface, cb: typing.Callable[[int,
     syscall.set_mode(SystemCallMode.CALLBACK)
 
     # Populate the request message
-    request = SpawnRequest(_darq_process_state.get_next_request_id(), exec_path)
+    request = SpawnProcessRequest(0, exec_path)
+    syscall.set_request(request)
+    syscall.set_callback(loop, cb)
+
+    # Enqueue.
+    _darq_process_state.queue_new_syscall(syscall)
+    return
+
+
+def kill_process(dpid: int):
+    """Kill a darq process.
+
+    :param dpid: DPID of process to be killed."""
+
+    # Get a SystemCallState
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.SYNC)
+
+    # Populate the request message
+    request = KillProcessRequest()
+    request.dpid = UInt64(dpid)
+    syscall.set_request(request)
+
+    # Enqueue.
+    _darq_process_state.queue_new_syscall(syscall)
+
+    # Wait for response.
+    syscall.sync_wait()
+    return
+
+
+def kill_process_cb(dpid: int, loop: EventLoopInterface, cb: typing.Callable[[int, int], None]) -> None:
+    """Asynchronously kill a darq process.
+
+    :param dpid: DPID of process to be killed.
+    :param loop: Event loop in which the callable should be invoked.
+    :param cb: Completion callback: cb(dpid, error_code)."""
+
+    # Get a SystemCallState
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.CALLBACK)
+
+    # Populate the request message
+    request = KillProcessRequest()
+    request.dpid = UInt64(dpid)
     syscall.set_request(request)
     syscall.set_callback(loop, cb)
 
@@ -307,11 +343,15 @@ def getpid() ->  int:
 
 def getppid() -> int:
     """Return this process' parent's DarqOS process identifier."""
-    pass
+    return _darq_process_state.getppid()
 
 
 def shutdown():
-    """Shut down the system."""
+    """Shut down the system.
+
+    All active services, tools, lens, etc, are shutdown.  Once these
+    shutdown processes are complete, the system will exit, and
+    power-off the host hardware."""
 
     # Get a SystemCallState
     syscall = SystemCallState()
@@ -331,13 +371,7 @@ def reboot():
 
     All active services, tools, lens, etc, are shutdown.  Once these
     shutdown processes are complete, the system will re-initialise,
-    as if starting afresh.
-
-    M0_NOTE:
-    The boot process is managed by a Python function, which
-    spawns all DarqOS entities as processes, managed by the boot process.
-    A restart will kill all those processes, before spawning a new boot
-    process and then exiting."""
+    as if starting afresh."""
 
     # Get a SystemCallState
     syscall = SystemCallState()

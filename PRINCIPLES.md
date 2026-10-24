@@ -11,44 +11,56 @@ DarqOS Principles
 
 # Open Standards
 
+* Open standards reflect the consensus expertise of the industry: take
+  advantage of that
+* Reading open standard data makes access to external systems simpler
+* Writing open standard data makes it easier for external systems to
+  access our data
+
 # Data Sovereignty
 
-* Don't rely on applications or services that own your data
+* Don't rely on proprietary applications or third-party services that
+  own your data
   * It could disappear
   * It could be exposed to other people
   * The price to use it could increase
   * The things you're allowed to do with it could be restricted
   * The service or application could be canceled
 
-* It's fine to synchronize with external data sources
+* It's fine to /synchronize/ with external data sources
   * There are many useful sources of information, many of which are
     available (more-or-less) gratis
   * Importing data to your own repository is fine
   * Updating your data by referring to an external source is fine
-
-# Trust the User
-
-* Don't hobble the experience in the name of security
-* Don't prevent the user from doing things that weren't anticipated
-* Provide tools, not shrink-wrapped workflows
+  * Be wary of exporting data: you're exposing it to the third-party,
+    anyone who might acquire them, and potentially, the public at
+    large either by it being stolen or intentionally revealed by the
+    service or any of its partners.
 
 # Target Experts
 
-* Users are novices for a very short time
+* Operators are novices for a very short time
+* Targeting novices causes inefficiency for experts
 * A consistent experience allows prior experience to be leveraged into
   expertise quickly
-* Targeting novices causes inefficiency for experts
+
+# Trust the Operator
+
+* Don't hobble the experience in the name of ease-of-use
+* Don't hobble the experience in the name of security
+* Don't prevent the operator from doing things that weren't anticipated
+* Provide tools, not shrink-wrapped workflows
 
 # Provide a consistent experience
 
-* Make the user experience consistent: standard appearance, standard
+* Make the operator experience consistent: standard appearance, standard
   operations, standard controls, etc
 * This facilitates rapid learning, transferable skills, and minimises
-  the need to memorize pointless differences
+  the need to memorise pointless differences
 
 # Connectivity is the Norm
 
-* In 2023, both local and Internet connectivity are the default, and
+* Since the 2020's, both local and Internet connectivity are the default, and
   are available almost always
 * The system should assume connectivity is generally available, but
   should not break without it
@@ -62,8 +74,8 @@ DarqOS Principles
 
 # Your devices should cooperate
 
-* Most users have multiple devices
-* All a users devices should work together
+* Most people have multiple devices
+* All of an operators devices should work together
 * Minimise duplication of data
 * Maximise location transparency
 

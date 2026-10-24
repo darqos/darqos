@@ -9,6 +9,7 @@ Existing kernels that might be useful:
   - Mach 4.0 (Utah?)
   - OSF-Mach 7.x (?) (OpenGroup)
   - XNU/Darwin
+  - Hurd aka GNU/Mach
   - Any others still available and useful?
 
 - L4
@@ -90,10 +91,9 @@ further development, but were set aside.
     - http://www.qnx.com/download/download.html?dlc=proc&newsearch=yes&searchme=non-commercial&p=1&sort=bydate&sorttype=desc&searchdate=alltime
 
 - Fuschia
-- Zircon (Google's Fuschia u-kernel)
+  - Zircon (Google's Fuschia u-kernel)
 - managram
 - helenos
-- Xous
 - NuttX (from Apache)
 
   - Basically POSIX APIs

@@ -115,6 +115,10 @@ class SystemCallState:
         self.response_message = message
         return
 
+    def notify(self):
+        """Wake a synchronous caller blocked in sync_wait()."""
+        self._sync_event.set()
+
     def sync_wait(self):
         # FIXME: should I put a timeout here, and actually have the syscall fail if it takes too long?
         self._sync_event.wait()

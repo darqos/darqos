@@ -3,45 +3,39 @@
 ** First Edition
 
 - Test out installation of Wayland, and Python Qt support for Wayland,
-  on `darqvm` (in Parallels)
-  - Test out Weston compositor
+  on either a Debian 13 VM or a hardware MiniPC
+  - Test out Wayfire compositor
     - Does it do window decoration or controls that we don't want?
     - Will need to (temporarily) install a few apps to test this
+    - How can we programmatically control it?
   - Can we write (simple test) Qt apps that
     - are full-screen
     - are windows
     - can have focus switched between them
     - can overlay the other windows, with an animated shade, for the HUDs?
-  - Can we use `greetd` and either an existing or new "greeter" to get
-    the password-only login working and looking reasonable?
-    - Or should we just auto-login the user, and have the Terminal
-      manage the login?
+  - Can we extend the Terminal service to do a useful login (password only)
+    screen that blocks access to the machine until it's happy?
   - Does a simple `cefpython3` application work?
-- Redo Wayland tests on RPi
-  - Update RPi400 to Debian12
-  - Test
 - Redo Wayland tests on Pinephone
-  - Update Pinephone to Mobian 12
-  - Test
-- Resolve the API model for IPC
-  - Synchronous?
-    - Using a background thread?
-    - With a `select`-style queue checker/waiter?
-  - Non-blocking?
-    - Traditional Unix-style?
-    - Integrated with Qt event loop?
-  - Asynchronous?
+  - Just as a quick sanity check that this is a viable prototyping platform
+- Implement and test the three different interaction modes for the API:
+  sync, async, and callback
+  - Synchronous
+    - Using the two-thread model in pylauncher
+    - Using an event loop in the pylauncher main thread, plus a queue, and
+      self-pipe to send messages from the application thread.
+  - Callback
+    - Using an event listener class to type check the callbacks
+    - Test with Qt event loop
+  - Asynchronous
     - Using asyncio
-  - More than one?
-- Reconsider IPC mechanism
-  - Use an IDL and code generator to get interfaces without heaps of
-    manual work?
-  - Switch to using DBus?
-  - Switch to using Cap'n'Proto?
-- Implement Storage service
-- Implement History service
-- Implement Index service
-- Implement Metadata service
+- Refactor IPC mechanism
+  - Use IDL and stub generator to get interfaces without heaps of work,
+    replacing JSON blobs as currently used.
+- Implement/update Storage service
+- Implement/update History service
+- Implement/update Index service
+- Implement/update Metadata service
 - Implement Factory (New/Do) HUD
 - Implement Search HUD
 - Implement History/Events HUD
@@ -49,9 +43,7 @@
   - Use storage service underneath
   - No need for file import/export in 1ed
   - Basic viewing and editing API
-    - This isn't emacs
-  - Don't bother (yet) with a performant datatype: just load a bunch
-    of codepoints into memory
+    - This isn't emacs, but it should like & feel like it
   - Don't bother yet with CRDT for concurrent editing
   - Think about granularity of history events
     - We could save every API call
@@ -61,7 +53,6 @@
       the doc?
     - Or timed autosave?
     - How much of this is in history vs. in the document storage itself?
-  - Need get(), insert(), delete() -- maybe that's it?
 - Implement GUI Text lens
   - Do we want to separate viewing and editing modes?  Some sort of
     confirmation before starting to change it?
