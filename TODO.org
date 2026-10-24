@@ -73,6 +73,20 @@
     - Reference
 - Snapshot
 
+Issues
+- During process spawning, the p-kernel passes PID, PPID, and path to
+  the loader as command-line arguments.  It then sends a RUNNING
+  message to the p-kernel as confirmation, and begins to execute.  If
+  there's some problem with these command-line parameters, the
+  application code will be blindly churning away, because there's no
+  sync-up with the p-kernel before it is started.  Maybe it should
+  just get a request_id parameter on the command line, send it back to
+  confirm it has started, and then the p-kernel should send it's stuff
+  in a START_RQST?  The process could ACK that, and then start.
+- Having pyloader exit if the p-kernel session drops might be pretty
+  painful.  This might need revisiting.
+
+  
 ** Second Edition
 
 - Implement Knowledgebase service

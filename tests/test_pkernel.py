@@ -13,6 +13,7 @@ import os
 import pathlib
 import shutil
 import socket
+import subprocess
 import sys
 import textwrap
 import time
@@ -152,6 +153,7 @@ def test_running_hands_socket_to_process(pkernel):
     pkernel.peers += [kernel_sock, peer]
 
     process = module.KernelProcessState(pkernel, 3, "/unused")
+    process.set_status(module.KernelProcessStatus.SPAWNED)
     pkernel._process_table[3] = process
     reader = module.TemporaryReader(kernel=pkernel, sock=kernel_sock)
     pkernel.incoming_connections[kernel_sock] = reader
@@ -437,3 +439,214 @@ def test_getppid_of_spawned_process(live_pkernel, tmp_path):
     assert parent == {"pid": parent_dpid, "ppid": 0}
     assert child["pid"] != parent_dpid
     assert child["ppid"] == parent_dpid
+
+
+def test_running_with_unknown_dpid(pkernel):
+    module = pkernel.module
+    kernel_sock, peer = socket.socketpair()
+    pkernel.peers += [kernel_sock, peer]
+
+    # As if accepted from the listening socket.
+    reader = module.TemporaryReader(kernel=pkernel, sock=kernel_sock)
+    pkernel.incoming_connections[kernel_sock] = reader
+    pkernel._loop.add_socket(kernel_sock, pkernel)
+
+    pkernel.handle_running(reader, darq.Running(dpid=99))
+
+    # The connection is dropped, and the loop no longer watches it.
+    assert kernel_sock.fileno() == -1
+    assert kernel_sock not in pkernel._loop.sockets
+    assert kernel_sock not in pkernel.incoming_connections
+    assert peer.recv(1) == b""
+    pkernel._loop.next()
+
+
+def accept_connection(kernel):
+    """Add a connection, as if accepted from the listening socket."""
+    kernel_sock, peer = socket.socketpair()
+    kernel.peers += [kernel_sock, peer]
+    reader = kernel.module.TemporaryReader(kernel=kernel, sock=kernel_sock)
+    kernel.incoming_connections[kernel_sock] = reader
+    kernel._loop.add_socket(kernel_sock, kernel)
+    return reader, kernel_sock, peer
+
+
+def test_running_for_running_process_rejected(pkernel):
+    process, process_peer = add_running_process(pkernel, 3)
+    original_sock = process.get_socket()
+
+    reader, kernel_sock, peer = accept_connection(pkernel)
+    pkernel.handle_running(reader, darq.Running(dpid=3))
+
+    # The impostor is dropped, and the running process is untouched.
+    assert kernel_sock.fileno() == -1
+    assert kernel_sock not in pkernel._loop.sockets
+    assert peer.recv(1) == b""
+    assert process.get_socket() is original_sock
+    assert pkernel._processes[original_sock] is process
+    assert process.get_status() == pkernel.module.KernelProcessStatus.RUNNING
+    pkernel._loop.next()
+
+
+@pytest.mark.parametrize("status", ["ALLOCATED", "ZOMBIE", "LOST"])
+def test_running_for_non_spawned_process_rejected(pkernel, status):
+    module = pkernel.module
+    process = module.KernelProcessState(pkernel, 3, "/unused")
+    process.set_status(module.KernelProcessStatus[status])
+    pkernel._process_table[3] = process
+
+    reader, kernel_sock, peer = accept_connection(pkernel)
+    pkernel.handle_running(reader, darq.Running(dpid=3))
+
+    assert kernel_sock.fileno() == -1
+    assert process.get_socket() is None
+    assert process.get_status() == module.KernelProcessStatus[status]
+
+
+################################################################
+# Connections before RUNNING
+################################################################
+
+def add_spawned_process(kernel, dpid: int):
+    module = kernel.module
+    process = module.KernelProcessState(kernel, dpid, "/unused")
+    process.set_status(module.KernelProcessStatus.SPAWNED)
+    kernel._process_table[dpid] = process
+    return process
+
+
+def assert_incoming_dropped(kernel, kernel_sock, peer):
+    assert kernel_sock.fileno() == -1
+    assert kernel_sock not in kernel._loop.sockets
+    assert kernel_sock not in kernel.incoming_connections
+    assert peer.recv(1) == b""
+    kernel._loop.next()
+
+
+def header_with_length(message_type: int, length: int) -> bytes:
+    message = darq.Message(message_type)
+    message.set_length(length)
+    return message.encode()
+
+
+def test_disconnect_before_running(pkernel):
+    reader, kernel_sock, peer = accept_connection(pkernel)
+    peer.shutdown(socket.SHUT_WR)
+
+    reader.on_readable(kernel_sock)
+
+    assert kernel_sock.fileno() == -1
+    assert kernel_sock not in pkernel._loop.sockets
+    assert kernel_sock not in pkernel.incoming_connections
+    pkernel._loop.next()
+
+
+def test_other_message_before_running(pkernel):
+    reader, kernel_sock, peer = accept_connection(pkernel)
+    peer.sendall(darq.OpenPortRequest(1, 0).encode())
+
+    reader.on_readable(kernel_sock)
+
+    assert_incoming_dropped(pkernel, kernel_sock, peer)
+
+
+def test_invalid_length_before_running(pkernel):
+    reader, kernel_sock, peer = accept_connection(pkernel)
+    peer.sendall(header_with_length(darq.MessageType.RUNNING, 4))
+
+    reader.on_readable(kernel_sock)
+
+    assert_incoming_dropped(pkernel, kernel_sock, peer)
+
+
+def test_running_split_across_reads(pkernel):
+    process = add_spawned_process(pkernel, 3)
+    reader, kernel_sock, peer = accept_connection(pkernel)
+    running = darq.Running(dpid=3).encode()
+
+    peer.sendall(running[:5])
+    reader.on_readable(kernel_sock)
+    assert process.get_status() == pkernel.module.KernelProcessStatus.SPAWNED
+
+    peer.sendall(running[5:])
+    reader.on_readable(kernel_sock)
+    assert process.get_status() == pkernel.module.KernelProcessStatus.RUNNING
+    assert process.get_socket() is kernel_sock
+
+
+def test_second_running_from_registered_process(pkernel):
+    process, peer = add_running_process(pkernel, 3)
+    sock = process.get_socket()
+
+    send_to_kernel(pkernel, process, darq.Running(dpid=3))
+
+    # Ignored: the process keeps its connection and state.
+    assert process.get_socket() is sock
+    assert pkernel._processes[sock] is process
+    assert process.get_status() == pkernel.module.KernelProcessStatus.RUNNING
+    assert receive(peer) == b""
+
+
+def test_pcall_in_same_read_as_running(pkernel):
+    process = add_spawned_process(pkernel, 3)
+    reader, kernel_sock, peer = accept_connection(pkernel)
+
+    peer.sendall(darq.Running(dpid=3).encode() + darq.OpenPortRequest(7, 0).encode())
+    reader.on_readable(kernel_sock)
+
+    assert process.get_status() == pkernel.module.KernelProcessStatus.RUNNING
+    response = darq.OpenPortResponse()
+    response.decode(peer.recv(65536))
+    assert response.request_id == 7
+    assert response.result == 0
+
+
+################################################################
+# Dispatch
+################################################################
+
+def test_dispatch_handles_every_message(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+
+    process.get_buffer().append(darq.OpenPortRequest(1, 0).encode() +
+                                darq.OpenPortRequest(2, 0).encode())
+    pkernel.dispatch(process)
+
+    received = receive(peer)
+    response = darq.OpenPortResponse()
+    ids = []
+    while received:
+        response.decode(received)
+        ids.append(response.request_id)
+        received = received[response.length:]
+    assert ids == [1, 2]
+
+
+def test_dispatch_invalid_length_disconnects(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+
+    process.get_buffer().append(header_with_length(darq.MessageType.OPEN_PORT_RQST, 0))
+    pkernel.dispatch(process)
+
+    assert process.get_socket() is None
+    assert process.get_status() == pkernel.module.KernelProcessStatus.LOST
+
+
+def test_pyloader_with_unknown_dpid_exits(live_pkernel, executable):
+    kernel = live_pkernel
+    port = kernel.socket.getsockname()[1]
+
+    # As if run manually, with a DPID the p-kernel didn't allocate.
+    loader = subprocess.Popen([kernel.module.PYTHON_IMAGE_LOADER, str(port), "99", "0", executable],
+                              env=kernel.get_loader_environment(),
+                              stderr=subprocess.PIPE, text=True)
+    try:
+        run_kernel_until(kernel, lambda: loader.poll() is not None,
+                         "pyloader to exit")
+    finally:
+        if loader.poll() is None:
+            loader.kill()
+        stderr = loader.communicate()[1]
+
+    assert loader.returncode == 1
+    assert "Disconnected by p-kernel" in stderr

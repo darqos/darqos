@@ -120,8 +120,11 @@ def pproc(monkeypatch):
 
     yield process
 
-    # Stop the fake p-kernel before closing its socket.
-    process_sock.shutdown(socket.SHUT_RDWR)
+    # Stop the fake p-kernel before closing its socket (unless pyloader
+    # has already closed it).
+    if process_sock.fileno() != -1:
+        process_sock.shutdown(socket.SHUT_RDWR)
+    kernel_sock.shutdown(socket.SHUT_RDWR)
     kernel.thread.join(TIMEOUT)
     process_sock.close()
     kernel_sock.close()
@@ -290,3 +293,48 @@ def test_kill_process_request_other_dpid(pproc, start_app):
 def test_getpid_and_getppid_are_local(pproc):
     assert run_app(pproc, lambda: (darq.getpid(), darq.getppid())) == (3, 2)
     assert pproc.kernel.received == []
+
+
+
+################################################################
+# p-kernel disconnection
+################################################################
+
+def run_loop(process):
+    """Run the event loop until it's stopped."""
+    process.loop.active = True
+    deadline = time.monotonic() + TIMEOUT
+    while process.loop.active:
+        assert time.monotonic() < deadline, "event loop did not stop"
+        process.loop.next()
+
+
+@pytest.mark.parametrize("blocked_in_pcall", [False, True])
+def test_p_kernel_disconnect(pproc, start_app, blocked_in_pcall):
+    if blocked_in_pcall:
+        pproc.kernel.ignore.add(darq.MessageType.SPAWN_PROCESS_RQST)
+        thread = start_app("""
+            import darq
+            def darq_main():
+                darq.spawn_process("/hang")
+            """)
+        deadline = time.monotonic() + TIMEOUT
+        while not pproc._pending:
+            assert time.monotonic() < deadline, "spawn request not sent"
+            pproc.loop.next()
+    else:
+        thread = start_app("""
+            import time
+            def darq_main():
+                while True:
+                    time.sleep(0.01)
+            """)
+
+    # The p-kernel drops the connection.
+    pproc.kernel.sock.shutdown(socket.SHUT_RDWR)
+    run_loop(pproc)
+
+    assert pproc.exit_status == 1
+    assert pproc._pkernel_sock is None
+    assert not thread.is_alive()
+    pproc.disconnect()

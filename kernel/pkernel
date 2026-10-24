@@ -330,19 +330,19 @@ class TemporaryReader:
             recv_buf = self._sock.recv(65536)
         except ConnectionResetError:
             logging.warning(f"IPC: {self.name()} connection reset.")
-            self._kernel.handle_disconnect(self)
+            self._kernel.handle_incoming_disconnect(self)
             return
 
         if len(recv_buf) == 0:
             logging.debug(f"IPC: {self.name()} connection closed by peer.")
-            self._kernel.handle_disconnect(self)
+            self._kernel.handle_incoming_disconnect(self)
             return
 
         self._recv_buffer.append(recv_buf)
         logging.debug(f"IPC: {self.name()} "
                       f"delivered {len(recv_buf)} bytes")
 
-        self._kernel.dispatch(self)
+        self._kernel.dispatch_incoming(self)
         return
 
 
@@ -454,15 +454,6 @@ class PseudoKernel(SocketListener, TimerListener):
             incoming_connection.on_readable(sock)
             return
 
-        if 0:
-            buf = sock.recv(65536)
-            if len(buf) == 0:
-                logging.warning(f"Socket [{sock.fileno()}] disconnected waiting for RUNNING.")
-                self._loop.cancel_socket(sock)
-                del self.incoming_connections[sock]
-                return
-
-
         client = self._processes.get(sock)
         if client:
             client.on_readable(sock)
@@ -496,17 +487,16 @@ class PseudoKernel(SocketListener, TimerListener):
         # Cache name, because we need to use it a few times.
         name = process.name()
 
-        if isinstance(process, KernelProcessState):
-            # Answer anyone waiting for this process to be killed.
-            kill_requests = process.take_kill_requests()
-            for requester, request_id in kill_requests:
-                if requester is not process:
-                    self.send_kill_process_response(requester, request_id, 0)
+        # Answer anyone waiting for this process to be killed.
+        kill_requests = process.take_kill_requests()
+        for requester, request_id in kill_requests:
+            if requester is not process:
+                self.send_kill_process_response(requester, request_id, 0)
 
-            if kill_requests:
-                process.set_status(KernelProcessStatus.ZOMBIE)
-            else:
-                process.set_status(KernelProcessStatus.LOST)
+        if kill_requests:
+            process.set_status(KernelProcessStatus.ZOMBIE)
+        else:
+            process.set_status(KernelProcessStatus.LOST)
 
         # Deregister ports.
         ports = process.get_ports()
@@ -524,10 +514,21 @@ class PseudoKernel(SocketListener, TimerListener):
             self._loop.cancel_socket(sock)
             sock.close()
 
-        if isinstance(process, KernelProcessState):
-            process.set_socket(None)
+        process.set_socket(None)
 
         logging.info(f"{name} disconnected.")
+        return
+
+    def handle_incoming_disconnect(self, reader: TemporaryReader):
+        """Close a connection that hasn't (successfully) sent RUNNING.
+
+        :param reader: Handler for the unidentified connection."""
+        sock = reader.get_socket()
+        logging.info(f"{reader.name()} disconnected before running.")
+
+        self.incoming_connections.pop(sock, None)
+        self._loop.cancel_socket(sock)
+        sock.close()
         return
 
     def get_ephemeral_port(self):
@@ -803,16 +804,23 @@ class PseudoKernel(SocketListener, TimerListener):
         """Handle startup notification from newly-spawned user process."""
         logging.info(f"Socket [{incoming_connection.get_socket().fileno()}] handle_running(dpid={message.dpid})")
 
-        # Remove incoming connection handler.
-        sock = incoming_connection.get_socket()
-        del self.incoming_connections[sock]
-
         # Add socket and fd table entries.
         process = self._process_table.get(message.dpid)
         if not process:
             logging.error(f"WTF, no process table entry for RUNNING with DPID {message.dpid}")
-            sock.close()
+            self.handle_incoming_disconnect(incoming_connection)
             return
+
+        # Only a newly-spawned process can report that it's running.
+        if process.get_status() != KernelProcessStatus.SPAWNED:
+            logging.error(f"RUNNING for DPID {message.dpid} rejected: "
+                          f"process is {process.get_status().name}, not SPAWNED")
+            self.handle_incoming_disconnect(incoming_connection)
+            return
+
+        # Remove incoming connection handler.
+        sock = incoming_connection.get_socket()
+        del self.incoming_connections[sock]
 
         self._processes[sock] = process
         self.fds[sock] = process
@@ -828,6 +836,13 @@ class PseudoKernel(SocketListener, TimerListener):
             requester, request_id = spawn_request
             self.send_spawn_process_response(requester, request_id,
                                              process.get_dpid(), 0)
+
+        # Hand over anything received after the RUNNING message.
+        leftover = incoming_connection.get_buffer()
+        if leftover.length() > 0:
+            process.get_buffer().append(leftover.peek(leftover.length()))
+            leftover.consume(leftover.length())
+            self.dispatch(process)
         return
 
 
@@ -945,35 +960,85 @@ class PseudoKernel(SocketListener, TimerListener):
                      f"request_id={request_id}, result={result}, port={port}")
         return
 
+    @staticmethod
+    def next_message(buffer: darq.Buffer) -> tuple[int, bytes] | None:
+        """Take the next complete message from a receive buffer.
+
+        :param buffer: Receive buffer.
+        :returns: (message type, message bytes), or None if incomplete.
+        :raises MessageDecodingError: if the header is invalid."""
+
+        # See if we have a header yet.
+        if buffer.length() < 8:
+            return None
+
+        message_type = darq.Message.decode_type(buffer.peek(8))
+        message_length = darq.Message.decode_length(buffer.peek(8))
+
+        if message_length < 8:
+            raise darq.MessageDecodingError(f"invalid message length {message_length}")
+
+        if message_length > buffer.length():
+            # Wait for the rest of the message.
+            return None
+
+        message_bytes = buffer.peek(message_length)
+        buffer.consume(message_length)  # FIXME: merge these two!
+        return message_type, message_bytes
+
+    def dispatch_incoming(self, reader: TemporaryReader):
+        """Process data received on a connection not yet identified.
+
+        The first message must be RUNNING: anything else drops the
+        connection."""
+
+        try:
+            next_message = self.next_message(reader.get_buffer())
+            if next_message is None:
+                return
+
+            message_type, message_bytes = next_message
+            if message_type != darq.MessageType.RUNNING:
+                logging.error(f"{reader.name()} sent message type "
+                              f"[{message_type}] before RUNNING")
+                self.handle_incoming_disconnect(reader)
+                return
+
+            message = darq.Running()
+            message.decode(message_bytes)
+        except darq.MessageDecodingError as e:
+            logging.error(f"{reader.name()} invalid message: {e}")
+            self.handle_incoming_disconnect(reader)
+            return
+
+        self.handle_running(reader, message)
+        return
+
     def dispatch(self, process: KernelProcessState):
         """Process data received from clients.
 
         :param process: Client connection that received data
 
-        Handle received message, if buffer contains one."""
+        Handle every complete message in the receive buffer."""
 
-        # See if we have a header yet.
-        buffer = process.get_buffer()
-        if buffer.length() < 8:
-            logging.debug(f"{process.name()} "
-                          f"Queued data ({buffer.length()} bytes) too s"
-                          f"mall for header (8 bytes).")
-            return
+        while process.get_socket() is not None:
+            try:
+                next_message = self.next_message(process.get_buffer())
+                if next_message is None:
+                    return
+                message_type, message_bytes = next_message
+                self.dispatch_message(process, message_type, message_bytes)
+            except darq.MessageDecodingError as e:
+                logging.error(f"{process.name()} invalid message: {e}")
+                self.handle_disconnect(process)
+                return
+        return
 
-        message_type = darq.Message.decode_type(buffer.peek(8))
-        message_length = darq.Message.decode_length(buffer.peek(8))
-
-        if message_type == 0 or message_length > buffer.length():
-            # Added more bytes, but total available doesn't yet constitute
-            # a message.  This should only really happen in testing.
-            logging.debug(f"{process.name()} "
-                          f"Queued data ({buffer.length()} bytes) "
-                          f"too small for message {message_type} "
-                          f"which expects {message_length} bytes.")
-            return
-
-        message_bytes = buffer.peek(message_length)
-        buffer.consume(message_length)  # FIXME: merge these two!
+    def dispatch_message(self,
+                         process: KernelProcessState,
+                         message_type: int,
+                         message_bytes: bytes):
+        """Decode one message from a client, and call its handler."""
 
         if message_type == darq.MessageType.OPEN_PORT_RQST:
             message = darq.OpenPortRequest()
@@ -1009,11 +1074,6 @@ class PseudoKernel(SocketListener, TimerListener):
             message = darq.Shutdown()
             message.decode(message_bytes)
             self.handle_shutdown(process, message)
-
-        elif message_type  == darq.MessageType.RUNNING:
-            message = darq.Running()
-            message.decode(message_bytes)
-            self.handle_running(process, message)
 
         else:
             logging.warning(f"{process.name()} Received message with "

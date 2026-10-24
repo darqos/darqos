@@ -71,6 +71,9 @@ class PythonPProcess:
         # Thread running the application's darq_main().
         self._app_thread: threading.Thread | None = None
 
+        # Host process exit status.
+        self.exit_status: int = 0
+
         # Event loop.
         self.loop = darq.SelectEventLoop()
         self.loop.add_socket(self._queue_wakeup_reader, self)
@@ -169,8 +172,32 @@ class PythonPProcess:
             self.handle_syscall_queue()
             return
 
-        data = sock.recv(65536)
+        try:
+            data = sock.recv(65536)
+        except ConnectionResetError:
+            data = b''
+
+        if not data:
+            self.handle_p_kernel_disconnect()
+            return
+
         self.handle_bytes_from_p_kernel(data)
+
+    def handle_p_kernel_disconnect(self):
+        """Handle the p-kernel closing the p-call session.
+
+        Without the p-kernel, this process can't continue: kill the
+        application and exit."""
+        logging.error("Disconnected by p-kernel: exiting.")
+        self.exit_status = 1
+
+        self.loop.cancel_socket(self._pkernel_sock)
+        self._pkernel_sock.close()
+        self._pkernel_sock = None
+
+        self.kill_app()
+        self._end_app()
+        return
 
     def on_writeable(self, sock: socket.socket):
         #logging.debug("Callback: socket is writeable")
@@ -184,6 +211,10 @@ class PythonPProcess:
         """Send a "syscall" message to the p-Kernel.
 
         :param message: Message to send."""
+        if self._pkernel_sock is None:
+            logging.warning(f"Not connected to p-kernel: message type {message.type} dropped")
+            return
+
         buffer = message.encode()
 
         # FIXME: in an async world, this should queue and return if it can't
@@ -252,8 +283,9 @@ class PythonPProcess:
         # Send exit message to p-kernel?
 
         # Close socket (and flush buffers).
-        self._pkernel_sock.close()
-        self._pkernel_sock = None
+        if self._pkernel_sock is not None:
+            self._pkernel_sock.close()
+            self._pkernel_sock = None
 
     def send_running_message(self):
         # Send startup confirmation to p-kernel.
@@ -442,4 +474,4 @@ if __name__ == "__main__":
 
     # Exit.
     logging.info("Exiting.")
-    sys.exit(0)
+    sys.exit(pproc.exit_status)
