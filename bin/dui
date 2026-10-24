@@ -105,15 +105,15 @@ fi
 chown -R $DARQ_USER:$DARQ_USER $DARQ
 
 # Run install script from dist.
-if [ ! -f $DIST/darq/sys/install ]; then
-    echo "Error: install script $DIST/darq/sys/install does not exist" >&2
+if [ ! -f $DIST/darq/bin/install ]; then
+    echo "Error: install script $DIST/darq/bin/install does not exist" >&2
     exit 1
 fi
 
-chmod +x $DIST/darq/sys/install
+chmod +x $DIST/darq/bin/install
 
 echo "Ok: about to execute install script"
-$DIST/darq/sys/install
+$DIST/darq/bin/install
 echo "Ok: install script completed"
 
 # Remove distribution files

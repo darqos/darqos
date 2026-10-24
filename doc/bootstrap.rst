@@ -31,7 +31,7 @@ Bootstrap
        configuration files, etc.
      * Fetch tarball for darq
      * Use `/darq/dist` as staging area for updates, and then
-       `/darq/dist/darq/sys/install` script to copy into `/darq` and
+       `/darq/dist/darq/bin/install` script to copy into `/darq` and
        activate
      * Clean `/darq/dist` once installed
      * Consider using eg. `rsync` to optimise this process later.

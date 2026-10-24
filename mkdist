@@ -55,8 +55,8 @@ for f in `find "$root/lenses" -name "*.py" -print`; do
 done
 
 # System scripts.
-mkdir -p "$destdir/sys"
-for f in `find "$root/sys" -name "*" -print`; do
+mkdir -p "$destdir/bin"
+for f in `find "$root/bin" -name "*" -print`; do
   t=${f#"$root"}
   mkdir -p `dirname $destdir/$t`
   cp -p $f $destdir/$t

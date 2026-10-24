@@ -5,6 +5,8 @@ In DarqOS, inter-process communication uses a kernel-provided IPC
 facility, similar in basic concept to many microkernels.  For clarity,
 this is referred to as Darq Inter Process Communication (DIPC).
 
+Influences include: Mach, QNX, L4, and Fuschia/Zircon.
+
 Processes can open a _port_, and using it, send, and receive messages.  Because it
 enables some significant performance optimisations, both asynchronous
 (one-way) messages and synchronous (request-response, RPC) messaging
@@ -180,7 +182,7 @@ single system where the register of message types uses a common index.
 
 
 IDL Compiler
-------------
+~~~~~~~~~~~~
 
 The IDL compiler takes a description of one or more messages, and
 generates suitable code in a specified programming language to read
@@ -195,3 +197,30 @@ best as a service, with an API that allows you to request the
 generation of stubs in language X.  Perhaps a syntax check on the IDL
 without generation?  Does it make sense to have it be an LSP for the
 IDL too?
+
+Python
+~~~~~~
+
+For 1ed, the IDL compiler (didlc) should be a Linux command line
+utility.  It should generate one Python file/module for each DIDL file
+processed, and each message should be a class, with encode() and
+decode() functions (in a similar style to the p-call message classes
+from darq/common.py).
+
+Syntax
+~~~~~~
+
+```
+library storage.filesystem;
+
+struct FileAttributes {
+    uint64 size;
+    uint32 permissions;
+    uint32 owner_id;
+}
+
+protocol FileServer {
+    GetAttributes(uint64 fd) -> (FileAttributes attr, uint32 status);
+}
+```
+

@@ -16,7 +16,7 @@ The host OS should be one of:
 * Debian 12 *bookworm* AMD64 netinst (https://www.debian.org/download)
 
 In all cases, the Darq distribution should be unpacked (or cloned)
-into `/darq/dist`.  The `/darq/dist/darq/sys/install` script should then
+into `/darq/dist`.  The `/darq/dist/darq/bin/install` script should then
 be run (as `root`) to install or update the local installation.  This will
 install any required host OS packages, configure the system to run
 Darq, and then reboot.
@@ -66,18 +66,13 @@ Image Layout
 
     * User applications
 
-  * `/darq/sys`
+  * `/darq/bin`
 
     * System scripts, or other Unix programs needed to support the
       operation of the system.  These items should be largely, if
       not totally, invisible from within Darq itself.
 
-  * `/darq/sys/init`
-
-      * The system bootstrap program; the point of handover from the
-        underlying Linux kernel to DarqOS.
-
-  * `/darq/sys/venv`
+  * `/darq/env`
 
     * Python virtual environment
     * Includes all installed dependencies
