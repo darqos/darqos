@@ -1,6 +1,6 @@
 #! /bin/bash
 # DarqOS
-# Copyright (C) 2023-2024 David Arnold
+# Copyright (C) 2023-2026 David Arnold
 
 # This script will install an unpacked DarqOS distribution, typically
 # in the /darq/dist directory, into the system directory, typically /darq.
@@ -35,10 +35,9 @@
 # The various locations, install/update mode, and perhaps a "devmode"
 # flag should be passed from dui into install as command-line parameters.
 #
-# This script should also probably deal with the differences between
-# RPi4, RPi400, RPi5, and a Unix laptop (and maybe Mobian as well?).
-# That might require per-platform sub-scripts?  Or functions?  Something,
-# anyway.
+# This script should also probably deal with the differences between a
+# PC and a phone?  That might require per-platform sub-scripts?  Or
+# functions?  Something, anyway.
 #
 # We also need to decide about logging.  It's bad enough that dui just
 # writes to stdout/stderr.  That's better than nothing though.
@@ -51,61 +50,19 @@ SERVICES="history index metadata security storage terminal type"
 # Shut down DarqOS
 # FIXME: what's actually needed here?
 # FIXME: use systemd target?
+# stop p-kernel
+# check everything else is dead
 
-# Check for raspi-conf utility.
-if [ ! -x /usr/bin/raspi-config ]; then
-    echo "Error: unable to find /usr/bin/raspi-config utility" >&2
-    exit 1
-fi
 
-# Check raspi-config localisation defaults.
-# - Locale
-sudo raspi-config nonint do_change_locale C.UTF-8
-export LANG="C.UTF-8"
-echo "Ok: set default locale (C.UTF-8)"
-
-# - Timezone
-sudo raspi-config nonint do_change_timezone Australia/Sydney
-echo "Ok: set default timezone (Australia/Sydney)"
-
-# - Keyboard layout
-sudo raspi-config nonint do_configure_keyboard us
-echo "Ok: set default keyboard layout (us)"
-
-# - WiFi location
-sudo raspi-config nonint do_wifi_country AU
-echo "Ok: set WiFi country (AU)"
-
-# Check raspi-config set for auto-login
-# B1: console, login required
-# B2: console, login automatically
-# B3: GUI, login required
-# B4: GUI, login automatically
-sudo raspi-config nonint do_boot_behaviour B2
-echo "Ok: set default boot behaviour"
-
-# Check raspi-config SSH access is enabled (for now, at least).
-sudo raspi-config nonint do_ssh 0
-echo "Ok: enabled SSH server"
-
-# Disable splash screen on boot.
-sudo raspi-config nonint do_boot_splash 1
-echo "Ok: disabled boot splash"
-
-# Enable Wayland
-sudo raspi-config nonint do_wayland W2
-echo "Ok: enabled Wayland"
-
-# Disable screen blanking.
-sudo raspi-config nonint do_blanking 1
-echo "Ok: disabled screen blanking"
-
-# FIXME: network config is done via nmcli
-
-# FIXME: Create or update configuration files
+# Configure OS.
+# Disable/remove anything not needed from default Debian config
+# Set locale to C.UTF-8
+# Create 'darq' user and group.
+# Set auto-login
+# Enable SSH login (for now)
 
 # Update OS.
-# NOTE: Assume we start from RasPiOS Lite image.
+# NOTE: Assume we start from Debian 13 "Trixie" netinst image.
 apt-get update
 apt-get -u -y dist-upgrade
 apt autoremove
@@ -156,24 +113,15 @@ echo "Ok: installed darqos Python runtime"
     echo "Installed p-Kernel"
 )
 
-# Install services.
-(
-    cd "$DIST/darq/services"
-    for f in $SERVICES ; do
-        mkdir -p "$DARQ/services/$f"
-        cp -p "$f"/*.py "$f/darqos-$f" "$f/darqos-$f.service" "$DARQ/services/$f/"
-        chmod +x "$DARQ/services/$f/darqos-$f"
-
-        systemctl link "$DARQ/services/$f/darqos-$f.service"
-        echo "Installed service: darqos-$f"
-    done
-)
+# Check for firstrun
+# - if sysconf file already exists, read it, and apply its settings
+#   - timezone
+#   - keymap
+#   - network
+#   - etc
 
 # Restart DarqOS
-#systemctl set-default darqos.target
-#systemctl default
-
-# FIXME: what needs to be restarted?
-# FIXME: OS? (in which case, don't worry about services)
-# FIXME: just services? (iterate over list, and restart them)
+# start p-kernel
+# wait for bootstrap to start all the services
+# check everything is alive
 
