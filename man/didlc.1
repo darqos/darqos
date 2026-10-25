@@ -1,0 +1,122 @@
+.\" darqos
+.\" Copyright (C) 2026 David Arnold
+.TH DIDLC 1 2026-10-25 DarqOS "DarqOS User's Manual"
+.SH NAME
+didlc \- compile DarqOS interface definitions
+.SH SYNOPSIS
+.B didlc
+.RB [ \-o
+.IR output ]
+.I input
+.SH DESCRIPTION
+.B didlc
+compiles a Darq Interface Definition Language (DIDL) file into an
+intermediate representation (IR), written as JSON.
+The IR gives the exact byte layout of the message header and of every
+request and response message the file defines, for use by code
+generators.
+.SS Language
+A DIDL file names a library, and declares structs and protocols:
+.PP
+.RS
+.nf
+library filesystem;
+
+struct FileAttributes {
+    uint64 size;
+    uint32 permissions;
+    uint32 owner_id;
+}
+
+protocol FileServer {
+    1: GetAttributes(uint64 fd) -> (FileAttributes attr, uint32 status);
+    2: Close(uint64 fd);
+}
+.fi
+.RE
+.PP
+Each method in a protocol has a request, and optionally a response
+introduced by
+.BR \-> .
+A method without a response is one-way.
+.PP
+Each method must be given a number, from 1 to 65535, which is carried
+in the message header to identify it.
+Numbers are assigned by hand, and must be unique within a protocol.
+.PP
+Comments start with
+.B //
+and run to the end of the line.
+.SS Types
+.TP
+.BR bool ", " int8 ", " uint8
+1 byte.
+.TP
+.BR int16 ", " uint16
+2 bytes.
+.TP
+.BR int32 ", " uint32 ", " real32
+4 bytes.
+.TP
+.BR int64 ", " uint64 ", " real64
+8 bytes.
+.TP
+.B opaque
+16-byte variable-length data descriptor, 8-byte aligned.
+.TP
+.B port
+4-byte IPC port number, identified for special handling by the IPC
+system.
+.PP
+A struct may be used as a field type, before or after its
+declaration, but may not contain itself.
+.SS Layout
+Fields are laid out in order, following the C/C++ ABI: each field is
+aligned to its natural boundary, a struct is aligned to its most
+strictly aligned member, and every struct and message body is padded
+to a multiple of its alignment.
+.PP
+Every message starts with an 8-byte header:
+.TP
+.B txid
+.BR uint32 :
+transaction identifier matching a reply to its request; 0 for one-way
+messages.
+.TP
+.B flags
+.BR uint16 :
+reserved, must be 0.
+.TP
+.B method
+.BR uint16 :
+the method number.
+.SH OPTIONS
+.TP
+.BI \-o " output\fR, " \-\-output " output"
+Write the IR to
+.IR output ,
+or to standard output if
+.I output
+is
+.BR \- .
+By default, it is written next to
+.IR input ,
+with the extension replaced by
+.IR .dir .
+.TP
+.BR \-h ", " \-\-help
+Show a usage summary.
+.SH EXIT STATUS
+0 on success; 1 if the input can't be read or contains an error;
+2 if the command line is invalid.
+.SH DIAGNOSTICS
+Errors are reported on standard error as
+.PP
+.RS
+.IB file : line : column ": error: " message
+.RE
+.PP
+and no output file is written.
+.SH SEE ALSO
+DarqOS documentation,
+.IR doc/ipc.rst .

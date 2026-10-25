@@ -1,0 +1,116 @@
+.\" darqos
+.\" Copyright (C) 2026 David Arnold
+.TH DUI 8 2026-10-25 DarqOS "DarqOS System Manager's Manual"
+.SH NAME
+dui \- download and install or update DarqOS
+.SH SYNOPSIS
+.B dui
+.SH DESCRIPTION
+.B dui
+(DarqOS Updater/Installer) fetches a DarqOS distribution tarball and
+runs the
+.BR install (8)
+script it contains.
+It is used both for the first install on a host and for later
+updates.
+It must be run as root.
+.PP
+.B dui
+performs these steps, stopping with an error if any fails:
+.IP 1. 4
+Create the
+.B $DARQ_USER
+account, if it doesn't exist.
+.IP 2.
+Create
+.BR $DARQ ,
+if it doesn't exist.
+.IP 3.
+Remove any existing
+.BR $DIST ,
+and create it again, empty, owned by
+.BR $DARQ_USER .
+.IP 4.
+Download
+.B $DIST_BASE/$DIST_FILE
+into
+.I /tmp
+with
+.BR wget (1).
+.IP 5.
+Unpack the tarball into
+.BR $DIST ,
+and give
+.B $DARQ_USER
+ownership of everything under
+.BR $DARQ .
+.IP 6.
+Run
+.BR $DIST/darq/bin/install .
+.SH OPTIONS
+None.
+Settings are taken from the environment.
+.SH ENVIRONMENT
+.TP
+.B DARQ
+Installation root.
+Default:
+.IR /darq .
+.TP
+.B DIST
+Staging directory for the unpacked distribution.
+Default:
+.BR $DARQ/dist .
+.TP
+.B DIST_FILE
+Name of the tarball to download.
+Default:
+.IR darqos-latest.tar.gz .
+.TP
+.B DIST_BASE
+URL of the directory to download it from.
+Default:
+.IR https://www.0x1.org/d/darq .
+.TP
+.B DARQ_USER
+Account that owns the installed files.
+Default:
+.IR darq .
+.SH FILES
+.TP
+.BI /tmp/ DIST_FILE
+The downloaded tarball.
+It is not removed afterwards.
+.TP
+.I $DIST/darq/bin/install
+The install script run in the last step.
+.SH EXIT STATUS
+0 if the install script completed; 1 if an earlier step failed.
+.SH DIAGNOSTICS
+Progress is written to standard output as lines starting
+.RB \(lq Ok: \(rq,
+and errors to standard error as lines starting
+.RB \(lq Error: \(rq.
+.SH BUGS
+Any existing
+.B $DIST
+is deleted before the download is attempted.
+.PP
+The check for an existing
+.B $DARQ_USER
+account is malformed, so the account is never created; if it were, it
+would be named
+.B darq
+whatever
+.B DARQ_USER
+is set to.
+.PP
+The exit status of the install script is not checked.
+.PP
+Only tarballs built with the current
+.B mkdist
+can be installed: older ones keep the install script under
+.IR darq/sys .
+.SH SEE ALSO
+.BR install (8),
+.BR wget (1)

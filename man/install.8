@@ -1,0 +1,94 @@
+.\" darqos
+.\" Copyright (C) 2026 David Arnold
+.TH INSTALL 8 2026-10-25 DarqOS "DarqOS System Manager's Manual"
+.SH NAME
+install \- install an unpacked DarqOS distribution
+.SH SYNOPSIS
+.B /darq/dist/darq/bin/install
+.SH DESCRIPTION
+.B install
+copies an unpacked DarqOS distribution from the staging directory,
+.IR /darq/dist ,
+into the installation root,
+.IR /darq ,
+and prepares the host to run it.
+It is normally run by
+.BR dui (8),
+as root.
+.PP
+It performs these steps:
+.IP 1. 4
+Update the host's Debian packages
+.RB ( "apt-get update" ,
+.BR "apt-get dist-upgrade" ,
+.BR "apt autoremove" ).
+.IP 2.
+Install the Debian packages DarqOS needs, including
+.BR foot ,
+.BR wayfire ,
+Python 3.11 and PyQt5.
+.IP 3.
+Create the Python virtual environment
+.IR /darq/env ,
+if it doesn't exist, with access to system site packages.
+.IP 4.
+Install or upgrade the Python modules DarqOS depends on, then
+reinstall the DarqOS runtime wheel from the distribution.
+.IP 5.
+Copy the p-kernel into
+.IR /darq/kernel ,
+and link its
+.BR systemd (1)
+units.
+.PP
+The host is expected to start from a Debian 13 (trixie) netinst
+image.
+.SH OPTIONS
+None.
+.SH FILES
+.TP
+.I /darq/dist/darq
+The unpacked distribution.
+.TP
+.I /darq/dist/darq/lib/darq-0.1-py3-none-any.whl
+The DarqOS Python runtime.
+.TP
+.I /darq/env
+Python virtual environment.
+.TP
+.I /darq/kernel
+Installed p-kernel and its
+.B systemd
+units,
+.I darqos-pkernel.service
+and
+.IR darqos.target .
+.SH DIAGNOSTICS
+Progress is written to standard output as lines starting
+.RB \(lq Ok: \(rq.
+.SH BUGS
+This is an early draft of the installer.
+It does not stop a running system before updating it, configure the
+host (locale, auto-login, the
+.B darq
+account), or restart DarqOS afterwards.
+It doesn't distinguish a first install from an update.
+.PP
+Commands' failures are not checked, and
+.B apt-get install
+asks for confirmation.
+.PP
+It installs
+.I /darq/kernel/*.py
+and
+.IR darqos-pkernel ,
+but the p-kernel executable is now
+.IR pkernel ,
+and
+.B pyloader
+is not installed.
+.PP
+It does not install services, types, lenses, or tools.
+.SH SEE ALSO
+.BR dui (8),
+.BR pkernel (8)

@@ -1,0 +1,126 @@
+.\" darqos
+.\" Copyright (C) 2026 David Arnold
+.TH PKERNEL 8 2026-10-25 DarqOS "DarqOS System Manager's Manual"
+.SH NAME
+pkernel \- DarqOS pseudo-kernel
+.SH SYNOPSIS
+.B pkernel
+.SH DESCRIPTION
+.B pkernel
+is the Linux service that provides the functionality that will
+eventually live in the DarqOS kernel.
+It keeps the process table, allocates IPC ports, and routes IPC
+messages between DarqOS processes.
+.PP
+Every DarqOS process holds a TCP connection to
+.B pkernel
+on the loopback interface, and uses it to make pseudo-system calls
+(p-calls) such as
+.BR open_port ,
+.BR send_message ,
+.B spawn_process
+and
+.BR kill_process .
+.B pkernel
+is not itself a DarqOS process: it has no DarqOS process identifier
+(dpid).
+.PP
+On startup,
+.B pkernel
+listens on TCP port 11000, schedules the boot sequence, and runs its
+event loop until interrupted.
+.SS Processes
+A process is created by a
+.B spawn_process
+p-call.
+.B pkernel
+allocates a dpid, then starts
+.BR pyloader (8)
+from its own directory with that dpid, the parent's dpid, the
+listening port, and the executable path.
+The executable path must be a directory containing a
+.I main.py
+file.
+The child runs with
+.I /
+as its working directory, and with the directory containing the
+.B darq
+package that
+.B pkernel
+is using prepended to
+.BR PYTHONPATH .
+.PP
+The new process connects back and announces itself with a RUNNING
+message; only then is the
+.B spawn_process
+call answered.
+.B pkernel
+accepts RUNNING only for a dpid it has spawned and that has not yet
+started.
+Any other first message, or an unknown dpid, causes the connection to
+be closed.
+.PP
+Exited children are reaped on
+.BR SIGCHLD .
+If a child exits before it reports RUNNING, its
+.B spawn_process
+call is answered with an error.
+.SS Process states
+.TP
+.B ALLOCATED
+Table entry created, but the process is not yet spawned.
+.TP
+.B SPAWNED
+The loader has been started, but has not reported RUNNING.
+.TP
+.B RUNNING
+The process is connected and able to make p-calls.
+.TP
+.B ZOMBIE
+The process disconnected after a
+.BR kill_process .
+.TP
+.B LOST
+The process disconnected without being killed.
+.SH OPTIONS
+None.
+.SH ENVIRONMENT
+.TP
+.B INVOCATION_ID
+If set (as it is by
+.BR systemd (1)),
+log messages are written to standard output without timestamps, for
+the journal.
+Otherwise they are written to standard error with timestamps.
+.TP
+.B PYTHONPATH
+Passed on to spawned processes, after the
+.B darq
+package directory.
+.SH FILES
+.TP
+.I /darq/kernel/pkernel
+The p-kernel executable.
+.TP
+.I /darq/kernel/pyloader
+Loader for Python executables, started for each new process.
+.TP
+.I /darq/kernel/darqos-pkernel.service
+.BR systemd (1)
+unit that runs the p-kernel as part of
+.IR darqos.target .
+.SH EXIT STATUS
+0 when the event loop exits.
+.SH BUGS
+The listening port is fixed at 11000.
+.PP
+The boot sequence does not yet start any system services, and
+shutdown does not yet stop any processes.
+.PP
+There is no timeout on a spawned process reporting RUNNING, or on a
+killed process disconnecting.
+ZOMBIE entries are never removed from the process table.
+.SH SEE ALSO
+.BR pyloader (8),
+.BR install (8),
+.BR systemd (1)

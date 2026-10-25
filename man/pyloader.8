@@ -1,0 +1,118 @@
+.\" darqos
+.\" Copyright (C) 2026 David Arnold
+.TH PYLOADER 8 2026-10-25 DarqOS "DarqOS System Manager's Manual"
+.SH NAME
+pyloader \- DarqOS loader for Python executables
+.SH SYNOPSIS
+.B pyloader
+.I p-kernel-port dpid parent-dpid executable-path
+.br
+.B pyloader
+.RB { help | \-h | \-? | \-\-help }
+.SH DESCRIPTION
+.B pyloader
+runs a Python executable as a DarqOS process.
+It is normally started by
+.BR pkernel (8)
+in response to a
+.B spawn_process
+p-call, and is not meant to be run by hand.
+.PP
+.B pyloader
+connects to the p-kernel on the loopback interface at
+.IR p-kernel-port ,
+sends a RUNNING message for
+.IR dpid ,
+then imports
+.I main.py
+from
+.I executable-path
+and calls its
+.B darq_main()
+function, with no arguments, on a new application thread.
+.PP
+The main thread runs an event loop that carries p-calls from the
+application thread to the p-kernel and delivers the replies.
+The process's
+.B getpid()
+and
+.B getppid()
+are answered locally from
+.I dpid
+and
+.IR parent-dpid .
+.PP
+The host process title is set to
+.BI darq- dpid
+to make it easy to find with
+.BR ps (1).
+.SS Termination
+.B pyloader
+exits when the application's
+.B darq_main()
+returns, or when the p-kernel delivers a
+.B kill_process
+for this dpid.
+A killed application thread is stopped by raising
+.B SystemExit
+in it; any p-call it is blocked in is abandoned.
+If the thread does not stop (for example, because it is stuck in
+native code),
+.B pyloader
+exits immediately with status 1.
+.PP
+If the p-kernel closes the connection, for instance because it does
+not recognise
+.IR dpid ,
+.B pyloader
+logs
+.RB \(lq "Disconnected by p-kernel: exiting." \(rq,
+stops the application, and exits with status 1.
+.SH ARGUMENTS
+.TP
+.I p-kernel-port
+TCP port on which the p-kernel is listening.
+.TP
+.I dpid
+DarqOS process identifier allocated to this process by the p-kernel.
+.TP
+.I parent-dpid
+DarqOS process identifier of the process that requested the spawn, or
+0 if it was started by the p-kernel itself.
+.TP
+.I executable-path
+Directory containing the application's
+.I main.py
+file.
+It is added to the front of the module search path.
+.SH ENVIRONMENT
+.TP
+.B PYTHONPATH
+Must allow the
+.B darq
+package to be imported.
+.BR pkernel (8)
+sets this when it spawns the loader.
+.SH EXIT STATUS
+.TP
+0
+The application finished, or was killed by
+.BR kill_process .
+.TP
+1
+The p-kernel closed the connection, the application thread could not
+be stopped, or usage help was requested.
+.TP
+42
+The wrong number of arguments was given.
+.SH DIAGNOSTICS
+Log messages are written to standard error.
+.SH BUGS
+If no p-kernel is listening on
+.IR p-kernel-port ,
+.B pyloader
+exits with a Python traceback rather than an error message.
+.PP
+Asking for usage help exits with status 1.
+.SH SEE ALSO
+.BR pkernel (8)
