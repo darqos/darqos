@@ -9,6 +9,7 @@
 
 import importlib.machinery
 import importlib.util
+import os
 import pathlib
 import socket
 import sys
@@ -52,6 +53,11 @@ class FakePKernel:
                    buf.length() < darq.Message.decode_length(buf.peek(8))):
                 data = self.sock.recv(65536)
                 if not data:
+                    # The process has closed its side: close ours too.
+                    try:
+                        self.sock.shutdown(socket.SHUT_WR)
+                    except OSError:
+                        pass
                     return
                 buf.append(data)
 
@@ -59,6 +65,13 @@ class FakePKernel:
             message_buf = buf.peek(length)
             buf.consume(length)
             self.handle(darq.Message.decode_type(message_buf), message_buf)
+
+    def wait_for(self, count: int):
+        """Wait until this many messages have been received."""
+        deadline = time.monotonic() + TIMEOUT
+        while len(self.received) < count:
+            assert time.monotonic() < deadline, "messages not received"
+            time.sleep(0.01)
 
     def handle(self, message_type, message_buf):
         if message_type in self.ignore:
@@ -97,6 +110,16 @@ class FakePKernel:
             request.decode(message_buf)
             self.received.append(request)
 
+        elif message_type == darq.MessageType.RUN_REQUEST:
+            message = darq.RunRequest()
+            message.decode(message_buf)
+            self.received.append(message)
+
+        elif message_type == darq.MessageType.EXITED:
+            message = darq.Exited()
+            message.decode(message_buf)
+            self.received.append(message)
+
 
 @pytest.fixture
 def pproc(monkeypatch):
@@ -111,6 +134,10 @@ def pproc(monkeypatch):
     process._pkernel_sock.close()
     process._pkernel_sock = process_sock
     process.loop.add_socket(process_sock, process)
+
+    # Tests poll conditions the loop can't see (such as a thread ending):
+    # don't let an idle iteration block for long.
+    process.loop.MAX_TIMEOUT = 0.05
 
     monkeypatch.setitem(darq.syscall.__dict__, "_darq_process_state", process)
 
@@ -214,19 +241,29 @@ def test_kill_process(pproc):
 ################################################################
 
 @pytest.fixture
-def start_app(pproc, tmp_path, monkeypatch):
-    """Start darq_main() from the given source on the application thread."""
+def install_app(pproc, tmp_path, monkeypatch):
+    """Make the given source the application's main.py, without starting it."""
     monkeypatch.setattr(sys, "path", list(sys.path))
     monkeypatch.delitem(sys.modules, "main", raising=False)
 
-    def start(source: str):
+    def install(source: str):
         (tmp_path / "main.py").write_text(textwrap.dedent(source))
         pproc._exec_path = str(tmp_path)
+
+    yield install
+    monkeypatch.delitem(sys.modules, "main", raising=False)
+
+
+@pytest.fixture
+def start_app(pproc, install_app):
+    """Start darq_main() from the given source on the application thread."""
+
+    def start(source: str):
+        install_app(source)
         pproc.start_app()
         return pproc._app_thread
 
-    yield start
-    monkeypatch.delitem(sys.modules, "main", raising=False)
+    return start
 
 
 def test_kill_app_running(pproc, start_app):
@@ -338,3 +375,159 @@ def test_p_kernel_disconnect(pproc, start_app, blocked_in_pcall):
     assert pproc._pkernel_sock is None
     assert not thread.is_alive()
     pproc.disconnect()
+
+
+################################################################
+# Application exit
+################################################################
+
+def exited_messages(process) -> list:
+    return [m for m in process.kernel.received if isinstance(m, darq.Exited)]
+
+
+@pytest.mark.parametrize("body, status, error", [
+    ("return", 0, None),
+    ("return 0", 0, None),
+    ("return 3", 3, None),
+    ("return -1", -1, None),
+    ("return 'done'", 1, "darq_main returned 'done'"),
+    ("return 2 ** 40", 1, "darq_main returned 1099511627776"),
+    ("import sys; sys.exit()", 0, None),
+    ("import sys; sys.exit(5)", 5, None),
+    ("import sys; sys.exit('failed')", 1, "sys.exit() with 'failed'"),
+])
+def test_app_exit_reported(pproc, start_app, body, status, error):
+    thread = start_app(f"""
+        def darq_main():
+            {body}
+        """)
+    run_loop(pproc)
+
+    [exited] = exited_messages(pproc)
+    assert (exited.status, exited.get_error()) == (status, error)
+    assert not thread.is_alive()
+
+    # The session is closed, and the host exit status reflects the app's.
+    assert pproc._pkernel_sock is None
+    assert pproc.exit_status == (status if 0 <= status <= 255 else 1)
+
+
+def test_app_exception_reported(pproc, start_app):
+    start_app("""
+        def darq_main():
+            raise ValueError("boom")
+        """)
+    run_loop(pproc)
+
+    [exited] = exited_messages(pproc)
+    assert exited.status == 1
+    assert exited.get_error().startswith("Traceback (most recent call last):")
+    assert exited.get_error().rstrip().endswith("ValueError: boom")
+    assert pproc.exit_status == 1
+
+
+def test_app_exit_follows_its_last_pcalls(pproc, start_app):
+    # A one-way p-call queued just before the app returns must reach the
+    # p-kernel before the Exited message.
+    start_app("""
+        import darq
+        def darq_main():
+            darq.send_message(16385, 16386, b"last words")
+        """)
+    run_loop(pproc)
+
+    kinds = [type(m) for m in pproc.kernel.received]
+    assert kinds == [darq.SendMessage, darq.Exited]
+
+
+def test_killed_app_does_not_report_exit(pproc, start_app):
+    thread = start_app("""
+        import time
+        def darq_main():
+            while True:
+                time.sleep(0.01)
+        """)
+    pproc.loop.active = True
+    pproc.dispatch(darq.MessageType.KILL_PROCESS_RQST,
+                   darq.KillProcessRequest(0, pproc.getpid()).encode())
+    assert not thread.is_alive()
+
+    # Give a stray exit report the chance to be processed.
+    pproc.loop.next()
+    assert exited_messages(pproc) == []
+    assert pproc._app_result is None
+
+
+@pytest.mark.parametrize("value, result", [
+    (None, (0, None)),
+    (0, (0, None)),
+    (True, (1, None)),
+    (2 ** 31 - 1, (2 ** 31 - 1, None)),
+    (-2 ** 31, (-2 ** 31, None)),
+    (2 ** 31, (1, "returned 2147483648")),
+    (1.5, (1, "returned 1.5")),
+])
+def test_status_from_result(pproc, value, result):
+    assert pproc.status_from_result(value, "returned") == result
+
+
+################################################################
+# Starting: RUN_REQUEST and RUN_RESPONSE
+################################################################
+
+LONG_RUNNING_APP = """
+    import time
+    def darq_main():
+        while True:
+            time.sleep(0.01)
+    """
+
+
+def test_run_request(pproc):
+    pproc.send_run_request()
+    pproc.kernel.wait_for(1)
+    [request] = pproc.kernel.received
+    assert (request.dpid, request.host_pid) == (3, os.getpid())
+
+
+def test_app_not_started_before_run_response(pproc, install_app):
+    install_app(LONG_RUNNING_APP)
+    pproc.send_run_request()
+    pproc.loop.next()
+    assert pproc._app_thread is None
+
+
+def test_run_response_starts_app(pproc, install_app):
+    install_app(LONG_RUNNING_APP)
+    pproc.dispatch(darq.MessageType.RUN_RESPONSE, darq.RunResponse(0).encode())
+
+    thread = pproc._app_thread
+    assert thread is not None and thread.is_alive()
+
+    # A duplicate response doesn't start a second application.
+    pproc.dispatch(darq.MessageType.RUN_RESPONSE, darq.RunResponse(0).encode())
+    assert pproc._app_thread is thread
+    assert pproc.kill_app()
+
+
+def test_refused_run_response(pproc, install_app):
+    install_app(LONG_RUNNING_APP)
+    pproc.loop.active = True
+    pproc.dispatch(darq.MessageType.RUN_RESPONSE, darq.RunResponse(1).encode())
+
+    assert pproc._app_thread is None
+    assert pproc.exit_status == 1
+    assert not pproc.loop.active
+
+
+def test_app_that_fails_to_load(pproc, install_app):
+    install_app("""
+        raise ImportError("broken app")
+        """)
+    pproc.dispatch(darq.MessageType.RUN_RESPONSE, darq.RunResponse(0).encode())
+    run_loop(pproc)
+
+    [exited] = exited_messages(pproc)
+    assert exited.status == 1
+    assert exited.get_error().rstrip().endswith("ImportError: broken app")
+    assert pproc.exit_status == 1

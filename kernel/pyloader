@@ -7,6 +7,7 @@
 # - Passing p-call requests/messages to the p-kernel
 # - Delivering p-call responses to the application
 # - Executing the application code
+# - Reporting the application's exit status to the p-kernel
 #
 # There are two threads created by this stub.  The first (main) thread
 # runs an event loop servicing the socket connection to the p-kernel,
@@ -23,6 +24,7 @@ import socket
 import sys
 import threading
 import time
+import traceback
 import typing
 
 import darq
@@ -58,8 +60,19 @@ class PythonPProcess:
         # Open ports, by port number.
         self.ports: dict[int, darq.PortState] = {}
 
-        # Thread exit notification pipe.
-        self._exit_pipe_reader, self._exit_pipe_writer = os.pipe()
+        # Event loop wakeup mechanism for the application thread's exit, and
+        # the application's result: (status, error), set when it finishes.
+        self._exit_wakeup_reader, self._exit_wakeup_writer = socket.socketpair()
+        self._exit_wakeup_reader.setblocking(False)
+        self._app_result: tuple[int, str | None] | None = None
+
+        # Set when the application thread is being killed, rather than
+        # finishing by itself.
+        self._app_killed: bool = False
+
+        # Set once the application's exit has been reported, and the
+        # p-call session is closing.
+        self._exiting: bool = False
 
         # Transaction identifiers for p-kernel requests.  Only accessed from
         # the main thread.
@@ -77,6 +90,7 @@ class PythonPProcess:
         # Event loop.
         self.loop = darq.SelectEventLoop()
         self.loop.add_socket(self._queue_wakeup_reader, self)
+        self.loop.add_socket(self._exit_wakeup_reader, self)
         return
         
     def getpid(self) -> int:
@@ -150,11 +164,100 @@ class PythonPProcess:
             logging.warning(f"Mode {syscall.get_mode()} completion not implemented")
         return syscall
 
-    def signal_app_thread_exit(self):
-        """Call to signal loader that the user thread target function has exited."""
-        written = os.write(self._exit_pipe_writer, b'X')
-        if written != 1:
-            raise Exception("failed to write byte to thread exit pipe")
+    def run_darq_main(self, darq_main):
+        """Run the application's main function, and report how it ended.
+
+        Runs on the application thread.  A return value of None or 0,
+        or sys.exit() with no code, is success; an integer is the exit
+        status; anything else, including an exception, is status 1, with
+        a description of the failure."""
+
+        error = None
+        try:
+            status, error = self.status_from_result(darq_main(), "darq_main returned")
+        except SystemExit as e:
+            if self._app_killed:
+                logging.debug("Application thread killed.")
+                return
+            status, error = self.status_from_result(e.code, "sys.exit() with")
+        except BaseException:
+            status, error = 1, traceback.format_exc()
+
+        self.app_exited(status, error)
+        return
+
+    @staticmethod
+    def status_from_result(value, description: str) -> tuple[int, str | None]:
+        """Convert an application's result into (status, error).
+
+        :param value: darq_main's return value, or sys.exit()'s code.
+        :param description: How the value was given, for the error."""
+        if value is None:
+            return 0, None
+        if isinstance(value, int) and -2 ** 31 <= value < 2 ** 31:
+            return int(value), None
+        return 1, f"{description} {value!r}"
+
+    def app_exited(self, status: int, error: str | None):
+        """Record the application's result, and wake the main thread to report it.
+
+        Called on the application thread."""
+        self._app_result = (status, error)
+        self._exit_wakeup_writer.send(b'X')
+        return
+
+    def handle_app_exit(self):
+        """Report the application's exit to the p-kernel, and close the session."""
+
+        # Drain the wakeup socket.
+        try:
+            while self._exit_wakeup_reader.recv(4096):
+                pass
+        except BlockingIOError:
+            pass
+
+        if self._app_result is None or self._exiting:
+            return
+
+        # The thread has finished the application: let it end.
+        if self._app_thread is not None:
+            self._app_thread.join(1.0)
+
+        status, error = self._app_result
+        if status == 0:
+            logging.info("Application exited.")
+        else:
+            logging.info(f"Application exited with status {status}.")
+        if error:
+            logging.error(f"Application failed: {error}")
+        self.exit_status = status if 0 <= status <= 255 else 1
+
+        # Send any p-calls the application made before it finished first.
+        self.handle_syscall_queue()
+        self.send_to_p_kernel(darq.Exited(status, error))
+
+        if self._pkernel_sock is None:
+            self._end_app()
+            return
+
+        # Close the sending side, so the p-kernel reads Exited and then EOF.
+        # The socket is closed once the p-kernel closes its side: closing it
+        # with data unread would reset the connection.
+        self._exiting = True
+        try:
+            self._pkernel_sock.shutdown(socket.SHUT_WR)
+        except OSError:
+            # Already disconnected: there's nothing more to wait for.
+            self.handle_p_kernel_close()
+        return
+
+    def handle_p_kernel_close(self):
+        """Finish closing the p-call session, after the application exited."""
+        logging.debug("p-kernel closed the session.")
+        self.loop.cancel_socket(self._pkernel_sock)
+        self._pkernel_sock.close()
+        self._pkernel_sock = None
+        self._end_app()
         return
 
     def connect_to_p_kernel(self):
@@ -172,13 +275,20 @@ class PythonPProcess:
             self.handle_syscall_queue()
             return
 
+        if sock is self._exit_wakeup_reader:
+            self.handle_app_exit()
+            return
+
         try:
             data = sock.recv(65536)
         except ConnectionResetError:
             data = b''
 
         if not data:
-            self.handle_p_kernel_disconnect()
+            if self._exiting:
+                self.handle_p_kernel_close()
+            else:
+                self.handle_p_kernel_disconnect()
             return
 
         self.handle_bytes_from_p_kernel(data)
@@ -265,6 +375,11 @@ class PythonPProcess:
             message.decode(message_buf)
             self.complete_syscall(message)
 
+        elif message_type == darq.MessageType.RUN_RESPONSE:
+            message = darq.RunResponse()
+            message.decode(message_buf)
+            self.handle_run_response(message)
+
         elif message_type == darq.MessageType.KILL_PROCESS_RQST:
             message = darq.KillProcessRequest()
             message.decode(message_buf)
@@ -280,19 +395,40 @@ class PythonPProcess:
 
     def disconnect(self):
 
-        # Send exit message to p-kernel?
-
         # Close socket (and flush buffers).
         if self._pkernel_sock is not None:
             self._pkernel_sock.close()
             self._pkernel_sock = None
 
-    def send_running_message(self):
-        # Send startup confirmation to p-kernel.
-        message = darq.Running()
+    def send_run_request(self):
+        """Ask the p-kernel to let this process run.
+
+        The application is started once the p-kernel accepts: see
+        handle_run_response()."""
+        message = darq.RunRequest()
         message.dpid = self._dpid
         message.host_pid = os.getpid()
         self.send_to_p_kernel(message)
+        return
+
+    def handle_run_response(self, message: darq.RunResponse):
+        """Start the application, if the p-kernel has accepted this process."""
+        if self._app_thread is not None:
+            logging.warning("Duplicate RUN_RESPONSE ignored")
+            return
+
+        if message.result != 0:
+            logging.error(f"p-kernel refused to run this process (result {message.result}): exiting.")
+            self.exit_status = 1
+            self._end_app()
+            return
+
+        try:
+            self.start_app()
+        except Exception:
+            # Couldn't load the application (such as an error importing
+            # main.py): report it like an application failure.
+            self.app_exited(1, traceback.format_exc())
         return
 
     def handle_deliver_message(self, message: darq.DeliverMessage):
@@ -344,17 +480,11 @@ class PythonPProcess:
             "# Inject the process state structure into the syscall module.\n" \
             "import darq; darq.syscall.__dict__['_darq_process_state'] = _darq_process_state\n" \
             "\n" \
-            "# Run the application's main function, exiting quietly when\n" \
-            "# killed (see PythonPProcess.kill_app).\n" \
-            "def run_darq_main():\n" \
-            "    try:\n" \
-            "        main.darq_main()\n" \
-            "    except SystemExit:\n" \
-            "        logging.debug('Application thread killed.')\n" \
-            "\n" \
-            "# Start the application's main function in a new thread.\n" \
+            "# Start the application's main function in a new thread, which\n" \
+            "# reports how it ended (see PythonPProcess.run_darq_main).\n" \
             "try:\n" \
-            "    t = threading.Thread(target=run_darq_main, name='darq_main')\n" \
+            "    t = threading.Thread(target=_darq_process_state.run_darq_main,\n" \
+            "                         args=(main.darq_main,), name='darq_main')\n" \
             "    logging.debug('Starting application thread.')\n" \
             "    t.start()\n" \
             "finally:\n" \
@@ -387,6 +517,7 @@ class PythonPProcess:
         # Raise SystemExit in the application thread.  Python delivers it
         # when the thread next executes bytecode, so it won't interrupt a
         # thread blocked in native code.
+        self._app_killed = True
         ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(thread.ident),
                                                    ctypes.py_object(SystemExit))
 
@@ -461,12 +592,10 @@ if __name__ == "__main__":
 
     # Connect to p-kernel.
     pproc.connect_to_p_kernel()
-    pproc.send_running_message()
+    pproc.send_run_request()
 
-    # Start the application code in a new thread.
-    pproc.start_app()
-
-    # Wait for events, either from app code, or from p-kernel.
+    # Wait for events, from the p-kernel (starting with the RUN_RESPONSE that
+    # starts the application thread), or from the application.
     pproc.run()
 
     # Disconnect (nicely) from p-kernel.

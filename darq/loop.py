@@ -26,9 +26,17 @@ class EventLoopInterface:
     for GUI applications."""
 
     def add_socket(self, sock: socket.socket, callback):
+        """Monitor a socket for readability."""
         pass
 
     def cancel_socket(self, sock: socket.socket):
+        pass
+
+    def set_write_interest(self, sock: socket.socket, enabled: bool):
+        """Start or stop monitoring a registered socket for writability.
+
+        Enable it only while there is data waiting to be sent: an idle
+        socket is almost always writable."""
         pass
 
     def add_timer(self, duration: float, callback) -> int:
@@ -87,13 +95,15 @@ class SelectTimerState:
         self.listener: TimerListener = listener
         self.expiry: float = 0
 
-    def set_epxiry(self, now: float) -> float:
+    def set_expiry(self, now: float) -> float:
         self.expiry = now + self.duration
         return self.expiry
 
 
 class SelectTimerCollection:
-    "Collection of timeouts managed by the select event loop."""
+    """Collection of timeouts managed by the select event loop.
+
+    Expiry times are on the time.monotonic() clock."""
 
     def __init__(self):
         """Constructor."""
@@ -117,6 +127,7 @@ class SelectTimerCollection:
         timer_state = SelectTimerState(self.next_id, interval, listener)
         self.next_id += 1
 
+        timer_state.set_expiry(time.monotonic())
         self.timers.append(timer_state)
         self.timers.sort(key=lambda x: x.expiry)
 
@@ -136,27 +147,56 @@ class SelectTimerCollection:
             i += 1
         return False
 
-    def get_next_expiry(self) -> float:
-        """Return the absolute timestamp for the next due timer.
+    def get_next_expiry(self) -> typing.Optional[float]:
+        """Return the monotonic timestamp for the next due timer.
 
-        :returns: Next expiry timestamp, or 30s in future if none."""
+        :returns: Next expiry timestamp, or None if there are no timers."""
         if len(self.timers) == 0:
-            return time.time() + 30.0
+            return None
 
         return self.timers[0].expiry
+
+    def get_due(self, now: float) -> typing.List[SelectTimerState]:
+        """Return the timers due at or before now, earliest first.
+
+        :param now: Current monotonic timestamp."""
+        return [t for t in self.timers if t.expiry <= now]
+
+    def is_active(self, timer_state: SelectTimerState) -> bool:
+        """Return True if the timer has not been cancelled."""
+        return any(t is timer_state for t in self.timers)
+
+    def reschedule(self, timer_state: SelectTimerState, now: float):
+        """Set a fired timer's next expiry.
+
+        Missed intervals are skipped, rather than fired in a burst.
+
+        :param timer_state: Timer that has just expired.
+        :param now: Current monotonic timestamp."""
+        timer_state.expiry += timer_state.duration
+        if timer_state.expiry <= now:
+            timer_state.set_expiry(now)
+        self.timers.sort(key=lambda x: x.expiry)
 
 
 class SelectEventLoop(EventLoopInterface):
     """A simple select-based event loop."""
 
+    # Longest wait in select() when no timer is due sooner.
+    MAX_TIMEOUT = 10.0
+
     def __init__(self):
         """Constructor."""
         self.sockets: typing.Dict[socket.socket, typing.Any] = {}
+        self.writers: typing.Set[socket.socket] = set()
         self.timers: SelectTimerCollection = SelectTimerCollection()
         self.active: bool = False
 
     def add_socket(self, sock: socket.socket, listener: SocketListener):
         """Add socket to event loop for monitoring.
+
+        The socket is monitored for readability; see set_write_interest()
+        for writability.
 
         :param sock: Socket to monitor.
         :param listener: Listener class for callback to report events."""
@@ -167,6 +207,20 @@ class SelectEventLoop(EventLoopInterface):
 
         :param sock: Socket for which to cancel monitoring."""
         del self.sockets[sock]
+        self.writers.discard(sock)
+
+    def set_write_interest(self, sock: socket.socket, enabled: bool):
+        """Start or stop monitoring a registered socket for writability.
+
+        :param sock: Registered socket.
+        :param enabled: True to report writability via on_writeable()."""
+        if sock not in self.sockets:
+            raise SocketNotFoundError(sock)
+
+        if enabled:
+            self.writers.add(sock)
+        else:
+            self.writers.discard(sock)
 
     def add_timer(self, duration, listener) -> int:
         """Add timer to event loop.
@@ -194,18 +248,17 @@ class SelectEventLoop(EventLoopInterface):
         while self.active:
             self.next()
 
+    def get_timeout(self) -> float:
+        """Return seconds until the next timer is due, for select()."""
+        expiry = self.timers.get_next_expiry()
+        if expiry is None:
+            return self.MAX_TIMEOUT
+        return min(max(0.0, expiry - time.monotonic()), self.MAX_TIMEOUT)
+
     def next(self):
         """Process the next event."""
 
-        if len(self.timers) > 0:
-            timeout = self.timers[0].expiry
-            for t in self.timers[1:]:
-                # FIXME: get next timer expiry time, or fallback timeout
-                pass
-        else:
-            timeout = 10.0
-
-        rr, rw, _ = select.select(self.sockets, self.sockets, [], timeout)
+        rr, rw, _ = select.select(self.sockets, self.writers, [], self.get_timeout())
 
         for s in rr:
             listener = self.sockets.get(s)
@@ -217,11 +270,24 @@ class SelectEventLoop(EventLoopInterface):
             if listener is not None:
                 listener.on_writeable(s)
 
-        for t in self.timers:
-            now = time.time()
-            if t.expiry < now:
-                t.expiry += t.duration
-                t.listener.on_timeout(t.timer_id, t.expiry, now)
+        self.run_timers()
+
+    def run_timers(self):
+        """Call the listeners of all due timers.
+
+        Each timer is rescheduled before its listener is called, so the
+        listener can cancel it.  Timers cancelled by an earlier listener
+        in the same pass are not called, and timers added during the
+        pass wait for the next."""
+
+        now = time.monotonic()
+        for t in self.timers.get_due(now):
+            if not self.timers.is_active(t):
+                continue
+
+            expiry = t.expiry
+            self.timers.reschedule(t, now)
+            t.listener.on_timeout(t.timer_id, expiry, now)
 
     def stop(self):
         """Exit event loop at next iteration."""
@@ -237,9 +303,10 @@ class QtSocketState:
         self.read_notifier.activated.connect(self.on_readable)
         self.read_notifier.setEnabled(True)
 
+        # Writability is monitored only on request: see set_write_interest().
         self.write_notifier = QSocketNotifier(sock.fileno(), QSocketNotifier.Type.Write)
         self.write_notifier.activated.connect(self.on_writeable)
-        self.read_notifier.setEnabled(True)
+        self.write_notifier.setEnabled(False)
         return
 
     def on_readable(self, sock):
@@ -261,8 +328,8 @@ class QtEventLoop(EventLoopInterface):
         return
 
     def add_socket(self, sock: socket.socket, callback: SocketListener):
-        # All sockets have both read and write monitoring; no sockets
-        # support exception monitoring.
+        # Sockets are monitored for reading, and for writing only on
+        # request; no sockets support exception monitoring.
         if sock.fileno() in self.sockets:
             raise DuplicateSocketError(sock)
 
@@ -282,6 +349,13 @@ class QtEventLoop(EventLoopInterface):
         state.write_notifier = None
 
         del self.sockets[sock.fileno()]
+        return
+
+    def set_write_interest(self, sock: socket.socket, enabled: bool):
+        if sock.fileno() not in self.sockets:
+            raise SocketNotFoundError(sock)
+
+        self.sockets[sock.fileno()].write_notifier.setEnabled(enabled)
         return
 
     def add_timer(self, duration: float, callback: TimerListener) -> int:

@@ -50,19 +50,28 @@ package that
 is using prepended to
 .BR PYTHONPATH .
 .PP
-The new process connects back and announces itself with a RUNNING
-message; only then is the
+The new process connects back and asks to run with a RUN_REQUEST
+message.
+.B pkernel
+accepts it only for a dpid it has spawned and that has not yet
+started: it answers with a RUN_RESPONSE, and only then is the
 .B spawn_process
 call answered.
+For an unknown dpid, or one that is not newly spawned, the
+RUN_RESPONSE refuses the request and the connection is closed.
+Any other first message also causes the connection to be closed.
+.PP
+When a process' application finishes, it reports its exit status, and
+a description of any failure, in an EXITED message, then closes its
+connection.
 .B pkernel
-accepts RUNNING only for a dpid it has spawned and that has not yet
-started.
-Any other first message, or an unknown dpid, causes the connection to
-be closed.
+records both in the process table, for a future
+.B wait
+p-call.
 .PP
 Exited children are reaped on
 .BR SIGCHLD .
-If a child exits before it reports RUNNING, its
+If a child exits before it sends RUN_REQUEST, its
 .B spawn_process
 call is answered with an error.
 .SS Process states
@@ -71,17 +80,18 @@ call is answered with an error.
 Table entry created, but the process is not yet spawned.
 .TP
 .B SPAWNED
-The loader has been started, but has not reported RUNNING.
+The loader has been started, but has not sent RUN_REQUEST.
 .TP
 .B RUNNING
 The process is connected and able to make p-calls.
 .TP
 .B ZOMBIE
-The process disconnected after a
-.BR kill_process .
+The process disconnected after reporting its exit, or after a
+.BR kill_process ;
+its exit status has not yet been collected.
 .TP
 .B LOST
-The process disconnected without being killed.
+The process disconnected without reporting its exit or being killed.
 .SH OPTIONS
 None.
 .SH ENVIRONMENT
@@ -117,7 +127,7 @@ The listening port is fixed at 11000.
 The boot sequence does not yet start any system services, and
 shutdown does not yet stop any processes.
 .PP
-There is no timeout on a spawned process reporting RUNNING, or on a
+There is no timeout on a spawned process sending RUN_REQUEST, or on a
 killed process disconnecting.
 ZOMBIE entries are never removed from the process table.
 .SH SEE ALSO

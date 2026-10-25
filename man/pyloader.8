@@ -21,9 +21,11 @@ p-call, and is not meant to be run by hand.
 .B pyloader
 connects to the p-kernel on the loopback interface at
 .IR p-kernel-port ,
-sends a RUNNING message for
-.IR dpid ,
-then imports
+and sends a RUN_REQUEST message for
+.IR dpid .
+Once the p-kernel accepts it with a RUN_RESPONSE,
+.B pyloader
+imports
 .I main.py
 from
 .I executable-path
@@ -50,9 +52,33 @@ to make it easy to find with
 .B pyloader
 exits when the application's
 .B darq_main()
-returns, or when the p-kernel delivers a
+finishes, or when the p-kernel delivers a
 .B kill_process
 for this dpid.
+.PP
+When
+.B darq_main()
+finishes, its exit status is reported to the p-kernel in an EXITED
+message:
+.IP \(bu 2
+returning
+.B None
+or 0, or calling
+.B sys.exit()
+with no code, is status 0;
+.IP \(bu
+returning an integer, or calling
+.BI sys.exit( n )\fR,
+is that status;
+.IP \(bu
+anything else, including an uncaught exception, is status 1, with a
+description of the failure (the traceback, for an exception).
+.PP
+Any p-calls the application made before it finished are sent first.
+.B pyloader
+then closes its side of the connection, waits for the p-kernel to
+close its side, and exits.
+.PP
 A killed application thread is stopped by raising
 .B SystemExit
 in it; any p-call it is blocked in is abandoned.
@@ -61,9 +87,14 @@ native code),
 .B pyloader
 exits immediately with status 1.
 .PP
-If the p-kernel closes the connection, for instance because it does
+If the p-kernel refuses the RUN_REQUEST, for instance because it does
 not recognise
 .IR dpid ,
+.B pyloader
+logs an error and exits with status 1, without starting the
+application.
+.PP
+If the p-kernel closes the connection while the application is running,
 .B pyloader
 logs
 .RB \(lq "Disconnected by p-kernel: exiting." \(rq,
@@ -94,14 +125,19 @@ package to be imported.
 .BR pkernel (8)
 sets this when it spawns the loader.
 .SH EXIT STATUS
+When the application finishes,
+.B pyloader
+exits with the application's status, if it is from 0 to 255, or 1
+otherwise.
+Otherwise:
 .TP
 0
-The application finished, or was killed by
+The application was killed by
 .BR kill_process .
 .TP
 1
-The p-kernel closed the connection, the application thread could not
-be stopped, or usage help was requested.
+The p-kernel refused to run the process or closed the connection, the
+application thread could not be stopped, or usage help was requested.
 .TP
 42
 The wrong number of arguments was given.

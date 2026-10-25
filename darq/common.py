@@ -18,6 +18,7 @@ __all__ = [
     "ClosePortResponse",
     "DeliverChunk",
     "DeliverMessage",
+    "Exited",
     "IPC_PORT",
     "KillProcessRequest",
     "KillProcessResponse",
@@ -27,7 +28,8 @@ __all__ = [
     "OpenPortResponse",
     "Reboot",
     "RECV_BUFLEN",
-    "Running",
+    "RunRequest",
+    "RunResponse",
     "SendChunk",
     "SendMessage",
     "Shutdown",
@@ -61,11 +63,13 @@ class MessageType(IntEnum):
     SHUTDOWN = 10
     GET_PID = 11
     KEEP_ALIVE = 12
-    RUNNING = 13
+    RUN_REQUEST = 13
     SPAWN_PROCESS_RQST = 14
     SPAWN_PROCESS_RESP = 15
     KILL_PROCESS_RQST = 16
     KILL_PROCESS_RESP = 17
+    EXITED = 18
+    RUN_RESPONSE = 19
 
 
 ################################################################
@@ -278,9 +282,14 @@ class Message:
 # p-Call Messages
 ########################################################################
 
-class Running(Message):
+class RunRequest(Message):
+    """First message from a newly-spawned process, asking to run.
+
+    The process must not start its application until the p-kernel
+    accepts it with a RunResponse."""
+
     def __init__(self, dpid: int = 0):
-        super().__init__(MessageType.RUNNING)
+        super().__init__(MessageType.RUN_REQUEST)
         self.set_length(self.header_length + 16)
         self.dpid: int = dpid
         self.host_pid: int = 0
@@ -298,6 +307,29 @@ class Running(Message):
         bits = struct.unpack(">QQ", buffer[self.header_length:self.length])
         self.dpid = bits[0]
         self.host_pid = bits[1]
+        return
+
+
+class RunResponse(Message):
+    """The p-kernel's answer to a RunRequest: 0 means the process may run."""
+
+    def __init__(self, result: int = 0):
+        super().__init__(MessageType.RUN_RESPONSE)
+        self.set_length(self.header_length + 8)
+        self.result: int = result
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">Lxxxx", self.result)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        bits = struct.unpack(">Lxxxx", buffer[self.header_length:self.length])
+        self.result = bits[0]
         return
 
 
@@ -494,6 +526,43 @@ class KillProcessResponse(Message):
         bits = struct.unpack(">LL", buffer[self.header_length:self.length])
         self.request_id = bits[0]
         self.result = bits[1]
+        return
+
+
+class Exited(Message):
+    """Report from a process that its application has finished.
+
+    The status is the application's exit status: 0 for success.  The
+    error is a description of the failure (such as a traceback), or
+    empty if there was none."""
+
+    def __init__(self, status: int = 0, error: str | None = None):
+        super().__init__(MessageType.EXITED)
+        self.status = status
+        self.error = b'' if error is None else error.encode("utf-8")
+        self.set_length(self.header_length + 8 + self.padded_length(self.error))
+
+    def get_error(self) -> str | None:
+        return self.error.decode("utf-8") if self.error else None
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">lL", self.status, len(self.error))
+        buf += self.pad_bytes(self.error)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        error_start = self.header_length + 8
+        bits = struct.unpack(">lL", buffer[self.header_length:error_start])
+        self.status = bits[0]
+        error_length = bits[1]
+        if error_start + error_length > self.length:
+            raise MessageDecodingError("error string overruns message")
+        self.error = buffer[error_start:error_start + error_length]
         return
 
 

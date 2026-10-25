@@ -58,7 +58,7 @@ class KernelProcessStatus(IntEnum):
     # Table entry created, but process not yet spawned.
     ALLOCATED = 0
 
-    # Process spawned, but not yet received Running message.
+    # Process spawned, but not yet received its RunRequest.
     SPAWNED = 1
 
     # Process running.
@@ -145,12 +145,16 @@ class KernelProcessState:
         # Kill requests awaiting this process' exit: (requester, request_id).
         self._kill_requests: list[tuple["KernelProcessState", int]] = []
 
-        # Spawn request awaiting this process' Running message, if any.
+        # Spawn request awaiting this process' RunRequest, if any.
         self._spawn_request: tuple["KernelProcessState", int] | None = None
 
         # Host process running the language stub (see also _hpid).
         self._child: subprocess.Popen | None = None
 
+        # Application's exit status and error description, once it has
+        # reported its exit (see the future wait() p-call).
+        self._exit_status: int | None = None
+        self._exit_error: str | None = None
 
     def name(self) -> str:
         """(Internal) Log message prefix."""
@@ -225,6 +229,25 @@ class KernelProcessState:
         request = self._spawn_request
         self._spawn_request = None
         return request
+
+    # Exit
+
+    def set_exit(self, status: int, error: str | None):
+        """Record the application's exit status and error description."""
+        self._exit_status = status
+        self._exit_error = error
+
+    def has_exited(self) -> bool:
+        """Return True if the application has reported its exit."""
+        return self._exit_status is not None
+
+    def get_exit_status(self) -> int | None:
+        """Return the application's exit status, or None if it hasn't exited."""
+        return self._exit_status
+
+    def get_exit_error(self) -> str | None:
+        """Return the description of the application's failure, if any."""
+        return self._exit_error
 
     # Kill requests
 
@@ -383,7 +406,7 @@ class PseudoKernel(SocketListener, TimerListener):
         self.lenses = []
 
         # Map of accepted sockets, not yet associated with a
-        # KernelProcessState (awaiting their RUNNING message).
+        # KernelProcessState (awaiting their RunRequest).
         self.incoming_connections = {}
 
         # Host platform.
@@ -493,7 +516,9 @@ class PseudoKernel(SocketListener, TimerListener):
             if requester is not process:
                 self.send_kill_process_response(requester, request_id, 0)
 
-        if kill_requests:
+        # A process that was killed, or reported its exit, is a zombie until
+        # its exit status is collected; otherwise, it was lost.
+        if kill_requests or process.has_exited():
             process.set_status(KernelProcessStatus.ZOMBIE)
         else:
             process.set_status(KernelProcessStatus.LOST)
@@ -519,8 +544,22 @@ class PseudoKernel(SocketListener, TimerListener):
         logging.info(f"{name} disconnected.")
         return
 
+    def handle_exited(self, process: KernelProcessState, message: darq.Exited):
+        """Record a process' report that its application has finished.
+
+        The process then closes its p-call session, which makes it a
+        zombie (see handle_disconnect)."""
+        if process.has_exited():
+            logging.warning(f"{process.name()} reported its exit again")
+
+        error = message.get_error()
+        process.set_exit(message.status, error)
+        logging.info(f"{process.name()} exited with status {message.status}"
+                     + (f": {error}" if error else ""))
+        return
+
     def handle_incoming_disconnect(self, reader: TemporaryReader):
-        """Close a connection that hasn't (successfully) sent RUNNING.
+        """Close a connection that hasn't (successfully) sent RUN_REQUEST.
 
         :param reader: Handler for the unidentified connection."""
         sock = reader.get_socket()
@@ -796,26 +835,29 @@ class PseudoKernel(SocketListener, TimerListener):
         # Start error timer.
         # FIXME
 
-        # That's it: when the stub starts, it'll connect and send a Running
-        # message, triggering the spawn_process_response.
+        # That's it: when the stub starts, it'll connect and send a
+        # RunRequest, triggering the spawn_process_response.
         return dpid
 
-    def handle_running(self, incoming_connection, message: darq.Running):
-        """Handle startup notification from newly-spawned user process."""
-        logging.info(f"Socket [{incoming_connection.get_socket().fileno()}] handle_running(dpid={message.dpid})")
+    def handle_run_request(self, incoming_connection, message: darq.RunRequest):
+        """Handle a newly-spawned user process asking to run.
+
+        The process waits for the RunResponse before starting its
+        application."""
+        logging.info(f"Socket [{incoming_connection.get_socket().fileno()}] handle_run_request(dpid={message.dpid})")
 
         # Add socket and fd table entries.
         process = self._process_table.get(message.dpid)
         if not process:
-            logging.error(f"WTF, no process table entry for RUNNING with DPID {message.dpid}")
-            self.handle_incoming_disconnect(incoming_connection)
+            logging.error(f"WTF, no process table entry for RUN_REQUEST with DPID {message.dpid}")
+            self.reject_run_request(incoming_connection)
             return
 
-        # Only a newly-spawned process can report that it's running.
+        # Only a newly-spawned process can ask to run.
         if process.get_status() != KernelProcessStatus.SPAWNED:
-            logging.error(f"RUNNING for DPID {message.dpid} rejected: "
+            logging.error(f"RUN_REQUEST for DPID {message.dpid} rejected: "
                           f"process is {process.get_status().name}, not SPAWNED")
-            self.handle_incoming_disconnect(incoming_connection)
+            self.reject_run_request(incoming_connection)
             return
 
         # Remove incoming connection handler.
@@ -830,6 +872,9 @@ class PseudoKernel(SocketListener, TimerListener):
         process.set_status(KernelProcessStatus.RUNNING)
         process.set_host_pid(message.host_pid)
 
+        # Let the process start its application.
+        process.send_data(darq.RunResponse(0).encode())
+
         # Answer the request that spawned this process.
         spawn_request = process.take_spawn_request()
         if spawn_request is not None:
@@ -837,7 +882,7 @@ class PseudoKernel(SocketListener, TimerListener):
             self.send_spawn_process_response(requester, request_id,
                                              process.get_dpid(), 0)
 
-        # Hand over anything received after the RUNNING message.
+        # Hand over anything received after the RUN_REQUEST message.
         leftover = incoming_connection.get_buffer()
         if leftover.length() > 0:
             process.get_buffer().append(leftover.peek(leftover.length()))
@@ -845,6 +890,15 @@ class PseudoKernel(SocketListener, TimerListener):
             self.dispatch(process)
         return
 
+
+    def reject_run_request(self, incoming_connection):
+        """Refuse a RunRequest, and close the connection."""
+        try:
+            incoming_connection.get_socket().sendall(darq.RunResponse(1).encode())  # FIXME: better errno
+        except OSError as e:
+            logging.warning(f"{incoming_connection.name()} couldn't send RUN_RESPONSE: {e}")
+        self.handle_incoming_disconnect(incoming_connection)
+        return
 
     def handle_open_port_request(self,
                                  process: KernelProcessState,
@@ -989,7 +1043,7 @@ class PseudoKernel(SocketListener, TimerListener):
     def dispatch_incoming(self, reader: TemporaryReader):
         """Process data received on a connection not yet identified.
 
-        The first message must be RUNNING: anything else drops the
+        The first message must be RUN_REQUEST: anything else drops the
         connection."""
 
         try:
@@ -998,20 +1052,20 @@ class PseudoKernel(SocketListener, TimerListener):
                 return
 
             message_type, message_bytes = next_message
-            if message_type != darq.MessageType.RUNNING:
+            if message_type != darq.MessageType.RUN_REQUEST:
                 logging.error(f"{reader.name()} sent message type "
-                              f"[{message_type}] before RUNNING")
+                              f"[{message_type}] before RUN_REQUEST")
                 self.handle_incoming_disconnect(reader)
                 return
 
-            message = darq.Running()
+            message = darq.RunRequest()
             message.decode(message_bytes)
         except darq.MessageDecodingError as e:
             logging.error(f"{reader.name()} invalid message: {e}")
             self.handle_incoming_disconnect(reader)
             return
 
-        self.handle_running(reader, message)
+        self.handle_run_request(reader, message)
         return
 
     def dispatch(self, process: KernelProcessState):
@@ -1064,6 +1118,11 @@ class PseudoKernel(SocketListener, TimerListener):
             message = darq.KillProcessRequest()
             message.decode(message_bytes)
             self.handle_kill_process_request(process, message)
+
+        elif message_type == darq.MessageType.EXITED:
+            message = darq.Exited()
+            message.decode(message_bytes)
+            self.handle_exited(process, message)
 
         elif message_type == darq.MessageType.REBOOT:
             message = darq.Reboot()

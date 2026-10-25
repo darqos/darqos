@@ -16,6 +16,7 @@ from darq.common import (
     ClosePortResponse,
     DeliverChunk,
     DeliverMessage,
+    Exited,
     KillProcessRequest,
     KillProcessResponse,
     Message,
@@ -23,7 +24,8 @@ from darq.common import (
     OpenPortRequest,
     OpenPortResponse,
     Reboot,
-    Running,
+    RunRequest,
+    RunResponse,
     SendChunk,
     SendMessage,
     Shutdown,
@@ -69,7 +71,7 @@ class TestMessage:
         assert d.length == 1234
 
     def test_init_copies_header(self):
-        m = Message(MessageType.RUNNING)
+        m = Message(MessageType.RUN_REQUEST)
         m.set_length(24)
 
         d = Message()
@@ -108,30 +110,46 @@ class TestMessage:
 # Fixed-size messages
 ################################################################
 
-class TestRunning:
+class TestRunRequest:
     def test_roundtrip(self):
-        m = Running(dpid=42)
+        m = RunRequest(dpid=42)
         m.host_pid = 31337
         buf = m.encode()
-        check_header(buf, MessageType.RUNNING)
+        check_header(buf, MessageType.RUN_REQUEST)
 
-        d = Running()
+        d = RunRequest()
         d.decode(buf)
         assert d.dpid == 42
         assert d.host_pid == 31337
 
     def test_max_values(self):
-        m = Running(dpid=UInt64.max())
+        m = RunRequest(dpid=UInt64.max())
         m.host_pid = UInt64.max()
-        d = Running()
+        d = RunRequest()
         d.decode(m.encode())
         assert d.dpid == UInt64.max()
         assert d.host_pid == UInt64.max()
 
     def test_truncated_raises(self):
-        buf = Running(dpid=1).encode()
+        buf = RunRequest(dpid=1).encode()
         with pytest.raises(MessageDecodingError):
-            Running().decode(buf[:-1])
+            RunRequest().decode(buf[:-1])
+
+
+class TestRunResponse:
+    @pytest.mark.parametrize("result", [0, 1, 2 ** 32 - 1])
+    def test_roundtrip(self, result):
+        buf = RunResponse(result).encode()
+        check_header(buf, MessageType.RUN_RESPONSE)
+        assert len(buf) == HEADER_LENGTH + 8
+
+        d = RunResponse()
+        d.decode(buf)
+        assert d.result == result
+
+    def test_truncated_raises(self):
+        with pytest.raises(MessageDecodingError):
+            RunResponse().decode(RunResponse(0).encode()[:-1])
 
 
 class TestOpenPortRequest:
@@ -335,6 +353,42 @@ class TestSpawnProcessResponse:
     def test_length_set_on_construction(self):
         m = SpawnProcessResponse(request_id=5, result=0, dpid=17, error=None)
         assert m.length == HEADER_LENGTH + 20
+
+
+class TestExited:
+    @pytest.mark.parametrize("status", [0, 1, 255, -1, 2 ** 31 - 1, -2 ** 31])
+    def test_roundtrip_status(self, status):
+        buf = Exited(status).encode()
+        check_header(buf, MessageType.EXITED)
+
+        d = Exited()
+        d.decode(buf)
+        assert d.status == status
+        assert d.get_error() is None
+
+    @pytest.mark.parametrize("error", ["E", "ValueError: boom", "Traceback (most recent call last):\n  ...\n", "échec"])
+    def test_roundtrip_error(self, error):
+        buf = Exited(1, error).encode()
+        assert len(buf) % 4 == 0
+
+        d = Exited()
+        d.decode(buf)
+        assert d.status == 1
+        assert d.get_error() == error
+
+    def test_length_set_on_construction(self):
+        assert Exited(0).length == HEADER_LENGTH + 8
+        assert Exited(1, "abcde").length == HEADER_LENGTH + 8 + 8
+
+    def test_truncated_raises(self):
+        with pytest.raises(MessageDecodingError):
+            Exited().decode(Exited(1, "error").encode()[:-1])
+
+    def test_error_overrun_raises(self):
+        buf = bytearray(Exited(1, "abc").encode())
+        struct.pack_into(">L", buf, HEADER_LENGTH + 4, 100)
+        with pytest.raises(MessageDecodingError):
+            Exited().decode(bytes(buf))
 
 
 ################################################################
