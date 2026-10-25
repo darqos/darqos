@@ -1,0 +1,289 @@
+#! /usr/bin/env python3
+# darqos
+# Copyright (C) 2026 David Arnold
+
+
+import argparse
+import json
+import os
+import re
+import sys
+from typing import List, Dict, Any
+
+
+# Type alignments
+TYPE_MAP = {
+    'bool':    {"size": 1, "align": 1},
+    'int8':    {"size": 1, "align": 1}, 'uint8':   {"size": 1, "align": 1},
+    'int16':   {"size": 2, "align": 2}, 'uint16':  {"size": 2, "align": 2},
+    'int32':   {"size": 4, "align": 4}, 'uint32':  {"size": 4, "align": 4},
+    'int64':   {"size": 8, "align": 8}, 'uint64':  {"size": 8, "align": 8},
+    'real32':  {"size": 4, "align": 4}, 'real64':  {"size": 8, "align": 8},
+    'opaque':  {"size": 16, "align": 8}, # Vector descriptor pointer layout
+    'port':    {"size": 4, "align": 4},  # uint32, handled specially by the IPC system
+}
+
+
+# Message header
+HEADER_FIELDS = [
+    # Transaction id matching a reply to its request; 0 for one-way    
+    {"name": "txid",    "type": "uint32"},
+
+    # Reserved, must be 0
+    {"name": "flags",   "type": "uint16"},
+
+    # Method number, assigned in the DIDL source (1-65535; 0 is reserved)
+    {"name": "method", "type": "uint16"},
+]
+
+
+# Lexer patterns for language tokens
+TOKEN_SPEC = [
+    ('COMMENT',   r'\/\/.*'),
+    ('LIBRARY',   r'\blibrary\b'),
+    ('STRUCT',    r'\bstruct\b'),
+    ('PROTOCOL',  r'\bprotocol\b'),
+    ('ARROW',     r'->'),
+    ('NUMBER',    r'\d+'),
+    ('ID',        r'[a-zA-Z_][a-zA-Z0-9_\.]*'),
+    ('LBRACE',    r'\{'), ('RBRACE',    r'\}'),
+    ('LPAR',      r'\('), ('RPAR',      r'\)'),
+    ('SEMI',      r';'),   ('COMMA',     r','),
+    ('COLON',     r':'),
+    ('WS',        r'\s+'),
+    ('MISMATCH',  r'.'),
+]
+
+
+class DidlError(Exception):
+    """A compile error tied to a source position (1-based line and column)."""
+    def __init__(self, msg: str, line: int, col: int):
+        super().__init__(msg)
+        self.line = line
+        self.col = col
+
+
+class Token:
+    def __init__(self, type_: str, value: str, line: int, col: int):
+        self.type = type_
+        self.value = value
+        self.line = line
+        self.col = col
+
+    def __repr__(self):
+        return f"{self.type}({self.value})"
+
+
+
+def lex(code: str) -> List[Token]:
+    tokens = []
+    regex = '|'.join(f'(?P<{pair[0]}>{pair[1]})' for pair in TOKEN_SPEC)
+    line, line_start = 1, 0
+    for mo in re.finditer(regex, code):
+        kind = mo.lastgroup
+        val = mo.group(kind)
+        col = mo.start() - line_start + 1
+        if kind == 'MISMATCH': raise DidlError(f"Unexpected token characters: {val}", line, col)
+        if kind != 'WS' and kind != 'COMMENT':
+            tokens.append(Token(kind, val, line, col))
+        # Advance line tracking past any newlines inside this match
+        newlines = val.count('\n')
+        if newlines:
+            line += newlines
+            line_start = mo.start() + val.rindex('\n') + 1
+    tokens.append(Token('EOF', '', line, len(code) - line_start + 1))
+    return tokens
+
+
+class Parser:
+    def __init__(self, tokens: List[Token]):
+        self.tokens = tokens
+        self.pos = 0
+
+    def peek(self) -> Token: return self.tokens[self.pos]
+    def consume(self, expected_type: str) -> Token:
+        t = self.peek()
+        if t.type != expected_type: raise DidlError(f"Expected {expected_type}, got {t}", t.line, t.col)
+        self.pos += 1
+        return t
+
+    def parse(self) -> Dict[str, Any]:
+        ast = {"library": "", "structs": [], "protocols": []}
+        while self.peek().type != 'EOF':
+            t = self.peek()
+            if t.type == 'LIBRARY':
+                self.consume('LIBRARY')
+                ast["library"] = self.consume('ID').value
+                self.consume('SEMI')
+            elif t.type == 'STRUCT': ast["structs"].append(self.parse_struct())
+            elif t.type == 'PROTOCOL': ast["protocols"].append(self.parse_protocol())
+            else: raise DidlError(f"Unexpected global scope token: {t}", t.line, t.col)
+        return ast
+
+    def parse_struct(self) -> Dict[str, Any]:
+        self.consume('STRUCT')
+        name = self.consume('ID')
+        self.consume('LBRACE')
+        fields = []
+        while self.peek().type != 'RBRACE':
+            type_ = self.consume('ID')
+            f_name = self.consume('ID').value
+            self.consume('SEMI')
+            fields.append({"name": f_name, "type": type_.value, "line": type_.line, "col": type_.col})
+        self.consume('RBRACE')
+        return {"name": name.value, "raw_fields": fields, "line": name.line, "col": name.col}
+
+    def parse_protocol(self) -> Dict[str, Any]:
+        self.consume('PROTOCOL')
+        name = self.consume('ID').value
+        self.consume('LBRACE')
+        methods = []
+        while self.peek().type != 'RBRACE':
+            number = self.consume('NUMBER')
+            self.consume('COLON')
+            m_name = self.consume('ID')
+            self.consume('LPAR')
+            req = self.parse_method_args()
+            self.consume('RPAR')
+            resp = None  # one-way unless there is a "-> (...)" reply
+            if self.peek().type == 'ARROW':
+                self.consume('ARROW')
+                self.consume('LPAR')
+                resp = self.parse_method_args()
+                self.consume('RPAR')
+            self.consume('SEMI')
+            methods.append({"name": m_name.value, "number": int(number.value),
+                            "request": req, "response": resp,
+                            "line": m_name.line, "col": m_name.col,
+                            "number_line": number.line, "number_col": number.col})
+        self.consume('RBRACE')
+        return {"name": name, "methods": methods}
+
+    def parse_method_args(self) -> List[Dict[str, Any]]:
+        args = []
+        if self.peek().type == 'RPAR': return args
+        while True:
+            type_ = self.consume('ID')
+            name = self.consume('ID').value
+            args.append({"type": type_.value, "name": name, "line": type_.line, "col": type_.col})
+            if self.peek().type == 'COMMA':
+                self.consume('COMMA')
+                continue
+            break
+        return args
+
+
+def compile_ir(ast: Dict[str, Any]) -> Dict[str, Any]:
+    """Computes exact memory alignments, insertions of padding, and field byte offsets."""
+    declared_structs = {s["name"]: s for s in ast["structs"]}
+    layouts: Dict[str, Dict[str, Any]] = {}
+    in_progress: List[str] = []  # structs whose layout is being computed, for cycle detection
+
+    def layout_fields(fields: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Lays out fields in order with C-ABI padding, as for a struct body."""
+        current_offset = 0
+        max_alignment = 1
+        compiled_fields = []
+
+        for field in fields:
+            f_type = field["type"]
+            if f_type in TYPE_MAP:
+                size = TYPE_MAP[f_type]["size"]
+                align = TYPE_MAP[f_type]["align"]
+            elif f_type in declared_structs:
+                # Nested structures are laid out on demand, so declaration order doesn't matter
+                if f_type in in_progress:
+                    cycle = " -> ".join(in_progress[in_progress.index(f_type):] + [f_type])
+                    raise DidlError(f"Recursive struct containment: {cycle}", field["line"], field["col"])
+                nested = layout_struct(declared_structs[f_type])
+                size = nested["total_size"]
+                align = nested["alignment"]
+            else:
+                raise DidlError(f"Unknown type: {f_type}", field["line"], field["col"])
+
+            max_alignment = max(max_alignment, align)
+
+            # Pad current offset out to match natural field boundaries
+            if current_offset % align != 0:
+                current_offset += (align - (current_offset % align))
+
+            compiled_fields.append({
+                "name": field["name"], "type": f_type,
+                "offset": current_offset, "size": size, "alignment": align
+            })
+            current_offset += size
+
+        # Structural trailer padding guarantees total structure aligns perfectly
+        if current_offset % max_alignment != 0:
+            current_offset += (max_alignment - (current_offset % max_alignment))
+
+        return {"total_size": current_offset, "alignment": max_alignment, "fields": compiled_fields}
+
+    def layout_struct(s: Dict[str, Any]) -> Dict[str, Any]:
+        if s["name"] in layouts: return layouts[s["name"]]
+        in_progress.append(s["name"])
+        layouts[s["name"]] = {"name": s["name"], **layout_fields(s["raw_fields"])}
+        in_progress.pop()
+        return layouts[s["name"]]
+
+    def compile_protocol(p: Dict[str, Any]) -> Dict[str, Any]:
+        methods = []
+        seen: Dict[str, Dict[str, Any]] = {}  # method name -> method
+        numbers: Dict[int, str] = {}          # method number -> method name
+        for m in p["methods"]:
+            if m["name"] in seen:
+                raise DidlError(f"Duplicate method: {p['name']}.{m['name']}", m["line"], m["col"])
+            seen[m["name"]] = m
+            number = m["number"]
+            if not 1 <= number <= 0xffff:
+                raise DidlError(f"Method number out of range (1-65535): {p['name']}.{m['name']} is {number}",
+                                m["number_line"], m["number_col"])
+            if number in numbers:
+                raise DidlError(f"Duplicate method number {number}: {p['name']}.{m['name']} and "
+                                f"{p['name']}.{numbers[number]}", m["number_line"], m["number_col"])
+            numbers[number] = m["name"]
+            methods.append({
+                "name": m["name"],
+                "number": number,
+                "request": layout_fields(m["request"]),
+                "response": None if m["response"] is None else layout_fields(m["response"]),
+            })
+        return {"name": p["name"], "methods": methods}
+
+    return {
+        "library": ast["library"],
+        "message_header": layout_fields(HEADER_FIELDS),
+        "structs": [layout_struct(s) for s in ast["structs"]],
+        "protocols": [compile_protocol(p) for p in ast["protocols"]],
+    }
+
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Compile a .didl file into a .dir IR file.")
+    ap.add_argument("input", help="source .didl file")
+    ap.add_argument("-o", "--output", help="output .dir file, or - for stdout (default: input with .dir extension)")
+    args = ap.parse_args()
+
+    output = args.output or os.path.splitext(args.input)[0] + ".dir"
+    try:
+        with open(args.input) as f:
+            ir = compile_ir(Parser(lex(f.read())).parse())
+    except OSError as e:
+        print(f"didlc: {e}", file=sys.stderr)
+        return 1
+    except DidlError as e:
+        print(f"{args.input}:{e.line}:{e.col}: error: {e}", file=sys.stderr)
+        return 1
+
+    text = json.dumps(ir, indent=2) + "\n"
+    if output == "-":
+        sys.stdout.write(text)
+    else:
+        with open(output, "w") as f:
+            f.write(text)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

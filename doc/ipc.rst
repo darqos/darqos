@@ -210,8 +210,10 @@ from darq/common.py).
 Syntax
 ~~~~~~
 
+Example
+
 ```
-library storage.filesystem;
+library filesystem;
 
 struct FileAttributes {
     uint64 size;
@@ -220,7 +222,15 @@ struct FileAttributes {
 }
 
 protocol FileServer {
-    GetAttributes(uint64 fd) -> (FileAttributes attr, uint32 status);
+    1: GetAttributes(uint64 fd) -> (FileAttributes attr, uint32 status);
+    2: Foo(uint8 a, uint16 b, int8 c, real32 d, real64 e, bool f, opaque g, port h);
 }
 ```
 
+Notes:
+
+* Struct alignment and padding follow the C/C++ ABI: a struct is aligned to its most strictly aligned member, and its size is padded to a multiple of that alignment.
+* The 'library' attribute is used to name the generated Python module.
+* Specification of a return type(s) for method x implies two messages: xRequest and xResponse
+* The 'port' type is a uint32, but identified for special handling within the IPC system.
+  
