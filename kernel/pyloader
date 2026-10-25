@@ -427,6 +427,13 @@ class PythonPProcess(darq.SocketListener):
 
             header_buf = self.recv_buffer.peek(8)  # FIXME: check version, etc, first.
             message_length = darq.Message.decode_length(header_buf)
+            if message_length < 8:
+                # The stream can't be split into messages any more: treat
+                # it like the p-kernel closing the session.
+                logging.error(f"Invalid message length {message_length} from p-kernel.")
+                self.handle_p_kernel_disconnect()
+                return
+
             if self.recv_buffer.length() < message_length:
                 # Wait for more data to be delivered so we can decode message.
                 return
@@ -513,39 +520,59 @@ class PythonPProcess(darq.SocketListener):
         return
 
     def handle_deliver_message(self, message: darq.DeliverMessage):
-        """Pass a delivered message to the application's listener, on its loop."""
-        listener = self.listener
-        if listener is None or self.loop is None:
-            # FIXME: queue for receive_message(), once it exists.
-            logging.warning(f"Message for port {message.destination} dropped: no listener")
-            return
+        """Pass a delivered message to the application.
 
-        # Check destination.
-        if message.destination not in self.ports:
-            self.post_to_app(lambda: listener.on_error(0, 0, "Bad port"))
-            return
-
+        With the callback model (see darq.init_cb), it goes to the
+        listener, on the application's loop; otherwise, it's queued on
+        its port for receive_message()."""
         source, destination, payload = message.source, message.destination, message.payload
-        self.post_to_app(lambda: listener.on_message(source, destination, payload))
+        port = self.ports.get(destination)
+
+        listener = self.listener
+        if listener is not None and self.loop is not None:
+            if port is None:
+                self.post_to_app(lambda: listener.on_error(0, 0, "Bad port"))
+            else:
+                self.post_to_app(lambda: listener.on_message(source, destination, payload))
+            return
+
+        if port is None:
+            logging.warning(f"Message for port {destination} dropped: port not open")
+            return
+
+        port.deliver(source, payload)
         return
+
+    def receive_message(self, port: int, blocking: bool) -> tuple[int, bytes] | None:
+        """Receive a message delivered to a port: see darq.receive_message().
+
+        Called on the application's thread."""
+        port_state = self.ports.get(port)
+        if port_state is None:
+            raise darq.NonExistentPortError(port)
+        return port_state.receive(blocking)
 
 
     def handle_open_port_response(self, message: darq.OpenPortResponse):
-        if self.complete_syscall(message) is None:
-            return
-
-        # Record the newly-opened port.
-        if message.result == 0:
+        # Record the newly-opened port before completing the p-call, so
+        # the application can use it as soon as open_port() returns.
+        if message.request_id in self._pending and message.result == 0:
             port_state = darq.PortState(message.port)
             port_state.is_open = True
             self.ports[message.port] = port_state
+
+        self.complete_syscall(message)
         return
 
     def handle_close_port_response(self, message: darq.ClosePortResponse):
-        if self.complete_syscall(message) is None:
-            return
+        # Forget the port before completing the p-call, releasing any
+        # receiver blocked on it.
+        if message.request_id in self._pending:
+            port_state = self.ports.pop(message.port, None)
+            if port_state is not None:
+                port_state.close()
 
-        self.ports.pop(message.port, None)
+        self.complete_syscall(message)
         return
 
     def handle_kill_process_request(self, message: darq.KillProcessRequest):
@@ -600,6 +627,10 @@ class PythonPProcess(darq.SocketListener):
         for syscall in self._pending.values():
             syscall.notify()
         self._pending.clear()
+
+        # And any receive_message() it's blocked in.
+        for port_state in list(self.ports.values()):
+            port_state.wake()
 
         return self._app_finished.wait(timeout)
 

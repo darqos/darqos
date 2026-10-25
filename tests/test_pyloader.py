@@ -480,6 +480,44 @@ def test_p_kernel_disconnect_before_start(pproc):
     assert pproc.exit_status == 1
 
 
+@pytest.mark.parametrize("length", [0, 7])
+def test_invalid_message_length_disconnects(pproc, install_app, length):
+    install_app("""
+        import time
+        import darq
+        def darq_main():
+            darq.send_message(16385, 16386, b"started")
+            while True:
+                time.sleep(0.01)
+        """)
+
+    # A header whose length can't cover itself: the stream can't be
+    # split into messages after it.
+    def send_bad_header(request):
+        message = darq.Message(darq.MessageType.DELIVER_MESSAGE)
+        message.set_length(length)
+        pproc.kernel.sock.sendall(message.encode())
+
+    pproc.kernel.actions[darq.MessageType.SEND_MESSAGE] = send_bad_header
+    run_process(pproc)
+
+    assert pproc.exit_status == 1
+    assert pproc._pkernel_sock is None
+    assert pproc._app_killed
+
+
+def test_message_split_across_reads(pproc):
+    # A header arriving in pieces is held until it's complete.
+    def answer_in_pieces(request):
+        buf = darq.RunResponse(0).encode()
+        for piece in (buf[:3], buf[3:7], buf[7:]):
+            pproc.kernel.sock.sendall(piece)
+            time.sleep(0.05)
+
+    pproc.kernel.actions[darq.MessageType.RUN_REQUEST] = answer_in_pieces
+    assert run_app(pproc, lambda: True)
+
+
 ################################################################
 # Application exit
 ################################################################
