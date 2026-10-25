@@ -1,0 +1,377 @@
+#! /usr/bin/env python3
+# darqos
+# Copyright (C) 2026 David Arnold
+
+# Generates a Python module from a DIDL IR (.dir) file produced by didlc.
+#
+# The module has a class for each struct, and for each message: a
+# method with a response produces xRequest and xResponse, and a
+# one-way method produces x.  Each message class holds its fields,
+# and has encode() and decode() methods, in the style of the p-call
+# messages in darq/common.py.  A class for each protocol maps method
+# numbers to its message classes.
+#
+# The common classes, the message header and the wire format are
+# defined in darq/dipc.py: the generated module imports them, and
+# contains no boilerplate of its own.
+
+
+import argparse
+import json
+import keyword
+import os
+import sys
+from typing import Any, Dict, List
+
+
+# struct module format codes, and Python type hints, for primitive types
+TYPE_CODES = {
+    'bool':   ('?', 'bool'),
+    'int8':   ('b', 'int'),   'uint8':  ('B', 'int'),
+    'int16':  ('h', 'int'),   'uint16': ('H', 'int'),
+    'int32':  ('i', 'int'),   'uint32': ('I', 'int'),
+    'int64':  ('q', 'int'),   'uint64': ('Q', 'int'),
+    'real32': ('f', 'float'), 'real64': ('d', 'float'),
+    'opaque': ('II', 'bytes'),
+    'port':   ('I', 'int'),
+}
+
+# struct module byte order prefix, matching darq.dipc.BYTE_ORDER
+BYTE_ORDER = "<"
+
+DEFAULTS = {'bool': 'False', 'float': '0.0', 'bytes': "b''", 'int': '0'}
+
+# IR format version this generator reads, matching didlc's IR_VERSION
+IR_VERSION = 1
+
+# Message header length, matching darq.dipc.HEADER_LENGTH
+HEADER_LENGTH = 8
+
+# Names the generated module imports
+RESERVED_NAMES = {"Message", "Record", "struct", "MessageDecodingError"}
+
+
+class GenError(Exception):
+    pass
+
+
+def check_identifier(name: str, what: str):
+    if not name.isidentifier() or keyword.iskeyword(name):
+        raise GenError(f"{what} '{name}' is not a valid Python identifier")
+
+
+def align_up(n: int, alignment: int) -> int:
+    return (n + alignment - 1) // alignment * alignment
+
+
+class Generator:
+    def __init__(self, ir: Dict[str, Any], source: str):
+        # Check the version before relying on anything else in the IR.
+        version = ir.get("version")
+        if version != IR_VERSION:
+            raise GenError(f"IR format version {version}, expected {IR_VERSION}: recompile with didlc")
+
+        self.ir = ir
+        self.source = source
+        self.structs = {s["name"]: s for s in ir["structs"]}
+        self.lines: List[str] = []
+        self.class_names: List[str] = []
+
+    def emit(self, line: str = ""):
+        self.lines.append(line)
+
+    ################################################################
+    # Layout
+
+    def leaves(self, layout: Dict[str, Any], base: int, path: str) -> List[Dict[str, Any]]:
+        """Flattens a layout into its primitive fields, in order.
+
+        Struct fields contribute an "init" entry, which constructs the
+        nested struct when decoding, followed by their own fields."""
+        result = []
+        for f in layout["fields"]:
+            check_identifier(f["name"], "Field name")
+            f_path = f"{path}.{f['name']}"
+            if f["type"] in self.structs:
+                result.append({"init": f_path, "struct": f["type"]})
+                result.extend(self.leaves(self.structs[f["type"]], base + f["offset"], f_path))
+            elif f["type"] in TYPE_CODES:
+                result.append({"path": f_path, "type": f["type"],
+                               "offset": base + f["offset"], "size": f["size"]})
+            else:
+                raise GenError(f"Unknown type '{f['type']}' for field {f_path}")
+        return result
+
+    @staticmethod
+    def struct_format(leaves: List[Dict[str, Any]], total_size: int) -> str:
+        """Builds a struct module format, with explicit padding."""
+        fmt = BYTE_ORDER
+        pos = 0
+        for leaf in leaves:
+            if "init" in leaf:
+                continue
+            if leaf["offset"] > pos:
+                fmt += f"{leaf['offset'] - pos}x"
+            fmt += TYPE_CODES[leaf["type"]][0]
+            pos = leaf["offset"] + leaf["size"]
+        if total_size > pos:
+            fmt += f"{total_size - pos}x"
+        return fmt
+
+    def hint(self, f: Dict[str, Any]) -> str:
+        if f["type"] in self.structs:
+            return f"{f['type']} | None"
+        return TYPE_CODES[f["type"]][1]
+
+    def default(self, f: Dict[str, Any]) -> str:
+        if f["type"] in self.structs:
+            return "None"
+        return DEFAULTS[TYPE_CODES[f["type"]][1]]
+
+    def constructor(self, fields: List[Dict[str, Any]], leading: List[str], super_call: str | None):
+        params = ["self"] + leading + [f"{f['name']}: {self.hint(f)} = {self.default(f)}" for f in fields]
+        signature = f"    def __init__({', '.join(params)}):"
+        if len(signature) <= 100:
+            self.emit(signature)
+        else:
+            self.emit("    def __init__(" + params[0] + ",")
+            for n, param in enumerate(params[1:], 1):
+                self.emit(f"                 {param}{'):' if n == len(params) - 1 else ','}")
+        if super_call:
+            self.emit(f"        {super_call}")
+        for f in fields:
+            if f["type"] in self.structs:
+                self.emit(f"        self.{f['name']} = {f['type']}() if {f['name']} is None else {f['name']}")
+            else:
+                self.emit(f"        self.{f['name']} = {f['name']}")
+        if not fields and not super_call:
+            self.emit("        pass")
+
+    ################################################################
+    # Module
+
+    def generate(self) -> str:
+        for s in self.ir["structs"]:
+            self.add_class_name(s["name"], f"struct {s['name']}")
+
+        messages = []
+        for p in self.ir["protocols"]:
+            check_identifier(p["name"], "Protocol name")
+            self.add_class_name(p["name"], f"protocol {p['name']}")
+            for m in p["methods"]:
+                check_identifier(m["name"], "Method name")
+                if m["response"] is None:
+                    kinds = [(m["name"], "request", "one-way message")]
+                else:
+                    kinds = [(m["name"] + "Request", "request", "request"),
+                             (m["name"] + "Response", "response", "response")]
+                for class_name, key, description in kinds:
+                    self.add_class_name(class_name, f"{p['name']}.{m['name']} {key}")
+                    messages.append((class_name, p, m, m[key], description))
+
+        self.emit("# Generated by didlpygen from " + self.source + ": do not edit.")
+        self.emit("#")
+        self.emit(f"# DIDL library: {self.ir['library']}")
+        self.emit()
+        # Import only what the module uses.
+        packed = any(body["fields"] for _, _, _, body, _ in messages)
+        dipc_names = (["Message"] if messages else []) + (["Record"] if self.ir["structs"] else [])
+        if packed:
+            self.emit("import struct")
+            self.emit()
+        if dipc_names:
+            self.emit(f"from darq.dipc import {', '.join(dipc_names)}")
+        if packed:
+            self.emit("from darq.errors import MessageDecodingError")
+        if packed or dipc_names:
+            self.emit()
+            self.emit()
+        self.emit("# Control exports")
+        self.emit("__all__ = [")
+        for name in sorted(self.class_names):
+            self.emit(f'    "{name}",')
+        self.emit("]")
+        self.emit()
+        self.emit()
+
+        if self.ir["structs"]:
+            self.emit_banner("Structs")
+            for s in self.ir["structs"]:
+                self.emit_struct(s)
+
+        if messages:
+            self.emit_banner("Messages")
+            for message in messages:
+                self.emit_message(*message)
+
+        if self.ir["protocols"]:
+            self.emit_banner("Protocols")
+            for p in self.ir["protocols"]:
+                self.emit_protocol(p)
+
+        return "\n".join(self.lines).rstrip("\n") + "\n"
+
+    def add_class_name(self, name: str, what: str):
+        check_identifier(name, "Name")
+        if name in RESERVED_NAMES:
+            raise GenError(f"Name '{name}' of {what} is reserved in the generated module")
+        if name in self.class_names:
+            raise GenError(f"Class name '{name}' of {what} is already used")
+        self.class_names.append(name)
+
+    def emit_banner(self, title: str):
+        self.emit("################################################################")
+        self.emit(f"# {title}")
+        self.emit("################################################################")
+        self.emit()
+        self.emit()
+
+    def emit_struct(self, s: Dict[str, Any]):
+        self.emit(f"class {s['name']}(Record):")
+        self.emit(f'    """struct {s["name"]}: {s["total_size"]} bytes, {s["alignment"]}-byte aligned."""')
+        self.emit()
+        self.constructor(s["fields"], [], None)
+        self.emit()
+        self.emit()
+
+    def emit_message(self, class_name: str, p: Dict[str, Any], m: Dict[str, Any],
+                     layout: Dict[str, Any], description: str):
+        body_start = align_up(HEADER_LENGTH, layout["alignment"])
+        leaves = self.leaves(layout, 0, "self")
+        fmt = self.struct_format(leaves, layout["total_size"])
+        length = body_start + layout["total_size"]
+        opaques = [leaf for leaf in leaves if leaf.get("type") == "opaque"]
+        data_start = align_up(length, 8)
+
+        self.emit(f"class {class_name}(Message):")
+        self.emit(f'    """{p["name"]}.{m["name"]} {description}."""')
+        self.emit()
+        self.emit(f"    METHOD = {m['number']}")
+        if layout["fields"]:
+            self.emit(f'    BODY_FORMAT = "{fmt}"')
+            self.emit(f"    BODY_START = {body_start}")
+        self.emit(f"    LENGTH = {length}")
+        if opaques:
+            self.emit(f"    DATA_START = {data_start}")
+        self.emit()
+        self.constructor(layout["fields"], ["txid: int = 0"], "super().__init__(txid)")
+        self.emit()
+
+        # Encoder
+        self.emit("    def encode(self) -> bytes:")
+        self.emit("        buf = super().encode()")
+        if layout["fields"]:
+            if opaques:
+                self.emit("        data = b''")
+                for n, leaf in enumerate(opaques):
+                    self.emit(f"        offset{n} = self.DATA_START + len(data)")
+                    self.emit(f"        data += self.pad_bytes({leaf['path']})")
+            values = []
+            for leaf in leaves:
+                if "init" in leaf:
+                    continue
+                if leaf["type"] == "opaque":
+                    values += [f"offset{opaques.index(leaf)}", f"len({leaf['path']})"]
+                else:
+                    values.append(leaf["path"])
+            if body_start > HEADER_LENGTH:
+                self.emit(f"        buf += b'\\0' * {body_start - HEADER_LENGTH}")
+            self.emit("        buf += struct.pack(self.BODY_FORMAT,")
+            for n, value in enumerate(values):
+                self.emit(f"                           {value}{')' if n == len(values) - 1 else ','}")
+            if opaques:
+                if data_start > length:
+                    self.emit(f"        buf += b'\\0' * {data_start - length}")
+                self.emit("        buf += data")
+        self.emit("        return buf")
+        self.emit()
+
+        # Decoder
+        self.emit("    def decode(self, buffer: bytes):")
+        self.emit("        super().decode(buffer)")
+        if layout["fields"]:
+            self.emit("        if len(buffer) < self.LENGTH:")
+            self.emit('            raise MessageDecodingError("buffer too short for message")')
+            self.emit()
+            self.emit("        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)")
+            index = 0
+            for leaf in leaves:
+                if "init" in leaf:
+                    self.emit(f"        {leaf['init']} = {leaf['struct']}()")
+                elif leaf["type"] == "opaque":
+                    self.emit(f"        {leaf['path']} = self.decode_opaque(buffer, self.DATA_START, "
+                              f"bits[{index}], bits[{index + 1}])")
+                    index += 2
+                else:
+                    self.emit(f"        {leaf['path']} = bits[{index}]")
+                    index += 1
+        self.emit("        return")
+        self.emit()
+        self.emit()
+
+    def emit_protocol(self, p: Dict[str, Any]):
+        def table(name: str, entries: List[str]):
+            if not entries:
+                self.emit(f"    {name} = {{}}")
+                return
+            self.emit(f"    {name} = {{")
+            for entry in entries:
+                self.emit(f"        {entry},")
+            self.emit("    }")
+
+        requests, responses = [], []
+        for m in p["methods"]:
+            if m["response"] is None:
+                requests.append(f"{m['number']}: {m['name']}")
+            else:
+                requests.append(f"{m['number']}: {m['name']}Request")
+                responses.append(f"{m['number']}: {m['name']}Response")
+
+        self.emit(f"class {p['name']}:")
+        self.emit(f'    """protocol {p["name"]}: message classes by method number."""')
+        self.emit()
+        table("REQUESTS", requests)
+        self.emit()
+        table("RESPONSES", responses)
+        self.emit()
+        self.emit()
+
+
+def module_name(library: str) -> str:
+    return library.replace(".", "_") or "didl"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Generate a Python module from a .dir IR file.")
+    ap.add_argument("input", help="source .dir file, from didlc")
+    ap.add_argument("-o", "--output",
+                    help="output .py file, or - for stdout (default: named after the library, "
+                         "beside the input)")
+    args = ap.parse_args()
+
+    try:
+        with open(args.input) as f:
+            ir = json.load(f)
+        text = Generator(ir, os.path.basename(args.input)).generate()
+    except OSError as e:
+        print(f"didlpygen: {e}", file=sys.stderr)
+        return 1
+    except (ValueError, KeyError, TypeError, AttributeError) as e:
+        print(f"{args.input}: error: invalid IR: {e!r}", file=sys.stderr)
+        return 1
+    except GenError as e:
+        print(f"{args.input}: error: {e}", file=sys.stderr)
+        return 1
+
+    output = args.output or os.path.join(os.path.dirname(args.input),
+                                         module_name(ir["library"]) + ".py")
+    if output == "-":
+        sys.stdout.write(text)
+    else:
+        with open(output, "w") as f:
+            f.write(text)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

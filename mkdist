@@ -55,13 +55,18 @@ for f in `find "$root/lenses" -name "*.py" -print`; do
   echo $t
 done
 
-# System scripts.
+# System scripts and tools.
 mkdir -p "$destdir/bin"
-for f in `find "$root/bin" -name "*" -print`; do
-  t=${f#"$root"}
-  mkdir -p `dirname $destdir/$t`
-  cp -p $f $destdir/$t
-  echo $t
+for f in dui install didlc didlpygen; do
+  cp -p "$root/bin/$f" "$destdir/bin/"
+  echo "/bin/$f"
+done
+
+# Manual pages.
+mkdir -p "$destdir/man"
+for f in "$root"/man/*.[1-8]; do
+  cp -p "$f" "$destdir/man/"
+  echo "/man/`basename $f`"
 done
 
 # Make archive.

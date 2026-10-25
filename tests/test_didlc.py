@@ -218,11 +218,15 @@ def test_duplicate_method_name():
 # Layout
 ################################################################
 
-def test_message_header():
-    header = compile_source("library t;")["message_header"]
-    assert offsets(header) == [("txid", 0), ("flags", 4), ("method", 6)]
-    assert [f["type"] for f in header["fields"]] == ["uint32", "uint16", "uint16"]
-    assert header["total_size"] == 8
+def test_ir_version():
+    ir = compile_source("library t;")
+    assert ir["version"] == didlc.IR_VERSION
+    assert list(ir)[0] == "version"
+
+
+def test_no_message_header_in_ir():
+    # The header is fixed, and defined by darq.dipc.
+    assert "message_header" not in compile_source("library t;")
 
 
 @pytest.mark.parametrize("type_, size, align", [
@@ -232,7 +236,7 @@ def test_message_header():
     ("int32", 4, 4), ("uint32", 4, 4),
     ("int64", 8, 8), ("uint64", 8, 8),
     ("real32", 4, 4), ("real64", 8, 8),
-    ("opaque", 16, 8),
+    ("opaque", 8, 4),
     ("port", 4, 4),
 ])
 def test_primitive_types(type_, size, align):
@@ -284,8 +288,8 @@ def test_doc_example():
     assert get["response"]["total_size"] == 24
     foo = method(ir, "Foo")
     assert offsets(foo["request"]) == [
-        ("a", 0), ("b", 2), ("c", 4), ("d", 8), ("e", 16), ("f", 24), ("g", 32), ("h", 48)]
-    assert foo["request"]["total_size"] == 56
+        ("a", 0), ("b", 2), ("c", 4), ("d", 8), ("e", 16), ("f", 24), ("g", 28), ("h", 36)]
+    assert foo["request"]["total_size"] == 40
 
 
 ################################################################

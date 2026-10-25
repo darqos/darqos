@@ -115,6 +115,26 @@ echo "Ok: installed darqos Python runtime"
     echo "Installed p-Kernel"
 )
 
+# Install DIDL tools
+(
+    cd "$DIST/darq/bin"
+    mkdir -p "$DARQ/bin"
+    cp -p didlc didlpygen "$DARQ/bin/"
+    chmod +x "$DARQ/bin/didlc" "$DARQ/bin/didlpygen"
+    echo "Ok: installed DIDL tools"
+)
+
+# Install manual pages, by section: view with "man -M /darq/man <page>"
+(
+    cd "$DIST/darq/man"
+    for f in *.[1-8]; do
+        section="man${f##*.}"
+        mkdir -p "$DARQ/man/$section"
+        cp -p "$f" "$DARQ/man/$section/"
+    done
+    echo "Ok: installed manual pages"
+)
+
 # Check for firstrun
 # - if sysconf file already exists, read it, and apply its settings
 #   - timezone

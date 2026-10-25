@@ -233,4 +233,5 @@ Notes:
 * The 'library' attribute is used to name the generated Python module.
 * Specification of a return type(s) for method x implies two messages: xRequest and xResponse
 * The 'port' type is a uint32, but identified for special handling within the IPC system.
+* The 'opaque' type is a sequence of bytes.  It's encoded as a uint32 offset (from the start of the message) and a uint32 length, and the bytes are appended to the end of the message, 8-byte aligned.
   

@@ -40,6 +40,17 @@ Copy the p-kernel into
 and link its
 .BR systemd (1)
 units.
+.IP 6.
+Copy the DIDL tools,
+.BR didlc (1)
+and
+.BR didlpygen (1),
+into
+.IR /darq/bin .
+.IP 7.
+Copy the manual pages into
+.IR /darq/man ,
+by section.
 .PP
 The host is expected to start from a Debian 13 (trixie) netinst
 image.
@@ -69,6 +80,13 @@ units,
 .I darqos-pkernel.service
 and
 .IR darqos.target .
+.TP
+.I /darq/bin
+Installed DIDL tools.
+.TP
+.I /darq/man
+Installed manual pages; read them with
+.BR "man \-M /darq/man" .
 .SH DIAGNOSTICS
 Progress is written to standard output as lines starting
 .RB \(lq Ok: \(rq.
@@ -84,5 +102,7 @@ Commands' failures are not checked.
 .PP
 It does not install services, types, lenses, or tools.
 .SH SEE ALSO
+.BR didlc (1),
+.BR didlpygen (1),
 .BR dui (8),
 .BR pkernel (8)

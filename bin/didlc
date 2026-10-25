@@ -19,22 +19,13 @@ TYPE_MAP = {
     'int32':   {"size": 4, "align": 4}, 'uint32':  {"size": 4, "align": 4},
     'int64':   {"size": 8, "align": 8}, 'uint64':  {"size": 8, "align": 8},
     'real32':  {"size": 4, "align": 4}, 'real64':  {"size": 8, "align": 8},
-    'opaque':  {"size": 16, "align": 8}, # Vector descriptor pointer layout
+    'opaque':  {"size": 8, "align": 4},  # uint32 offset and uint32 length of out-of-line bytes
     'port':    {"size": 4, "align": 4},  # uint32, handled specially by the IPC system
 }
 
 
-# Message header
-HEADER_FIELDS = [
-    # Transaction id matching a reply to its request; 0 for one-way    
-    {"name": "txid",    "type": "uint32"},
-
-    # Reserved, must be 0
-    {"name": "flags",   "type": "uint16"},
-
-    # Method number, assigned in the DIDL source (1-65535; 0 is reserved)
-    {"name": "method", "type": "uint16"},
-]
+# IR format version: increment on any change that breaks consumers
+IR_VERSION = 1
 
 
 # Lexer patterns for language tokens
@@ -251,8 +242,8 @@ def compile_ir(ast: Dict[str, Any]) -> Dict[str, Any]:
         return {"name": p["name"], "methods": methods}
 
     return {
+        "version": IR_VERSION,
         "library": ast["library"],
-        "message_header": layout_fields(HEADER_FIELDS),
         "structs": [layout_struct(s) for s in ast["structs"]],
         "protocols": [compile_protocol(p) for p in ast["protocols"]],
     }

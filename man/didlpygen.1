@@ -1,0 +1,131 @@
+.\" darqos
+.\" Copyright (C) 2026 David Arnold
+.TH DIDLPYGEN 1 2026-10-25 DarqOS "DarqOS User's Manual"
+.SH NAME
+didlpygen \- generate Python message classes from DIDL
+.SH SYNOPSIS
+.B didlpygen
+.RB [ \-o
+.IR output ]
+.I input
+.SH DESCRIPTION
+.B didlpygen
+reads the intermediate representation (IR) written by
+.BR didlc (1)
+and generates a Python module with classes to hold, encode and decode
+the messages it defines.
+.PP
+The module contains:
+.TP
+.I struct classes
+One class per DIDL struct, holding its fields.
+.TP
+.I message classes
+For a method
+.I x
+with a response,
+.IB x Request
+and
+.IB x Response\fR;
+for a one-way method,
+.IR x .
+Each has a constructor taking
+.B txid
+followed by its fields,
+.B encode()
+returning the message as
+.BR bytes ,
+and
+.BI decode( buffer )
+filling the object from a buffer holding the whole message.
+.B decode()
+raises
+.B darq.errors.MessageDecodingError
+if the buffer is too short, the method number doesn't match, the
+reserved flags are set, or an opaque value is out of range or not
+8-byte aligned.
+.TP
+.I protocol classes
+One class per protocol, whose
+.B REQUESTS
+and
+.B RESPONSES
+dictionaries map method numbers to message classes.
+.PP
+The module contains no boilerplate: the struct and message classes
+derive from
+.B Record
+and
+.B Message
+in
+.BR darq.dipc ,
+which also provides
+.B decode_method()
+and
+.B decode_txid()
+to read a message header for dispatching.
+Struct and message objects compare equal when their fields are equal.
+.SS Wire format
+Fields are little-endian, at the offsets given in the IR.
+The body follows the 8-byte header.
+An
+.B opaque
+field is an 8-byte descriptor: a
+.B uint32
+offset of its value from the start of the message, then a
+.B uint32
+length.
+The values are appended after the fixed part of the message, in field
+order, each starting on an 8-byte boundary and padded with zeros to a
+multiple of 8 bytes.
+.SH OPTIONS
+.TP
+.BI \-o " output\fR, " \-\-output " output"
+Write the module to
+.IR output ,
+or to standard output if
+.I output
+is
+.BR \- .
+By default, it is written next to
+.IR input ,
+named after the DIDL library with dots replaced by underscores: the
+library
+.B storage.filesystem
+produces
+.IR storage_filesystem.py .
+.TP
+.BR \-h ", " \-\-help
+Show a usage summary.
+.SH EXIT STATUS
+0 on success; 1 if the input can't be read, isn't valid IR, has a
+format version this
+.B didlpygen
+doesn't support, or can't
+be generated; 2 if the command line is invalid.
+.SH DIAGNOSTICS
+Errors are reported on standard error as
+.IB file ": error: " message\fR.
+Generation fails if a name isn't a valid Python identifier, if two
+classes would have the same name, or if a name is one the module
+defines itself (such as
+.B Message
+or
+.BR Record ,
+which it imports).
+.SH BUGS
+Message class names are not qualified by protocol, so two protocols in
+one library can't both have a method with the same name.
+.PP
+Field values are not range-checked before encoding: an out-of-range
+value raises
+.BR struct.error .
+.SH EXAMPLE
+.RS
+.nf
+didlc filesystem.didl
+didlpygen filesystem.dir
+.fi
+.RE
+.SH SEE ALSO
+.BR didlc (1)

@@ -12,9 +12,10 @@ didlc \- compile DarqOS interface definitions
 .B didlc
 compiles a Darq Interface Definition Language (DIDL) file into an
 intermediate representation (IR), written as JSON.
-The IR gives the exact byte layout of the message header and of every
-request and response message the file defines, for use by code
-generators.
+The IR gives the exact byte layout of the body of every request and
+response message the file defines, for use by code generators.
+It carries a format version number, which is incremented whenever the
+IR changes in a way that breaks its consumers.
 .SS Language
 A DIDL file names a library, and declares structs and protocols:
 .PP
@@ -62,7 +63,13 @@ and run to the end of the line.
 8 bytes.
 .TP
 .B opaque
-16-byte variable-length data descriptor, 8-byte aligned.
+A sequence of bytes.
+In the message, an 8-byte, 4-byte aligned descriptor: a
+.B uint32
+offset and a
+.B uint32
+length.
+The bytes themselves are appended to the end of the message.
 .TP
 .B port
 4-byte IPC port number, identified for special handling by the IPC
@@ -76,7 +83,9 @@ aligned to its natural boundary, a struct is aligned to its most
 strictly aligned member, and every struct and message body is padded
 to a multiple of its alignment.
 .PP
-Every message starts with an 8-byte header:
+Every message starts with a fixed 8-byte header, defined by
+.B darq.dipc
+rather than recorded in the IR; the body follows it:
 .TP
 .B txid
 .BR uint32 :
@@ -118,5 +127,6 @@ Errors are reported on standard error as
 .PP
 and no output file is written.
 .SH SEE ALSO
+.BR didlpygen (1),
 DarqOS documentation,
 .IR doc/ipc.rst .
