@@ -64,11 +64,9 @@ kernel.
 Target Platforms
 ----------------
 
-The sole supported platform for the first edition is the Raspberry Pi
-400 with an HDMI monitor, a USB mouse, USB keyboard, and USB
-"soundcard".  Both wired and wireless Ethernet are supported.  While
-not tested, it's very likely that a Raspberry Pi 4 will also work, if
-you can get one.
+The sole supported platform for the first edition is a Lenovo mini PC
+(AMD64), running Debian 13, with an HDMI monitor, a USB mouse, and a
+USB keyboard.  Both wired and wireless Ethernet are supported.
 
 Future editions are intended to work on tablets and mobile phones.
 Some work has been done on the original PinePhone platform; this will
@@ -76,7 +74,7 @@ likely not be an ongoing target platform, but it's a useful
 experimental device for now.
 
 At some point, it will begin to target laptops and desktop PCs.  From
-the DarqOS point of view, these are more-or-less just bigger and
-faster versions of a Raspberry Pi, with lots of diversity in their
-I/O devices.  It's pretty likely that support will target very specific
+the DarqOS point of view, these are more-or-less just variations on
+the first edition's mini PC, with lots of diversity in their I/O
+devices.  It's pretty likely that support will target very specific
 models and configurations when it happens.

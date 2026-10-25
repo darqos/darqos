@@ -93,12 +93,11 @@ Sources and Sinks are Device instances, a restricted class of Service.
 Hardware Support
 ----------------
 
-First edition supports a USB soundcard via ALSA under Raspberry Pi OS
-on the Pi 400, providing a stereo sink and mono source, both using a
-standard 3.5mm analog jack.
+First edition supports the mini PC's built-in audio, or a USB
+soundcard, via ALSA, providing a stereo sink and mono source, both
+using a standard 3.5mm analog jack.
 
-It's possible that the HDMI audio sink could also be supported.  On a
-Raspberry Pi 4, the built-in analog jack should also work.
+It's possible that the HDMI audio sink could also be supported.
 
 These devices are exposed to the OS as IPC nodes, AudioSinkDevice and
 AudioSourceDevice.  They should be registered with the

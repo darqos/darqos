@@ -30,7 +30,8 @@ echo "kernel"
 
 # Services.
 mkdir -p "$destdir/services"
-for f in "$root"/services/*/*.py "$root"/services/*/darqos-* ; do
+# Services are spawned by the p-kernel: only their code is needed.
+for f in "$root"/services/*/*.py ; do
   t=${f#"$root"}
   mkdir -p `dirname $destdir/$t`
   cp -p $f $destdir/$t

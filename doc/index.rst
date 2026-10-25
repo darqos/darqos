@@ -47,7 +47,6 @@
 
    roadmap
 
-   rpi
    kernel
 
 

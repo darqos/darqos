@@ -9,11 +9,11 @@ DarqOS supports two methods of distribution:
 In either case, the host OS filesystem will contain the distributed image,
 a typical Unix-style tree of files.
 
-The host OS should be one of:
+The host OS should be Debian 13 *trixie* AMD64 netinst
+(https://www.debian.org/download).
 
-* Raspberry Pi OS Lite (64 bit) (https://www.raspberrypi.com/software/)
-* Mobian (https://mobian-project.org/)
-* Debian 12 *bookworm* AMD64 netinst (https://www.debian.org/download)
+1st Edition requires the Debian 13 packages: Python 3.13, and wlroots
+0.18 for the compositor.
 
 In all cases, the Darq distribution should be unpacked (or cloned)
 into `/darq/dist`.  The `/darq/dist/darq/bin/install` script should then
@@ -46,12 +46,17 @@ Image Layout
 
   * `/darq/kernel`
 
-    * The p-kernel server implementation
+    * The p-kernel server implementation, and the Python loader
+      (`pyloader`) it runs for each process
+    * The p-kernel's systemd units, linked into systemd by the install
+      script
 
   * `/darq/services`
 
     * Contains sub-directories for each installed service, containing
       their executable files and any associated file storage.
+    * Services are spawned by the p-kernel: they have no systemd units
+      of their own.
 
   * `/darq/types`
 
@@ -71,6 +76,14 @@ Image Layout
     * System scripts, or other Unix programs needed to support the
       operation of the system.  These items should be largely, if
       not totally, invisible from within Darq itself.
+    * Includes the DIDL tools (`didlc` and `didlpygen`), and the
+      compositor, which the Terminal service starts as a Linux child
+      process.
+
+  * `/darq/man`
+
+    * Manual pages for the Unix-level programs, by section: view them
+      with `man -M /darq/man <page>`.
 
   * `/darq/env`
 
@@ -95,5 +108,17 @@ Image Layout
 
 * Some items will be installed into the Linux environment:
 
-  * systemd unit files
+  * The `darq` user, created by `dui`
+  * systemd unit files, for the p-kernel only: it spawns the services.
+    Its unit is also the `darq` user's login session on tty1, so the
+    compositor gets its seat from logind, and it replaces the getty
+    there.
+  * PAM configuration for that session, if it uses its own PAM
+    service rather than `login`
   * `/etc` configuration files (as altered by Darq)
+
+* Some items are created by the host OS at runtime, not installed:
+
+  * `/run/user/<uid>`, the `darq` user's runtime directory, created by
+    logind for the session.  The compositor's Wayland sockets live
+    here.

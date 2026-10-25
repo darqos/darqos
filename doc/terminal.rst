@@ -46,22 +46,17 @@ PyQt5.
 
 Wayland provides a display server: a process that controls access to
 the display hardware and allows multiple other processes to share
-it.  It's likely that we'll use the Weston compositor, although that
-will depend on experimentation: in general, we require few services
-beyond basic compositing.
+it.  DarqOS uses its own small compositor, rather than an existing one
+(see Compositor, below).
 
 PyQt5 (and/or PyQt6 or PySide6) offer one primary benefit: a
 pre-existing widget set, which avoids us having to implement our own.
 Longer term, a simpler widget set should be implemented, avoiding Qt's
 breadth and cross-platform support.
 
-For the RPi4 target, the Terminal Service will manage: 1 or 2 HDMI
-screens, a USB keyboard, a USB mouse, stereo audio out, mono audio in,
-and a USB camera.  If using the RPi400, audio will need a USB audio
-dongle.
-
-For the PC target, we'll support basically the same set of
-peripherals; in both cases, the camera is the lowest priority.
+The Terminal Service will manage: 1 or 2 HDMI screens, a USB
+keyboard, a USB mouse, stereo audio out, mono audio in, and a USB
+camera.  The camera is the lowest priority.
 
 On startup, the Terminal Service will use PyQt5 to identify all
 available screen, and display a full-screen, most-distant Z-order root
@@ -72,10 +67,9 @@ configuration: multiple screens will all be used by the one
 For starters, only the default keymap provided by the Linux layer will
 be supported.
 
-The Terminal Service will run as a Linux process.  It will use Wayland
-to direct user input (mouse/keyboard) to different processes running
-on the display server: it won't have any direct control over this
-process -- this is the domain of the Wayland compositor.
+The Terminal Service runs as a DarqOS process, spawned by the p-kernel.
+It starts the compositor, and decides what it does: the compositor
+provides the mechanism, and the Terminal the policy.
 
 Once initialised, the terminal will display a lock screen with an
 authentication field, controls to sleep/reboot/shutdown the machine,
@@ -87,19 +81,112 @@ point the main "desktop" functionality will be available.  If
 started to show the *intro* page, giving the user an overview of the
 system controls.
 
+Compositor
+~~~~~~~~~~
+
+Several of the Terminal's requirements can only be met inside the
+compositor:
+
+- Global hotkeys: a Wayland client only sees keys sent to its own
+  windows, so only the compositor can catch *System-N* and friends.
+- The lock screen: a client can't stop input reaching other clients,
+  so only the compositor can block access to the machine.
+- Window layering: Wayland has no "keep this window at the bottom (or
+  top)" hint.  Desktop surfaces normally use the layer-shell protocol,
+  but PyQt5 can't use it (Debian 13's ``layer-shell-qt`` is Qt 6 only).
+- No decorations, with windows moved by dragging their margin, and
+  resized by dragging their border.
+
+Existing compositors are opinionated about window management and
+decorations, and those that could be extended far enough (eg. Wayfire,
+with plugins) would mean writing compositor code anyway, while working
+around their defaults.  So, the 1st Edition compositor is forked from
+``tinywl``, the small reference compositor in the wlroots source tree,
+built against wlroots 0.18 (as packaged in Debian 13).  ``tinywl``
+already handles windows (xdg-shell), keyboard focus, the cursor, and
+interactive move and resize.
+
+The compositor adds:
+
+- Four layers: background, applications, overlay, and lock.  The
+  Terminal's windows are placed in the background, overlay, or lock
+  layers; all other clients' windows go in the applications layer.
+- No decorations: it tells clients that it draws decorations
+  (xdg-decoration, server-side mode), and then draws nothing.
+- System-key combinations are not delivered to clients, but passed to
+  the Terminal, which decides what they do.
+- While locked, input goes only to the lock layer.
+
+It's written in C, and kept to mechanism: what a hotkey does, which
+panel to show, and when to lock, are all decided by the Terminal.
+
+Starting the Compositor
+~~~~~~~~~~~~~~~~~~~~~~~
+
+The Terminal is the session: if it dies, the display is useless.  So
+the Terminal starts the compositor, as an ordinary Linux child process
+(not a DarqOS process), and the compositor dies with it.  In
+``darq_main``, before creating the ``QApplication``, the Terminal:
+
+1. Creates a socket pair, and starts the compositor with one end,
+   setting ``PR_SET_PDEATHSIG`` in the child so it exits if the
+   Terminal does.
+2. Sets ``WAYLAND_SOCKET`` to the other end.  ``wl_display_connect()``
+   uses ``WAYLAND_SOCKET`` in preference to ``WAYLAND_DISPLAY``, so Qt
+   connects over the socket pair without further code.
+3. Waits for the compositor to report that it's ready.
+
+The Wayland connection over the socket pair identifies the Terminal to
+the compositor: no other client can connect over it, so no other proof
+is needed.  The policy channel between them (hotkeys, locking, and
+layer placement) uses the same pair, or a second one.
+
+The compositor also listens on a public socket, ``darq-0``.  The
+p-kernel sets ``WAYLAND_DISPLAY=darq-0`` and
+``QT_WAYLAND_DISABLE_WINDOWDECORATION=1`` in the environment of the
+processes it spawns, so other GUI applications connect there, and Qt
+doesn't draw its own decorations if the compositor's request isn't
+honoured.
+
+Session and Login
+~~~~~~~~~~~~~~~~~
+
+The compositor needs a *seat*: access to the display and input
+devices, which is revoked when switching virtual terminals.  This is
+provided by logind (``systemd-logind``), through libseat, which
+wlroots uses.
+
+logind gives devices to processes in an active login session, so the
+p-kernel's systemd unit is a login session: it runs as the ``darq``
+user, with ``PAMName=``, ``TTYPath=/dev/tty1``, and
+``Conflicts=getty@tty1.service``.  The p-kernel, the Terminal it
+spawns, and the compositor the Terminal starts, all inherit that
+session.  logind also provides:
+
+- The runtime directory, ``/run/user/<uid>``, created by
+  ``pam_systemd``, where the Wayland sockets live.
+- Access to audio and camera devices for the active session.
+- Power button and lid handling, and inhibitor locks for sleep and
+  idle.
+
+The machine auto-logs-in to this one Linux session: DarqOS users exist
+only within it, and the Terminal manages DarqOS login itself, using its
+lock screen.  A display manager like greetd isn't used, because it
+would start the p-kernel itself, rather than via its systemd unit.
+
+seatd is the fallback, if a PAM session turns out to be awkward: the
+``darq`` user would be a member of seatd's group, and the p-kernel's
+unit would create the runtime directory itself (``RuntimeDirectory=``).
+Switching only changes units and groups, not code.
+
+Until the session is set up, the p-kernel runs as root, and so does
+the compositor, using libseat's built-in backend.
+
 Keyboard
 ~~~~~~~~
 
 The default keymap will more-or-less replicate the PC105/Win95
-standard keyboard.  The RPi400 built-in keyboard will support the
-following mappings:
-
-- System : the Raspberry Pi key
-- Application : Alt_L
-- Control_L : Caps Lock
-- AltGr : Alt_R
-
-A standard PC keyboard will map:
+standard keyboard.  A standard PC keyboard will map:
 
 - System : the Windows key
 - Application : Alt_L
@@ -191,8 +278,9 @@ Switcher
 ~~~~~~~~
 
 The Terminal service should provide a means of switching between open
-windows: the equivalent of Alt-Tab.  This might end up being
-implemented by Wayfire, initially.
+windows: the equivalent of Alt-Tab.  The compositor passes the
+switching hotkey to the Terminal, which shows the switcher, and asks
+the compositor to raise and focus the chosen window.
 
 Object Properties
 ~~~~~~~~~~~~~~~~~

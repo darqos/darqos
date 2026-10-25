@@ -919,10 +919,6 @@ single layer.
 Example of bare-metal OpenGL application
 * https://gitlab.freedesktop.org/mesa/kmscube/
 
-Notes on running on RPi4
-* https://www.raspberrypi.org/forums/viewtopic.php?p=1490438
-* https://github.com/matusnovak/rpi-opengl-without-x
-
 L4, LittleKernel, Fuschia/Zircon, Minix3, -- some existing micro-kernel
 might be a good start for the OS?
 
@@ -932,8 +928,6 @@ very long time ago -- what would need to change?
 
 See the recent USENIX :login article from Jon Crowcroft:
 https://www.usenix.org/publications/loginonline/transcending-posix-end-era
-
-* Cut-down RPi Linux: https://dietpi.com/
 
 Notes
 -----

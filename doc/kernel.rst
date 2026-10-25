@@ -99,7 +99,6 @@ further development, but were set aside.
   - Basically POSIX APIs
   - SMP
   - Supports PinePhone
-  - Does *NOT* support Raspberry Pi !? WTF?
 
 - Genode
 

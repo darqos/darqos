@@ -5,7 +5,7 @@
 # DarqOS Updater/Installer
 
 # This script is used for either the initial install or subsequent
-# update of a DarqOS image on a Raspberry Pi OS machine.
+# update of a DarqOS image on a Debian 13 machine.
 #
 # It will attempt to download the latest available image (or
 # optionally, a specified image) from the repository, unpack it,

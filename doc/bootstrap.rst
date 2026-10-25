@@ -4,7 +4,7 @@ Bootstrap
 1st Edition
 -----------
 
- * Lenovo MiniPCR platform
+ * Lenovo MiniPC platform
 
    * Nicely self-contained
    * Suitable platform for future OS-level work
@@ -14,10 +14,15 @@ Bootstrap
 
    * Use *Debian* (64 bit) as the base image
 
-     * Configure with Wayland server, but no desktop environment
-       * Run Wayfire compositor, for now
+     * Configure with Wayland, but no desktop environment
+       * DarqOS has its own compositor, forked from wlroots' `tinywl`,
+         started by the Terminal service (see :doc:`terminal`)
      * auto-login into default user (`darq`)
-       * Implemented via `getty@tty1` `systemd` service
+       * Implemented by the p-kernel's `systemd` unit, which is a
+         logind session for `darq` on tty1 (`PAMName=`, `TTYPath=`)
+       * `getty@tty1` is not used: the unit conflicts with it
+       * DarqOS users exist only within this session: the Terminal
+         manages DarqOS login
      * Install single `dui` script that can fetch/install Darq when
        run as root.
 
@@ -41,8 +46,10 @@ Bootstrap
    * Standard Linux systemd boot to multi-user target
    * p-Kernel
 
-     * p-kernel systemd unit is automatically started
+     * p-kernel systemd unit is automatically started, as the `darq`
+       user's login session; it's the only DarqOS systemd unit
      * p-kernel will spawn system services
+     * Until the session is set up, the p-kernel runs as root
 
    * Storage
 
@@ -73,14 +80,18 @@ Bootstrap
      * Service is a Darq Python app, spawned as a p-process from the
        p-kernel as part of the bootstrap process.
      * Running PyQt5 (or 6?)
-     * Spawns Wayfire compositor to manage windows
+     * Starts the DarqOS compositor, as a Linux child process, before
+       creating its `QApplication`
+     * The compositor provides the mechanism, and the Terminal sets the
+       policy: what hotkeys do, which panels to show, and when to lock
+     * The compositor gets its seat (display and input devices) from
+       the logind session, through libseat
      * Needs to have pointer & keyboard
 
-       * Can we get enough control via Qt?  Worried about the stupid
-         Command/Control mapping Qt does ...
-       * If not Qt, maybe need to wrangle directly with Linux evdev?
-
-         * In the worst case, perhaps thd (trigger happy) will work
+       * The compositor catches System-key combinations before clients
+         see them, and passes them to the Terminal, so global hotkeys
+         don't depend on Qt
+       * Worried about the stupid Command/Control mapping Qt does ...
 
      * Also will need to provide audio I/O
 
@@ -88,6 +99,8 @@ Bootstrap
 
          * I guess ideally Pipewire, but it'll depend on what
            works for the MiniPC / Debian
+
+       * Device access comes from the logind session
 
      * Either provides or facilitates the Factory, Find, and Events
        UIs.
