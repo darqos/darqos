@@ -21,7 +21,7 @@ It performs these steps:
 Update the host's Debian packages
 .RB ( "apt-get update" ,
 .BR "apt-get dist-upgrade" ,
-.BR "apt autoremove" ).
+.BR "apt-get autoremove" ).
 .IP 2.
 Install the Debian packages DarqOS needs, including
 .BR foot ,
@@ -80,9 +80,7 @@ host (locale, auto-login, the
 account), or restart DarqOS afterwards.
 It doesn't distinguish a first install from an update.
 .PP
-Commands' failures are not checked, and
-.B apt-get install
-asks for confirmation.
+Commands' failures are not checked.
 .PP
 It does not install services, types, lenses, or tools.
 .SH SEE ALSO

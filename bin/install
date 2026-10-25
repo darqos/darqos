@@ -47,6 +47,9 @@ DARQ=/darq
 DIST=$DARQ/dist
 SERVICES="history index metadata security storage terminal type"
 
+# Don't let package installs stop to ask questions.
+export DEBIAN_FRONTEND=noninteractive
+
 # Shut down DarqOS
 # FIXME: what's actually needed here?
 # FIXME: use systemd target?
@@ -65,10 +68,10 @@ SERVICES="history index metadata security storage terminal type"
 # NOTE: Assume we start from Debian 13 "Trixie" netinst image.
 apt-get update
 apt-get -u -y dist-upgrade
-apt autoremove
+apt-get -y autoremove
 
 # Install any required Debian packages
-apt-get install \
+apt-get install -y \
         foot \
         python3.11-venv \
         python3-pyqt5 \

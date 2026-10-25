@@ -48,8 +48,12 @@ if [ "`whoami`" != root ]; then
 fi
 
 # Check or create darq user.
-if [ ! id $DARQ_USER >/dev/null 2>/dev/null ]; then
-    adduser darq
+if ! id "$DARQ_USER" >/dev/null 2>&1; then
+    if ! useradd -m "$DARQ_USER"; then
+        echo "Error: unable to create user $DARQ_USER" >&2
+        exit 1
+    fi
+    echo "Ok: created user $DARQ_USER"
 fi
 
 # Check $DARQ exists.
