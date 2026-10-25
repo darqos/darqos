@@ -1,14 +1,8 @@
 # Copyright (C) 2020-2021 David Arnold
 
-import sys
-import uuid
 
-from darq.type.base import *
-from darq.rt.storage import Storage
-from darq.rt.history import History, Event
+from darq.type.base import Object
 
-from PyQt5.QtWidgets import QApplication, QWidget, QTextEdit, QGridLayout
-from PyQt5 import QtCore
 
 
 class Entity(Object):

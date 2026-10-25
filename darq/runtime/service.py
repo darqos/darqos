@@ -7,7 +7,7 @@ import os
 import orjson
 
 import darq
-from darq.syscall import EventListener, open_port, close_port, send_message
+from darq.syscall import EventListener, open_port, send_message
 
 
 class Service(EventListener):

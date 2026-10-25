@@ -36,14 +36,23 @@
 #     thread updates the syscall object with the response data, and
 #     signals the Future.
 
-import logging
 import os
 import typing
 import uuid
 
-from .application import *
-from .common import *
-from .errors import *
+from .application import EventListener, SystemCallMode, SystemCallState
+from .common import (
+    ClosePortRequest,
+    KillProcessRequest,
+    OpenPortRequest,
+    OpenPortResponse,
+    Reboot,
+    SendMessage,
+    Shutdown,
+    SpawnProcessRequest,
+    SpawnProcessResponse,
+    UInt64,
+)
 from .loop import EventLoopInterface
 
 
@@ -79,8 +88,22 @@ __all__ = [
 # part of spawning a new process.  See pyloader.PythonPProcecss.start_app
 # for the details.
 
-if typing.TYPE_CHECKING:
-    _darq_process_state: "PythonPProcess|None" = None
+class ProcessState(typing.Protocol):
+    """What this module needs from the injected process state."""
+
+    # Event loop, and listener for the callback model (see init_cb).
+    loop: EventLoopInterface
+    listener: EventListener | None
+
+    def queue_new_syscall(self, syscall_state: SystemCallState) -> None: ...
+
+    def getpid(self) -> int: ...
+
+    def getppid(self) -> int: ...
+
+
+# Placeholder until pyloader injects the real process state.
+_darq_process_state: ProcessState = typing.cast(ProcessState, None)
 
 
 ########################################################################
@@ -132,12 +155,13 @@ def open_port(port: int) -> int:
     syscall.sync_wait()
 
     # Extract result.
-    allocated_port = syscall.get_response().port
+    allocated_port = typing.cast(OpenPortResponse, syscall.get_response()).port
     return allocated_port
 
 
 async def open_port_a(port: int) -> int:
-    return await _darq_process_state.open_port_a(port)
+    # FIXME: the process runtime has no asyncio support yet.
+    raise NotImplementedError("open_port_a")
 
 
     """Synchronously allocate a new port for communication."""
@@ -230,7 +254,8 @@ def send_message(source: int, destination: int, message: bytes):
 
 def receive_message(port: int, blocking: bool = True) -> bytes:
     """Receive a message from a port."""
-    return _darq_process_state.receive_message(port, blocking)
+    # FIXME: not yet implemented by the process runtime (pyloader).
+    raise NotImplementedError("receive_message")
 
 
 # def send_chunk(self, source: int, destination: int, stream: int, offset: int, chunk: bytes):
@@ -267,7 +292,7 @@ def spawn_process(exec_path: str) -> int:
     syscall.sync_wait()
 
     # Extract result.
-    dpid = syscall.get_response().dpid
+    dpid = typing.cast(SpawnProcessResponse, syscall.get_response()).dpid
     return dpid
 
 
@@ -386,6 +411,10 @@ def reboot():
     return
 
 
+# Cached name of the local context (see get_local_context).
+_local_context_id: str | None = None
+
+
 def get_local_context() -> str:
     """Return the name of the local context."""
 
@@ -472,7 +501,7 @@ def create_object(type_id: str, is_transient: bool = False) -> ObjectProxy:
     # Have type implementation create new instance.
     # If not transient, persist newly-created instance.
     # Create proxy for instance and return to caller.
-    pass
+    raise NotImplementedError("create_object")
 
 
 def lookup_object(object_id: typing.Union[str, ObjectIdentifier]) -> ObjectProxy:
@@ -495,4 +524,4 @@ def lookup_object(object_id: typing.Union[str, ObjectIdentifier]) -> ObjectProxy
 
     # Ask type implementation to activate the object, and return a
     # proxy.
-    pass
+    raise NotImplementedError("lookup_object")

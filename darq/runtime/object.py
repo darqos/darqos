@@ -1,11 +1,9 @@
 # DarqOS
 # Copyright (C) 2020-2022 David Arnold
 
-import os
 
-from typing import Optional, Union
 
-from darq.errors import *
+from darq.errors import ObjectIdentifierIllegalCodepointError
 
 
 # An Object reference needs to have the context, the local_id, and the
@@ -95,7 +93,7 @@ class ObjectIdentifier:
         for invalid codepoints."""
 
         # FIXME: implement this more thoroughly!
-        return not (':' in s)
+        return ':' not in s
 
 
 class Object:

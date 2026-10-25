@@ -23,14 +23,12 @@ import setproctitle
 import socket
 import sys
 import threading
-import time
 import traceback
-import typing
 
 import darq
 
 
-class PythonPProcess:
+class PythonPProcess(darq.SocketListener):
     def __init__(self, pkernel_port: int, dpid: int, parent_dpid: int, exec_path: str):
         logging.info(f"Darq PID [{dpid}], parent [{parent_dpid}], host PID [{os.getpid()}] from [{exec_path}]")
 
@@ -43,7 +41,7 @@ class PythonPProcess:
         setproctitle.setproctitle(f"darq-{self._dpid}")
 
         # Connection to p-Kernel process.
-        self._pkernel_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._pkernel_sock: socket.socket | None = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
         # p-Call request queue from application threads (queue is thread-safe).
         self._requests = queue.Queue()
@@ -59,6 +57,9 @@ class PythonPProcess:
 
         # Open ports, by port number.
         self.ports: dict[int, darq.PortState] = {}
+
+        # The application's event loop listener, set by darq.init_cb().
+        self.listener: darq.EventListener | None = None
 
         # Event loop wakeup mechanism for the application thread's exit, and
         # the application's result: (status, error), set when it finishes.
@@ -254,18 +255,29 @@ class PythonPProcess:
     def handle_p_kernel_close(self):
         """Finish closing the p-call session, after the application exited."""
         logging.debug("p-kernel closed the session.")
-        self.loop.cancel_socket(self._pkernel_sock)
-        self._pkernel_sock.close()
-        self._pkernel_sock = None
+        self.close_p_kernel_socket()
         self._end_app()
+        return
+
+    def close_p_kernel_socket(self):
+        """Stop monitoring, and close, the p-call session's socket."""
+        sock = self._pkernel_sock
+        if sock is None:
+            return
+
+        self.loop.cancel_socket(sock)
+        sock.close()
+        self._pkernel_sock = None
         return
 
     def connect_to_p_kernel(self):
         """Establish the TCP connection to the p-kernel."""
 
-        self._pkernel_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.loop.add_socket(self._pkernel_sock, self)
-        self._pkernel_sock.connect(('localhost', self._pkernel_port))
+        sock = self._pkernel_sock
+        assert sock is not None, "already disconnected"
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.loop.add_socket(sock, self)
+        sock.connect(('localhost', self._pkernel_port))
         return
 
     def on_readable(self, sock: socket.socket):
@@ -301,9 +313,7 @@ class PythonPProcess:
         logging.error("Disconnected by p-kernel: exiting.")
         self.exit_status = 1
 
-        self.loop.cancel_socket(self._pkernel_sock)
-        self._pkernel_sock.close()
-        self._pkernel_sock = None
+        self.close_p_kernel_socket()
 
         self.kill_app()
         self._end_app()
@@ -432,6 +442,11 @@ class PythonPProcess:
         return
 
     def handle_deliver_message(self, message: darq.DeliverMessage):
+        if self.listener is None:
+            # FIXME: queue for receive_message(), once it exists.
+            logging.warning(f"Message for port {message.destination} dropped: no listener")
+            return
+
         # Check destination.
         if message.destination not in self.ports:
             self.listener.on_error(0, 0, "Bad port")
@@ -518,6 +533,7 @@ class PythonPProcess:
         # when the thread next executes bytecode, so it won't interrupt a
         # thread blocked in native code.
         self._app_killed = True
+        assert thread.ident is not None  # set once started
         ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(thread.ident),
                                                    ctypes.py_object(SystemExit))
 
@@ -568,7 +584,8 @@ if __name__ == "__main__":
     # 'darq_main', which is called with no parameters.
 
     if len(sys.argv) == 2 and sys.argv[1] in ('help', '-h', '-?', '--help'):
-        sys.stdout.write(f"Usage: {os.path.basename(sys.argv[0])} p-kernel-port darq-process-id parent-darq-process-id executable-path\n\n")
+        sys.stdout.write(f"Usage: {os.path.basename(sys.argv[0])} "
+                         "p-kernel-port darq-process-id parent-darq-process-id executable-path\n\n")
         sys.exit(1)
 
     if len(sys.argv) != 5:

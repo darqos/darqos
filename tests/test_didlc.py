@@ -8,6 +8,7 @@ import importlib.util
 import json
 import pathlib
 import textwrap
+import typing
 
 import pytest
 
@@ -19,6 +20,7 @@ def load_didlc():
     """Import bin/didlc as a module (it has no .py extension)."""
     loader = importlib.machinery.SourceFileLoader("didlc", str(DIDLC_PATH))
     spec = importlib.util.spec_from_loader("didlc", loader)
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
     return module
@@ -31,7 +33,7 @@ def compile_source(source: str) -> dict:
     return didlc.compile_ir(didlc.Parser(didlc.lex(textwrap.dedent(source))).parse())
 
 
-def compile_error(source: str) -> didlc.DidlError:
+def compile_error(source: str) -> typing.Any:
     with pytest.raises(didlc.DidlError) as info:
         compile_source(source)
     return info.value

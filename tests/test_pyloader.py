@@ -30,6 +30,7 @@ def load_pyloader():
     """Import kernel/pyloader as a module (it has no .py extension)."""
     loader = importlib.machinery.SourceFileLoader("pyloader", str(PYLOADER_PATH))
     spec = importlib.util.spec_from_loader("pyloader", loader)
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
     return module

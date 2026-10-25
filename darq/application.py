@@ -6,16 +6,13 @@
 # Uses darq.common and darq.loop to provide the foundation for
 # Darq applicaations.
 
-import logging
-import socket
 import threading
 import typing
 
 from enum import IntEnum
 from warnings import deprecated
 
-from .common import *
-from .errors import *
+from .common import Buffer, Message
 from .loop import EventLoopInterface
 
 # Default exported symbols.
@@ -54,10 +51,10 @@ class SystemCallState:
         self._type = 0
 
         # Request message structure containing parameters.
-        self._request = None
+        self._request: Message | None = None
 
         # Response message structure containing results.
-        self._response = None
+        self._response: Message | None = None
 
         # Event on which a synchronous call will wait for a response.
         self._sync_event = threading.Event()
@@ -82,23 +79,26 @@ class SystemCallState:
         self._request = request
 
     def get_request(self) -> Message:
+        assert self._request is not None, "p-call has no request"
         return self._request
 
     def set_response(self, response: Message):
         self._response = response
 
-    def get_response(self)  -> Message:
+    def get_response(self) -> Message | None:
+        """Return the response, or None if the p-call was abandoned."""
         return self._response
 
     def set_callback(self, loop: EventLoopInterface, cb: typing.Callable):
+        self._loop = loop
         self._callback = cb
 
     def get_callback(self) -> tuple[EventLoopInterface|None, typing.Callable|None]:
-        return tuple(self._loop, self._callback)
+        return self._loop, self._callback
 
     @deprecated("Use get_mode() instead")
     def is_sync(self):
-        return not self._async
+        return self._mode == SystemCallMode.SYNC
 
     @deprecated("Shouldn't need this?")
     def is_complete(self):
@@ -142,6 +142,9 @@ class PortState:
         # Queue of messages received for this port, but not yet
         # retrieved by the application.
         self.messages = []
+
+        # Reassembly buffer for received bytes.
+        self.buffer = Buffer()
         return
 
     def append_bytes(self, buf: bytes):

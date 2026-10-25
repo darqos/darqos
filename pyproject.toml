@@ -13,3 +13,41 @@ packages = ["darq", "darq.kernel", "darq.runtime", "darq.services", "darq.type"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.ruff]
+# Files without a .py extension must be listed explicitly.
+include = [
+    "darq/**/*.py",
+    "tests/**/*.py",
+    "kernel/pkernel",
+    "kernel/pyloader",
+    "bin/didlc",
+    "bin/didlpygen",
+]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# The package re-exports its modules' contents.
+"darq/__init__.py" = ["F401", "F403"]
+
+[tool.pyright]
+# The core runtime, p-kernel and tools.  The ZMQ-era services, runtime
+# and type modules are added as they're ported to the new IPC.
+include = [
+    "darq/application.py",
+    "darq/common.py",
+    "darq/dipc.py",
+    "darq/errors.py",
+    "darq/loop.py",
+    "darq/syscall.py",
+    "kernel/pkernel",
+    "kernel/pyloader",
+    "bin/didlc",
+    "bin/didlpygen",
+    "tests",
+]
+pythonVersion = "3.13"

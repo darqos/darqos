@@ -405,8 +405,8 @@ class OpenPortRequest(Message):
         :param port: Requested port number, or zero for default."""
         super().__init__(MessageType.OPEN_PORT_RQST)
         self.set_length(self.header_length + 16)
-        self.request_id: UInt32 = UInt32(request_id)
-        self.requested_port: UInt64 = UInt64(port)
+        self.request_id: int = UInt32(request_id)
+        self.requested_port: int = UInt64(port)
 
     def encode(self) -> bytes:
         buf = super().encode()
@@ -434,9 +434,9 @@ class OpenPortResponse(Message):
         :param port: Created port number."""
         super().__init__(MessageType.OPEN_PORT_RESP)
         self.set_length(self.header_length + 16)
-        self.request_id: UInt32 = UInt32(request_id)
-        self.result: UInt8 = UInt8(result)
-        self.port: UInt64 = UInt64(port)
+        self.request_id: int = UInt32(request_id)
+        self.result: int = UInt8(result)
+        self.port: int = UInt64(port)
         return
 
     def encode(self) -> bytes:
@@ -461,8 +461,8 @@ class ClosePortRequest(Message):
     def __init__(self, request_id: int = 0, port: int = 0):
         super().__init__(MessageType.CLOSE_PORT_RQST)
         self.set_length(self.header_length + 16)
-        self.request_id: UInt32 = UInt32(request_id)
-        self.port: UInt64 = UInt64(port)
+        self.request_id: int = UInt32(request_id)
+        self.port: int = UInt64(port)
         return
 
     def encode(self) -> bytes:
@@ -485,8 +485,8 @@ class KillProcessRequest(Message):
     def __init__(self, request_id: int = 0, dpid: int = 0):
         super().__init__(MessageType.KILL_PROCESS_RQST)
         self.set_length(self.header_length + 16)
-        self.request_id: UInt32 = UInt32(request_id)
-        self.dpid: UInt64 = UInt64(dpid)
+        self.request_id: int = UInt32(request_id)
+        self.dpid: int = UInt64(dpid)
         return
 
     def encode(self) -> bytes:
@@ -509,8 +509,8 @@ class KillProcessResponse(Message):
     def __init__(self, request_id: int = 0, result: int = 0):
         super().__init__(MessageType.KILL_PROCESS_RESP)
         self.set_length(self.header_length + 8)
-        self.request_id: UInt32 = UInt32(request_id)
-        self.result: UInt32 = UInt32(result)
+        self.request_id: int = UInt32(request_id)
+        self.result: int = UInt32(result)
         return
 
     def encode(self) -> bytes:
@@ -567,15 +567,21 @@ class Exited(Message):
 
 
 class ClosePortResponse(Message):
-    def __init__(self):
+    """Message to report result of closing a port."""
+    def __init__(self, request_id: int = 0, result: int = 0, port: int = 0):
+        """Report result of closing a port.
+
+        :param result: Zero means success, otherwise error code
+        :param port: Closed port number."""
         super().__init__(MessageType.CLOSE_PORT_RESP)
         self.set_length(self.header_length + 16)
-        self.request_id: UInt32 = UInt32(0)
-        self.port: UInt64 = UInt64(0)
+        self.request_id: int = UInt32(request_id)
+        self.result: int = UInt32(result)
+        self.port: int = UInt64(port)
 
     def encode(self) -> bytes:
         buf = super().encode()
-        buf += struct.pack(">LxxxxQ", self.request_id, self.port)
+        buf += struct.pack(">LLQ", self.request_id, self.result, self.port)
         return buf
 
     def decode(self, buffer: bytes):
@@ -583,9 +589,10 @@ class ClosePortResponse(Message):
         if len(buffer) < self.length:
             raise MessageDecodingError("buffer too short for packet")
 
-        bits = struct.unpack(">LxxxxQ", buffer[self.header_length:self.length])
+        bits = struct.unpack(">LLQ", buffer[self.header_length:self.length])
         self.request_id = bits[0]
-        self.port = bits[1]
+        self.result = bits[1]
+        self.port = bits[2]
         return
 
 
@@ -597,8 +604,8 @@ class PortMessage(Message):
 
     def __init__(self, message_type: int, source: int = 0, destination: int = 0):
         super().__init__(message_type)
-        self.source: UInt64 = UInt64(source)
-        self.destination: UInt64 = UInt64(destination)
+        self.source: int = UInt64(source)
+        self.destination: int = UInt64(destination)
         self.payload = b''
         self.set_length(self.header_length + self.BODY_LENGTH)
 
@@ -648,9 +655,9 @@ class ChunkMessage(Message):
 
     def __init__(self, message_type: int, source: int = 0, destination: int = 0, offset: int = 0):
         super().__init__(message_type)
-        self.source: UInt64 = UInt64(source)
-        self.destination: UInt64 = UInt64(destination)
-        self.offset: UInt64 = UInt64(offset)
+        self.source: int = UInt64(source)
+        self.destination: int = UInt64(destination)
+        self.offset: int = UInt64(offset)
         self.payload = b''
         self.set_length(self.header_length + self.BODY_LENGTH)
 

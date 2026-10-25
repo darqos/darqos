@@ -4,7 +4,6 @@
 # Tools are application processes that are not a Type or a Lens
 
 from ..syscall import EventListener
-from ..syscall import open_port
 
 
 

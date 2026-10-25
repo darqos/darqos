@@ -3,7 +3,6 @@
 # Copyright (C) 2022 David Arnold
 
 
-from typing import List
 
 from darq.runtime.service import ServiceAPI
 

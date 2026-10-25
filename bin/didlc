@@ -72,9 +72,11 @@ def lex(code: str) -> List[Token]:
     line, line_start = 1, 0
     for mo in re.finditer(regex, code):
         kind = mo.lastgroup
+        assert kind is not None  # every alternative is a named group
         val = mo.group(kind)
         col = mo.start() - line_start + 1
-        if kind == 'MISMATCH': raise DidlError(f"Unexpected token characters: {val}", line, col)
+        if kind == 'MISMATCH':
+            raise DidlError(f"Unexpected token characters: {val}", line, col)
         if kind != 'WS' and kind != 'COMMENT':
             tokens.append(Token(kind, val, line, col))
         # Advance line tracking past any newlines inside this match
@@ -94,7 +96,8 @@ class Parser:
     def peek(self) -> Token: return self.tokens[self.pos]
     def consume(self, expected_type: str) -> Token:
         t = self.peek()
-        if t.type != expected_type: raise DidlError(f"Expected {expected_type}, got {t}", t.line, t.col)
+        if t.type != expected_type:
+            raise DidlError(f"Expected {expected_type}, got {t}", t.line, t.col)
         self.pos += 1
         return t
 
@@ -106,9 +109,12 @@ class Parser:
                 self.consume('LIBRARY')
                 ast["library"] = self.consume('ID').value
                 self.consume('SEMI')
-            elif t.type == 'STRUCT': ast["structs"].append(self.parse_struct())
-            elif t.type == 'PROTOCOL': ast["protocols"].append(self.parse_protocol())
-            else: raise DidlError(f"Unexpected global scope token: {t}", t.line, t.col)
+            elif t.type == 'STRUCT':
+                ast["structs"].append(self.parse_struct())
+            elif t.type == 'PROTOCOL':
+                ast["protocols"].append(self.parse_protocol())
+            else:
+                raise DidlError(f"Unexpected global scope token: {t}", t.line, t.col)
         return ast
 
     def parse_struct(self) -> Dict[str, Any]:
@@ -152,7 +158,8 @@ class Parser:
 
     def parse_method_args(self) -> List[Dict[str, Any]]:
         args = []
-        if self.peek().type == 'RPAR': return args
+        if self.peek().type == 'RPAR':
+            return args
         while True:
             type_ = self.consume('ID')
             name = self.consume('ID').value
@@ -211,7 +218,8 @@ def compile_ir(ast: Dict[str, Any]) -> Dict[str, Any]:
         return {"total_size": current_offset, "alignment": max_alignment, "fields": compiled_fields}
 
     def layout_struct(s: Dict[str, Any]) -> Dict[str, Any]:
-        if s["name"] in layouts: return layouts[s["name"]]
+        if s["name"] in layouts:
+            return layouts[s["name"]]
         in_progress.append(s["name"])
         layouts[s["name"]] = {"name": s["name"], **layout_fields(s["raw_fields"])}
         in_progress.pop()

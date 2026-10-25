@@ -1,7 +1,6 @@
 # darqos
 # Copyright (C) 2022 David Arnold
 
-import socket
 import uuid
 
 from enum import Enum

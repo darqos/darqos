@@ -1,6 +1,5 @@
 # Copyright (C) 2020-2022 David Arnold
 
-from typing import Optional
 
 
 class Object:

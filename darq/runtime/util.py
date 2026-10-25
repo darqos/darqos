@@ -6,8 +6,6 @@
 
 import enum
 import logging
-import sys
-import syslog
 
 
 class Facility(enum.IntEnum):

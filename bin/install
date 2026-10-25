@@ -73,7 +73,7 @@ apt-get -y autoremove
 # Install any required Debian packages
 apt-get install -y \
         foot \
-        python3.11-venv \
+        python3.13-venv \
         python3-pyqt5 \
         qtwayland5 \
         libgl1-mesa-dri \
@@ -86,7 +86,7 @@ apt-get install -y \
 # Create virtual environment if it doesn't exist
 cd $DARQ
 if [ ! -d $DARQ/env ]; then
-    python3.11 -m venv --system-site-packages env
+    python3.13 -m venv --system-site-packages env
 fi
 
 # Install or update Python modules

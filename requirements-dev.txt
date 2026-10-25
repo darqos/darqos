@@ -1,2 +1,4 @@
 -r requirements.txt
+pyright==1.1.414
 pytest
+ruff==0.17.2

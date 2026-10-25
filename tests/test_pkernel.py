@@ -17,6 +17,7 @@ import subprocess
 import sys
 import textwrap
 import time
+import typing
 
 import pytest
 
@@ -26,10 +27,11 @@ import darq
 PKERNEL_PATH = pathlib.Path(__file__).parent.parent / "kernel" / "pkernel"
 
 
-def load_pkernel():
+def load_pkernel() -> typing.Any:
     """Import kernel/pkernel as a module (it has no .py extension)."""
     loader = importlib.machinery.SourceFileLoader("pkernel", str(PKERNEL_PATH))
     spec = importlib.util.spec_from_loader("pkernel", loader)
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
     return module
@@ -190,7 +192,7 @@ class FakePopen:
     """Record the stub command line, rather than starting a process."""
     calls: list[list[str]] = []
 
-    envs: list[dict[str, str]] = []
+    envs: list[dict[str, str] | None] = []
 
     def __init__(self, args, **kwargs):
         FakePopen.calls.append(args)
@@ -230,7 +232,8 @@ def test_spawn_process_starts_stub(pkernel, fake_popen, executable):
     send_to_kernel(pkernel, parent, darq.SpawnProcessRequest(5, executable))
 
     module = pkernel.module
-    assert fake_popen.calls == [[module.PYTHON_IMAGE_LOADER, str(pkernel.socket.getsockname()[1]), "2", "1", executable]]
+    port = str(pkernel.socket.getsockname()[1])
+    assert fake_popen.calls == [[module.PYTHON_IMAGE_LOADER, port, "2", "1", executable]]
     child = pkernel._process_table[2]
     assert child.get_status() == module.KernelProcessStatus.SPAWNED
     assert child.get_parent_dpid() == 1
