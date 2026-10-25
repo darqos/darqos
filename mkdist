@@ -21,7 +21,8 @@ echo "darq.whl"
 
 # p-Kernel.
 mkdir -p "$destdir/kernel"
-cp -p "$root"/kernel/*.py "$destdir/kernel/"
+cp -p "$root"/kernel/pkernel "$destdir/kernel/"
+cp -p "$root"/kernel/pyloader "$destdir/kernel/"
 cp -p "$root"/kernel/darqos-pkernel "$destdir/kernel/"
 cp -p "$root"/kernel/darqos-pkernel.service "$destdir/kernel/"
 cp -p "$root"/kernel/darqos.target "$destdir/kernel/"

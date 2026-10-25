@@ -4,4 +4,4 @@
 
 cd /darq/kernel
 source /darq/env/bin/activate
-python main.py
+exec ./pkernel

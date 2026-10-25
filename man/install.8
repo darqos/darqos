@@ -57,7 +57,13 @@ The DarqOS Python runtime.
 Python virtual environment.
 .TP
 .I /darq/kernel
-Installed p-kernel and its
+Installed p-kernel
+.RI ( pkernel ),
+Python loader
+.RI ( pyloader ),
+launcher script
+.RI ( darqos-pkernel ),
+and its
 .B systemd
 units,
 .I darqos-pkernel.service
@@ -77,16 +83,6 @@ It doesn't distinguish a first install from an update.
 Commands' failures are not checked, and
 .B apt-get install
 asks for confirmation.
-.PP
-It installs
-.I /darq/kernel/*.py
-and
-.IR darqos-pkernel ,
-but the p-kernel executable is now
-.IR pkernel ,
-and
-.B pyloader
-is not installed.
 .PP
 It does not install services, types, lenses, or tools.
 .SH SEE ALSO

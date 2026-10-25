@@ -103,9 +103,8 @@ echo "Ok: installed darqos Python runtime"
 (
     cd "$DIST/darq/kernel"
     mkdir -p "$DARQ/kernel"
-    cp -p ./*.py "$DARQ/kernel/"
-    cp -p darqos-pkernel "$DARQ/kernel/"
-    chmod +x "$DARQ/kernel/darqos-pkernel"
+    cp -p pkernel pyloader darqos-pkernel "$DARQ/kernel/"
+    chmod +x "$DARQ/kernel/pkernel" "$DARQ/kernel/pyloader" "$DARQ/kernel/darqos-pkernel"
 
     cp -p darqos.target darqos-pkernel.service "$DARQ/kernel/"
     systemctl link "$DARQ/kernel/darqos-pkernel.service"
