@@ -21,14 +21,12 @@
 import logging
 import os
 import platform
-import random
 import signal
 import socket
 import subprocess
 import sys
 
 from enum import IntEnum
-from typing import MutableSequence
 
 import darq
 from darq.loop import SocketListener, TimerListener
@@ -36,12 +34,6 @@ from darq.loop import SocketListener, TimerListener
 
 # TCP listening port for connection of IPC clients.
 TCP_PORT = 11000
-
-# Start of auto-allocated IPC port numbers.
-EPHEMERAL_PORT_START = 16384
-
-# End of auto-allocated IPC port numbers.
-EPHEMERAL_PORT_MAX = 2 ** 32
 
 # Loader for Python executables, installed alongside the p-kernel.
 PYTHON_IMAGE_LOADER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pyloader")
@@ -70,8 +62,52 @@ class KernelProcessStatus(IntEnum):
     LOST = 4
 
 
+class PortRight(IntEnum):
+    """Right to a port held through a process' handle (see doc/ipc.rst)."""
+
+    # The one right to receive the port's messages, held by the process
+    # that created it.  It also allows sending to the port.
+    RECEIVE = 1
+
+    # A right to send messages to the port.
+    SEND = 2
+
+
 class KernelPortState:
-    pass
+    """A port: a destination for messages.
+
+    Processes never see ports, only handles for their rights to them:
+    see KernelProcessState's handle table."""
+
+    def __init__(self, port_id: int, owner: "KernelProcessState"):
+        """Constructor.
+
+        :param port_id: Internal identifier, for logging only.
+        :param owner: Process holding the port's receive right."""
+
+        # Never sent to processes: their handles identify ports.
+        self.port_id: int = port_id
+
+        # Process holding the receive right, while the port is alive.
+        self.owner: KernelProcessState | None = owner
+
+        # Cleared when the port is destroyed: handles other processes
+        # hold for it are then dead.
+        self.alive: bool = True
+
+        # Name registered for the port, if any.
+        self.name: str | None = None
+
+    def __repr__(self) -> str:
+        return f"port [{self.port_id}]"
+
+
+class HandleEntry:
+    """A process' right to a port, in its handle table."""
+
+    def __init__(self, port: KernelPortState, right: PortRight):
+        self.port = port
+        self.right = right
 
 
 class KernelProcessState:
@@ -129,8 +165,12 @@ class KernelProcessState:
         # Process status.
         self._status: KernelProcessStatus = KernelProcessStatus.ALLOCATED
 
-        # Port alias table for this process.
-        self._ports: dict[int, KernelPortState] = {}
+        # Handle table: this process' rights to ports, by handle.  Each
+        # port has at most one handle, so the reverse mapping finds it.
+        # Handles are never reused.
+        self._handles: dict[int, HandleEntry] = {}
+        self._port_handles: dict[KernelPortState, int] = {}
+        self._next_handle: int = 1
 
         # Socket for this p-process' connection to the p-kernel.
         self._sock: socket.socket | None = None
@@ -191,23 +231,53 @@ class KernelProcessState:
     def get_status(self) -> KernelProcessStatus:
         return self._status
 
-    # Ports
+    # Handles
 
-    def add_port(self, port: int):
-        """Add a port to this client's list.
+    def add_right(self, port: KernelPortState, right: PortRight) -> int:
+        """Give this process a right to a port.
 
-        :param port: Port number to add."""
-        self._ports[port] = KernelPortState()
+        A process has at most one handle for each port: if it already
+        has one, that handle is returned.  A receive right includes the
+        right to send, so a send right adds nothing to it.
 
-    def remove_port(self, port: int):
-        """Remove a port from this client's list.
+        :param port: Port to which the right is given.
+        :param right: Right given.
+        :returns: This process' handle for the port."""
+        handle = self._port_handles.get(port)
+        if handle is not None:
+            return handle
 
-        :param port: Port number to remove."""
-        self._ports.pop(port, None)
+        handle = self._next_handle
+        self._next_handle += 1
+        self._handles[handle] = HandleEntry(port, right)
+        self._port_handles[port] = handle
+        return handle
 
-    def get_ports(self) -> MutableSequence[int]:
-        """Return the list of ports registered for this client."""
-        return list(self._ports)
+    def get_handle(self, handle: int) -> HandleEntry | None:
+        """Return the right a handle refers to, or None if it's not open."""
+        return self._handles.get(handle)
+
+    def handle_for(self, port: KernelPortState) -> int | None:
+        """Return this process' handle for a port, or None if it has none."""
+        return self._port_handles.get(port)
+
+    def remove_handle(self, handle: int) -> HandleEntry | None:
+        """Close a handle.
+
+        :returns: The right it referred to, or None if it wasn't open."""
+        entry = self._handles.pop(handle, None)
+        if entry is not None:
+            del self._port_handles[entry.port]
+        return entry
+
+    def take_handles(self) -> list[HandleEntry]:
+        """Close all this process' handles.
+
+        :returns: The rights they referred to."""
+        entries = list(self._handles.values())
+        self._handles.clear()
+        self._port_handles.clear()
+        return entries
 
     def set_child(self, child: subprocess.Popen):
         """Record the Popen object for this p-process."""
@@ -393,11 +463,15 @@ class PseudoKernel(SocketListener, TimerListener):
         # Map of p-call sockets to process.
         self._processes: dict[socket.socket, KernelProcessState] = {}
 
-        # Map of file descriptor to IPC client.
-        self.fds: dict[int, KernelProcessState] = {}
+        # Live ports, by internal identifier.  Processes refer to them
+        # through their handle tables (see KernelProcessState).
+        self._ports: dict[int, KernelPortState] = {}
+        self._next_port_id: int = 1
 
-        # Port table.
-        self._ports: dict[str, darq.UInt64] = {}
+        # Name registry: named ports, and blocking lookups waiting for a
+        # name to be registered, as (process, request_id).
+        self._names: dict[str, KernelPortState] = {}
+        self._name_waiters: dict[str, list[tuple[KernelProcessState, int]]] = {}
 
         # Registries.
         self.types = []
@@ -522,12 +596,19 @@ class PseudoKernel(SocketListener, TimerListener):
         else:
             process.set_status(KernelProcessStatus.LOST)
 
-        # Deregister ports.
-        ports = process.get_ports()
-        for port in ports:
-            if port in self.fds:
-                del self.fds[port]
-                logging.debug(f"{name} closed port {port}")
+        # Abandon its lookups, and release its rights, destroying the
+        # ports it owns.
+        for name in list(self._name_waiters):
+            waiters = [w for w in self._name_waiters[name] if w[0] is not process]
+            if waiters:
+                self._name_waiters[name] = waiters
+            else:
+                del self._name_waiters[name]
+
+        for entry in process.take_handles():
+            if entry.right == PortRight.RECEIVE:
+                self.destroy_port(entry.port)
+                logging.debug(f"{name} closed {entry.port}")
 
         # Remove client.
         sock = process.get_socket()
@@ -569,60 +650,44 @@ class PseudoKernel(SocketListener, TimerListener):
         sock.close()
         return
 
-    def get_ephemeral_port(self):
-        """Allocate an ephemeral port.
+    def create_port(self, owner: KernelProcessState) -> KernelPortState:
+        """Create a port, owned by a process.
 
-        Note: this isn't thread-safe: if it's called again before the port
-        number is used, it will return the same value."""
-
-        # Ports are allocated at random, outside the WKP range.
-        port = random.randint(EPHEMERAL_PORT_START, EPHEMERAL_PORT_MAX)
-        while port in self.fds:
-            port = random.randint(EPHEMERAL_PORT_START, EPHEMERAL_PORT_MAX)
-
-        # FIXME: there's a race condition here, that the port could be
-        # FIXME: reused before it's registered.
+        :param owner: Process to hold its receive right.
+        :returns: The new port."""
+        port = KernelPortState(self._next_port_id, owner)
+        self._next_port_id += 1
+        self._ports[port.port_id] = port
         return port
 
-    def register_port(self, port: int, process: KernelProcessState):
-        """Record the association between a port and a client (socket)."""
-        if port in self.fds:
-            logging.warning(f"register_port() error: "
-                            f"port already registered: {port}")
-            return False
+    def destroy_port(self, port: KernelPortState):
+        """Destroy a port: handles other processes hold for it become dead.
 
-        self.fds[port] = process
-        return True
+        Its name, if any, is removed from the registry."""
+        port.alive = False
+        port.owner = None
+        self._ports.pop(port.port_id, None)
 
-    def deregister_port(self, port: int, process: KernelProcessState):
-        """Delete the association between a port and a client (socket)."""
-        if port not in self.fds:
-            logging.warning(f"deregister_port() error: "
-                            f"port not registered: {port}")
-            return False
-
-        registered_client = self.fds[port]
-        if registered_client != process:
-            logging.warning(f"deregister_port() error: "
-                            f"port ({port}, and client {process.name()}) "
-                            f"doesn't match registered client "
-                            f"{registered_client.name()}")
-            return False
-
-        del self.fds[port]
-        return True
-
-    def deliver_message(self, message: darq.DeliverMessage):
-        """Deliver a received message to its destination port's client."""
-        dest_client = self.fds.get(message.destination)
-        if not dest_client:
-            logging.warning(f"Failed to deliver message. "
-                            f"No such port: {message.destination}")
-            return
-
-        buf = message.encode()
-        dest_client.send_data(buf)
+        if port.name is not None:
+            logging.info(f"Name '{port.name}' removed with {port}")
+            self._names.pop(port.name, None)
+            port.name = None
         return
+
+    @staticmethod
+    def is_reserved_name(name: str) -> bool:
+        """Return True if a name is reserved for system services."""
+        return name == "darq" or name.startswith("darq.")
+
+    @staticmethod
+    def decode_name(message: darq.RegisterNameRequest | darq.LookupNameRequest) -> str | None:
+        """Return a request's name, or None if it's not a valid name."""
+        if not 0 < len(message.name) <= darq.MAX_NAME_LENGTH:
+            return None
+        try:
+            return message.get_name()
+        except UnicodeDecodeError:
+            return None
 
     def handle_reboot(self, process: KernelProcessState, message: darq.Reboot):
         logging.info("System rebooting.")
@@ -865,7 +930,6 @@ class PseudoKernel(SocketListener, TimerListener):
         del self.incoming_connections[sock]
 
         self._processes[sock] = process
-        self.fds[sock] = process
         process.set_socket(sock)
 
         # Update process table state.
@@ -903,75 +967,172 @@ class PseudoKernel(SocketListener, TimerListener):
     def handle_open_port_request(self,
                                  process: KernelProcessState,
                                  request: darq.OpenPortRequest):
-        """Handle request for new port."""
-        port = request.requested_port
+        """Handle request for a new port: the process gets its receive right."""
+        port = self.create_port(process)
+        handle = process.add_right(port, PortRight.RECEIVE)
 
-        # A requested port value of zero means to auto-assign a port number.
-        if port == 0:
-            port = self.get_ephemeral_port()
-            if port <= 0:
-                logging.error("Ephemeral port overflow; request failed.")
-                self.send_open_port_response(process,
-                                             request.request_id,
-                                             1,  # FIXME: better errno
-                                             request.requested_port)
-                return
-
-        process.add_port(port)
-        self.register_port(port, process)
-
-        logging.info(f"{process.name()} new_port "
-                     f"requested {request.requested_port}, "
-                     f"assigned {port}.")
-
-        logging.info(f"{process.name()} open_port({port}) succeeded")
-        self.send_open_port_response(process, request.request_id, 0, port)
+        logging.info(f"{process.name()} open_port() created {port}, handle {handle}")
+        self.send_open_port_response(process, request.request_id, 0, handle)
         return
 
     def handle_close_port_request(self,
                                   process: KernelProcessState,
                                   request: darq.ClosePortRequest):
-        """Handle request to close port."""
+        """Handle request to close a handle.
 
-        port = request.port
-
-        if port not in self.fds:
-            logging.warning(f"close_port({port}) failed: bad port")
-            self.send_close_port_response(process, request.request_id, 1, port)  # FIXME: better errno
+        Closing a receive right destroys the port; closing a send right
+        just gives it up."""
+        handle = request.port
+        entry = process.remove_handle(handle)
+        if entry is None:
+            logging.warning(f"{process.name()} close_port({handle}) failed: bad handle")
+            self.send_close_port_response(process, request.request_id, 1, handle)  # FIXME: better errno
             return
 
-        process.remove_port(port)
-        self.deregister_port(port, process)
+        if entry.right == PortRight.RECEIVE:
+            self.destroy_port(entry.port)
 
-        logging.info(f"{process.name()} close_port({port}) succeeded")
-        self.send_close_port_response(process, request.request_id, 0, port)
+        logging.info(f"{process.name()} close_port({handle}) closed its "
+                     f"{entry.right.name} right to {entry.port}")
+        self.send_close_port_response(process, request.request_id, 0, handle)
         return
 
-    def handle_send_message(self,
-                            source: KernelProcessState,
-                            message: darq.SendMessage):
-        """Handle request to send message from connected client.
+    def handle_send_message_request(self,
+                                    sender: KernelProcessState,
+                                    message: darq.SendMessageRequest):
+        """Handle request to send a message from connected client.
 
-        :param source: Client session that received this message.
+        The source and destination are the sender's handles: they're
+        translated into the receiver's (see doc/ipc.rst).  The sender is
+        answered after delivery, so a message to its own port is queued
+        before its send_message() returns.
+
+        :param sender: Client session that received this message.
         :param message: Received message."""
+        name = sender.name()
 
-        logging.info(f"send_message: from {message.source}, "
-                     f"to {message.destination}, "
-                     f"[{message.payload}]")
+        def refuse(result: darq.SendResult, reason: str):
+            logging.warning(f"{name} send_message({message.source}, {message.destination}) "
+                            f"refused: {reason}")
+            response = darq.SendMessageResponse(message.request_id, result)
+            sender.send_data(response.encode())
 
-        # Look up destination.
-        destination = self.fds.get(message.destination)
+        # The source must be one of the sender's own ports, since that's
+        # where replies go.
+        source = sender.get_handle(message.source)
+        if source is None:
+            refuse(darq.SendResult.BAD_HANDLE, "bad source handle")
+            return
+        if source.right != PortRight.RECEIVE:
+            refuse(darq.SendResult.NOT_RECEIVE_RIGHT, "source isn't a receive right")
+            return
+
+        destination = sender.get_handle(message.destination)
         if destination is None:
-            raise Exception("bad destination port in send")  # FIXME: needs proper exception (and on_error)
+            refuse(darq.SendResult.BAD_HANDLE, "bad destination handle")
+            return
 
-        deliver = darq.DeliverMessage()
-        deliver.source = message.source
-        deliver.destination = message.destination
+        port = destination.port
+        receiver = port.owner
+        if not port.alive or receiver is None:
+            refuse(darq.SendResult.DEAD_PORT, f"{port} is dead")
+            return
+
+        # Translate into the receiver's handles.  It gets a send right to
+        # the source port, so it can reply.
+        destination_handle = receiver.handle_for(port)
+        assert destination_handle is not None, "owner has no handle for its port"
+        source_handle = receiver.add_right(source.port, PortRight.SEND)
+
+        deliver = darq.DeliverMessage(source_handle, destination_handle)
         deliver.set_payload(message.payload)
+        receiver.send_data(deliver.encode())
 
-        buf = deliver.encode()
-        destination.send_data(buf)
-        logging.info("Sent deliver_message")
+        logging.info(f"{name} send_message() from {source.port} to {port}, "
+                     f"delivered to {receiver.name()} "
+                     f"(handles {source_handle} to {destination_handle})")
+        response = darq.SendMessageResponse(message.request_id, darq.SendResult.OK)
+        sender.send_data(response.encode())
+        return
+
+    def handle_register_name_request(self,
+                                     process: KernelProcessState,
+                                     request: darq.RegisterNameRequest):
+        """Register a name for one of the process' ports.
+
+        Names reserved for system services (see is_reserved_name) may
+        only be registered by processes the p-kernel spawned itself, which
+        have no parent.  Any blocking lookups waiting for the name are
+        answered."""
+        name = self.decode_name(request)
+        entry = process.get_handle(request.port)
+
+        if name is None:
+            result = darq.NameResult.INVALID_NAME
+        elif entry is None or entry.right != PortRight.RECEIVE:
+            result = darq.NameResult.BAD_HANDLE
+        elif self.is_reserved_name(name) and process.get_parent_dpid() != 0:
+            result = darq.NameResult.RESERVED_NAME
+        elif name in self._names:
+            result = darq.NameResult.NAME_TAKEN
+        elif entry.port.name is not None:
+            result = darq.NameResult.PORT_ALREADY_NAMED
+        else:
+            result = darq.NameResult.OK
+
+        if result != darq.NameResult.OK:
+            logging.warning(f"{process.name()} register_name({name!r}, {request.port}) "
+                            f"failed: {result.name}")
+            process.send_data(darq.RegisterNameResponse(request.request_id, result).encode())
+            return
+
+        assert name is not None and entry is not None
+        port = entry.port
+        port.name = name
+        self._names[name] = port
+        logging.info(f"{process.name()} registered '{name}' for {port}")
+        process.send_data(darq.RegisterNameResponse(request.request_id, result).encode())
+
+        for waiter, request_id in self._name_waiters.pop(name, []):
+            self.answer_lookup(waiter, request_id, port)
+        return
+
+    def handle_lookup_name_request(self,
+                                   process: KernelProcessState,
+                                   request: darq.LookupNameRequest):
+        """Give the process a send right to a named port.
+
+        If the name isn't registered, a blocking lookup is answered once
+        it is; a non-blocking one is answered at once, with NOT_FOUND."""
+        name = self.decode_name(request)
+        if name is None:
+            logging.warning(f"{process.name()} lookup_name() failed: invalid name")
+            response = darq.LookupNameResponse(request.request_id, darq.NameResult.INVALID_NAME, 0)
+            process.send_data(response.encode())
+            return
+
+        port = self._names.get(name)
+        if port is not None:
+            self.answer_lookup(process, request.request_id, port)
+            return
+
+        if request.blocking:
+            logging.info(f"{process.name()} lookup_name({name!r}) waiting for registration")
+            self._name_waiters.setdefault(name, []).append((process, request.request_id))
+            return
+
+        logging.info(f"{process.name()} lookup_name({name!r}): not found")
+        response = darq.LookupNameResponse(request.request_id, darq.NameResult.NOT_FOUND, 0)
+        process.send_data(response.encode())
+        return
+
+    @staticmethod
+    def answer_lookup(process: KernelProcessState, request_id: int, port: KernelPortState):
+        """Give a process a send right to a port, answering its lookup."""
+        handle = process.add_right(port, PortRight.SEND)
+        logging.info(f"{process.name()} lookup_name({port.name!r}) gave handle {handle} for {port}")
+        response = darq.LookupNameResponse(request_id, darq.NameResult.OK, handle)
+        process.send_data(response.encode())
         return
 
     def handle_send_chunk(self,
@@ -1104,15 +1265,25 @@ class PseudoKernel(SocketListener, TimerListener):
             message.decode(message_bytes)
             self.handle_close_port_request(process, message)
 
-        elif message_type == darq.MessageType.SEND_MESSAGE:
-            message = darq.SendMessage()
+        elif message_type == darq.MessageType.SEND_MESSAGE_RQST:
+            message = darq.SendMessageRequest()
             message.decode(message_bytes)
-            self.handle_send_message(process, message)
+            self.handle_send_message_request(process, message)
 
         elif message_type == darq.MessageType.SPAWN_PROCESS_RQST:
             message = darq.SpawnProcessRequest(0, "")
             message.decode(message_bytes)
             self.handle_spawn_process(process, message)
+
+        elif message_type == darq.MessageType.REGISTER_NAME_RQST:
+            message = darq.RegisterNameRequest()
+            message.decode(message_bytes)
+            self.handle_register_name_request(process, message)
+
+        elif message_type == darq.MessageType.LOOKUP_NAME_RQST:
+            message = darq.LookupNameRequest()
+            message.decode(message_bytes)
+            self.handle_lookup_name_request(process, message)
 
         elif message_type == darq.MessageType.KILL_PROCESS_RQST:
             message = darq.KillProcessRequest()

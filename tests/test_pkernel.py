@@ -47,6 +47,10 @@ def pkernel():
     kernel.module = module
     kernel.peers = []
 
+    # Messages read from a process' peer socket, but not yet checked by
+    # the test, by peer (see send() and delivered(pkernel, )).
+    kernel.unread = {}
+
     # Tests run the loop to check it copes, not to wait for events: don't
     # let an idle iteration block for long.
     kernel._loop.MAX_TIMEOUT = 0.05
@@ -513,6 +517,30 @@ def test_spawned_process_exit(live_pkernel, tmp_path, body, status, error_end):
     assert process.get_child().returncode == status
 
 
+def test_spawned_process_receives_its_own_message(live_pkernel, tmp_path):
+    # A message sent through the p-kernel, back to the sending port.
+    kernel = live_pkernel
+    module = kernel.module
+    path = write_app(tmp_path / "app", """
+        import darq
+        def darq_main():
+            port = darq.open_port()
+            darq.send_message(port, port, b"ping")
+            source, payload = darq.receive_message(port)
+            if (source, payload) != (port, b"ping"):
+                return f"received {(source, payload)!r}"
+            if darq.receive_message(port, blocking=False) is not None:
+                return "received a second message"
+            return 0
+        """)
+
+    dpid = kernel.do_spawn_process(None, path)
+    process = kernel._process_table[dpid]
+    run_kernel_until(kernel, lambda: process.get_status() == module.KernelProcessStatus.ZOMBIE,
+                     "the process to exit")
+    assert (process.get_exit_status(), process.get_exit_error()) == (0, None)
+
+
 def test_running_with_unknown_dpid(pkernel):
     module = pkernel.module
     kernel_sock, peer = socket.socketpair()
@@ -619,7 +647,7 @@ def test_disconnect_before_running(pkernel):
 
 def test_other_message_before_running(pkernel):
     reader, kernel_sock, peer = accept_connection(pkernel)
-    peer.sendall(darq.OpenPortRequest(1, 0).encode())
+    peer.sendall(darq.OpenPortRequest(1).encode())
 
     reader.on_readable(kernel_sock)
 
@@ -667,7 +695,7 @@ def test_pcall_in_same_read_as_running(pkernel):
     process = add_spawned_process(pkernel, 3)
     reader, kernel_sock, peer = accept_connection(pkernel)
 
-    peer.sendall(darq.RunRequest(dpid=3).encode() + darq.OpenPortRequest(7, 0).encode())
+    peer.sendall(darq.RunRequest(dpid=3).encode() + darq.OpenPortRequest(7).encode())
     reader.on_readable(kernel_sock)
 
     assert process.get_status() == pkernel.module.KernelProcessStatus.RUNNING
@@ -679,14 +707,539 @@ def test_pcall_in_same_read_as_running(pkernel):
 
 
 ################################################################
+# Ports and handles
+################################################################
+
+def received_messages(peer: socket.socket) -> list[tuple[int, bytes]]:
+    """Return the messages the kernel has sent to a process, as (type, bytes)."""
+    buf = darq.Buffer()
+    buf.append(receive(peer))
+    messages = []
+    while buf.length() >= 8:
+        length = darq.Message.decode_length(buf.peek(8))
+        message = buf.peek(length)
+        buf.consume(length)
+        messages.append((darq.Message.decode_type(message), message))
+    return messages
+
+
+def open_port(kernel, process, peer, request_id: int = 1) -> int:
+    """Open a port for a process, returning its handle."""
+    send_to_kernel(kernel, process, darq.OpenPortRequest(request_id))
+    [(message_type, buf)] = received_messages(peer)
+    assert message_type == darq.MessageType.OPEN_PORT_RESP
+    response = darq.OpenPortResponse()
+    response.decode(buf)
+    assert (response.request_id, response.result) == (request_id, 0)
+    return response.port
+
+
+def close_port(kernel, process, peer, handle: int) -> int:
+    """Close a process' handle, returning the result."""
+    send_to_kernel(kernel, process, darq.ClosePortRequest(1, handle))
+    [(message_type, buf)] = received_messages(peer)
+    assert message_type == darq.MessageType.CLOSE_PORT_RESP
+    response = darq.ClosePortResponse()
+    response.decode(buf)
+    assert response.port == handle
+    return response.result
+
+
+def send(kernel, process, source: int, destination: int, payload: bytes) -> int:
+    """Send a message from a process, returning the SendResult.
+
+    Anything else the process received meanwhile (such as a message to
+    its own port) is kept for delivered(pkernel, )."""
+    message = darq.SendMessageRequest(source, destination, request_id=9)
+    message.set_payload(payload)
+    send_to_kernel(kernel, process, message)
+
+    results = []
+    peer = process_peer(kernel, process)
+    for message_type, buf in received_messages(peer):
+        if message_type == darq.MessageType.SEND_MESSAGE_RESP:
+            response = darq.SendMessageResponse()
+            response.decode(buf)
+            assert response.request_id == 9
+            results.append(response.result)
+        else:
+            kernel.unread.setdefault(peer, []).append((message_type, buf))
+    [result] = results
+    return result
+
+
+def process_peer(kernel, process) -> socket.socket:
+    """Return the test's end of a process' p-call session."""
+    kernel_sock = process.get_socket()
+    index = kernel.peers.index(kernel_sock)
+    return kernel.peers[index + 1]
+
+
+def delivered(kernel, peer: socket.socket) -> list[tuple[int, int, bytes]]:
+    """Return the messages delivered to a process, as (source, destination, payload)."""
+    messages = []
+    for message_type, buf in kernel.unread.pop(peer, []) + received_messages(peer):
+        assert message_type == darq.MessageType.DELIVER_MESSAGE
+        message = darq.DeliverMessage()
+        message.decode(buf)
+        messages.append((message.source, message.destination, message.payload))
+    return messages
+
+
+def grant_send_right(kernel, holder, owner, handle: int) -> int:
+    """Give a process a send right to another's port (until there's a registry)."""
+    port = owner.get_handle(handle).port
+    return holder.add_right(port, kernel.module.PortRight.SEND)
+
+
+def test_open_port_gives_receive_right(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+    handle = open_port(pkernel, process, peer)
+
+    entry = process.get_handle(handle)
+    assert entry.right == pkernel.module.PortRight.RECEIVE
+    assert entry.port.owner is process
+    assert entry.port.alive
+    assert list(pkernel._ports.values()) == [entry.port]
+
+
+def test_handles_count_from_one_and_are_not_reused(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+    assert [open_port(pkernel, process, peer, i) for i in (1, 2)] == [1, 2]
+
+    assert close_port(pkernel, process, peer, 1) == 0
+    assert open_port(pkernel, process, peer, 3) == 3
+
+
+def test_handles_are_per_process(pkernel):
+    a, a_peer = add_running_process(pkernel, 1)
+    b, b_peer = add_running_process(pkernel, 2)
+
+    # Each process' first handle is 1, but they're different ports.
+    assert open_port(pkernel, a, a_peer) == 1
+    assert open_port(pkernel, b, b_peer) == 1
+    assert a.get_handle(1).port is not b.get_handle(1).port
+
+
+def test_close_receive_right_destroys_port(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+    handle = open_port(pkernel, process, peer)
+    port = process.get_handle(handle).port
+
+    assert close_port(pkernel, process, peer, handle) == 0
+    assert process.get_handle(handle) is None
+    assert not port.alive
+    assert pkernel._ports == {}
+
+
+def test_close_send_right_keeps_port(pkernel):
+    a, a_peer = add_running_process(pkernel, 1)
+    b, b_peer = add_running_process(pkernel, 2)
+    b_port = open_port(pkernel, b, b_peer)
+    a_to_b = grant_send_right(pkernel, a, b, b_port)
+
+    assert close_port(pkernel, a, a_peer, a_to_b) == 0
+    assert a.get_handle(a_to_b) is None
+    assert b.get_handle(b_port).port.alive
+
+
+def test_close_bad_handle(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+    assert close_port(pkernel, process, peer, 99) == 1
+
+
+def test_send_translates_handles(pkernel):
+    a, a_peer = add_running_process(pkernel, 1)
+    b, b_peer = add_running_process(pkernel, 2)
+    a_port = open_port(pkernel, a, a_peer)
+    b_port = open_port(pkernel, b, b_peer)
+
+    # Give A's first handle a different number from B's, to show the
+    # translation.
+    open_port(pkernel, a, a_peer, 2)
+    a_to_b = grant_send_right(pkernel, a, b, b_port)
+    assert a_to_b == 3
+
+    assert send(pkernel, a, a_port, a_to_b, b"ping") == darq.SendResult.OK
+
+    # B receives on its own handle, and gets a send right to A's port.
+    [(source, destination, payload)] = delivered(pkernel, b_peer)
+    assert (destination, payload) == (b_port, b"ping")
+    entry = b.get_handle(source)
+    assert entry.right == pkernel.module.PortRight.SEND
+    assert entry.port is a.get_handle(a_port).port
+
+    # B replies to the source: A sees its existing handle for B's port.
+    assert send(pkernel, b, b_port, source, b"pong") == darq.SendResult.OK
+    assert delivered(pkernel, a_peer) == [(a_to_b, a_port, b"pong")]
+
+
+def test_reply_right_reuses_handle(pkernel):
+    a, a_peer = add_running_process(pkernel, 1)
+    b, b_peer = add_running_process(pkernel, 2)
+    a_port = open_port(pkernel, a, a_peer)
+    b_port = open_port(pkernel, b, b_peer)
+    a_to_b = grant_send_right(pkernel, a, b, b_port)
+
+    assert send(pkernel, a, a_port, a_to_b, b"one") == darq.SendResult.OK
+    assert send(pkernel, a, a_port, a_to_b, b"two") == darq.SendResult.OK
+
+    [(first, _, _), (second, _, _)] = delivered(pkernel, b_peer)
+    assert first == second
+
+
+def test_send_answered_after_delivery(pkernel):
+    # A message to the sender's own port is delivered before the send is
+    # answered, so it's queued by the time send_message() returns.
+    process, peer = add_running_process(pkernel, 1)
+    handle = open_port(pkernel, process, peer)
+
+    message = darq.SendMessageRequest(handle, handle, request_id=4)
+    send_to_kernel(pkernel, process, message)
+    types = [message_type for message_type, _ in received_messages(peer)]
+    assert types == [darq.MessageType.DELIVER_MESSAGE, darq.MessageType.SEND_MESSAGE_RESP]
+
+
+def test_send_to_own_port(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+    handle = open_port(pkernel, process, peer)
+
+    assert send(pkernel, process, handle, handle, b"self") == darq.SendResult.OK
+    assert delivered(pkernel, peer) == [(handle, handle, b"self")]
+
+
+def test_send_from_send_right_refused(pkernel):
+    a, a_peer = add_running_process(pkernel, 1)
+    b, b_peer = add_running_process(pkernel, 2)
+    b_port = open_port(pkernel, b, b_peer)
+    a_to_b = grant_send_right(pkernel, a, b, b_port)
+
+    # A can't send from B's port: replies would go to B.
+    assert send(pkernel, a, a_to_b, a_to_b, b"spoof") == darq.SendResult.NOT_RECEIVE_RIGHT
+    assert delivered(pkernel, b_peer) == []
+
+
+@pytest.mark.parametrize("bad_handle", [0, 99])
+def test_send_with_bad_handle_refused(pkernel, bad_handle):
+    process, peer = add_running_process(pkernel, 1)
+    handle = open_port(pkernel, process, peer)
+
+    assert send(pkernel, process, handle, bad_handle, b"nowhere") == darq.SendResult.BAD_HANDLE
+    assert send(pkernel, process, bad_handle, handle, b"from nowhere") == darq.SendResult.BAD_HANDLE
+    assert delivered(pkernel, peer) == []
+
+
+def test_send_to_closed_port_refused(pkernel):
+    a, a_peer = add_running_process(pkernel, 1)
+    b, b_peer = add_running_process(pkernel, 2)
+    a_port = open_port(pkernel, a, a_peer)
+    b_port = open_port(pkernel, b, b_peer)
+    a_to_b = grant_send_right(pkernel, a, b, b_port)
+    close_port(pkernel, b, b_peer, b_port)
+
+    assert send(pkernel, a, a_port, a_to_b, b"too late") == darq.SendResult.DEAD_PORT
+    assert delivered(pkernel, b_peer) == []
+
+    # A's handle remains, but is dead.
+    assert not a.get_handle(a_to_b).port.alive
+
+
+def test_disconnect_destroys_owned_ports(pkernel):
+    a, a_peer = add_running_process(pkernel, 1)
+    b, b_peer = add_running_process(pkernel, 2)
+    a_port = open_port(pkernel, a, a_peer)
+    b_port = open_port(pkernel, b, b_peer)
+    a_to_b = grant_send_right(pkernel, a, b, b_port)
+    port = b.get_handle(b_port).port
+
+    pkernel.handle_disconnect(b)
+
+    assert not port.alive
+    assert list(pkernel._ports.values()) == [a.get_handle(a_port).port]
+    assert b.get_handle(b_port) is None
+    assert send(pkernel, a, a_port, a_to_b, b"gone") == darq.SendResult.DEAD_PORT
+    assert delivered(pkernel, b_peer) == []
+
+
+################################################################
+# Name registry
+################################################################
+
+def register_name(kernel, process, peer, name: str, handle: int) -> int:
+    """Register a name for a process' port, returning the result."""
+    send_to_kernel(kernel, process, darq.RegisterNameRequest(1, name, handle))
+    [(message_type, buf)] = received_messages(peer)
+    assert message_type == darq.MessageType.REGISTER_NAME_RESP
+    response = darq.RegisterNameResponse()
+    response.decode(buf)
+    return response.result
+
+
+def lookup_responses(peer) -> list[tuple[int, int, int]]:
+    """Return the lookup responses sent to a process, as (request_id, result, handle)."""
+    responses = []
+    for message_type, buf in received_messages(peer):
+        assert message_type == darq.MessageType.LOOKUP_NAME_RESP
+        response = darq.LookupNameResponse()
+        response.decode(buf)
+        responses.append((response.request_id, response.result, response.port))
+    return responses
+
+
+def lookup_name(kernel, process, peer, name: str, blocking: bool = False,
+                request_id: int = 1) -> tuple[int, int] | None:
+    """Look up a name for a process: (result, handle), or None if unanswered."""
+    send_to_kernel(kernel, process, darq.LookupNameRequest(request_id, name, blocking))
+    responses = lookup_responses(peer)
+    if not responses:
+        return None
+    [(response_id, result, handle)] = responses
+    assert response_id == request_id
+    return result, handle
+
+
+def user_process(kernel, dpid: int):
+    """Add a running process spawned by another process, not the kernel."""
+    process, peer = add_running_process(kernel, dpid)
+    process.set_parent_dpid(1)
+    return process, peer
+
+
+def test_register_and_lookup(pkernel):
+    service, service_peer = add_running_process(pkernel, 1)
+    client, client_peer = user_process(pkernel, 2)
+    service_port = open_port(pkernel, service, service_peer)
+    client_port = open_port(pkernel, client, client_peer)
+
+    assert register_name(pkernel, service, service_peer, "test.service", service_port) == 0
+    answer = lookup_name(pkernel, client, client_peer, "test.service")
+    assert answer is not None
+    result, handle = answer
+    assert result == darq.NameResult.OK
+    entry = client.get_handle(handle)
+    assert entry.right == pkernel.module.PortRight.SEND
+    assert entry.port is service.get_handle(service_port).port
+
+    # The looked-up handle reaches the service.
+    assert send(pkernel, client, client_port, handle, b"hello") == darq.SendResult.OK
+    [(source, destination, payload)] = delivered(pkernel, service_peer)
+    assert (destination, payload) == (service_port, b"hello")
+
+
+def test_repeated_lookup_returns_same_handle(pkernel):
+    service, service_peer = add_running_process(pkernel, 1)
+    client, client_peer = user_process(pkernel, 2)
+    register_name(pkernel, service, service_peer, "test.service", open_port(pkernel, service, service_peer))
+
+    first = lookup_name(pkernel, client, client_peer, "test.service")
+    second = lookup_name(pkernel, client, client_peer, "test.service", request_id=2)
+    assert first == second
+
+
+def test_lookup_of_own_name_returns_receive_handle(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+    handle = open_port(pkernel, process, peer)
+    register_name(pkernel, process, peer, "test.self", handle)
+
+    assert lookup_name(pkernel, process, peer, "test.self") == (darq.NameResult.OK, handle)
+
+
+def test_non_blocking_lookup_not_found(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+    assert lookup_name(pkernel, process, peer, "test.missing") == (darq.NameResult.NOT_FOUND, 0)
+
+
+def test_blocking_lookup_answered_on_registration(pkernel):
+    service, service_peer = add_running_process(pkernel, 1)
+    a, a_peer = user_process(pkernel, 2)
+    b, b_peer = user_process(pkernel, 3)
+
+    assert lookup_name(pkernel, a, a_peer, "test.later", blocking=True, request_id=5) is None
+    assert lookup_name(pkernel, b, b_peer, "test.later", blocking=True, request_id=6) is None
+
+    service_port = open_port(pkernel, service, service_peer)
+    assert register_name(pkernel, service, service_peer, "test.later", service_port) == 0
+
+    port = service.get_handle(service_port).port
+    [(request_id, result, handle)] = lookup_responses(a_peer)
+    assert (request_id, result) == (5, darq.NameResult.OK)
+    assert a.get_handle(handle).port is port
+    [(request_id, result, handle)] = lookup_responses(b_peer)
+    assert (request_id, result) == (6, darq.NameResult.OK)
+    assert b.get_handle(handle).port is port
+    assert pkernel._name_waiters == {}
+
+
+def test_waiting_lookup_abandoned_on_disconnect(pkernel):
+    service, service_peer = add_running_process(pkernel, 1)
+    client, client_peer = user_process(pkernel, 2)
+    lookup_name(pkernel, client, client_peer, "test.later", blocking=True)
+
+    pkernel.handle_disconnect(client)
+    assert pkernel._name_waiters == {}
+
+    # Registering afterwards doesn't try to answer it.
+    assert register_name(pkernel, service, service_peer, "test.later",
+                         open_port(pkernel, service, service_peer)) == 0
+
+
+def test_name_taken(pkernel):
+    a, a_peer = add_running_process(pkernel, 1)
+    b, b_peer = add_running_process(pkernel, 2)
+    register_name(pkernel, a, a_peer, "test.name", open_port(pkernel, a, a_peer))
+
+    result = register_name(pkernel, b, b_peer, "test.name", open_port(pkernel, b, b_peer))
+    assert result == darq.NameResult.NAME_TAKEN
+
+
+def test_port_already_named(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+    handle = open_port(pkernel, process, peer)
+    register_name(pkernel, process, peer, "test.first", handle)
+
+    assert register_name(pkernel, process, peer, "test.second", handle) == darq.NameResult.PORT_ALREADY_NAMED
+
+
+def test_register_needs_receive_right(pkernel):
+    a, a_peer = add_running_process(pkernel, 1)
+    b, b_peer = add_running_process(pkernel, 2)
+    b_port = open_port(pkernel, b, b_peer)
+    a_to_b = grant_send_right(pkernel, a, b, b_port)
+
+    assert register_name(pkernel, a, a_peer, "test.stolen", a_to_b) == darq.NameResult.BAD_HANDLE
+    assert register_name(pkernel, a, a_peer, "test.nothing", 99) == darq.NameResult.BAD_HANDLE
+
+
+@pytest.mark.parametrize("name", ["", "x" * 256])
+def test_invalid_name(pkernel, name):
+    process, peer = add_running_process(pkernel, 1)
+    handle = open_port(pkernel, process, peer)
+
+    assert register_name(pkernel, process, peer, name, handle) == darq.NameResult.INVALID_NAME
+    assert lookup_name(pkernel, process, peer, name) == (darq.NameResult.INVALID_NAME, 0)
+
+
+def test_name_not_utf8(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+    request = darq.RegisterNameRequest(1, "", open_port(pkernel, process, peer))
+    request.name = b"\xff\xfe"
+    request.set_length(request.header_length + 16 + request.padded_length(request.name))
+    send_to_kernel(pkernel, process, request)
+
+    response = darq.RegisterNameResponse()
+    response.decode(receive(peer))
+    assert response.result == darq.NameResult.INVALID_NAME
+
+
+def test_longest_name(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+    name = "x" * darq.MAX_NAME_LENGTH
+    assert register_name(pkernel, process, peer, name, open_port(pkernel, process, peer)) == 0
+
+
+@pytest.mark.parametrize("name", ["darq", "darq.storage"])
+def test_reserved_names(pkernel, name):
+    # A user process can't register a reserved name ...
+    user, user_peer = user_process(pkernel, 2)
+    result = register_name(pkernel, user, user_peer, name, open_port(pkernel, user, user_peer))
+    assert result == darq.NameResult.RESERVED_NAME
+
+    # ... but a process the kernel spawned (parent dpid 0) can.
+    system, system_peer = add_running_process(pkernel, 1)
+    result = register_name(pkernel, system, system_peer, name, open_port(pkernel, system, system_peer))
+    assert result == darq.NameResult.OK
+
+
+def test_names_like_reserved_are_not(pkernel):
+    user, user_peer = user_process(pkernel, 2)
+    assert register_name(pkernel, user, user_peer, "darqos.thing", open_port(pkernel, user, user_peer)) == 0
+
+
+def test_name_removed_with_port(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+    handle = open_port(pkernel, process, peer)
+    register_name(pkernel, process, peer, "test.name", handle)
+
+    close_port(pkernel, process, peer, handle)
+    assert lookup_name(pkernel, process, peer, "test.name") == (darq.NameResult.NOT_FOUND, 0)
+
+    # The name can be registered again, for another port.
+    assert register_name(pkernel, process, peer, "test.name", open_port(pkernel, process, peer, 2)) == 0
+
+
+def test_name_removed_on_disconnect(pkernel):
+    service, service_peer = add_running_process(pkernel, 1)
+    client, client_peer = user_process(pkernel, 2)
+    register_name(pkernel, service, service_peer, "test.name", open_port(pkernel, service, service_peer))
+
+    pkernel.handle_disconnect(service)
+    assert lookup_name(pkernel, client, client_peer, "test.name") == (darq.NameResult.NOT_FOUND, 0)
+
+
+def test_two_processes_ping_pong(live_pkernel, tmp_path):
+    # Phase 1's exit test: a service registers a name, and a client
+    # looks it up, then they exchange messages, each replying to the
+    # other's source handle.
+    kernel = live_pkernel
+    module = kernel.module
+    client_path = write_app(tmp_path / "client", """
+        import darq
+        def darq_main():
+            # Only processes the kernel spawned can use the darq namespace.
+            try:
+                darq.register_name("darq.impostor", darq.open_port())
+                return "registered a reserved name"
+            except darq.ReservedNameError:
+                pass
+
+            service = darq.lookup_name("darq.test.ping")
+            port = darq.open_port()
+            for n in (b"1", b"2", b"3"):
+                darq.send_message(port, service, b"ping " + n)
+                source, payload = darq.receive_message(port)
+                if (source, payload) != (service, b"pong " + n):
+                    return f"received {(source, payload)!r}"
+            darq.send_message(port, service, b"done")
+            return 0
+        """)
+    service_path = write_app(tmp_path / "service", f"""
+        import darq
+        def darq_main():
+            port = darq.open_port()
+            darq.register_name("darq.test.ping", port)
+            darq.spawn_process({client_path!r})
+            while True:
+                source, payload = darq.receive_message(port)
+                if payload == b"done":
+                    return 0
+                if not payload.startswith(b"ping "):
+                    return f"received {{payload!r}}"
+                darq.send_message(port, source, b"pong " + payload[5:])
+        """)
+
+    dpid = kernel.do_spawn_process(None, service_path)
+    service = kernel._process_table[dpid]
+    zombie = module.KernelProcessStatus.ZOMBIE
+    run_kernel_until(kernel, lambda: len(kernel._process_table) == 2 and
+                     all(p.get_status() == zombie for p in kernel._process_table.values()),
+                     "both processes to exit")
+
+    [client] = [p for p in kernel._process_table.values() if p is not service]
+    assert client.get_parent_dpid() == service.get_dpid()
+    assert (client.get_exit_status(), client.get_exit_error()) == (0, None)
+    assert (service.get_exit_status(), service.get_exit_error()) == (0, None)
+    assert kernel._names == {}
+
+
+################################################################
 # Dispatch
 ################################################################
 
 def test_dispatch_handles_every_message(pkernel):
     process, peer = add_running_process(pkernel, 1)
 
-    process.get_buffer().append(darq.OpenPortRequest(1, 0).encode() +
-                                darq.OpenPortRequest(2, 0).encode())
+    process.get_buffer().append(darq.OpenPortRequest(1).encode() +
+                                darq.OpenPortRequest(2).encode())
     pkernel.dispatch(process)
 
     received = receive(peer)

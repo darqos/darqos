@@ -198,6 +198,12 @@ class PythonPProcess(darq.SocketListener):
             request = syscall.get_request()
             assert isinstance(request, darq.KillProcessRequest)
             return request.dpid, response.result
+        if isinstance(response, darq.RegisterNameResponse):
+            request = syscall.get_request()
+            assert isinstance(request, darq.RegisterNameRequest)
+            return request.port, response.result
+        if isinstance(response, darq.LookupNameResponse):
+            return response.port, response.result
         raise TypeError(f"No callback arguments for {type(response).__name__}")
 
     def post_callback(self, syscall: darq.SystemCallState):
@@ -462,6 +468,21 @@ class PythonPProcess(darq.SocketListener):
 
         elif message_type == darq.MessageType.SPAWN_PROCESS_RESP:
             message = darq.SpawnProcessResponse(0, 0, 0, None)
+            message.decode(message_buf)
+            self.complete_syscall(message)
+
+        elif message_type == darq.MessageType.SEND_MESSAGE_RESP:
+            message = darq.SendMessageResponse()
+            message.decode(message_buf)
+            self.complete_syscall(message)
+
+        elif message_type == darq.MessageType.REGISTER_NAME_RESP:
+            message = darq.RegisterNameResponse()
+            message.decode(message_buf)
+            self.complete_syscall(message)
+
+        elif message_type == darq.MessageType.LOOKUP_NAME_RESP:
+            message = darq.LookupNameResponse()
             message.decode(message_buf)
             self.complete_syscall(message)
 

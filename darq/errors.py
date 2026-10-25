@@ -32,6 +32,36 @@ class PortNumberOutOfRange(DarqError):
     pass
 
 
+class PortRightError(DarqError):
+    """The handle doesn't hold the right needed: a receive right, to send from."""
+    pass
+
+
+class DeadPortError(DarqError):
+    """The port has been destroyed."""
+    pass
+
+
+class InvalidNameError(DarqError):
+    """The name is empty, too long, or not valid UTF-8."""
+    pass
+
+
+class NameTakenError(DarqError):
+    """Another port is already registered with the name."""
+    pass
+
+
+class ReservedNameError(DarqError):
+    """The name is reserved for system services."""
+    pass
+
+
+class PortAlreadyNamedError(DarqError):
+    """The port is already registered with another name."""
+    pass
+
+
 # FIXME
 EXCEPTION_MAP: dict[int, DarqError] = {}
 

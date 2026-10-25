@@ -9,8 +9,9 @@ pkernel \- DarqOS pseudo-kernel
 .B pkernel
 is the Linux service that provides the functionality that will
 eventually live in the DarqOS kernel.
-It keeps the process table, allocates IPC ports, and routes IPC
-messages between DarqOS processes.
+It keeps the process table, manages IPC ports and each process'
+handles for them, keeps the name registry through which processes find
+each other's ports, and routes IPC messages between DarqOS processes.
 .PP
 Every DarqOS process holds a TCP connection to
 .B pkernel
@@ -127,8 +128,8 @@ The listening port is fixed at 11000.
 The boot sequence does not yet start any system services, and
 shutdown does not yet stop any processes.
 .PP
-There is no timeout on a spawned process sending RUN_REQUEST, or on a
-killed process disconnecting.
+There is no timeout on a spawned process sending RUN_REQUEST, on a
+killed process disconnecting, or on a blocking name lookup.
 ZOMBIE entries are never removed from the process table.
 .SH SEE ALSO
 .BR pyloader (8),

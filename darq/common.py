@@ -22,16 +22,24 @@ __all__ = [
     "IPC_PORT",
     "KillProcessRequest",
     "KillProcessResponse",
+    "LookupNameRequest",
+    "LookupNameResponse",
+    "MAX_NAME_LENGTH",
     "Message",
     "MessageType",
+    "NameResult",
     "OpenPortRequest",
     "OpenPortResponse",
     "Reboot",
     "RECV_BUFLEN",
+    "RegisterNameRequest",
+    "RegisterNameResponse",
     "RunRequest",
     "RunResponse",
     "SendChunk",
-    "SendMessage",
+    "SendMessageRequest",
+    "SendMessageResponse",
+    "SendResult",
     "Shutdown",
     "SpawnProcessRequest",
     "SpawnProcessResponse",
@@ -55,7 +63,7 @@ class MessageType(IntEnum):
     OPEN_PORT_RESP = 2
     CLOSE_PORT_RQST = 3
     CLOSE_PORT_RESP = 4
-    SEND_MESSAGE = 5
+    SEND_MESSAGE_RQST = 5
     SEND_CHUNK = 6
     DELIVER_MESSAGE = 7
     DELIVER_CHUNK = 8
@@ -70,6 +78,52 @@ class MessageType(IntEnum):
     KILL_PROCESS_RESP = 17
     EXITED = 18
     RUN_RESPONSE = 19
+    REGISTER_NAME_RQST = 20
+    REGISTER_NAME_RESP = 21
+    LOOKUP_NAME_RQST = 22
+    LOOKUP_NAME_RESP = 23
+    SEND_MESSAGE_RESP = 24
+
+
+class SendResult(IntEnum):
+    """Result codes for sending a message."""
+    OK = 0
+
+    # The source or destination isn't an open handle.
+    BAD_HANDLE = 1
+
+    # The source isn't a receive right: replies would go elsewhere.
+    NOT_RECEIVE_RIGHT = 2
+
+    # The destination port has been destroyed.
+    DEAD_PORT = 3
+
+
+class NameResult(IntEnum):
+    """Result codes for the name registry p-calls."""
+    OK = 0
+
+    # The handle isn't a receive right held by the caller.
+    BAD_HANDLE = 1
+
+    # The name is empty, too long, or not valid UTF-8.
+    INVALID_NAME = 2
+
+    # Another port is registered with the name.
+    NAME_TAKEN = 3
+
+    # The name is reserved for system services (see doc/ipc.rst).
+    RESERVED_NAME = 4
+
+    # The port is already registered with another name.
+    PORT_ALREADY_NAMED = 5
+
+    # No port is registered with the name (non-blocking lookup only).
+    NOT_FOUND = 6
+
+
+# Longest registered name, in bytes of UTF-8.
+MAX_NAME_LENGTH = 255
 
 
 ################################################################
@@ -398,20 +452,20 @@ class SpawnProcessResponse(Message):
 
 class OpenPortRequest(Message):
     """Message to request creation of a new port."""
-    def __init__(self, request_id: int = 0, port: int = 0):
+    def __init__(self, request_id: int = 0):
         """Request creation of new port.
 
-        :param request_id: Request identifier.
-        :param port: Requested port number, or zero for default."""
+        The response carries the requester's handle for the port's
+        receive right.
+
+        :param request_id: Request identifier."""
         super().__init__(MessageType.OPEN_PORT_RQST)
-        self.set_length(self.header_length + 16)
+        self.set_length(self.header_length + 8)
         self.request_id: int = UInt32(request_id)
-        self.requested_port: int = UInt64(port)
 
     def encode(self) -> bytes:
         buf = super().encode()
-        print(f"request_id = {self.request_id}, requested_port = {self.requested_port}")
-        buf += struct.pack(">LxxxxQ", self.request_id, self.requested_port)
+        buf += struct.pack(">Lxxxx", self.request_id)
         return buf
 
     def decode(self, buffer: bytes):
@@ -419,9 +473,8 @@ class OpenPortRequest(Message):
         if len(buffer) < self.length:
             raise MessageDecodingError("buffer too short for packet")
 
-        bits = struct.unpack(">LxxxxQ", buffer[self.header_length:self.length])
+        bits = struct.unpack(">Lxxxx", buffer[self.header_length:self.length])
         self.request_id = bits[0]
-        self.requested_port = bits[1]
         return
 
 
@@ -431,7 +484,7 @@ class OpenPortResponse(Message):
         """Report result of port creation.
 
         :param result: Zero means success, otherwise error code
-        :param port: Created port number."""
+        :param port: Requester's handle for the new port."""
         super().__init__(MessageType.OPEN_PORT_RESP)
         self.set_length(self.header_length + 16)
         self.request_id: int = UInt32(request_id)
@@ -596,6 +649,137 @@ class ClosePortResponse(Message):
         return
 
 
+class RegisterNameRequest(Message):
+    """Request to register a name for a port, in the p-kernel's registry."""
+    def __init__(self, request_id: int = 0, name: str = "", port: int = 0):
+        """Constructor.
+
+        :param request_id: Request identifier.
+        :param name: Name to register.
+        :param port: Requester's handle for the port's receive right."""
+        super().__init__(MessageType.REGISTER_NAME_RQST)
+        self.request_id: int = UInt32(request_id)
+        self.port: int = UInt64(port)
+        self.name = name.encode("utf-8")
+        self.set_length(self.header_length + 16 + self.padded_length(self.name))
+
+    def get_name(self) -> str:
+        """Return the name, raising UnicodeDecodeError if it's not valid UTF-8."""
+        return self.name.decode("utf-8")
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LLQ", self.request_id, len(self.name), self.port)
+        buf += self.pad_bytes(self.name)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        name_start = self.header_length + 16
+        bits = struct.unpack(">LLQ", buffer[self.header_length:name_start])
+        self.request_id = bits[0]
+        name_length = bits[1]
+        self.port = bits[2]
+        if name_start + name_length > self.length:
+            raise MessageDecodingError("name overruns message")
+        self.name = buffer[name_start:name_start + name_length]
+        return
+
+
+class RegisterNameResponse(Message):
+    """Result of registering a name: a NameResult code."""
+    def __init__(self, request_id: int = 0, result: int = 0):
+        super().__init__(MessageType.REGISTER_NAME_RESP)
+        self.set_length(self.header_length + 8)
+        self.request_id: int = UInt32(request_id)
+        self.result: int = UInt32(result)
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LL", self.request_id, self.result)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        bits = struct.unpack(">LL", buffer[self.header_length:self.length])
+        self.request_id = bits[0]
+        self.result = bits[1]
+        return
+
+
+class LookupNameRequest(Message):
+    """Request a send right to a named port, from the p-kernel's registry."""
+    def __init__(self, request_id: int = 0, name: str = "", blocking: bool = True):
+        """Constructor.
+
+        :param request_id: Request identifier.
+        :param name: Name to look up.
+        :param blocking: If True, the p-kernel answers once the name is
+                         registered; otherwise, at once."""
+        super().__init__(MessageType.LOOKUP_NAME_RQST)
+        self.request_id: int = UInt32(request_id)
+        self.blocking: bool = blocking
+        self.name = name.encode("utf-8")
+        self.set_length(self.header_length + 16 + self.padded_length(self.name))
+
+    def get_name(self) -> str:
+        """Return the name, raising UnicodeDecodeError if it's not valid UTF-8."""
+        return self.name.decode("utf-8")
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LLLxxxx", self.request_id, len(self.name), 1 if self.blocking else 0)
+        buf += self.pad_bytes(self.name)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        name_start = self.header_length + 16
+        bits = struct.unpack(">LLLxxxx", buffer[self.header_length:name_start])
+        self.request_id = bits[0]
+        name_length = bits[1]
+        self.blocking = bool(bits[2] & 1)
+        if name_start + name_length > self.length:
+            raise MessageDecodingError("name overruns message")
+        self.name = buffer[name_start:name_start + name_length]
+        return
+
+
+class LookupNameResponse(Message):
+    """Result of a name lookup: a NameResult code, and the new send right's handle."""
+    def __init__(self, request_id: int = 0, result: int = 0, port: int = 0):
+        super().__init__(MessageType.LOOKUP_NAME_RESP)
+        self.set_length(self.header_length + 16)
+        self.request_id: int = UInt32(request_id)
+        self.result: int = UInt32(result)
+        self.port: int = UInt64(port)
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LLQ", self.request_id, self.result, self.port)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        bits = struct.unpack(">LLQ", buffer[self.header_length:self.length])
+        self.request_id = bits[0]
+        self.result = bits[1]
+        self.port = bits[2]
+        return
+
+
 class PortMessage(Message):
     """Common implementation for port-to-port messages."""
 
@@ -637,9 +821,75 @@ class PortMessage(Message):
         return
 
 
-class SendMessage(PortMessage):
-    def __init__(self, source: int = 0, destination: int = 0):
-        super().__init__(MessageType.SEND_MESSAGE, source, destination)
+class SendMessageRequest(Message):
+    """Request to send a message from one of the sender's ports, to a handle."""
+
+    # Length of fixed fields following the header.
+    BODY_LENGTH = 24
+
+    def __init__(self, source: int = 0, destination: int = 0, request_id: int = 0):
+        """Constructor.
+
+        :param source: Sender's handle for the port it's sending from:
+                       a receive right, where replies will go.
+        :param destination: Sender's handle for the destination port.
+        :param request_id: Request identifier."""
+        super().__init__(MessageType.SEND_MESSAGE_RQST)
+        self.request_id: int = UInt32(request_id)
+        self.source: int = UInt64(source)
+        self.destination: int = UInt64(destination)
+        self.payload = b''
+        self.set_length(self.header_length + self.BODY_LENGTH)
+
+    def set_payload(self, payload: bytes):
+        self.payload = payload
+        self.set_length(self.header_length + self.BODY_LENGTH + self.padded_length(payload))
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LLQQ", self.request_id, len(self.payload), self.source, self.destination)
+        buf += self.pad_bytes(self.payload)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        payload_start = self.header_length + self.BODY_LENGTH
+        bits = struct.unpack(">LLQQ", buffer[self.header_length:payload_start])
+        self.request_id = bits[0]
+        payload_length = bits[1]
+        self.source = bits[2]
+        self.destination = bits[3]
+        if payload_start + payload_length > self.length:
+            raise MessageDecodingError("payload overruns message")
+        self.payload = buffer[payload_start:payload_start + payload_length]
+        return
+
+
+class SendMessageResponse(Message):
+    """Result of sending a message: a SendResult code."""
+    def __init__(self, request_id: int = 0, result: int = 0):
+        super().__init__(MessageType.SEND_MESSAGE_RESP)
+        self.set_length(self.header_length + 8)
+        self.request_id: int = UInt32(request_id)
+        self.result: int = UInt32(result)
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LL", self.request_id, self.result)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        bits = struct.unpack(">LL", buffer[self.header_length:self.length])
+        self.request_id = bits[0]
+        self.result = bits[1]
+        return
 
 
 class DeliverMessage(PortMessage):

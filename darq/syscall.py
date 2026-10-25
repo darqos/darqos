@@ -45,14 +45,31 @@ from .application import EventListener, SystemCallMode, SystemCallState
 from .common import (
     ClosePortRequest,
     KillProcessRequest,
+    LookupNameRequest,
+    LookupNameResponse,
+    NameResult,
     OpenPortRequest,
     OpenPortResponse,
+    RegisterNameRequest,
+    RegisterNameResponse,
     Reboot,
-    SendMessage,
+    SendMessageRequest,
+    SendMessageResponse,
+    SendResult,
     Shutdown,
     SpawnProcessRequest,
     SpawnProcessResponse,
     UInt64,
+)
+from .errors import (
+    DarqError,
+    DeadPortError,
+    InvalidNameError,
+    NameTakenError,
+    NonExistentPortError,
+    PortAlreadyNamedError,
+    PortRightError,
+    ReservedNameError,
 )
 from .loop import EventLoopInterface
 
@@ -70,10 +87,15 @@ __all__ = [
     "close_port",
     "close_port_cb",
     "send_message",
+    "receive_message",
     "spawn_process",
     "spawn_process_cb",
     "kill_process",
     "kill_process_cb",
+    "register_name",
+    "register_name_cb",
+    "lookup_name",
+    "lookup_name_cb",
     "shutdown",
     "reboot",
 ]
@@ -97,6 +119,8 @@ class ProcessState(typing.Protocol):
     listener: EventListener | None
 
     def queue_new_syscall(self, syscall_state: SystemCallState) -> None: ...
+
+    def receive_message(self, port: int, blocking: bool) -> tuple[int, bytes] | None: ...
 
     def getpid(self) -> int: ...
 
@@ -134,11 +158,12 @@ def get_loop():
     return _darq_process_state.loop
 
 
-def open_port(port: int) -> int:
-    """Synchronously allocate a new port for communication.
+def open_port() -> int:
+    """Synchronously create a new port for communication.
 
-    :param port: Requested port number; Zero requests ephemeral port.
-    :returns: Allocated port number."""
+    The process holds the port's receive right: see doc/ipc.rst.
+
+    :returns: This process' handle for the new port."""
 
     # Get a SystemCallState
     syscall = SystemCallState()
@@ -146,7 +171,6 @@ def open_port(port: int) -> int:
 
     # Populate the request message
     request = OpenPortRequest()
-    request.requested_port = UInt64(port)
     syscall.set_request(request)
 
     # Enqueue.
@@ -160,18 +184,16 @@ def open_port(port: int) -> int:
     return allocated_port
 
 
-async def open_port_a(port: int) -> int:
+async def open_port_a() -> int:
     # FIXME: the process runtime has no asyncio support yet.
     raise NotImplementedError("open_port_a")
 
 
-    """Synchronously allocate a new port for communication."""
-def open_port_cb(port: int, loop: EventLoopInterface, cb: typing.Callable[[int, int], None]) -> None:
-    """Asynchronously allocate new port for communication.
+def open_port_cb(loop: EventLoopInterface, cb: typing.Callable[[int, int], None]) -> None:
+    """Asynchronously create a new port for communication.
 
-    :param port: Requested port number; Zero requests ephemeral port.
     :param loop: Event loop in which the callable should be invoked.
-    :param cb: Completion callback: cb(port, error_code)."""
+    :param cb: Completion callback: cb(handle, error_code)."""
 
     # Get a SystemCallState
     syscall = SystemCallState()
@@ -179,7 +201,6 @@ def open_port_cb(port: int, loop: EventLoopInterface, cb: typing.Callable[[int, 
 
     # Populate the request message
     request = OpenPortRequest()
-    request.requested_port = UInt64(port)
     syscall.set_request(request)
     syscall.set_callback(loop, cb)
 
@@ -189,9 +210,12 @@ def open_port_cb(port: int, loop: EventLoopInterface, cb: typing.Callable[[int, 
 
 
 def close_port(port: int):
-    """Close a previously-allocated communication port.
+    """Close a handle.
 
-    :param port: Port number to be closed."""
+    Closing a receive right (from open_port) destroys the port; closing
+    a send right just gives it up.
+
+    :param port: Handle to be closed."""
 
     # Get a SystemCallState
     syscall = SystemCallState()
@@ -211,9 +235,9 @@ def close_port(port: int):
 
 
 def close_port_cb(port: int, loop: EventLoopInterface, cb: typing.Callable[[int, int], None]) -> None:
-    """Asynchronously close a previously-allocated communication port.
+    """Asynchronously close a handle: see close_port().
 
-    :param port: Port number to be closed.
+    :param port: Handle to be closed.
     :param loop: Event loop in which the callable should be invoked.
     :param cb: Completion callback: cb(port, error_code)."""
 
@@ -232,31 +256,70 @@ def close_port_cb(port: int, loop: EventLoopInterface, cb: typing.Callable[[int,
     return
 
 
-def send_message(source: int, destination: int, message: bytes):
-    """Send a message to another port.
+# Exceptions for send_message's result codes.
+_SEND_ERRORS: dict[int, type[DarqError]] = {
+    SendResult.BAD_HANDLE: NonExistentPortError,
+    SendResult.NOT_RECEIVE_RIGHT: PortRightError,
+    SendResult.DEAD_PORT: DeadPortError,
+}
 
-    :param source: Sending port number.
-    :param destination: Target port number.
-    :param message: Buffer to be sent."""
+
+def send_message(source: int, destination: int, message: bytes):
+    """Send a message to a port.
+
+    Returns once the p-kernel has delivered the message (or refused
+    it).  A message to one of the sender's own ports is already queued
+    for receive_message() when this returns.
+
+    :param source: Handle for the sending port: a receive right, where
+                   replies will go.
+    :param destination: Handle for the destination port.
+    :param message: Buffer to be sent.
+    :raises NonExistentPortError: if either handle isn't open.
+    :raises PortRightError: if the source isn't a receive right.
+    :raises DeadPortError: if the destination port has been destroyed."""
 
     # Get a SystemCallState
     syscall = SystemCallState()
     syscall.set_mode(SystemCallMode.SYNC)
 
     # Populate the request message
-    request = SendMessage(source, destination)
+    request = SendMessageRequest(source, destination)
     request.set_payload(message)
     syscall.set_request(request)
 
-    # Enqueue.  There's no response to a SendMessage, so don't wait.
+    # Enqueue.
     _darq_process_state.queue_new_syscall(syscall)
+
+    # Wait for response.
+    syscall.sync_wait()
+
+    result = typing.cast(SendMessageResponse, syscall.get_response()).result
+    if result != SendResult.OK:
+        try:
+            reason = SendResult(result).name
+        except ValueError:
+            reason = f"result {result}"
+        raise _SEND_ERRORS.get(result, DarqError)(f"send from {source} to {destination}: {reason}")
     return
 
 
-def receive_message(port: int, blocking: bool = True) -> bytes:
-    """Receive a message from a port."""
-    # FIXME: not yet implemented by the process runtime (pyloader).
-    raise NotImplementedError("receive_message")
+def receive_message(port: int, blocking: bool = True) -> tuple[int, bytes] | None:
+    """Receive a message delivered to a port.
+
+    Messages are received in the order they were delivered.  This needs
+    no request to the p-kernel: delivered messages are queued locally.
+    Messages for a process using the callback model (see init_cb) go to
+    its listener instead, so they can't be received here.
+
+    :param port: Open port number.
+    :param blocking: If True, wait until a message is delivered;
+                     otherwise, return None at once if none has been.
+    :returns: (source port, payload), or None if not blocking and no
+              message has been delivered.
+    :raises NonExistentPortError: if the port isn't open, or is closed
+                                  while waiting."""
+    return _darq_process_state.receive_message(port, blocking)
 
 
 # def send_chunk(self, source: int, destination: int, stream: int, offset: int, chunk: bytes):
@@ -358,6 +421,119 @@ def kill_process_cb(dpid: int, loop: EventLoopInterface, cb: typing.Callable[[in
     syscall.set_callback(loop, cb)
 
     # Enqueue.
+    _darq_process_state.queue_new_syscall(syscall)
+    return
+
+
+# Exceptions for the name registry's result codes.
+_NAME_ERRORS: dict[int, type[DarqError]] = {
+    NameResult.BAD_HANDLE: NonExistentPortError,
+    NameResult.INVALID_NAME: InvalidNameError,
+    NameResult.NAME_TAKEN: NameTakenError,
+    NameResult.RESERVED_NAME: ReservedNameError,
+    NameResult.PORT_ALREADY_NAMED: PortAlreadyNamedError,
+}
+
+
+def _name_error(result: int, name: str) -> DarqError:
+    """Return the exception for a name registry result code."""
+    try:
+        reason = NameResult(result).name
+    except ValueError:
+        reason = f"result {result}"
+    return _NAME_ERRORS.get(result, DarqError)(f"{name!r}: {reason}")
+
+
+def register_name(name: str, port: int) -> None:
+    """Register a name for a port, so other processes can look it up.
+
+    A port can have one name, which is removed when the port is
+    destroyed.  Names beginning with 'darq.' are reserved for system
+    services: see doc/ipc.rst.
+
+    :param name: Name to register: 1 to 255 bytes of UTF-8.
+    :param port: Handle for the port's receive right.
+    :raises NonExistentPortError: if the handle isn't a receive right.
+    :raises InvalidNameError: if the name is empty or too long.
+    :raises NameTakenError: if another port has the name.
+    :raises ReservedNameError: if the name is reserved.
+    :raises PortAlreadyNamedError: if the port already has a name."""
+
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.SYNC)
+    syscall.set_request(RegisterNameRequest(0, name, port))
+
+    _darq_process_state.queue_new_syscall(syscall)
+    syscall.sync_wait()
+
+    result = typing.cast(RegisterNameResponse, syscall.get_response()).result
+    if result != NameResult.OK:
+        raise _name_error(result, name)
+    return
+
+
+def register_name_cb(name: str, port: int, loop: EventLoopInterface,
+                     cb: typing.Callable[[int, int], None]) -> None:
+    """Asynchronously register a name for a port: see register_name().
+
+    :param name: Name to register.
+    :param port: Handle for the port's receive right.
+    :param loop: Event loop in which the callable should be invoked.
+    :param cb: Completion callback: cb(port, error_code), with a
+               NameResult code."""
+
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.CALLBACK)
+    syscall.set_request(RegisterNameRequest(0, name, port))
+    syscall.set_callback(loop, cb)
+
+    _darq_process_state.queue_new_syscall(syscall)
+    return
+
+
+def lookup_name(name: str, blocking: bool = True) -> int | None:
+    """Look up a registered name, for a send right to its port.
+
+    :param name: Registered name.
+    :param blocking: If True, wait until the name is registered;
+                     otherwise, return None at once if it isn't.
+    :returns: Handle for a send right to the port (or this process'
+              existing handle, if it has one), or None if not blocking
+              and the name isn't registered.
+    :raises InvalidNameError: if the name is empty or too long."""
+
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.SYNC)
+    syscall.set_request(LookupNameRequest(0, name, blocking))
+
+    _darq_process_state.queue_new_syscall(syscall)
+    syscall.sync_wait()
+
+    response = typing.cast(LookupNameResponse, syscall.get_response())
+    if response.result == NameResult.NOT_FOUND:
+        return None
+    if response.result != NameResult.OK:
+        raise _name_error(response.result, name)
+    return response.port
+
+
+def lookup_name_cb(name: str, blocking: bool, loop: EventLoopInterface,
+                   cb: typing.Callable[[int, int], None]) -> None:
+    """Asynchronously look up a registered name: see lookup_name().
+
+    :param name: Registered name.
+    :param blocking: If True, call back once the name is registered;
+                     otherwise, at once.
+    :param loop: Event loop in which the callable should be invoked.
+    :param cb: Completion callback: cb(handle, error_code), with a
+               NameResult code (NOT_FOUND if not blocking, and the name
+               isn't registered)."""
+
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.CALLBACK)
+    syscall.set_request(LookupNameRequest(0, name, blocking))
+    syscall.set_callback(loop, cb)
+
     _darq_process_state.queue_new_syscall(syscall)
     return
 

@@ -6,6 +6,7 @@
 # Uses darq.common and darq.loop to provide the foundation for
 # Darq applicaations.
 
+import collections
 import threading
 import typing
 
@@ -13,6 +14,7 @@ from enum import IntEnum
 from warnings import deprecated
 
 from .common import Buffer, Message
+from .errors import NonExistentPortError
 from .loop import EventLoopInterface
 
 # Default exported symbols.
@@ -139,9 +141,15 @@ class PortState:
         # True if port is open.
         self.is_open: bool = False
 
-        # Queue of messages received for this port, but not yet
-        # retrieved by the application.
-        self.messages = []
+        # Queue of messages delivered to this port, but not yet received
+        # by the application, as (source port, payload).  Messages are
+        # delivered on the I/O thread, and received on the application's,
+        # so the queue is guarded by the lock.  A blocked receiver waits
+        # for the event, which is set when a message is delivered, or the
+        # port is closed.
+        self.messages: collections.deque[tuple[int, bytes]] = collections.deque()
+        self._lock = threading.Lock()
+        self._event = threading.Event()
 
         # Reassembly buffer for received bytes.
         self.buffer = Buffer()
@@ -151,11 +159,55 @@ class PortState:
         """Append received bytes to the reassembly buffer."""
         return self.buffer.append(buf)
 
-    def get_message(self) -> Message | None:
-        """Return a queued, received Message, if one is available.
+    def deliver(self, source: int, payload: bytes):
+        """Queue a delivered message, releasing a blocked receiver.
 
-        :returns: a Message, or None if none is available."""
+        :param source: Sending port number.
+        :param payload: Message contents."""
+        with self._lock:
+            self.messages.append((source, payload))
+            self._event.set()
+        return
 
+    def receive(self, blocking: bool = True) -> tuple[int, bytes] | None:
+        """Take the next delivered message, in order of delivery.
+
+        :param blocking: If True, wait for a message to be delivered;
+                         otherwise, return None if there isn't one.
+        :returns: (source port, payload), or None if not blocking and
+                  no message has been delivered.
+        :raises NonExistentPortError: if the port is closed, before or
+                                      while waiting."""
+        while True:
+            with self._lock:
+                if self.messages:
+                    return self.messages.popleft()
+                if not self.is_open:
+                    raise NonExistentPortError(self.port_id)
+                if not blocking:
+                    return None
+
+                # Cleared while holding the lock, so a message delivered
+                # from here on sets it again.
+                self._event.clear()
+
+            self._event.wait()
+
+    def close(self):
+        """Mark the port closed, releasing any blocked receiver.
+
+        Messages already delivered can still be received."""
+        with self._lock:
+            self.is_open = False
+            self._event.set()
+        return
+
+    def wake(self):
+        """Release a blocked receiver, without a message.
+
+        It checks again, and waits again if there's still nothing for
+        it: this lets a pending exception (such as a kill) be raised."""
+        self._event.set()
         return
 
 

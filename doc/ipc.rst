@@ -44,29 +44,40 @@ consequent maximum message size of 4GB (which seems ample, but is it
 really?)
 
 The p-kernel protocol consists of request and response messages for
-the pKernel emulated system calls.
+the pKernel emulated system calls.  Those concerning ports and
+messages are:
 
 * OpenPortRequest
 * OpenPortResponse
 * ClosePortRequest
 * ClosePortResponse
-* SendMessage
+* SendMessageRequest
+* SendMessageResponse
 * DeliverMessage
 * SendChunk
 * DeliverChunk
+* RegisterNameRequest
+* RegisterNameResponse
+* LookupNameRequest
+* LookupNameResponse
 
-A process can register zero or more _ports_, which act as the source
-and destination of messages.  `OpenPortRequest` requests the
-allocation of a new port, and `OpenPortResponse` confirms the
-allocation, and returns the new port's identifier.  `ClosePortRequest`
-requests destruction of a port, and `ClosePortResponse` confirms it.
+A process can hold zero or more _ports_, which act as the source and
+destination of messages (see Ports, below).  `OpenPortRequest` requests
+the creation of a new port, and `OpenPortResponse` confirms it, and
+returns the process' handle for the new port.  `ClosePortRequest`
+requests that a handle be closed, and `ClosePortResponse` confirms it.
 
-`SendMessage` is used to send a message from a process to the
+`SendMessageRequest` is used to send a message from a process to the
 p-kernel, and `DeliverMessage` to deliver it from the p-kernel to a
-process.  THey contain a short hader, identifying the source and
-destination ports, followed by the payload.  `SendChunk`and
-`DeliverChunk` are similar, but are used for streaming data, and
-includes ordering and positioning data within the stream.
+process.  They contain a short header, identifying the source and
+destination ports, followed by the payload, and a list of port handles
+transferred with the message.  `SendMessageResponse` reports whether
+the message was accepted for delivery.  `SendChunk` and `DeliverChunk`
+are similar, but are used for streaming data, and include ordering and
+positioning data within the stream.
+
+`RegisterNameRequest` and `LookupNameRequest` use the p-kernel's name
+registry (see Name Registry, below).
 
 Both message and chunk payloads are structured binary data, managed by
 generated functions derived from an IDL.
@@ -74,17 +85,184 @@ generated functions derived from an IDL.
 Ports
 -----
 
-Ports are identified by small integer values.  There is not yet any
-provision to pass ports in messages, other than the source port from
-which it was sent, but this will likely be needed soon.
+Port rights follow the Mach model.  A port is a kernel object: a
+destination for messages.  Processes never see ports directly, only
+*rights* to them:
+
+* A port has exactly one *receive right*, held by the process that
+  created it.  Only that process receives the port's messages.
+* A port can have any number of *send rights*, held by other
+  processes, which may send messages to it.
+
+A process refers to its rights using *handles*: 64 bit integers,
+local to that process, like Unix file descriptors.  The p-kernel
+translates handles into references to its port objects, and back into
+the receiving process' handles on delivery.  A handle value means
+nothing outside the process that holds it.
+
+* Handles are allocated by a per-process counter, and never reused,
+  so a stale handle can't silently refer to a different port.
+* A process has at most one handle for each port.  Receiving another
+  right to a port it already has a handle for returns the same handle,
+  so comparing handles compares ports.  A receive right includes the
+  right to send, so a send right to a port a process owns adds nothing.
+* Handles aren't reference counted: a process holds a right, or
+  doesn't.  Every delivered message grants a send right to its source
+  port (see Sending), so with counting, a service would have to close a
+  client's handle once for each message it received from that client.
+  (Mach avoids this with *send-once* rights for replies.)
+
+This is also the basis of security: a process can only send to ports
+it holds a right to, and can only send from ports it owns, so it can
+neither reach services it wasn't given, nor impersonate another port.
+
+Kernel State
+~~~~~~~~~~~~
+
+The p-kernel keeps:
+
+* A table of live ports, each a `KernelPortState`: an internal
+  identifier (used only for logging, never sent to processes), the
+  process holding its receive right, whether it's alive, and its
+  registered name, if any.
+* For each process (its `KernelProcessState`), a handle table mapping
+  each handle to its port and right (RECEIVE or SEND), the reverse
+  mapping from port to handle, and the next handle number.
+* The name registry, mapping names to ports.
+
+Sending
+~~~~~~~
+
+A sender names a source handle, a destination handle, the payload,
+and a list of handles to transfer.  The p-kernel:
+
+1. Checks the source handle holds a RECEIVE right in the sender's
+   table: the source is where replies go, so it must be the sender's
+   own port.
+2. Checks the destination handle holds a SEND right, or a RECEIVE
+   right (a process may send to its own ports), to a live port.
+3. Translates the message for the receiver, which holds the
+   destination port's receive right:
+
+   * The destination becomes the receiver's handle for the port.
+   * The source becomes a SEND right in the receiver's table, created
+     if needed: every delivered message carries a right to reply.
+   * Each transferred handle becomes a SEND right in the receiver's
+     table, in the same way.
+
+4. Delivers the translated `DeliverMessage`, and answers the sender
+   with a `SendMessageResponse`.
+
+A failed check, or a dead destination, is reported in the
+`SendMessageResponse`, and nothing is delivered.  Sending is
+synchronous: `send_message()` returns once the p-kernel has answered,
+and raises an exception for a failure.  The result codes (`SendResult`)
+are:
+
+* `OK`: delivered.
+* `BAD_HANDLE`: the source or destination isn't an open handle
+  (`NonExistentPortError`).
+* `NOT_RECEIVE_RIGHT`: the source is only a send right
+  (`PortRightError`).
+* `DEAD_PORT`: the destination port has been destroyed
+  (`DeadPortError`).
+
+The p-kernel answers after delivering, so a message sent to one of the
+sender's own ports is already queued for `receive_message()` when
+`send_message()` returns.
+
+Ports in Messages
+~~~~~~~~~~~~~~~~~
+
+Payloads are opaque to the p-kernel, so it can't find ports written
+into them.  Instead, ports are transferred in a list alongside the
+payload, and a DIDL `port` field holds an index into that list.  The
+generated code builds the list when encoding, and maps indexes back
+to handles when decoding.  The p-kernel translates the list (step 3,
+above).
+
+* A `port` field is a uint16 index; the value 0xFFFF means "no port",
+  for optional ports (such as an optional reply port).
+* A message can transfer at most 64 handles.  The handle count in
+  `SendMessageRequest` and `DeliverMessage` is a uint16, and the
+  p-kernel refuses a `SendMessageRequest` with more than 64 handles, or
+  a handle it can't translate, in its `SendMessageResponse`.
+
+Most systems limit ports per message to a small number: Zircon allows
+64 handles per channel message, Linux 253 file descriptors per
+`SCM_RIGHTS` message, and seL4 2 or 3 extra capabilities.  The limit
+is what bounds the work for the p-kernel and receivers; the uint16
+index leaves room to raise it without changing the wire format.
+
+In 1ed, a transferred handle grants a SEND right.  Moving a RECEIVE
+right to another process can be added later.
+
+Port Lifetimes
+~~~~~~~~~~~~~~
+
+* Closing a RECEIVE handle destroys the port: it's marked dead, and
+  its registered name (if any) is removed.
+* Closing a SEND handle gives up that right.
+* When a process exits, or its p-call session is lost, all the ports
+  it holds receive rights for are destroyed, and all its handles are
+  released.
+* Other processes' handles to a destroyed port remain until they're
+  closed, as *dead* handles: sending to one fails.
+
+Notification of a port's death to the holders of send rights (so a
+client can notice its service has gone) is a future addition.
+
+Name Registry
+~~~~~~~~~~~~~
+
+Every handle comes from somewhere: from opening a port, receiving a
+message, or a transfer.  To bootstrap, a process needs a way to obtain
+rights to the system services.  The p-kernel provides a name
+registry:
+
+* `register_name(name, handle)` associates a name with a port: the
+  handle must hold a RECEIVE right.  A name is 1 to 255 bytes of UTF-8,
+  and a port can have one name.  The name is removed when the port is
+  destroyed, so it can then be registered again.
+* `lookup_name(name, blocking)` returns a new SEND handle for the
+  named port (or the caller's existing handle, if it has one).
+  Services start concurrently at boot, so a blocking lookup waits
+  until the name is registered, rather than failing; a non-blocking
+  lookup of an unregistered name returns nothing.  A waiting lookup is
+  abandoned if its process disconnects.
+
+Both have `_cb` variants for the callback model.  Failures are reported
+with a `NameResult` code, which `register_name` raises as an exception.
+
+Names `darq`, and beginning with `darq.`, are reserved for system services: they
+may only be registered by processes the p-kernel spawned itself (during
+boot), which have a parent dpid of 0.  No other process can create one:
+a `spawn_process` p-call always records its caller as the parent.
+Other names are registered on a first come, first served basis.
+
+This trusts every boot-spawned service with the whole `darq.`
+namespace: it keeps impostors out, but doesn't stop one system service
+registering another's name.  If that's needed, each name could be bound
+to the boot table entry that spawned its service, without changing the
+API.
+
+For 1ed, the registry is a table inside the p-kernel, reached by
+p-calls.  The alternative is a separate name service process, as in
+Mach (and macOS' launchd), reached through a *bootstrap port* given
+to every process when it's spawned.  That needs spawning with initial
+handles, and the registry process' own authority to check
+registrations.  The `register_name` and `lookup_name` API would be the
+same either way, so the registry can move into a process later.
+
+This replaces the earlier scheme of well-known port numbers.
 
 
 Application Architecture
 ------------------------
 
 Sending messages and chunks is a synchronous operation for the sending
-process: control flow blocks until the runtime library has enqueued
-the payload for transmission by the host operating system's TCP stack.
+process: control flow blocks until the p-kernel has accepted (or
+refused) the message.
 
 Receiving messages is more complicated.  The initial prototype releases
 will adopt a single-threaded event-loop structure, with the ability to
@@ -118,10 +296,10 @@ They may then register their service port(s) with the IPC system, but
 their client processes are unaware of these registered port numbers.
 How do the clients and their server rendezvous?
 
-This is primarily a security question: the services could use
-well-known port numbers, or the p-kernel could implement a name
-resolution service, but in either case, there is nothing to prevent
-an imposter registering as the service.
+This is primarily a security question: there must be nothing to
+prevent an imposter registering as the service.  DarqOS uses the
+p-kernel's name registry, which reserves the system services' names
+for the processes it spawned to run them (see Name Registry, above).
 
 Application to Service Communication
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -232,6 +410,6 @@ Notes:
 * Struct alignment and padding follow the C/C++ ABI: a struct is aligned to its most strictly aligned member, and its size is padded to a multiple of that alignment.
 * The 'library' attribute is used to name the generated Python module.
 * Specification of a return type(s) for method x implies two messages: xRequest and xResponse
-* The 'port' type is a uint32, but identified for special handling within the IPC system.
+* The 'port' type is a uint16 index into the list of handles transferred with the message, or 0xFFFF for no port (see Ports in Messages): the generated code converts between indexes and handles.  A message can transfer at most 64 handles.
 * The 'opaque' type is a sequence of bytes.  It's encoded as a uint32 offset (from the start of the message) and a uint32 length, and the bytes are appended to the end of the message, 8-byte aligned.
   

@@ -19,15 +19,20 @@ from darq.common import (
     Exited,
     KillProcessRequest,
     KillProcessResponse,
+    LookupNameRequest,
+    LookupNameResponse,
     Message,
     MessageType,
     OpenPortRequest,
     OpenPortResponse,
     Reboot,
+    RegisterNameRequest,
+    RegisterNameResponse,
     RunRequest,
     RunResponse,
     SendChunk,
-    SendMessage,
+    SendMessageRequest,
+    SendMessageResponse,
     Shutdown,
     SpawnProcessRequest,
     SpawnProcessResponse,
@@ -59,7 +64,7 @@ class TestMessage:
                                   MessageType.OPEN_PORT_RQST, HEADER_LENGTH)
 
     def test_roundtrip(self):
-        m = Message(MessageType.SEND_MESSAGE)
+        m = Message(MessageType.SEND_MESSAGE_RQST)
         m.set_version(3)
         m.set_length(1234)
 
@@ -67,7 +72,7 @@ class TestMessage:
         d.decode(m.encode())
         assert d.version == 3
         assert d.header_length == HEADER_LENGTH
-        assert d.type == MessageType.SEND_MESSAGE
+        assert d.type == MessageType.SEND_MESSAGE_RQST
         assert d.length == 1234
 
     def test_init_copies_header(self):
@@ -154,23 +159,17 @@ class TestRunResponse:
 
 class TestOpenPortRequest:
     def test_roundtrip(self):
-        m = OpenPortRequest(request_id=7, port=42)
+        m = OpenPortRequest(request_id=7)
         buf = m.encode()
         check_header(buf, MessageType.OPEN_PORT_RQST)
+        assert len(buf) == 16
 
         d = OpenPortRequest()
         d.decode(buf)
         assert d.request_id == 7
-        assert d.requested_port == 42
-
-    def test_ephemeral_and_max_port(self):
-        for port in (0, UInt64.max()):
-            d = OpenPortRequest()
-            d.decode(OpenPortRequest(1, port).encode())
-            assert d.requested_port == port
 
     def test_truncated_raises(self):
-        buf = OpenPortRequest(1, 2).encode()
+        buf = OpenPortRequest(1).encode()
         with pytest.raises(MessageDecodingError):
             OpenPortRequest().decode(buf[:-1])
 
@@ -208,6 +207,71 @@ class TestClosePortRequest:
         buf = ClosePortRequest(1, 2).encode()
         with pytest.raises(MessageDecodingError):
             ClosePortRequest().decode(buf[:-1])
+
+
+class TestRegisterNameRequest:
+    def test_roundtrip(self):
+        buf = RegisterNameRequest(7, "darq.storage", UInt64.max()).encode()
+        check_header(buf, MessageType.REGISTER_NAME_RQST)
+        assert len(buf) % 4 == 0
+
+        d = RegisterNameRequest()
+        d.decode(buf)
+        assert (d.request_id, d.get_name(), d.port) == (7, "darq.storage", UInt64.max())
+
+    def test_utf8_name(self):
+        d = RegisterNameRequest()
+        d.decode(RegisterNameRequest(1, "naïve.ポート", 2).encode())
+        assert d.get_name() == "naïve.ポート"
+
+    def test_name_overrun_raises(self):
+        buf = bytearray(RegisterNameRequest(1, "abc", 2).encode())
+        buf[12:16] = (99).to_bytes(4, "big")
+        with pytest.raises(MessageDecodingError):
+            RegisterNameRequest().decode(bytes(buf))
+
+    def test_truncated_raises(self):
+        buf = RegisterNameRequest(1, "abc", 2).encode()
+        with pytest.raises(MessageDecodingError):
+            RegisterNameRequest().decode(buf[:-1])
+
+
+class TestRegisterNameResponse:
+    def test_roundtrip(self):
+        buf = RegisterNameResponse(7, 3).encode()
+        check_header(buf, MessageType.REGISTER_NAME_RESP)
+
+        d = RegisterNameResponse()
+        d.decode(buf)
+        assert (d.request_id, d.result) == (7, 3)
+
+
+class TestLookupNameRequest:
+    @pytest.mark.parametrize("blocking", [True, False])
+    def test_roundtrip(self, blocking):
+        buf = LookupNameRequest(7, "darq.history", blocking).encode()
+        check_header(buf, MessageType.LOOKUP_NAME_RQST)
+        assert len(buf) % 4 == 0
+
+        d = LookupNameRequest(0, "", not blocking)
+        d.decode(buf)
+        assert (d.request_id, d.get_name(), d.blocking) == (7, "darq.history", blocking)
+
+    def test_name_overrun_raises(self):
+        buf = bytearray(LookupNameRequest(1, "abc").encode())
+        buf[12:16] = (99).to_bytes(4, "big")
+        with pytest.raises(MessageDecodingError):
+            LookupNameRequest().decode(bytes(buf))
+
+
+class TestLookupNameResponse:
+    def test_roundtrip(self):
+        buf = LookupNameResponse(7, 0, UInt64.max()).encode()
+        check_header(buf, MessageType.LOOKUP_NAME_RESP)
+
+        d = LookupNameResponse()
+        d.decode(buf)
+        assert (d.request_id, d.result, d.port) == (7, 0, UInt64.max())
 
 
 class TestClosePortResponse:
@@ -273,7 +337,6 @@ PAYLOADS = [b"", b"x", b"hello world", bytes(range(256))]
 
 
 @pytest.mark.parametrize("cls, message_type", [
-    (SendMessage, MessageType.SEND_MESSAGE),
     (DeliverMessage, MessageType.DELIVER_MESSAGE),
 ])
 class TestPortMessages:
@@ -308,11 +371,43 @@ class TestPortMessages:
             cls().decode(m.encode()[:-1])
 
 
-def test_send_message_constructor_ports():
-    m = SendMessage(source=1, destination=2)
-    d = SendMessage()
-    d.decode(m.encode())
-    assert (d.source, d.destination) == (1, 2)
+class TestSendMessageRequest:
+    @pytest.mark.parametrize("payload", PAYLOADS)
+    def test_roundtrip(self, payload):
+        m = SendMessageRequest(source=UInt64.max(), destination=16386, request_id=7)
+        m.set_payload(payload)
+        buf = m.encode()
+        check_header(buf, MessageType.SEND_MESSAGE_RQST)
+        assert len(buf) % 4 == 0
+        assert len(buf) == HEADER_LENGTH + 24 + m.padded_length(payload)
+
+        d = SendMessageRequest()
+        d.decode(buf)
+        assert (d.request_id, d.source, d.destination, d.payload) == (7, UInt64.max(), 16386, payload)
+
+    def test_payload_overrun_raises(self):
+        m = SendMessageRequest(1, 2, 3)
+        m.set_payload(b"abc")
+        buf = bytearray(m.encode())
+        buf[12:16] = (99).to_bytes(4, "big")
+        with pytest.raises(MessageDecodingError):
+            SendMessageRequest().decode(bytes(buf))
+
+    def test_truncated_raises(self):
+        m = SendMessageRequest(1, 2, 3)
+        m.set_payload(b"payload")
+        with pytest.raises(MessageDecodingError):
+            SendMessageRequest().decode(m.encode()[:-1])
+
+
+class TestSendMessageResponse:
+    def test_roundtrip(self):
+        buf = SendMessageResponse(7, 3).encode()
+        check_header(buf, MessageType.SEND_MESSAGE_RESP)
+
+        d = SendMessageResponse()
+        d.decode(buf)
+        assert (d.request_id, d.result) == (7, 3)
 
 
 class TestSpawnProcessRequest:

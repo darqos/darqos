@@ -9,11 +9,14 @@ TCP
 IPC
 ---
 
-* 11000 : Boot
-* 11001 : Storage
-* 11002 : History
-* 11003 : Security
-* 11004 : Metadata
-* 11005 : Index
-* 11006 : Type
-* 11007 : Terminal
+IPC ports have no fixed numbers: handles are allocated per process
+(see :doc:`ipc`).  System services are found by name, using the
+p-kernel's name registry:
+
+* `darq.storage` : Storage
+* `darq.history` : History
+* `darq.security` : Security
+* `darq.metadata` : Metadata
+* `darq.index` : Index
+* `darq.type` : Type
+* `darq.terminal` : Terminal
