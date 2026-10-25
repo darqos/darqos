@@ -9,13 +9,20 @@
 # - Executing the application code
 # - Reporting the application's exit status to the p-kernel
 #
-# There are two threads created by this stub.  The first (main) thread
-# runs an event loop servicing the socket connection to the p-kernel,
-# and monitoring the second (application) thread.  The application
-# thread is spawned by the main thread, to execute the darq_main()
-# function from the default module of the specified executable.
+# There are two threads.  The main thread runs the application: it
+# loads main.py from the specified executable, and calls its darq_main()
+# function.  The application owns the main thread, so it can use GUI
+# toolkits (such as Qt) that require it, and receive signals.
+#
+# The second (I/O) thread runs an event loop servicing the socket
+# connection to the p-kernel.  It sends the application's p-calls, and
+# delivers their responses: synchronous p-calls are woken directly,
+# while callbacks and delivered messages are posted to the application's
+# event loop (see darq.init() and darq.init_cb()).
 
 import ctypes
+import enum
+import importlib
 import logging
 import os
 import queue
@@ -26,6 +33,19 @@ import threading
 import traceback
 
 import darq
+
+
+class AppState(enum.Enum):
+    """Progress of the application on the main thread."""
+
+    # Waiting for the p-kernel's RUN_RESPONSE.
+    PENDING = 1
+
+    # Loading, or running, darq_main().
+    RUNNING = 2
+
+    # Finished, killed, or never to be started.
+    FINISHED = 3
 
 
 class PythonPProcess(darq.SocketListener):
@@ -43,32 +63,42 @@ class PythonPProcess(darq.SocketListener):
         # Connection to p-Kernel process.
         self._pkernel_sock: socket.socket | None = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-        # p-Call request queue from application threads (queue is thread-safe).
+        # p-Call request queue from the application (queue is thread-safe).
         self._requests = queue.Queue()
 
-        # Event loop wakeup mechanism for p-call request queue.  This is a
-        # socket pair, rather than a pipe, so the event loop can monitor it.
-        self._queue_wakeup_reader, self._queue_wakeup_writer = socket.socketpair()
-        self._queue_wakeup_reader.setblocking(False)
-
         # p-Calls sent to the p-kernel and awaiting a response, by request_id.
-        # Only accessed from the main thread.
+        # Only accessed from the I/O thread.
         self._pending: dict[int, darq.SystemCallState] = {}
 
         # Open ports, by port number.
         self.ports: dict[int, darq.PortState] = {}
 
-        # The application's event loop listener, set by darq.init_cb().
+        # The application's event loop, set by darq.init(), and its
+        # listener, set by darq.init_cb().  Callbacks are posted to it.
+        self.loop: darq.EventLoopInterface | None = None
         self.listener: darq.EventListener | None = None
 
-        # Event loop wakeup mechanism for the application thread's exit, and
-        # the application's result: (status, error), set when it finishes.
-        self._exit_wakeup_reader, self._exit_wakeup_writer = socket.socketpair()
-        self._exit_wakeup_reader.setblocking(False)
+        # The application's progress, guarded by the lock: it's changed
+        # by both threads.  The main thread waits for the start event
+        # before running the application, and the I/O thread waits for
+        # the finished event when killing it.
+        self._app_lock = threading.Lock()
+        self._app_state = AppState.PENDING
+        self._app_start = threading.Event()
+        self._app_finished = threading.Event()
+
+        # Thread identifier of the main thread, while it runs the application.
+        self._app_ident: int | None = None
+
+        # Set once the RUN_RESPONSE has been handled.  Only accessed
+        # from the I/O thread.
+        self._run_decided: bool = False
+
+        # The application's result: (status, error), set when it finishes.
         self._app_result: tuple[int, str | None] | None = None
 
-        # Set when the application thread is being killed, rather than
-        # finishing by itself.
+        # Set when the application is being killed, rather than finishing
+        # by itself.
         self._app_killed: bool = False
 
         # Set once the application's exit has been reported, and the
@@ -76,24 +106,22 @@ class PythonPProcess(darq.SocketListener):
         self._exiting: bool = False
 
         # Transaction identifiers for p-kernel requests.  Only accessed from
-        # the main thread.
+        # the I/O thread.
         self.request_id: int = 0
 
         # Re-assembly buffer.
         self.recv_buffer = darq.Buffer()
 
-        # Thread running the application's darq_main().
-        self._app_thread: threading.Thread | None = None
+        # Thread running the I/O event loop.
+        self._io_thread: threading.Thread | None = None
 
         # Host process exit status.
         self.exit_status: int = 0
 
-        # Event loop.
-        self.loop = darq.SelectEventLoop()
-        self.loop.add_socket(self._queue_wakeup_reader, self)
-        self.loop.add_socket(self._exit_wakeup_reader, self)
+        # I/O event loop.
+        self.io_loop = darq.SelectEventLoop()
         return
-        
+
     def getpid(self) -> int:
         """Return the DarqOS process identifier for this p-process."""
         return self._dpid
@@ -112,21 +140,11 @@ class PythonPProcess(darq.SocketListener):
     def queue_new_syscall(self, syscall_state: darq.SystemCallState):
         """Queue a system call to be sent to the p-kernel."""
         self._requests.put(syscall_state)
-
-        written = self._queue_wakeup_writer.send(b'X')
-        if written != 1:
-            raise Exception("failed to write byte to the queue wakeup socket !?")
+        self.io_loop.post(self.handle_syscall_queue)
         return
 
     def handle_syscall_queue(self):
-        """Send queued p-calls from the application thread to the p-kernel."""
-
-        # Drain the wakeup socket.
-        try:
-            while self._queue_wakeup_reader.recv(4096):
-                pass
-        except BlockingIOError:
-            pass
+        """Send queued p-calls from the application to the p-kernel."""
 
         while True:
             try:
@@ -157,34 +175,108 @@ class PythonPProcess(darq.SocketListener):
 
         syscall.set_response(response)
 
-        if syscall.get_mode() == darq.SystemCallMode.SYNC:
+        mode = syscall.get_mode()
+        if mode == darq.SystemCallMode.SYNC:
             syscall.notify()
+        elif mode == darq.SystemCallMode.CALLBACK:
+            self.post_callback(syscall)
         else:
-            # FIXME: callbacks must run on the application's loop, which
-            # needs a thread-safe way to post to it.
-            logging.warning(f"Mode {syscall.get_mode()} completion not implemented")
+            logging.warning(f"Mode {mode} completion not implemented")
         return syscall
 
-    def run_darq_main(self, darq_main):
-        """Run the application's main function, and report how it ended.
+    @staticmethod
+    def callback_args(syscall: darq.SystemCallState) -> tuple[int, int]:
+        """Return a completed p-call's callback arguments: (value, error_code).
 
-        Runs on the application thread.  A return value of None or 0,
-        or sys.exit() with no code, is success; an integer is the exit
-        status; anything else, including an exception, is status 1, with
-        a description of the failure."""
+        The value is the port, or process, the p-call was about."""
+        response = syscall.get_response()
+        if isinstance(response, (darq.OpenPortResponse, darq.ClosePortResponse)):
+            return response.port, response.result
+        if isinstance(response, darq.SpawnProcessResponse):
+            return response.dpid, response.result
+        if isinstance(response, darq.KillProcessResponse):
+            request = syscall.get_request()
+            assert isinstance(request, darq.KillProcessRequest)
+            return request.dpid, response.result
+        raise TypeError(f"No callback arguments for {type(response).__name__}")
+
+    def post_callback(self, syscall: darq.SystemCallState):
+        """Call a completed p-call's callback on its event loop."""
+        loop, callback = syscall.get_callback()
+        if loop is None or callback is None:
+            logging.warning("Callback p-call completed without a callback")
+            return
+
+        args = self.callback_args(syscall)
+        loop.post(lambda: callback(*args))
+        return
+
+    def post_to_app(self, function):
+        """Call function on the application's event loop.
+
+        :returns: False if the application has no event loop."""
+        if self.loop is None:
+            return False
+        self.loop.post(function)
+        return True
+
+    def run_app(self):
+        """Load and run the application, and report how it ended.
+
+        Runs on the main thread, once the p-kernel has accepted this
+        process.  A return value of None or 0, or sys.exit() with no
+        code, is success; an integer is the exit status; anything else,
+        including an exception, is status 1, with a description of the
+        failure.  A failure to load the application is reported the same
+        way."""
+
+        with self._app_lock:
+            if self._app_state != AppState.PENDING:
+                return
+            self._app_state = AppState.RUNNING
+            self._app_ident = threading.get_ident()
 
         error = None
         try:
-            status, error = self.status_from_result(darq_main(), "darq_main returned")
+            try:
+                darq_main = self.load_app()
+                result = darq_main()
+            finally:
+                self.app_finished()
+            status, error = self.status_from_result(result, "darq_main returned")
         except SystemExit as e:
             if self._app_killed:
-                logging.debug("Application thread killed.")
+                logging.debug("Application killed.")
                 return
             status, error = self.status_from_result(e.code, "sys.exit() with")
         except BaseException:
             status, error = 1, traceback.format_exc()
 
         self.app_exited(status, error)
+        return
+
+    def load_app(self):
+        """Import the application's main module, and return its darq_main."""
+
+        # Add executable module's location to system path.
+        sys.path.insert(0, self._exec_path)
+
+        # Inject the process state structure into the syscall module, so
+        # the application can make p-calls (even while being imported).
+        darq.syscall.__dict__["_darq_process_state"] = self
+
+        main = importlib.import_module("main")
+        return main.darq_main
+
+    def app_finished(self):
+        """Record that the application code is no longer running.
+
+        Called on the main thread.  Once this returns, the application
+        can no longer be killed."""
+        with self._app_lock:
+            self._app_state = AppState.FINISHED
+            self._app_ident = None
+            self._app_finished.set()
         return
 
     @staticmethod
@@ -200,29 +292,18 @@ class PythonPProcess(darq.SocketListener):
         return 1, f"{description} {value!r}"
 
     def app_exited(self, status: int, error: str | None):
-        """Record the application's result, and wake the main thread to report it.
+        """Record the application's result, and have the I/O thread report it.
 
-        Called on the application thread."""
+        Called on the main thread."""
         self._app_result = (status, error)
-        self._exit_wakeup_writer.send(b'X')
+        self.io_loop.post(self.handle_app_exit)
         return
 
     def handle_app_exit(self):
         """Report the application's exit to the p-kernel, and close the session."""
 
-        # Drain the wakeup socket.
-        try:
-            while self._exit_wakeup_reader.recv(4096):
-                pass
-        except BlockingIOError:
-            pass
-
         if self._app_result is None or self._exiting:
             return
-
-        # The thread has finished the application: let it end.
-        if self._app_thread is not None:
-            self._app_thread.join(1.0)
 
         status, error = self._app_result
         if status == 0:
@@ -265,7 +346,7 @@ class PythonPProcess(darq.SocketListener):
         if sock is None:
             return
 
-        self.loop.cancel_socket(sock)
+        self.io_loop.cancel_socket(sock)
         sock.close()
         self._pkernel_sock = None
         return
@@ -276,20 +357,12 @@ class PythonPProcess(darq.SocketListener):
         sock = self._pkernel_sock
         assert sock is not None, "already disconnected"
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.loop.add_socket(sock, self)
+        self.io_loop.add_socket(sock, self)
         sock.connect(('localhost', self._pkernel_port))
         return
 
     def on_readable(self, sock: socket.socket):
         logging.debug("Callback: socket is readable")
-
-        if sock is self._queue_wakeup_reader:
-            self.handle_syscall_queue()
-            return
-
-        if sock is self._exit_wakeup_reader:
-            self.handle_app_exit()
-            return
 
         try:
             data = sock.recv(65536)
@@ -423,36 +496,37 @@ class PythonPProcess(darq.SocketListener):
 
     def handle_run_response(self, message: darq.RunResponse):
         """Start the application, if the p-kernel has accepted this process."""
-        if self._app_thread is not None:
+        if self._run_decided:
             logging.warning("Duplicate RUN_RESPONSE ignored")
             return
+        self._run_decided = True
 
         if message.result != 0:
             logging.error(f"p-kernel refused to run this process (result {message.result}): exiting.")
             self.exit_status = 1
+            self.kill_app()
             self._end_app()
             return
 
-        try:
-            self.start_app()
-        except Exception:
-            # Couldn't load the application (such as an error importing
-            # main.py): report it like an application failure.
-            self.app_exited(1, traceback.format_exc())
+        # Release the main thread to run the application.
+        self._app_start.set()
         return
 
     def handle_deliver_message(self, message: darq.DeliverMessage):
-        if self.listener is None:
+        """Pass a delivered message to the application's listener, on its loop."""
+        listener = self.listener
+        if listener is None or self.loop is None:
             # FIXME: queue for receive_message(), once it exists.
             logging.warning(f"Message for port {message.destination} dropped: no listener")
             return
 
         # Check destination.
         if message.destination not in self.ports:
-            self.listener.on_error(0, 0, "Bad port")
+            self.post_to_app(lambda: listener.on_error(0, 0, "Bad port"))
             return
 
-        self.listener.on_message(message.source, message.destination, message.payload)
+        source, destination, payload = message.source, message.destination, message.payload
+        self.post_to_app(lambda: listener.on_message(source, destination, payload))
         return
 
 
@@ -474,40 +548,6 @@ class PythonPProcess(darq.SocketListener):
         self.ports.pop(message.port, None)
         return
 
-    def start_app(self):
-        # Create top-level namespace for application code.
-        app_globals = {}
-        app_globals["_darq_process_state"] = self
-
-        # Add executable path to system path.
-        launcher = \
-            "# language=Python\n" \
-            "import logging\n" \
-            "import sys\n" \
-            "import threading\n" \
-            "\n" \
-            "# Add executable module's location to system path.\n" \
-            f"sys.path.insert(0, '{self._exec_path}')\n" \
-            "\n" \
-            "# Import the application's main module,\n" \
-            "import main\n" \
-            "" \
-            "# Inject the process state structure into the syscall module.\n" \
-            "import darq; darq.syscall.__dict__['_darq_process_state'] = _darq_process_state\n" \
-            "\n" \
-            "# Start the application's main function in a new thread, which\n" \
-            "# reports how it ended (see PythonPProcess.run_darq_main).\n" \
-            "try:\n" \
-            "    t = threading.Thread(target=_darq_process_state.run_darq_main,\n" \
-            "                         args=(main.darq_main,), name='darq_main')\n" \
-            "    logging.debug('Starting application thread.')\n" \
-            "    t.start()\n" \
-            "finally:\n" \
-            "    pass #_darq_process_state\n"
-        exec(launcher, app_globals)
-        self._app_thread = app_globals["t"]
-        return
-
     def handle_kill_process_request(self, message: darq.KillProcessRequest):
         """Handle the p-kernel's request to kill this process."""
         if message.dpid != self._dpid:
@@ -520,24 +560,37 @@ class PythonPProcess(darq.SocketListener):
         return
 
     def kill_app(self, timeout: float = 1.0) -> bool:
-        """Kill the application thread.
+        """Kill the application, or stop it from starting.
 
-        :param timeout: Seconds to wait for the thread to exit.
-        :returns: True if the thread has exited."""
+        Called on the I/O thread.
 
-        thread = self._app_thread
-        if thread is None or not thread.is_alive():
-            return True
+        :param timeout: Seconds to wait for the application to stop.
+        :returns: True if the application isn't running."""
 
-        # Raise SystemExit in the application thread.  Python delivers it
-        # when the thread next executes bytecode, so it won't interrupt a
-        # thread blocked in native code.
-        self._app_killed = True
-        assert thread.ident is not None  # set once started
-        ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(thread.ident),
-                                                   ctypes.py_object(SystemExit))
+        with self._app_lock:
+            if self._app_state == AppState.PENDING:
+                # Not started yet: release the main thread, without
+                # running the application.
+                self._app_state = AppState.FINISHED
+                self._app_finished.set()
+                self._app_start.set()
+                return True
 
-        # Wake any p-calls the thread is blocked on, so it sees the exception.
+            if self._app_state == AppState.FINISHED:
+                return True
+
+            # Raise SystemExit in the main thread.  Python delivers it
+            # when the thread next executes bytecode, so it won't
+            # interrupt a thread blocked in native code (such as a Qt
+            # event loop with no events to deliver).  This is done holding
+            # the lock, so the application can't finish first.
+            self._app_killed = True
+            assert self._app_ident is not None  # set while running
+            ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(self._app_ident),
+                                                       ctypes.py_object(SystemExit))
+
+        # Wake any p-calls the application is blocked on, so it sees the
+        # exception.
         while True:
             try:
                 self._requests.get_nowait().notify()
@@ -548,27 +601,62 @@ class PythonPProcess(darq.SocketListener):
             syscall.notify()
         self._pending.clear()
 
-        thread.join(timeout)
-        return not thread.is_alive()
+        return self._app_finished.wait(timeout)
 
     def _end_app(self):
-        """End this process, once the application thread is dead."""
+        """End this process, once the application has stopped."""
 
         # FIXME: confirm death to p-kernel.
 
-        if self._app_thread is not None and self._app_thread.is_alive():
-            # Stuck in native code: the interpreter won't exit while it runs.
-            logging.error("Application thread did not exit: exiting forcibly.")
+        if not self._app_finished.is_set():
+            # Stuck in native code: the interpreter can't exit while it runs.
+            logging.error("Application did not exit: exiting forcibly.")
             os._exit(1)
 
-        # Leave the event loop: the main thread then disconnects and exits.
-        self.loop.stop()
+        # Leave the I/O event loop: the I/O thread then disconnects, and
+        # the main thread exits.
+        self.io_loop.stop()
+        return
+
+    def run_io_loop(self):
+        """Handle p-kernel messages and p-calls, until the session ends.
+
+        Runs on the I/O thread."""
+        try:
+            self.io_loop.run()
+        except BaseException:
+            logging.exception("p-kernel I/O failed: exiting.")
+            self.exit_status = 1
+        finally:
+            self.disconnect()
+
+            # Don't leave the application running, or the main thread
+            # waiting to start it, without the p-kernel.
+            if not self.kill_app():
+                logging.error("Application did not exit: exiting forcibly.")
+                os._exit(1)
         return
 
     def run(self):
-        """Loop, handling p-kernel messages and application events."""
+        """Run the I/O thread, and the application on this (main) thread.
 
-        self.loop.run()
+        Returns once the application has finished, and the p-call session
+        is closed."""
+
+        self._io_thread = threading.Thread(target=self.run_io_loop, name="p-kernel-io")
+        self._io_thread.start()
+
+        # Wait for the p-kernel to accept this process (see
+        # handle_run_response), or for the session to end without it.
+        self._app_start.wait()
+        try:
+            self.run_app()
+        except SystemExit:
+            # A kill that arrived as the application finished.
+            if not self._app_killed:
+                raise
+
+        self._io_thread.join()
         return
 
 
@@ -611,12 +699,10 @@ if __name__ == "__main__":
     pproc.connect_to_p_kernel()
     pproc.send_run_request()
 
-    # Wait for events, from the p-kernel (starting with the RUN_RESPONSE that
-    # starts the application thread), or from the application.
+    # Run the I/O thread, handling events from the p-kernel (starting with
+    # the RUN_RESPONSE that starts the application), and the application on
+    # this thread.  The I/O thread disconnects from the p-kernel.
     pproc.run()
-
-    # Disconnect (nicely) from p-kernel.
-    pproc.disconnect()
 
     # Exit.
     logging.info("Exiting.")

@@ -18,24 +18,28 @@ p-kernel, and sends a message containing its DPID allowing the
 p-kernel to associate the DPID with the accepted socket's file
 descriptor.
 
-It then spawns a second thread, running the entry point for the Python
-code in a prepared namespace containing the system runtime API.
+It then starts a second, I/O, thread, running an event loop that
+services the p-kernel connection.  Once the p-kernel accepts the
+process, the main thread imports the application, and runs its entry
+point.  The application owns the main thread, so it can use toolkits
+(like Qt) that require it, and it receives signals.
 
 The runtime API functions often need to interact with the p-kernel to
 implement their functionality.  For synchronous functions, this
-interaction uses a queue (in the prepared namespace) and a pipe to
-raise an event in the main threads's event loop.  The application
-thread waits on a threading.Event, which is then signaled when the
-p-kernel's response is received, unblocking the application thread.
+interaction uses a queue, and posts a call to the I/O thread's event
+loop to send the request.  The application waits on a threading.Event,
+which is then signaled when the p-kernel's response is received,
+unblocking it.  Callback-style functions instead have their callback
+posted to the application's event loop (see the event loop's post()
+method), as are messages delivered to the application's listener.
 Async code can await the asynchronous versions of the system calls,
 which use loop.call_soon_threadsafe() to update the future safely.
 
 The application's entry point is executed in a try:finally: block,
-which captures its exit and reports it to the loader's main thread for
+which captures its exit and passes it to the I/O thread for
 communication back to the p-kernel.  An abnormal exit (ie. interpreter
 crash, host OS process kill, etc) is detected by closure of the TCP
 connection to the p-kernel.
-
 
 API
 ---
@@ -46,7 +50,7 @@ The runtime environment for DarqOS applications consists of:
 
   * Things that would be provided by the real kernel, but require no
     state in the p-kernel.
-  * These are implemented within the loader's main thread, where they
+  * These are implemented within the application's thread, where they
     have access to the process' static state.
   * Examples are: getpid() (which uses local state), and gettime()
     (which directly accesses the host OS)

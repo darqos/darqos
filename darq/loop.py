@@ -1,12 +1,14 @@
 # darqos
 # Copyright (C) 2022-2024 David Arnold
 
+import collections
 import select
 import socket
+import threading
 import time
 import typing
 
-from PyQt5.QtCore import QEventLoop, QSocketNotifier, QTimer
+from PyQt5.QtCore import QEventLoop, QSocketNotifier, Qt, QTimer
 
 
 class DuplicateSocketError(Exception):
@@ -52,6 +54,13 @@ class EventLoopInterface:
     def add_deferred(self, callback):
         pass
 
+    def post(self, function: typing.Callable[[], None]):
+        """Call function on the loop's thread, soon.
+
+        This is the only method that may be called from other threads.
+        Posted functions are called in the order they were posted."""
+        raise NotImplementedError
+
     def run(self):
         """Process events until stop() is called."""
         pass
@@ -78,6 +87,45 @@ class SocketListener:
 
     def on_connected(self, sock: socket.socket):
         pass
+
+
+class PostedCalls(SocketListener):
+    """Functions posted to an event loop from other threads.
+
+    The loop monitors the reader socket, which is written to wake it
+    when a function is posted to an empty queue."""
+
+    def __init__(self):
+        self.calls: collections.deque[typing.Callable[[], None]] = collections.deque()
+        self.lock = threading.Lock()
+        self.reader, self.writer = socket.socketpair()
+        self.reader.setblocking(False)
+        return
+
+    def post(self, function: typing.Callable[[], None]):
+        with self.lock:
+            wake = not self.calls
+            self.calls.append(function)
+
+        # A non-empty queue has already woken the loop.
+        if wake:
+            self.writer.send(b'X')
+        return
+
+    def on_readable(self, sock: socket.socket):
+        """Call the functions posted so far."""
+        try:
+            while self.reader.recv(4096):
+                pass
+        except BlockingIOError:
+            pass
+
+        with self.lock:
+            calls, self.calls = self.calls, collections.deque()
+
+        for function in calls:
+            function()
+        return
 
 
 class DeferredListener(TimerListener):
@@ -196,6 +244,10 @@ class SelectEventLoop(EventLoopInterface):
         self.timers: SelectTimerCollection = SelectTimerCollection()
         self.active: bool = False
 
+        # Functions posted from other threads.
+        self.posted = PostedCalls()
+        self.add_socket(self.posted.reader, self.posted)
+
     def add_socket(self, sock: socket.socket, listener: SocketListener):
         """Add socket to event loop for monitoring.
 
@@ -244,6 +296,12 @@ class SelectEventLoop(EventLoopInterface):
 
         :param callback: Function to execute."""
         self.add_timer(0, DeferredListener(self, callback))
+
+    def post(self, function: typing.Callable[[], None]):
+        """Call function on the loop's thread, from any thread.
+
+        :param function: Function to call, with no arguments."""
+        self.posted.post(function)
 
     def run(self):
         """Enter event loop and begin processing events."""
@@ -323,13 +381,54 @@ class QtSocketState:
         self.listener.on_writeable(self.socket)
 
 
+class QtTimerState:
+    """Timer state for the Qt event loop.
+
+    Expiry times are on the time.monotonic() clock, as for the select
+    event loop.  Qt's default, coarse, timers can fire up to 5% early:
+    precise timers keep to its millisecond resolution."""
+
+    def __init__(self, timer_id: int, duration: float, listener: TimerListener):
+        self.timer_id = timer_id
+        self.duration = duration
+        self.listener = listener
+        self.expiry = time.monotonic() + duration
+
+        self.timer = QTimer()
+        self.timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self.timer.timeout.connect(self.on_timeout)
+        self.timer.start(int(duration * 1000))
+        return
+
+    def on_timeout(self):
+        """Slot callback: call the listener with the scheduled and actual times.
+
+        Missed intervals are skipped, rather than reported in a burst."""
+        now = time.monotonic()
+        expiry = self.expiry
+        self.expiry += self.duration
+        if self.expiry <= now:
+            self.expiry = now + self.duration
+
+        self.listener.on_timeout(self.timer_id, expiry, now)
+
+    def stop(self):
+        self.timer.stop()
+
+
 class QtEventLoop(EventLoopInterface):
 
     def __init__(self):
         super().__init__()
         self.loop: QEventLoop | None = None
-        self.timers = {}
+        self.timers: dict[int, QtTimerState] = {}
+        self.next_timer_id: int = 1
         self.sockets: dict[int, QtSocketState] = {}
+
+        # Functions posted from other threads.  The notifiers are created
+        # now, so they belong to the thread that owns the loop.
+        self.posted = PostedCalls()
+        self.add_socket(self.posted.reader, self.posted)
         return
 
     def add_socket(self, sock: socket.socket, listener: SocketListener):
@@ -359,27 +458,42 @@ class QtEventLoop(EventLoopInterface):
         return
 
     def add_timer(self, duration: float, listener: TimerListener) -> int:
+        """Call the listener every duration seconds.
 
-        # Convert duration to milliseconds
-        ms_duration = int(duration / 1000)
+        :param duration: Interval in seconds between calls.
+        :param listener: Listener for callbacks.
+        :returns: Timer identifier, for cancel_timer()."""
 
-        timer = QTimer()
-        timer.timeout.connect(listener.on_timeout)
-        timer.start(ms_duration)
-
-        self.timers[timer.timerId()] = timer
-        return timer.timerId()
+        # Qt's own timer identifiers are reused once a timer is stopped:
+        # these aren't, so a stale identifier can't cancel a newer timer.
+        timer_id = self.next_timer_id
+        self.next_timer_id += 1
+        self.timers[timer_id] = QtTimerState(timer_id, duration, listener)
+        return timer_id
 
     def cancel_timer(self, timer_id: int) -> bool:
-        timer = self.timers.pop(timer_id, None)
-        if timer is None:
+        """Cancel a timer.
+
+        :param timer_id: Identifier from add_timer().
+        :returns: True if the timer was found and cancelled."""
+        state = self.timers.pop(timer_id, None)
+        if state is None:
             return False
 
-        timer.stop()
+        state.stop()
         return True
 
     def add_deferred(self, callback):
-        pass
+        """Call this function once, soon, from the event loop.
+
+        :param callback: Function to execute."""
+        self.add_timer(0, DeferredListener(self, callback))
+
+    def post(self, function: typing.Callable[[], None]):
+        """Call function on the loop's thread, from any thread.
+
+        :param function: Function to call, with no arguments."""
+        self.posted.post(function)
 
     def get_loop(self) -> QEventLoop:
         """Return the Qt event loop, creating it on first use."""

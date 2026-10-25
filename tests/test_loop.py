@@ -4,6 +4,7 @@
 # Tests for the select event loop.
 
 import socket
+import threading
 import time
 
 import pytest
@@ -254,3 +255,148 @@ def test_cancel_socket_clears_write_interest(loop, sockets):
 def test_write_interest_needs_registered_socket(loop, sockets):
     with pytest.raises(SocketNotFoundError):
         loop.set_write_interest(sockets[0], True)
+
+
+################################################################
+# Posting from other threads
+################################################################
+
+def test_post_from_another_thread_wakes_loop(loop):
+    # Without the wakeup, select() would wait for MAX_TIMEOUT.
+    calls = []
+    poster = threading.Timer(0.05, loop.post, args=(lambda: calls.append(threading.current_thread()),))
+    poster.start()
+
+    start = time.monotonic()
+    while not calls:
+        assert time.monotonic() - start < 2.0, "posted call not run"
+        loop.next()
+    poster.join()
+
+    assert calls == [threading.current_thread()]
+
+
+def test_posted_calls_run_in_order(loop):
+    calls = []
+    for i in range(5):
+        loop.post(lambda i=i: calls.append(i))
+    loop.next()
+    assert calls == [0, 1, 2, 3, 4]
+
+
+def test_call_posted_by_posted_call_runs_later(loop):
+    calls = []
+
+    def first():
+        calls.append("first")
+        loop.post(lambda: calls.append("second"))
+
+    loop.post(first)
+    loop.next()
+    assert calls == ["first"]
+    loop.next()
+    assert calls == ["first", "second"]
+
+
+def test_post_stops_running_loop(loop):
+    threading.Timer(0.05, loop.post, args=(loop.stop,)).start()
+    start = time.monotonic()
+    loop.run()
+    assert time.monotonic() - start < 2.0
+
+
+################################################################
+# Qt event loop
+################################################################
+
+@pytest.fixture
+def qt_loop():
+    from PyQt5.QtCore import QCoreApplication
+    from darq.loop import QtEventLoop
+
+    # Keep the application referenced while the loop is used: Qt can't
+    # deliver events once it's gone.
+    app = QCoreApplication.instance() or QCoreApplication([])
+    assert app is not None
+    yield QtEventLoop()
+    del app
+
+
+def run_qt(loop, seconds: float = 2.0):
+    """Run the Qt loop until stopped, or for at most this long."""
+    guard = threading.Timer(seconds, loop.post, args=(loop.stop,))
+    guard.start()
+    loop.run()
+    guard.cancel()
+
+
+def test_qt_post_from_another_thread(qt_loop):
+    calls = []
+
+    def call():
+        calls.append(threading.current_thread())
+        qt_loop.stop()
+
+    poster = threading.Timer(0.05, qt_loop.post, args=(call,))
+    poster.start()
+    run_qt(qt_loop)
+    poster.join()
+
+    assert calls == [threading.current_thread()]
+
+
+def test_qt_timer_repeats_at_its_interval(qt_loop):
+    def stop_after_three(timer_id):
+        if len(recorder.calls) == 3:
+            qt_loop.cancel_timer(timer_id)
+            qt_loop.stop()
+
+    recorder = Recorder(stop_after_three)
+    start = time.monotonic()
+    timer_id = qt_loop.add_timer(0.05, recorder)
+    run_qt(qt_loop)
+    elapsed = time.monotonic() - start
+
+    # The duration is in seconds: three 50ms intervals.
+    assert len(recorder.calls) == 3
+    assert 0.14 <= elapsed < 1.0
+    assert {call[0] for call in recorder.calls} == {timer_id}
+
+    # Scheduled times are one interval apart, and not after the actual times.
+    expiries = [call[1] for call in recorder.calls]
+    assert expiries == pytest.approx([start + 0.05 * n for n in (1, 2, 3)], abs=0.02)
+    assert all(expiry <= actual for _, expiry, actual in recorder.calls)
+
+
+def test_qt_cancelled_timer_does_not_fire(qt_loop):
+    recorder = Recorder()
+    timer_id = qt_loop.add_timer(0.01, recorder)
+    assert qt_loop.cancel_timer(timer_id)
+    assert not qt_loop.cancel_timer(timer_id)
+
+    qt_loop.add_timer(0.1, Recorder(lambda timer_id: qt_loop.stop()))
+    run_qt(qt_loop)
+    assert recorder.calls == []
+
+
+def test_qt_timer_ids_not_reused(qt_loop):
+    first = qt_loop.add_timer(1.0, Recorder())
+    qt_loop.cancel_timer(first)
+    second = qt_loop.add_timer(1.0, Recorder())
+    assert second != first
+
+    # A stale identifier can't cancel the newer timer.
+    assert not qt_loop.cancel_timer(first)
+    assert qt_loop.cancel_timer(second)
+
+
+def test_qt_deferred_runs_once(qt_loop):
+    calls = []
+    qt_loop.add_deferred(lambda: calls.append(threading.current_thread()))
+
+    # Stop after the deferred call has had several chances to repeat.
+    qt_loop.add_timer(0.05, Recorder(lambda timer_id: qt_loop.stop()))
+    run_qt(qt_loop)
+
+    assert calls == [threading.current_thread()]
+    assert len(qt_loop.timers) == 1

@@ -31,10 +31,19 @@ from
 .I executable-path
 and calls its
 .B darq_main()
-function, with no arguments, on a new application thread.
+function, with no arguments, on the main thread.
+The application owns the main thread, so it can use toolkits, such as
+Qt, that require it, and it receives signals.
 .PP
-The main thread runs an event loop that carries p-calls from the
-application thread to the p-kernel and delivers the replies.
+A second, I/O, thread runs an event loop that carries p-calls from the
+application to the p-kernel and delivers the replies.
+A synchronous p-call blocks the application until its reply arrives.
+Completion callbacks, and messages delivered to the listener set by
+.BR init_cb() ,
+are called on the application's own event loop, as given to
+.B init()
+or
+.BR init_cb() .
 The process's
 .B getpid()
 and
@@ -79,11 +88,11 @@ Any p-calls the application made before it finished are sent first.
 then closes its side of the connection, waits for the p-kernel to
 close its side, and exits.
 .PP
-A killed application thread is stopped by raising
+A killed application is stopped by raising
 .B SystemExit
-in it; any p-call it is blocked in is abandoned.
-If the thread does not stop (for example, because it is stuck in
-native code),
+in the main thread; any p-call it is blocked in is abandoned.
+If the application does not stop within a second (for example, because
+it is blocked in native code, such as an idle Qt event loop),
 .B pyloader
 exits immediately with status 1.
 .PP
@@ -137,7 +146,7 @@ The application was killed by
 .TP
 1
 The p-kernel refused to run the process or closed the connection, the
-application thread could not be stopped, or usage help was requested.
+application could not be stopped, or usage help was requested.
 .TP
 42
 The wrong number of arguments was given.

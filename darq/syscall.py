@@ -19,22 +19,23 @@
 #   message header, and a basic binary structure for the syscall
 #   parameters.
 # - System calls can have synchronous and asynchronous variants.
-# - Request identifiers are assigned by the runtime thread when it
-#   takes a request from the queue, not by the application thread.
-#   - Synchronous calls append a syscall object to a queue, and set an
-#     eventfd to wakeup the p-process' runtime event loop.  It then
-#     encodes the request messages and sends it to the p-kernel.
-#     - The application thread blocks an a threading.Event
-#     - When a response is received from the p-kernel, the runtime
-#       thread updates the syscall object with the response data, and
-#       sets the event, unblocking the application thread.
-#   - Asynchronous calls also append a syscall object to a queue, and
-#     set an eventfd to wakeup the p-process' runtime event loop.  It
-#     then encodes the request message and sends it to the p-kernel.
+# - Request identifiers are assigned by the I/O thread when it takes a
+#   request from the queue, not by the application's (main) thread.
+#   - Synchronous calls append a syscall object to a queue, and post a
+#     call to the p-process' I/O event loop.  It then encodes the
+#     request message and sends it to the p-kernel.
+#     - The application thread blocks on a threading.Event
+#     - When a response is received from the p-kernel, the I/O thread
+#       updates the syscall object with the response data, and sets the
+#       event, unblocking the application thread.
+#   - Callback calls are queued the same way, but return immediately.
+#     When the response is received, the I/O thread posts the callback
+#     to the application's event loop, given with the call.
+#   - Asynchronous calls also append a syscall object to the queue.
 #     - The application thread returns an awaitable loop.Future.
-#     - When a response is received from the p-kernel, the runtime
-#     thread updates the syscall object with the response data, and
-#     signals the Future.
+#     - When a response is received from the p-kernel, the I/O thread
+#       updates the syscall object with the response data, and signals
+#       the Future.  (Not yet implemented.)
 
 import os
 import typing
@@ -85,7 +86,7 @@ __all__ = [
 # injected name.
 #
 # This name is injected by pyloader, into darq.syscall.__dict__, as
-# part of spawning a new process.  See pyloader.PythonPProcecss.start_app
+# part of spawning a new process.  See pyloader.PythonPProcess.load_app
 # for the details.
 
 class ProcessState(typing.Protocol):
