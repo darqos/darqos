@@ -35,7 +35,7 @@ Type descriptions consist of:
 * A reference to the implementation for this type
 * An optional endpoint for an active instance of the type implementation
 
-Whn a Type Implementation is installed in the system, it registers itself
+When a Type Implementation is installed in the system, it registers itself
 with the Type Service.  This process creates the description entries for
 the type(s) that the program implements.  Uninstalling will remove the
 description.  All type implementations should support these operations.
