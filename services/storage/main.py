@@ -1,215 +1,123 @@
-# DarqOS
-# Copyright (C) 2019-2023
+# darqos
+# Copyright (C) 2019-2026 David Arnold
 
-# Blob storage service.
+# Storage service: a persistent blob store, registered as darq.storage.
 #
-# Initially, all blobs will be stored in SQLite.  As a subsequent
-# optimisation, it might make sense to store larger objects in simple
-# files instead.
-#
-# The ideal scenario would be for the stored data to be mapped into the
-# memory of the client process, and then fetched from disc as required
-# (and using a suitable read-ahead heuristic to improve performance).
-# This is largely an issue for the IPC system, however.
-#
-# For now, let's have a simple API, and a runtime library to match.
+# It serves the Storage protocol (lib/didl/storage.didl), as described
+# in doc/storage.rst.  Blobs are kept in a SQLite database in the run
+# directory.  As a later optimisation, it might make sense to store
+# larger values in plain files instead, or to map them into clients'
+# memory.
 
-import base64
 import logging
 import os
+import secrets
 import sqlite3
-import sys
 
 import darq
+from darq.protocols.storage import (
+    CreateRequest,
+    CreateResponse,
+    DeleteRequest,
+    DeleteResponse,
+    GetRequest,
+    GetResponse,
+    Key,
+    PutRequest,
+    PutResponse,
+    StatRequest,
+    StatResponse,
+    Status,
+    Storage,
+)
 
 
-class StorageService(darq.Service):
-    """A simple persistent key:value store.
+# Database file, in the run directory.
+DATABASE = "storage.sqlite"
 
-    All system storage (aside from early bootstrap) should use this service.
+# Run directory, if the p-kernel didn't say (see doc/distribution.rst).
+DEFAULT_RUN_DIR = "/darq/run"
 
-    Large values should probably be memory-mapped and paged into working
-    set as required, rather than being completely loaded all at once."""
 
-    def __init__(self, file: str = None):
+def key_bytes(key: Key) -> bytes:
+    """Return a key as the database's primary key: 16 bytes, big-endian.
+
+    SQLite integers are signed 64-bit, so they can't hold a uint64."""
+    return key.high.to_bytes(8, "big") + key.low.to_bytes(8, "big")
+
+
+class StorageService(Storage.Handler):
+    """A persistent store of blobs, each identified by a random key.
+
+    Keys are 128-bit random integers, allocated by the service: a
+    collision with any key ever issued, including deleted ones, is
+    vanishingly unlikely, so keys are effectively never reused.  Each
+    blob has a generation, which starts at 1 and counts its changes.
+    Every change is committed before it's answered."""
+
+    def __init__(self, path: str):
         """Constructor.
 
-        :param file: Specify a file name for the blob starage."""
-
-        # Initialise runtime.
-        darq.init_callbacks(darq.SelectEventLoop(), self)
-
-        logging.info("Starting Storage service.")
-
-        # Initialise service.
-        super().__init__(11001)  # FIXME: hardcoded ports?!?
-
-        if file is None:
-            file = "storage.sqlite"
-
-        self.db = sqlite3.connect(file)
-        cursor = self.db.cursor()
-        cursor.execute("create table if not exists storage ("
-                       "key text not null primary key, "
-                       "value blob)")
-        self.db.commit()
-
-        self.context = None
-        self.socket = None
-        self.active = False
-
-        # Open port.
-        darq.open_port(self.port)
+        :param path: Database file, created if it doesn't exist."""
+        self.db = sqlite3.connect(path)
+        self.db.execute("pragma synchronous = full")
+        with self.db:
+            self.db.execute("create table if not exists blobs ("
+                            "key blob not null primary key, "
+                            "generation integer not null, "
+                            "value blob not null)")
+        logging.info(f"Storage database {path}")
         return
 
-    def run(self):
-        return darq.loop().run()
+    def create(self, request: CreateRequest, source: int) -> CreateResponse:
+        while True:
+            key = Key(secrets.randbits(64), secrets.randbits(64))
+            try:
+                with self.db:
+                    self.db.execute("insert into blobs values (?, 1, ?)", (key_bytes(key), request.value))
+                break
+            except sqlite3.IntegrityError:
+                logging.warning("Random key collided: trying another")
 
-    @staticmethod
-    def get_name() -> str:
-        """Return the service name."""
-        return "storage"
+        logging.debug(f"create() -> {key.high:016x}{key.low:016x}, {len(request.value)} bytes")
+        return CreateResponse(key=key, generation=1, status=Status.OK)
 
-    def set(self, key: str, value):
-        """Set the value for a key.
-
-        :param key: Key string.
-        :param value: Value data."""
-
-        print(f"set({key}, {value})")
-
-        cursor = self.db.cursor()
-        cursor.execute("insert into storage values (?, ?)",
-                       (key, value))
-        self.db.commit()
-        return
-
-    def update(self, key: str, value):
-        """Update the value for a key.
-
-        :param key: Key string.
-        :param value: Value data.
-
-        If 'key' is not already set, return an error."""
-
-        logging.debug(f"update({key}, {value})")
-
-        cursor = self.db.cursor()
-        cursor.execute("update storage set value = ? where key = ?",
-                       (value, key))
-        self.db.commit()
-        return
-
-    def exists(self, key: str) -> bool:
-        """Check whether key is set.
-
-        :param key: String eky.
-        :returns: True if set, False otherwise."""
-
-        cursor = self.db.cursor()
-        cursor.execute("select count(key) from storage where key = ?", (key,))
-        row = cursor.fetchone()
-        cursor.close()
-
-        key_exists = True
+    def get(self, request: GetRequest, source: int) -> GetResponse:
+        row = self.db.execute("select value, generation from blobs where key = ?",
+                              (key_bytes(request.key),)).fetchone()
         if row is None:
-            key_exists = False
-        if row[0] != 1:
-            key_exists = False
+            return GetResponse(status=Status.NOT_FOUND)
+        return GetResponse(value=row[0], generation=row[1], status=Status.OK)
 
-        logging.debug(f"exists({key}) -> {key_exists}")
-        return key_exists
+    def put(self, request: PutRequest, source: int) -> PutResponse:
+        key = key_bytes(request.key)
+        with self.db:
+            row = self.db.execute("select generation from blobs where key = ?", (key,)).fetchone()
+            if row is None:
+                return PutResponse(status=Status.NOT_FOUND)
+            if request.expected not in (0, row[0]):
+                # Someone else changed it: report the generation it's at.
+                return PutResponse(generation=row[0], status=Status.CONFLICT)
 
-    def get(self, key: str):
-        """Returns the value for key.
+            generation = row[0] + 1
+            self.db.execute("update blobs set value = ?, generation = ? where key = ?",
+                            (request.value, generation, key))
+        return PutResponse(generation=generation, status=Status.OK)
 
-        :param key: String key."""
+    def delete(self, request: DeleteRequest, source: int) -> DeleteResponse:
+        with self.db:
+            cursor = self.db.execute("delete from blobs where key = ?", (key_bytes(request.key),))
+        return DeleteResponse(status=Status.OK if cursor.rowcount == 1 else Status.NOT_FOUND)
 
-        cursor = self.db.cursor()
-        cursor.execute("select value from storage where key = ?", (key,))
-        row = cursor.fetchone()
-        cursor.close()
+    def stat(self, request: StatRequest, source: int) -> StatResponse:
+        row = self.db.execute("select length(value), generation from blobs where key = ?",
+                              (key_bytes(request.key),)).fetchone()
         if row is None:
-            print(f"get({key}) -> None")
-            return None
-        value = row[0]
-
-        logging.debug(f"get({key}) -> {value}")
-        return value
-
-    def delete(self, key: str):
-        """Deletes the value for key."""
-
-        logging.debug(f"delete({key})")
-
-        cursor = self.db.cursor()
-        cursor.execute("delete from storage where key = ?", (key,))
-        self.db.commit()
-        return
-
-    def handle_request(self, request: dict):
-        """Handle requests."""
-
-        method = request.get("method")
-        if method == "set":
-            self.set(request["key"], base64.b64decode(request["value"]))
-            self.send_reply(request, result=True)
-            return
-
-        elif method == "update":
-            self.update(request["key"], base64.b64decode(request["value"]))
-            self.send_reply(request, result=True)
-            return
-
-        elif method == "exists":
-            rpc_result = self.exists(request["key"])
-            self.send_reply(request, result=rpc_result)
-            return
-
-        elif method == "get":
-            value = self.get(request["key"])
-            self.send_reply(
-                request,
-                result=value is not None,
-                value=base64.b64encode(value).decode() if value else '')
-            return
-
-        elif method == "delete":
-            self.delete(request["key"])
-            self.send_reply(request, result=True)
-            return
-
-        else:
-            super().handle_request(request)
-        return
-
-    def handle_shutdown(self):
-        # Clean up database connection.
-        self.db.close()
-        self.db = None
-
-        super().handle_shutdown()
-
-        logging.info("Storage Service shutdown handled successfully.")
-        return
+            return StatResponse(status=Status.NOT_FOUND)
+        return StatResponse(size=row[0], generation=row[1], status=Status.OK)
 
 
-if __name__ == "__main__":
-    if os.getenv("INVOCATION_ID") is not None:
-        # Running under systemd
-        logging.basicConfig(stream=sys.stdout,
-                            format='%(levelname)8s %(message)s',
-                            level=logging.DEBUG)
-    else:
-        # Likely being run manually
-        logging.basicConfig(stream=sys.stderr,
-                            format='%(asctime)s p-Kernel %(levelname)8s %(message)s',
-                            level=logging.DEBUG)
-
-    logging.info("Starting storage service.")
-
-    service = StorageService()
-    result = service.run()
-
-    logging.info("Exiting storage service.")
-    sys.exit(result)
+def darq_main():
+    run_dir = os.environ.get("DARQ_RUN", DEFAULT_RUN_DIR)
+    os.makedirs(run_dir, exist_ok=True)
+    darq.serve("darq.storage", StorageService(os.path.join(run_dir, DATABASE)))

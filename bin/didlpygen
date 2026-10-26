@@ -4,7 +4,8 @@
 
 # Generates a Python module from a DIDL IR (.dir) file produced by didlc.
 #
-# The module has a class for each struct, and for each message: a
+# The module has an IntEnum class for each enum, a class for each
+# struct, and for each message: a
 # method with a response produces xRequest and xResponse, and a
 # one-way method produces x.  Each message class holds its fields,
 # and has encode() and decode() methods, in the style of the p-call
@@ -45,13 +46,13 @@ BYTE_ORDER = "<"
 DEFAULTS = {'bool': 'False', 'float': '0.0', 'bytes': "b''", 'int': '0', 'int | None': 'None'}
 
 # IR format version this generator reads, matching didlc's IR_VERSION
-IR_VERSION = 2
+IR_VERSION = 3
 
 # Message header length, matching darq.dipc.HEADER_LENGTH
 HEADER_LENGTH = 8
 
 # Names the generated module imports
-RESERVED_NAMES = {"Message", "Record", "struct", "typing", "system", "MessageDecodingError"}
+RESERVED_NAMES = {"IntEnum", "Message", "Record", "struct", "typing", "system", "MessageDecodingError"}
 
 # Names used by the darq.system Client and Handler base classes
 RESERVED_METHOD_NAMES = {"call", "send", "service", "timeout", "dispatch", "error"}
@@ -86,6 +87,7 @@ class Generator:
         self.ir = ir
         self.source = source
         self.structs = {s["name"]: s for s in ir["structs"]}
+        self.enums = {e["name"]: e for e in ir["enums"]}
         self.lines: List[str] = []
         self.class_names: List[str] = []
 
@@ -107,6 +109,9 @@ class Generator:
             if f["type"] in self.structs:
                 result.append({"init": f_path, "struct": f["type"]})
                 result.extend(self.leaves(self.structs[f["type"]], base + f["offset"], f_path))
+            elif f["type"] in self.enums:
+                result.append({"path": f_path, "type": self.enums[f["type"]]["type"], "enum": f["type"],
+                               "offset": base + f["offset"], "size": f["size"]})
             elif f["type"] in TYPE_CODES:
                 result.append({"path": f_path, "type": f["type"],
                                "offset": base + f["offset"], "size": f["size"]})
@@ -133,12 +138,24 @@ class Generator:
     def hint(self, f: Dict[str, Any]) -> str:
         if f["type"] in self.structs:
             return f"{f['type']} | None"
+        if f["type"] in self.enums:
+            return f["type"]
         return TYPE_CODES[f["type"]][1]
 
     def default(self, f: Dict[str, Any]) -> str:
         if f["type"] in self.structs:
             return "None"
+        if f["type"] in self.enums:
+            return f"{f['type']}.{self.enum_default(self.enums[f['type']])}"
         return DEFAULTS[TYPE_CODES[f["type"]][1]]
+
+    @staticmethod
+    def enum_default(e: Dict[str, Any]) -> str:
+        """The default member of an enum: the one whose value is 0, or the first."""
+        for m in e["members"]:
+            if m["value"] == 0:
+                return m["name"]
+        return e["members"][0]["name"]
 
     def constructor(self, fields: List[Dict[str, Any]], leading: List[str], super_call: str | None):
         params = ["self"] + leading + [f"{f['name']}: {self.hint(f)} = {self.default(f)}" for f in fields]
@@ -163,6 +180,12 @@ class Generator:
     # Module
 
     def generate(self) -> str:
+        for e in self.ir["enums"]:
+            self.add_class_name(e["name"], f"enum {e['name']}")
+            for m in e["members"]:
+                check_identifier(m["name"], f"Member name {e['name']}.{m['name']}")
+                if m["name"].startswith("_"):
+                    raise GenError(f"Member name {e['name']}.{m['name']} may not start with '_'")
         for s in self.ir["structs"]:
             self.add_class_name(s["name"], f"struct {s['name']}")
 
@@ -194,6 +217,9 @@ class Generator:
         if stdlib:
             self.emit("\n".join(stdlib))
             self.emit()
+        if self.ir["enums"]:
+            self.emit("from enum import IntEnum")
+            self.emit()
         if self.ir["protocols"]:
             self.emit("from darq import system")
         if dipc_names:
@@ -210,6 +236,11 @@ class Generator:
         self.emit("]")
         self.emit()
         self.emit()
+
+        if self.ir["enums"]:
+            self.emit_banner("Enums")
+            for e in self.ir["enums"]:
+                self.emit_enum(e)
 
         if self.ir["structs"]:
             self.emit_banner("Structs")
@@ -254,6 +285,15 @@ class Generator:
         self.emit("################################################################")
         self.emit(f"# {title}")
         self.emit("################################################################")
+        self.emit()
+        self.emit()
+
+    def emit_enum(self, e: Dict[str, Any]):
+        self.emit(f"class {e['name']}(IntEnum):")
+        self.emit(f'    """enum {e["name"]}: {e["type"]}."""')
+        self.emit()
+        for m in e["members"]:
+            self.emit(f"    {m['name']} = {m['value']}")
         self.emit()
         self.emit()
 
@@ -339,6 +379,9 @@ class Generator:
                     index += 2
                 elif leaf["type"] == "port":
                     self.emit(f"        {leaf['path']} = self.decode_port(handles, bits[{index}])")
+                    index += 1
+                elif "enum" in leaf:
+                    self.emit(f"        {leaf['path']} = self.decode_enum({leaf['enum']}, bits[{index}])")
                     index += 1
                 else:
                     self.emit(f"        {leaf['path']} = bits[{index}]")

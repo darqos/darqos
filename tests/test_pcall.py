@@ -17,6 +17,8 @@ from darq.pcall import (
     DeliverChunk,
     DeliverMessage,
     Exited,
+    GetBootValueRequest,
+    GetBootValueResponse,
     KillProcessRequest,
     KillProcessResponse,
     LookupNameRequest,
@@ -33,6 +35,8 @@ from darq.pcall import (
     SendChunk,
     SendMessageRequest,
     SendMessageResponse,
+    SetBootValueRequest,
+    SetBootValueResponse,
     Shutdown,
     SpawnProcessRequest,
     SpawnProcessResponse,
@@ -209,6 +213,53 @@ class TestClosePortRequest:
         buf = ClosePortRequest(1, 2).encode()
         with pytest.raises(MessageDecodingError):
             ClosePortRequest().decode(buf[:-1])
+
+
+class TestBootValueMessages:
+    def test_get_request_roundtrip(self):
+        buf = GetBootValueRequest(7, "darq.type.registry").encode()
+        check_header(buf, MessageType.GET_BOOT_VALUE_RQST)
+        assert len(buf) % 4 == 0
+        d = GetBootValueRequest()
+        d.decode(buf)
+        assert (d.request_id, d.get_name()) == (7, "darq.type.registry")
+
+    @pytest.mark.parametrize("value", [b"", b"x", bytes(range(256))])
+    def test_get_response_roundtrip(self, value):
+        buf = GetBootValueResponse(7, 1, value).encode()
+        check_header(buf, MessageType.GET_BOOT_VALUE_RESP)
+        assert len(buf) % 4 == 0
+        d = GetBootValueResponse()
+        d.decode(buf)
+        assert (d.request_id, d.result, d.value) == (7, 1, value)
+
+    @pytest.mark.parametrize("name, value", [("a", b"value"), ("abcde", b""), ("naïve", bytes(9)), ("x", None)])
+    def test_set_request_roundtrip(self, name, value):
+        buf = SetBootValueRequest(7, name, value).encode()
+        check_header(buf, MessageType.SET_BOOT_VALUE_RQST)
+        assert len(buf) % 4 == 0
+        d = SetBootValueRequest()
+        d.decode(buf)
+        assert (d.request_id, d.get_name(), d.value) == (7, name, value)
+
+    def test_set_response_roundtrip(self):
+        buf = SetBootValueResponse(7, 5).encode()
+        check_header(buf, MessageType.SET_BOOT_VALUE_RESP)
+        d = SetBootValueResponse()
+        d.decode(buf)
+        assert (d.request_id, d.result) == (7, 5)
+
+    def test_set_request_overrun_raises(self):
+        buf = bytearray(SetBootValueRequest(1, "abc", b"value").encode())
+        buf[16:20] = (99).to_bytes(4, "big")
+        with pytest.raises(MessageDecodingError):
+            SetBootValueRequest().decode(bytes(buf))
+
+    @pytest.mark.parametrize("message", [GetBootValueRequest(1, "abc"), GetBootValueResponse(1, 0, b"abc"),
+                                         SetBootValueRequest(1, "abc", b"v"), SetBootValueResponse(1, 0)])
+    def test_truncated_raises(self, message):
+        with pytest.raises(MessageDecodingError):
+            type(message)().decode(message.encode()[:-1])
 
 
 class TestRegisterNameRequest:

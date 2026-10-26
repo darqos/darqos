@@ -39,8 +39,11 @@ def load_pkernel() -> typing.Any:
 
 
 @pytest.fixture
-def pkernel():
+def pkernel(tmp_path, monkeypatch):
     module = load_pkernel()
+
+    # Keep the run directory (and boot vector) out of /darq/run.
+    monkeypatch.setenv("DARQ_RUN", str(tmp_path / "run"))
 
     # Listen on an ephemeral port, so as not to clash with a real p-kernel.
     module.TCP_PORT = 0
@@ -1417,6 +1420,183 @@ def test_rpc_service_and_client(live_pkernel, tmp_path):
     run_kernel_until(kernel, lambda: client.get_status() == module.KernelProcessStatus.ZOMBIE,
                      "the client to exit")
     assert (client.get_exit_status(), client.get_exit_error()) == (0, None)
+
+
+################################################################
+# Run directory and boot vector
+################################################################
+
+def test_run_directory_from_environment(pkernel, tmp_path):
+    assert pkernel.run_dir == str(tmp_path / "run")
+    assert (tmp_path / "run").is_dir()
+    assert pkernel.get_loader_environment()["DARQ_RUN"] == pkernel.run_dir
+
+
+def test_relative_run_directory(tmp_path, monkeypatch):
+    # Resolved against the p-kernel's working directory, since spawned
+    # processes run in /.
+    module = load_pkernel()
+    module.TCP_PORT = 0
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DARQ_RUN", "./run")
+    kernel = module.PseudoKernel()
+    try:
+        assert kernel.run_dir == str(tmp_path / "run")
+        assert kernel.get_loader_environment()["DARQ_RUN"] == str(tmp_path / "run")
+    finally:
+        kernel.close()
+
+
+def test_default_run_directory(pkernel):
+    assert pkernel.module.DEFAULT_RUN_DIR == "/darq/run"
+
+
+def get_boot_value(kernel, process, peer, name: str) -> tuple[int, bytes]:
+    """Get a boot vector value for a process, returning (result, value)."""
+    send_to_kernel(kernel, process, pk.GetBootValueRequest(3, name))
+    [(message_type, buf)] = received_messages(peer)
+    assert message_type == pk.MessageType.GET_BOOT_VALUE_RESP
+    response = pk.GetBootValueResponse()
+    response.decode(buf)
+    assert response.request_id == 3
+    return response.result, response.value
+
+
+def set_boot_value(kernel, process, peer, name: str, value: bytes | None) -> int:
+    """Set a boot vector value for a process, returning the result."""
+    send_to_kernel(kernel, process, pk.SetBootValueRequest(4, name, value))
+    [(message_type, buf)] = received_messages(peer)
+    assert message_type == pk.MessageType.SET_BOOT_VALUE_RESP
+    response = pk.SetBootValueResponse()
+    response.decode(buf)
+    assert response.request_id == 4
+    return response.result
+
+
+def test_boot_value_set_get_remove(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+    assert get_boot_value(pkernel, process, peer, "darq.type") == (pk.BootResult.NOT_FOUND, b"")
+    assert set_boot_value(pkernel, process, peer, "darq.type", b"\x01\x02") == pk.BootResult.OK
+    assert get_boot_value(pkernel, process, peer, "darq.type") == (pk.BootResult.OK, b"\x01\x02")
+
+    # An empty value is still a value.
+    assert set_boot_value(pkernel, process, peer, "darq.type", b"") == pk.BootResult.OK
+    assert get_boot_value(pkernel, process, peer, "darq.type") == (pk.BootResult.OK, b"")
+
+    assert set_boot_value(pkernel, process, peer, "darq.type", None) == pk.BootResult.OK
+    assert get_boot_value(pkernel, process, peer, "darq.type") == (pk.BootResult.NOT_FOUND, b"")
+    # Removing a name that isn't set is fine.
+    assert set_boot_value(pkernel, process, peer, "darq.type", None) == pk.BootResult.OK
+
+
+def test_boot_vector_persists(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+    set_boot_value(pkernel, process, peer, "a", b"one")
+    set_boot_value(pkernel, process, peer, "b", b"\xff")
+    path = os.path.join(pkernel.run_dir, pkernel.module.BOOT_VECTOR_FILE)
+    assert json.loads(pathlib.Path(path).read_text()) == {"a": "6f6e65", "b": "ff"}
+    assert pkernel.module.BootVector(path).values == {"a": b"one", "b": b"\xff"}
+    assert not os.path.exists(path + ".tmp")
+
+
+def test_boot_value_not_permitted(pkernel):
+    # Only for processes the p-kernel spawned.
+    system, system_peer = add_running_process(pkernel, 1)
+    set_boot_value(pkernel, system, system_peer, "a", b"one")
+    user, user_peer = user_process(pkernel, 2)
+    assert get_boot_value(pkernel, user, user_peer, "a") == (pk.BootResult.NOT_PERMITTED, b"")
+    assert set_boot_value(pkernel, user, user_peer, "a", b"two") == pk.BootResult.NOT_PERMITTED
+    assert set_boot_value(pkernel, user, user_peer, "a", None) == pk.BootResult.NOT_PERMITTED
+    assert get_boot_value(pkernel, system, system_peer, "a") == (pk.BootResult.OK, b"one")
+
+
+@pytest.mark.parametrize("name", ["", "x" * (pk.MAX_NAME_LENGTH + 1)])
+def test_boot_value_invalid_name(pkernel, name):
+    process, peer = add_running_process(pkernel, 1)
+    assert get_boot_value(pkernel, process, peer, name)[0] == pk.BootResult.INVALID_NAME
+    assert set_boot_value(pkernel, process, peer, name, b"v") == pk.BootResult.INVALID_NAME
+
+
+def test_boot_value_too_large(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+    value = bytes(pk.MAX_BOOT_VALUE_LENGTH)
+    assert set_boot_value(pkernel, process, peer, "a", value) == pk.BootResult.OK
+    assert set_boot_value(pkernel, process, peer, "a", value + b"x") == pk.BootResult.TOO_LARGE
+    assert get_boot_value(pkernel, process, peer, "a") == (pk.BootResult.OK, value)
+
+
+def test_boot_vector_full(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+    for n in range(pk.MAX_BOOT_VALUES):
+        assert set_boot_value(pkernel, process, peer, f"name{n}", b"v") == pk.BootResult.OK
+    assert set_boot_value(pkernel, process, peer, "another", b"v") == pk.BootResult.FULL
+    # Existing names can still be changed, or removed to make room.
+    assert set_boot_value(pkernel, process, peer, "name0", b"w") == pk.BootResult.OK
+    assert set_boot_value(pkernel, process, peer, "name0", None) == pk.BootResult.OK
+    assert set_boot_value(pkernel, process, peer, "another", b"v") == pk.BootResult.OK
+
+
+def test_boot_value_save_failure(pkernel, monkeypatch):
+    process, peer = add_running_process(pkernel, 1)
+    set_boot_value(pkernel, process, peer, "a", b"one")
+
+    def fail():
+        raise OSError("disc full")
+
+    monkeypatch.setattr(pkernel._boot_vector, "save", fail)
+    assert set_boot_value(pkernel, process, peer, "a", b"two") == pk.BootResult.IO_ERROR
+    assert set_boot_value(pkernel, process, peer, "b", b"new") == pk.BootResult.IO_ERROR
+    # Nothing changed.
+    assert pkernel._boot_vector.values == {"a": b"one"}
+
+
+def test_unreadable_boot_vector_kept(pkernel, tmp_path):
+    path = tmp_path / "bootvec.json"
+    path.write_text("not json")
+    vector = pkernel.module.BootVector(str(path))
+    assert vector.values == {}
+    assert (tmp_path / "bootvec.json.bad").read_text() == "not json"
+    assert not path.exists()
+
+
+def test_boot_values_end_to_end(live_pkernel, tmp_path):
+    kernel = live_pkernel
+    module = kernel.module
+    child_path = write_app(tmp_path / "child", """
+        import darq
+        def darq_main():
+            try:
+                darq.get_boot_value("test.key")
+                return "child could read the boot vector"
+            except darq.NotPermittedError:
+                return 0
+        """)
+    path = write_app(tmp_path / "service", f"""
+        import darq
+        def darq_main():
+            if darq.get_boot_value("test.key") is not None:
+                return "already set"
+            darq.set_boot_value("test.key", b"\\x00\\x01")
+            if darq.get_boot_value("test.key") != b"\\x00\\x01":
+                return "didn't read back"
+            try:
+                darq.set_boot_value("test.big", bytes(darq.MAX_BOOT_VALUE_LENGTH + 1))
+                return "set a value that's too large"
+            except darq.ValueTooLargeError:
+                pass
+            child = darq.spawn_process({child_path!r})
+            finished = darq.wait(child)
+            if finished != (child, darq.ExitReason.EXITED, 0, None):
+                return f"child finished {{finished!r}}"
+            return 0
+        """)
+
+    dpid = kernel.do_spawn_process(None, path)
+    service = kernel._process_table[dpid]
+    run_kernel_until(kernel, lambda: service.get_status() == module.KernelProcessStatus.ZOMBIE,
+                     "the service to exit")
+    assert (service.get_exit_status(), service.get_exit_error()) == (0, None)
+    assert kernel._boot_vector.values == {"test.key": b"\x00\x01"}
 
 
 ################################################################

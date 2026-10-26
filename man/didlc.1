@@ -17,11 +17,17 @@ response message the file defines, for use by code generators.
 It carries a format version number, which is incremented whenever the
 IR changes in a way that breaks its consumers.
 .SS Language
-A DIDL file names a library, and declares structs and protocols:
+A DIDL file names a library, and declares enums, structs and
+protocols:
 .PP
 .RS
 .nf
 library filesystem;
+
+enum Status : uint32 {
+    OK = 0;
+    NOT_FOUND = 1;
+}
 
 struct FileAttributes {
     uint64 size;
@@ -30,7 +36,7 @@ struct FileAttributes {
 }
 
 protocol FileServer {
-    1: GetAttributes(uint64 fd) -> (FileAttributes attr, uint32 status);
+    1: GetAttributes(uint64 fd) -> (FileAttributes attr, Status status);
     2: Close(uint64 fd);
 }
 .fi
@@ -44,6 +50,18 @@ A method without a response is one-way.
 Each method must be given a number, from 1 to 65535, which is carried
 in the message header to identify it.
 Numbers are assigned by hand, and must be unique within a protocol.
+.PP
+An enum names a set of integer values, and is based on an integer type
+.RB ( int8
+to
+.BR uint64 ),
+which sets its size and alignment in a message.
+Each member's value must fit the base type, and be unique within the
+enum.
+.PP
+Numbers are decimal, or hexadecimal with a
+.B 0x
+prefix, and may be negative.
 .PP
 Comments start with
 .B //
@@ -76,8 +94,10 @@ The bytes themselves are appended to the end of the message.
 or 0xFFFF for no port.
 A message can transfer at most 64 handles.
 .PP
-A struct may be used as a field type, before or after its
-declaration, but may not contain itself.
+A struct or enum may be used as a field type, before or after its
+declaration, but a struct may not contain itself.
+Enum and struct names must be distinct, and not the names of
+primitive types.
 .SS Layout
 Fields are laid out in order, following the C/C++ ABI: each field is
 aligned to its natural boundary, a struct is aligned to its most

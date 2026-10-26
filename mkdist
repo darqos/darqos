@@ -56,6 +56,13 @@ for f in `find "$root/lenses" -name "*.py" -print`; do
   echo $t
 done
 
+# DIDL protocol sources.
+mkdir -p "$destdir/lib/didl"
+for f in "$root"/lib/didl/*.didl; do
+  cp -p "$f" "$destdir/lib/didl/"
+  echo "/lib/didl/`basename $f`"
+done
+
 # System scripts and tools.
 mkdir -p "$destdir/bin"
 for f in dui install didlc didlpygen; do

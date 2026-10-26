@@ -25,7 +25,16 @@ TYPE_MAP = {
 
 
 # IR format version: increment on any change that breaks consumers
-IR_VERSION = 2
+IR_VERSION = 3
+
+
+# Integer types an enum may be based on, with their value ranges
+INTEGER_RANGES = {
+    'int8':  (-2 ** 7, 2 ** 7 - 1),   'uint8':  (0, 2 ** 8 - 1),
+    'int16': (-2 ** 15, 2 ** 15 - 1), 'uint16': (0, 2 ** 16 - 1),
+    'int32': (-2 ** 31, 2 ** 31 - 1), 'uint32': (0, 2 ** 32 - 1),
+    'int64': (-2 ** 63, 2 ** 63 - 1), 'uint64': (0, 2 ** 64 - 1),
+}
 
 
 # Lexer patterns for language tokens
@@ -33,14 +42,15 @@ TOKEN_SPEC = [
     ('COMMENT',   r'\/\/.*'),
     ('LIBRARY',   r'\blibrary\b'),
     ('STRUCT',    r'\bstruct\b'),
+    ('ENUM',      r'\benum\b'),
     ('PROTOCOL',  r'\bprotocol\b'),
     ('ARROW',     r'->'),
-    ('NUMBER',    r'\d+'),
+    ('NUMBER',    r'-?(?:0[xX][0-9a-fA-F]+|\d+)'),
     ('ID',        r'[a-zA-Z_][a-zA-Z0-9_\.]*'),
     ('LBRACE',    r'\{'), ('RBRACE',    r'\}'),
     ('LPAR',      r'\('), ('RPAR',      r'\)'),
     ('SEMI',      r';'),   ('COMMA',     r','),
-    ('COLON',     r':'),
+    ('COLON',     r':'),   ('EQUALS',    r'='),
     ('WS',        r'\s+'),
     ('MISMATCH',  r'.'),
 ]
@@ -88,6 +98,13 @@ def lex(code: str) -> List[Token]:
     return tokens
 
 
+def number(token: Token) -> int:
+    """The value of a NUMBER token: decimal, or hexadecimal with 0x."""
+    text = token.value.lstrip('-')
+    value = int(text, 16) if text[:2].lower() == '0x' else int(text)
+    return -value if token.value.startswith('-') else value
+
+
 class Parser:
     def __init__(self, tokens: List[Token]):
         self.tokens = tokens
@@ -102,13 +119,15 @@ class Parser:
         return t
 
     def parse(self) -> Dict[str, Any]:
-        ast = {"library": "", "structs": [], "protocols": []}
+        ast = {"library": "", "enums": [], "structs": [], "protocols": []}
         while self.peek().type != 'EOF':
             t = self.peek()
             if t.type == 'LIBRARY':
                 self.consume('LIBRARY')
                 ast["library"] = self.consume('ID').value
                 self.consume('SEMI')
+            elif t.type == 'ENUM':
+                ast["enums"].append(self.parse_enum())
             elif t.type == 'STRUCT':
                 ast["structs"].append(self.parse_struct())
             elif t.type == 'PROTOCOL':
@@ -116,6 +135,24 @@ class Parser:
             else:
                 raise DidlError(f"Unexpected global scope token: {t}", t.line, t.col)
         return ast
+
+    def parse_enum(self) -> Dict[str, Any]:
+        self.consume('ENUM')
+        name = self.consume('ID')
+        self.consume('COLON')
+        base = self.consume('ID')
+        self.consume('LBRACE')
+        members = []
+        while self.peek().type != 'RBRACE':
+            m_name = self.consume('ID')
+            self.consume('EQUALS')
+            value = self.consume('NUMBER')
+            self.consume('SEMI')
+            members.append({"name": m_name.value, "value": number(value),
+                            "line": m_name.line, "col": m_name.col})
+        self.consume('RBRACE')
+        return {"name": name.value, "type": base.value, "members": members,
+                "line": name.line, "col": name.col, "type_line": base.line, "type_col": base.col}
 
     def parse_struct(self) -> Dict[str, Any]:
         self.consume('STRUCT')
@@ -136,7 +173,7 @@ class Parser:
         self.consume('LBRACE')
         methods = []
         while self.peek().type != 'RBRACE':
-            number = self.consume('NUMBER')
+            number_token = self.consume('NUMBER')
             self.consume('COLON')
             m_name = self.consume('ID')
             self.consume('LPAR')
@@ -149,10 +186,10 @@ class Parser:
                 resp = self.parse_method_args()
                 self.consume('RPAR')
             self.consume('SEMI')
-            methods.append({"name": m_name.value, "number": int(number.value),
+            methods.append({"name": m_name.value, "number": number(number_token),
                             "request": req, "response": resp,
                             "line": m_name.line, "col": m_name.col,
-                            "number_line": number.line, "number_col": number.col})
+                            "number_line": number_token.line, "number_col": number_token.col})
         self.consume('RBRACE')
         return {"name": name, "methods": methods}
 
@@ -174,6 +211,18 @@ class Parser:
 def compile_ir(ast: Dict[str, Any]) -> Dict[str, Any]:
     """Computes exact memory alignments, insertions of padding, and field byte offsets."""
     declared_structs = {s["name"]: s for s in ast["structs"]}
+    declared_enums = {e["name"]: e for e in ast["enums"]}
+
+    # Type names must be distinct from each other, and from the primitive types.
+    type_names: Dict[str, str] = {}
+    for kind, declared in (("enum", ast["enums"]), ("struct", ast["structs"])):
+        for d in declared:
+            if d["name"] in TYPE_MAP:
+                raise DidlError(f"{kind} {d['name']} has the name of a primitive type", d["line"], d["col"])
+            if d["name"] in type_names:
+                raise DidlError(f"{kind} {d['name']} has the same name as {type_names[d['name']]} {d['name']}",
+                                d["line"], d["col"])
+            type_names[d["name"]] = kind
     layouts: Dict[str, Dict[str, Any]] = {}
     in_progress: List[str] = []  # structs whose layout is being computed, for cycle detection
 
@@ -188,6 +237,10 @@ def compile_ir(ast: Dict[str, Any]) -> Dict[str, Any]:
             if f_type in TYPE_MAP:
                 size = TYPE_MAP[f_type]["size"]
                 align = TYPE_MAP[f_type]["align"]
+            elif f_type in declared_enums:
+                base = TYPE_MAP[declared_enums[f_type]["type"]]
+                size = base["size"]
+                align = base["align"]
             elif f_type in declared_structs:
                 # Nested structures are laid out on demand, so declaration order doesn't matter
                 if f_type in in_progress:
@@ -249,9 +302,33 @@ def compile_ir(ast: Dict[str, Any]) -> Dict[str, Any]:
             })
         return {"name": p["name"], "methods": methods}
 
+    def compile_enum(e: Dict[str, Any]) -> Dict[str, Any]:
+        if e["type"] not in INTEGER_RANGES:
+            raise DidlError(f"enum {e['name']} must be based on an integer type, not {e['type']}",
+                            e["type_line"], e["type_col"])
+        if not e["members"]:
+            raise DidlError(f"enum {e['name']} has no members", e["line"], e["col"])
+        low, high = INTEGER_RANGES[e["type"]]
+        names: Dict[str, int] = {}
+        values: Dict[int, str] = {}
+        for m in e["members"]:
+            if m["name"] in names:
+                raise DidlError(f"Duplicate member: {e['name']}.{m['name']}", m["line"], m["col"])
+            if not low <= m["value"] <= high:
+                raise DidlError(f"Value out of range for {e['type']}: {e['name']}.{m['name']} is {m['value']}",
+                                m["line"], m["col"])
+            if m["value"] in values:
+                raise DidlError(f"Duplicate value {m['value']}: {e['name']}.{m['name']} and "
+                                f"{e['name']}.{values[m['value']]}", m["line"], m["col"])
+            names[m["name"]] = m["value"]
+            values[m["value"]] = m["name"]
+        return {"name": e["name"], "type": e["type"],
+                "members": [{"name": m["name"], "value": m["value"]} for m in e["members"]]}
+
     return {
         "version": IR_VERSION,
         "library": ast["library"],
+        "enums": [compile_enum(e) for e in ast["enums"]],
         "structs": [layout_struct(s) for s in ast["structs"]],
         "protocols": [compile_protocol(p) for p in ast["protocols"]],
     }

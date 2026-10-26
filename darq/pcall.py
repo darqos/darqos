@@ -16,6 +16,7 @@ from .errors import MessageDecodingError
 
 # Control exports
 __all__ = [
+    "BootResult",
     "Buffer",
     "ClosePortRequest",
     "ClosePortResponse",
@@ -23,11 +24,15 @@ __all__ = [
     "DeliverMessage",
     "Exited",
     "ExitReason",
+    "GetBootValueRequest",
+    "GetBootValueResponse",
     "IPC_PORT",
     "KillProcessRequest",
     "KillProcessResponse",
     "LookupNameRequest",
     "LookupNameResponse",
+    "MAX_BOOT_VALUE_LENGTH",
+    "MAX_BOOT_VALUES",
     "MAX_HANDLES",
     "MAX_NAME_LENGTH",
     "Message",
@@ -45,6 +50,8 @@ __all__ = [
     "SendMessageRequest",
     "SendMessageResponse",
     "SendResult",
+    "SetBootValueRequest",
+    "SetBootValueResponse",
     "Shutdown",
     "SpawnProcessRequest",
     "SpawnProcessResponse",
@@ -93,6 +100,10 @@ class MessageType(IntEnum):
     SEND_MESSAGE_RESP = 24
     WAIT_RQST = 25
     WAIT_RESP = 26
+    GET_BOOT_VALUE_RQST = 27
+    GET_BOOT_VALUE_RESP = 28
+    SET_BOOT_VALUE_RQST = 29
+    SET_BOOT_VALUE_RESP = 30
 
 
 class SendResult(IntEnum):
@@ -146,6 +157,29 @@ class WaitResult(IntEnum):
     NOT_FINISHED = 2
 
 
+class BootResult(IntEnum):
+    """Result codes for the boot vector p-calls."""
+    OK = 0
+
+    # The name isn't set (get only).
+    NOT_FOUND = 1
+
+    # Only processes the p-kernel spawned (parent dpid 0) may use it.
+    NOT_PERMITTED = 2
+
+    # The name is empty, too long, or not valid UTF-8.
+    INVALID_NAME = 3
+
+    # The value is longer than MAX_BOOT_VALUE_LENGTH.
+    TOO_LARGE = 4
+
+    # There are already MAX_BOOT_VALUES names set.
+    FULL = 5
+
+    # The p-kernel couldn't save the boot vector.
+    IO_ERROR = 6
+
+
 class ExitReason(IntEnum):
     """How a process finished."""
 
@@ -162,8 +196,12 @@ class ExitReason(IntEnum):
 # Most handles transferred with one message.
 MAX_HANDLES = 64
 
-# Longest registered name, in bytes of UTF-8.
+# Longest registered name, or boot vector name, in bytes of UTF-8.
 MAX_NAME_LENGTH = 255
+
+# Most names set in the boot vector, and the longest value for one.
+MAX_BOOT_VALUES = 64
+MAX_BOOT_VALUE_LENGTH = 1024
 
 
 ################################################################
@@ -899,6 +937,141 @@ class WaitResponse(Message):
         if error_start + error_length > self.length:
             raise MessageDecodingError("error string overruns message")
         self.error = buffer[error_start:error_start + error_length]
+        return
+
+
+class GetBootValueRequest(Message):
+    """Request the value set for a name in the boot vector."""
+    def __init__(self, request_id: int = 0, name: str = ""):
+        super().__init__(MessageType.GET_BOOT_VALUE_RQST)
+        self.request_id: int = UInt32(request_id)
+        self.name = name.encode("utf-8")
+        self.set_length(self.header_length + 8 + self.padded_length(self.name))
+
+    def get_name(self) -> str:
+        """Return the name, raising UnicodeDecodeError if it's not valid UTF-8."""
+        return self.name.decode("utf-8")
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LL", self.request_id, len(self.name))
+        buf += self.pad_bytes(self.name)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        name_start = self.header_length + 8
+        bits = struct.unpack(">LL", buffer[self.header_length:name_start])
+        self.request_id = bits[0]
+        if name_start + bits[1] > self.length:
+            raise MessageDecodingError("name overruns message")
+        self.name = bytes(buffer[name_start:name_start + bits[1]])
+        return
+
+
+class GetBootValueResponse(Message):
+    """Result of getting a boot vector value: a BootResult code, and the value."""
+    def __init__(self, request_id: int = 0, result: int = 0, value: bytes = b""):
+        super().__init__(MessageType.GET_BOOT_VALUE_RESP)
+        self.request_id: int = UInt32(request_id)
+        self.result: int = UInt32(result)
+        self.value = value
+        self.set_length(self.header_length + 16 + self.padded_length(value))
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LLLxxxx", self.request_id, self.result, len(self.value))
+        buf += self.pad_bytes(self.value)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        value_start = self.header_length + 16
+        bits = struct.unpack(">LLLxxxx", buffer[self.header_length:value_start])
+        self.request_id = bits[0]
+        self.result = bits[1]
+        if value_start + bits[2] > self.length:
+            raise MessageDecodingError("value overruns message")
+        self.value = bytes(buffer[value_start:value_start + bits[2]])
+        return
+
+
+class SetBootValueRequest(Message):
+    """Request to set, or remove, a name's value in the boot vector."""
+    def __init__(self, request_id: int = 0, name: str = "", value: bytes | None = None):
+        """Constructor.
+
+        :param request_id: Request identifier.
+        :param name: Name to set.
+        :param value: Value to set, or None to remove the name."""
+        super().__init__(MessageType.SET_BOOT_VALUE_RQST)
+        self.request_id: int = UInt32(request_id)
+        self.name = name.encode("utf-8")
+        self.value = value
+        self.get_length()
+
+    def get_name(self) -> str:
+        """Return the name, raising UnicodeDecodeError if it's not valid UTF-8."""
+        return self.name.decode("utf-8")
+
+    def get_length(self) -> int:
+        value = self.value or b""
+        self.set_length(self.header_length + 16 + self.padded_length(self.name) + self.padded_length(value))
+        return self.length
+
+    def encode(self) -> bytes:
+        value = self.value or b""
+        self.get_length()
+        buf = super().encode()
+        buf += struct.pack(">LLLL", self.request_id, len(self.name), len(value), 1 if self.value is None else 0)
+        buf += self.pad_bytes(self.name)
+        buf += self.pad_bytes(value)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        name_start = self.header_length + 16
+        bits = struct.unpack(">LLLL", buffer[self.header_length:name_start])
+        self.request_id = bits[0]
+        name_length, value_length, remove = bits[1], bits[2], bits[3] & 1
+        value_start = name_start + name_length + (-name_length % 4)
+        if value_start + value_length > self.length:
+            raise MessageDecodingError("name and value overrun message")
+        self.name = bytes(buffer[name_start:name_start + name_length])
+        self.value = None if remove else bytes(buffer[value_start:value_start + value_length])
+        return
+
+
+class SetBootValueResponse(Message):
+    """Result of setting a boot vector value: a BootResult code."""
+    def __init__(self, request_id: int = 0, result: int = 0):
+        super().__init__(MessageType.SET_BOOT_VALUE_RESP)
+        self.set_length(self.header_length + 8)
+        self.request_id: int = UInt32(request_id)
+        self.result: int = UInt32(result)
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LL", self.request_id, self.result)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        bits = struct.unpack(">LL", buffer[self.header_length:self.length])
+        self.request_id = bits[0]
+        self.result = bits[1]
         return
 
 

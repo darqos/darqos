@@ -1,0 +1,26 @@
+// darqos
+// Copyright (C) 2026 David Arnold
+//
+// Storage service protocol: see doc/storage.rst.
+
+library darq.storage;
+
+enum Status : uint32 {
+    OK = 0;
+    NOT_FOUND = 1;
+    CONFLICT = 2;
+}
+
+struct Key {
+    uint64 high;
+    uint64 low;
+}
+
+protocol Storage {
+    1: Create(opaque value) -> (Key key, uint64 generation, Status status);
+    2: Get(Key key) -> (opaque value, uint64 generation, Status status);
+    3: Put(Key key, uint64 expected, opaque value) -> (uint64 generation, Status status);
+    4: Delete(Key key) -> (Status status);
+    5: Stat(Key key) -> (uint64 size, uint64 generation, Status status);
+    // 6 and 7 are reserved for ranged Read and Write.
+}

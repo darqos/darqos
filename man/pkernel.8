@@ -124,6 +124,19 @@ lets
 .BR systemd (1)
 see the same service continue.
 Spawning is refused during shutdown.
+.SS Boot vector
+The p-kernel keeps a small, persistent name:value store, the
+.IR "boot vector" ,
+for the processes it spawned itself (parent dpid 0): with no boot
+volume, it's where system services keep what they need to find their
+own state, such as the keys of their storage blobs.
+It holds at most 64 names, of up to 255 bytes, with values of up to
+1024 bytes.
+Each change is saved, by writing a temporary file and renaming it,
+before the p-call is answered.
+A boot vector file that can't be read is renamed with a
+.I .bad
+suffix, and the p-kernel starts with an empty one.
 .SS Process states
 .TP
 .B ALLOCATED
@@ -157,6 +170,16 @@ Otherwise they are written to standard error with timestamps.
 Passed on to spawned processes, after the
 .B darq
 package directory.
+.TP
+.B DARQ_RUN
+The run directory, for files changed at runtime, such as services'
+databases and the boot vector; by default,
+.IR /darq/run .
+A relative path, such as
+.I ./run
+in a development tree, is taken from the p-kernel's working directory.
+It's created if needed, and spawned processes get its absolute path in
+.BR DARQ_RUN .
 .SH FILES
 .TP
 .I /darq/kernel/pkernel
@@ -164,6 +187,9 @@ The p-kernel executable.
 .TP
 .I /darq/kernel/pyloader
 Loader for Python executables, started for each new process.
+.TP
+.I /darq/run/bootvec.json
+The boot vector, as JSON, with values in hex.
 .TP
 .I /darq/kernel/darqos-pkernel.service
 .BR systemd (1)

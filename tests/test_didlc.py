@@ -365,6 +365,61 @@ def test_self_containing_struct():
 
 
 ################################################################
+# Enums
+################################################################
+
+def test_enum_members():
+    ir = compile_source("library t;\nenum E : int8 { A = -128; B = 0x10; C = 127; }")
+    assert ir["enums"] == [{"name": "E", "type": "int8", "members": [
+        {"name": "A", "value": -128}, {"name": "B", "value": 16}, {"name": "C", "value": 127}]}]
+
+
+def test_enum_field_layout():
+    # An enum field is laid out as its base type.
+    ir = compile_source("""
+        library t;
+        protocol P { 1: M(uint8 a, Wide w, Narrow n); }
+        enum Wide : uint64 { X = 1; }
+        enum Narrow : uint8 { Y = 1; }
+        """)
+    layout = method(ir, "M")["request"]
+    assert offsets(layout) == [("a", 0), ("w", 8), ("n", 16)]
+    assert [f["type"] for f in layout["fields"]] == ["uint8", "Wide", "Narrow"]
+    assert (layout["total_size"], layout["alignment"]) == (24, 8)
+
+
+def test_enum_in_struct():
+    ir = compile_source("library t;\nenum E : uint32 { A = 0; }\nstruct S { uint8 x; E e; }")
+    assert offsets(ir["structs"][0]) == [("x", 0), ("e", 4)]
+
+
+@pytest.mark.parametrize("source, message", [
+    ("enum E : real32 { A = 0; }", "must be based on an integer type, not real32"),
+    ("enum E : bool { A = 0; }", "must be based on an integer type, not bool"),
+    ("enum E : uint32 { }", "enum E has no members"),
+    ("enum E : uint32 { A = 0; A = 1; }", "Duplicate member: E.A"),
+    ("enum E : uint32 { A = 0; B = 0; }", "Duplicate value 0: E.B and E.A"),
+    ("enum E : uint8 { A = 256; }", "Value out of range for uint8: E.A is 256"),
+    ("enum E : uint8 { A = -1; }", "Value out of range for uint8: E.A is -1"),
+    ("enum E : int8 { A = -129; }", "Value out of range for int8: E.A is -129"),
+    ("enum uint32 : uint32 { A = 0; }", "enum uint32 has the name of a primitive type"),
+    ("enum E : uint32 { A = 0; }\nstruct E {}", "struct E has the same name as enum E"),
+    ("enum E : uint32 { A; }", "Expected EQUALS"),
+    ("enum E { A = 0; }", "Expected COLON"),
+])
+def test_enum_errors(source, message):
+    assert message in str(compile_error("library t;\n" + source))
+
+
+def test_negative_method_number_out_of_range():
+    assert "out of range" in str(compile_error("library t;\nprotocol P { -1: M(); }"))
+
+
+def test_hex_method_number():
+    assert method(compile_source("library t;\nprotocol P { 0x10: M(); }"), "M")["number"] == 16
+
+
+################################################################
 # Command line
 ################################################################
 

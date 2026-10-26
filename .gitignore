@@ -15,3 +15,6 @@ venv*/
 *.sqlite
 snapshots/darqos-*.tar.gz
 *.egg-info
+
+# Development run directory (DARQ_RUN=./run)
+/run/

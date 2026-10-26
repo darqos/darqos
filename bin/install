@@ -124,6 +124,14 @@ echo "Ok: installed darqos Python runtime"
     echo "Ok: installed DIDL tools"
 )
 
+# Install DIDL protocol sources
+(
+    cd "$DIST/darq/lib/didl"
+    mkdir -p "$DARQ/lib/didl"
+    cp -p *.didl "$DARQ/lib/didl/"
+    echo "Ok: installed DIDL protocol sources"
+)
+
 # Install manual pages, by section: view with "man -M /darq/man <page>"
 (
     cd "$DIST/darq/man"

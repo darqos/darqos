@@ -80,6 +80,12 @@ Image Layout
       compositor, which the Terminal service starts as a Linux child
       process.
 
+  * `/darq/lib/didl`
+
+    * The DIDL sources of the system's protocols (`lib/didl/*.didl` in
+      the repository).  Their generated Python modules are part of the
+      darq package, in `darq.protocols`.
+
   * `/darq/man`
 
     * Manual pages for the Unix-level programs, by section: view them
@@ -101,7 +107,11 @@ Image Layout
 
     * Home for files that are modified at runtime by the installation.
       This will notably include the SQLite databases used by the
-      various services, kernel configuration, etc.
+      various services, kernel configuration, the p-kernel's boot
+      vector, etc.
+    * In a development tree, the `DARQ_RUN` environment variable
+      points the p-kernel at `./run` instead; spawned processes find
+      it in `DARQ_RUN` too.
     * This directory will *not* be simply overwritten during an
       upgrade, but instead, will be processed by the install script to
       update all storage as required by the new version.

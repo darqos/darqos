@@ -17,6 +17,13 @@ the messages it defines.
 .PP
 The module contains:
 .TP
+.I enum classes
+One
+.B enum.IntEnum
+class per DIDL enum.
+An enum field defaults to its member with value 0, or to its first
+member.
+.TP
 .I struct classes
 One class per DIDL struct, holding its fields.
 .TP
@@ -50,7 +57,8 @@ raises
 .B darq.errors.MessageDecodingError
 if the buffer is too short, the method number doesn't match, the
 flags are wrong, an opaque value is out of range or not 8-byte
-aligned, or a port index is past the end of the handles.
+aligned, a port index is past the end of the handles, or an enum
+field's value isn't one of its members.
 Each request class's
 .B RESPONSE
 is its response class;

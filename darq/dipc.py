@@ -21,6 +21,8 @@
 # - A 'port' field is a uint16 index into the list of handles
 #   transferred with the message, or NO_PORT.  encode() returns the
 #   list along with the bytes, and decode() takes it back.
+# - An enum field is encoded as its base integer type.  Decoding a value
+#   that isn't one of the enum's members fails.
 
 
 import struct
@@ -151,6 +153,14 @@ class Message(Record):
         if index >= len(handles):
             raise MessageDecodingError(f"port index {index}, but {len(handles)} handles")
         return handles[index]
+
+    @staticmethod
+    def decode_enum[E: IntEnum](enum: type[E], value: int) -> E:
+        """Return the member of an enum for a field's value."""
+        try:
+            return enum(value)
+        except ValueError:
+            raise MessageDecodingError(f"{value} is not a {enum.__name__}") from None
 
     @staticmethod
     def pad_bytes(raw_bytes: bytes) -> bytes:

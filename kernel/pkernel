@@ -18,6 +18,7 @@
 #
 # xxx
 
+import json
 import logging
 import os
 import platform
@@ -55,6 +56,16 @@ KILL_TIMEOUT = 5.0
 # They're legitimate, so they don't time out, but a long wait is likely a
 # boot ordering problem.
 LOOKUP_WARNING_INTERVAL = 30.0
+
+# Run directory, for files changed at runtime: services' databases, and
+# the boot vector (see doc/distribution.rst).  The DARQ_RUN environment
+# variable overrides it, such as with ./run in a development tree; a
+# relative path is taken from the p-kernel's working directory.  Spawned
+# processes get the absolute path in DARQ_RUN.
+DEFAULT_RUN_DIR = "/darq/run"
+
+# Boot vector file, in the run directory.
+BOOT_VECTOR_FILE = "bootvec.json"
 
 # Loader for Python executables, installed alongside the p-kernel.
 PYTHON_IMAGE_LOADER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pyloader")
@@ -437,6 +448,70 @@ class KernelProcessState:
 
 
 
+class BootVector:
+    """A small, persistent name:value store, for processes the p-kernel
+    spawned (see doc/bootstrap.rst).
+
+    With no boot volume, it's where system services keep what they need
+    to find their own state, such as the keys of their storage blobs.
+    It's saved as JSON, with values in hex, and each change is saved
+    atomically before it's answered."""
+
+    def __init__(self, path: str):
+        self.path = path
+        self.values: dict[str, bytes] = {}
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            self.values = {str(name): bytes.fromhex(value) for name, value in data.items()}
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, AttributeError, TypeError) as e:
+            # Keep the bad file for inspection, rather than overwrite it.
+            logging.error(f"Boot vector {path} unreadable, starting empty: {e!r}")
+            try:
+                os.replace(path, path + ".bad")
+            except OSError:
+                pass
+        return
+
+    def get(self, name: str) -> bytes | None:
+        return self.values.get(name)
+
+    def set(self, name: str, value: bytes | None):
+        """Set, or with None remove, a name's value, and save.
+
+        :raises OSError: if it can't be saved; nothing is changed."""
+        previous = dict(self.values)
+        if value is None:
+            self.values.pop(name, None)
+        else:
+            self.values[name] = value
+        try:
+            self.save()
+        except OSError:
+            self.values = previous
+            raise
+        return
+
+    def save(self):
+        """Write the file atomically: a temporary file, renamed over it."""
+        temporary = self.path + ".tmp"
+        with open(temporary, "w") as f:
+            json.dump({name: value.hex() for name, value in self.values.items()}, f,
+                      indent=2, sort_keys=True)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, self.path)
+        directory = os.open(os.path.dirname(self.path), os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        return
+
+
 class TemporaryReader:
     def __init__(self, kernel, sock: socket.socket):
         self._kernel = kernel
@@ -528,6 +603,11 @@ class PseudoKernel(SocketListener, TimerListener):
 
         # Timer to force shutdown, while it's in progress.
         self._shutdown_timer: int | None = None
+
+        # Run directory, and the boot vector kept in it.
+        self.run_dir = os.path.abspath(os.environ.get("DARQ_RUN", DEFAULT_RUN_DIR))
+        os.makedirs(self.run_dir, exist_ok=True)
+        self._boot_vector = BootVector(os.path.join(self.run_dir, BOOT_VECTOR_FILE))
 
         # Registries.
         self.types = []
@@ -774,7 +854,8 @@ class PseudoKernel(SocketListener, TimerListener):
         return name == "darq" or name.startswith("darq.")
 
     @staticmethod
-    def decode_name(message: pk.RegisterNameRequest | pk.LookupNameRequest) -> str | None:
+    def decode_name(message: pk.RegisterNameRequest | pk.LookupNameRequest | pk.GetBootValueRequest |
+                    pk.SetBootValueRequest) -> str | None:
         """Return a request's name, or None if it's not a valid name."""
         if not 0 < len(message.name) <= pk.MAX_NAME_LENGTH:
             return None
@@ -782,6 +863,55 @@ class PseudoKernel(SocketListener, TimerListener):
             return message.get_name()
         except UnicodeDecodeError:
             return None
+
+    def handle_get_boot_value_request(self, process: KernelProcessState, request: pk.GetBootValueRequest):
+        """Answer a request for a boot vector value: only for processes
+        the p-kernel spawned."""
+        name = self.decode_name(request)
+        value = None
+        if process.get_parent_dpid() != 0:
+            result = pk.BootResult.NOT_PERMITTED
+        elif name is None:
+            result = pk.BootResult.INVALID_NAME
+        else:
+            value = self._boot_vector.get(name)
+            result = pk.BootResult.OK if value is not None else pk.BootResult.NOT_FOUND
+
+        if result not in (pk.BootResult.OK, pk.BootResult.NOT_FOUND):
+            logging.warning(f"{process.name()} get_boot_value({name!r}) failed: {result.name}")
+        process.send_data(pk.GetBootValueResponse(request.request_id, result, value or b"").encode())
+        return
+
+    def handle_set_boot_value_request(self, process: KernelProcessState, request: pk.SetBootValueRequest):
+        """Set, or remove, a boot vector value: only for processes the
+        p-kernel spawned.  It's saved before it's answered."""
+        name = self.decode_name(request)
+        value = request.value
+        if process.get_parent_dpid() != 0:
+            result = pk.BootResult.NOT_PERMITTED
+        elif name is None:
+            result = pk.BootResult.INVALID_NAME
+        elif value is not None and len(value) > pk.MAX_BOOT_VALUE_LENGTH:
+            result = pk.BootResult.TOO_LARGE
+        elif (value is not None and self._boot_vector.get(name) is None and
+              len(self._boot_vector.values) >= pk.MAX_BOOT_VALUES):
+            result = pk.BootResult.FULL
+        else:
+            assert name is not None
+            try:
+                self._boot_vector.set(name, value)
+                result = pk.BootResult.OK
+            except OSError as e:
+                logging.error(f"Saving boot vector {self._boot_vector.path} failed: {e!r}")
+                result = pk.BootResult.IO_ERROR
+
+        what = "removed" if value is None else f"{len(value)} bytes"
+        if result == pk.BootResult.OK:
+            logging.info(f"{process.name()} set_boot_value({name!r}): {what}")
+        else:
+            logging.warning(f"{process.name()} set_boot_value({name!r}, {what}) failed: {result.name}")
+        process.send_data(pk.SetBootValueResponse(request.request_id, result).encode())
+        return
 
     def handle_reboot(self, process: KernelProcessState, message: pk.Reboot):
         if self.may_shut_down(process, "reboot"):
@@ -1184,13 +1314,14 @@ class PseudoKernel(SocketListener, TimerListener):
         return dpid
 
 
-    @staticmethod
-    def get_loader_environment() -> dict[str, str]:
+    def get_loader_environment(self) -> dict[str, str]:
         """Return the environment for a language stub process.
 
         It's this process' environment, with the darq package's location
-        prepended to PYTHONPATH."""
+        prepended to PYTHONPATH, and the absolute run directory in
+        DARQ_RUN."""
         env = dict(os.environ)
+        env["DARQ_RUN"] = self.run_dir
         paths = [DARQ_PYTHON_PATH]
         if env.get("PYTHONPATH"):
             paths.append(env["PYTHONPATH"])
@@ -1646,6 +1777,16 @@ class PseudoKernel(SocketListener, TimerListener):
             message = pk.WaitRequest()
             message.decode(message_bytes)
             self.handle_wait_request(process, message)
+
+        elif message_type == pk.MessageType.GET_BOOT_VALUE_RQST:
+            message = pk.GetBootValueRequest()
+            message.decode(message_bytes)
+            self.handle_get_boot_value_request(process, message)
+
+        elif message_type == pk.MessageType.SET_BOOT_VALUE_RQST:
+            message = pk.SetBootValueRequest()
+            message.decode(message_bytes)
+            self.handle_set_boot_value_request(process, message)
 
         elif message_type == pk.MessageType.KILL_PROCESS_RQST:
             message = pk.KillProcessRequest()

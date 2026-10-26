@@ -55,18 +55,26 @@ Bootstrap
 
      * Service is Darq Python app, and spawned as a p-process from the
        p-kernel as part of the bootstrap process.
-     * Pass it the "device" info, in this case a Unix filesystem path
-     * The storage service registers itself with the kernel service, thus
-       making itself available to its clients.
+     * It keeps its database in the run directory, which the p-kernel
+       passes in `DARQ_RUN`: `/darq/run`, or `./run` in a development
+       tree.
+     * The storage service registers `darq.storage` in the p-kernel's
+       name registry, making itself available to its clients.  Names
+       under `darq.` are reserved for processes the p-kernel spawned
+       (see :doc:`ipc`).
 
-       * How does this registration work?
+   * Boot vector
 
-         * Is there a generic name-to-port mapping service?
-         * Is there a mapping in the p-Kernel?
-         * Does it use a well-known port number?
-
-           * There are issues of who's allowed to register names
-             and/or ports here.
+     * There's no boot volume, and no in-kernel storage drivers, so a
+       service starting at boot has nowhere to find its own state,
+       such as the keys of its storage blobs.
+     * The p-kernel keeps a small, persistent name:value *boot vector*
+       for this, in the run directory, accessible only to processes it
+       spawned itself (parent dpid 0), with the `get_boot_value` and
+       `set_boot_value` p-calls.  For example, the Type service keeps
+       the key of its registry blob there.
+     * It holds at most 64 names, with values of at most 1 KiB, so it
+       stays small: it's for finding state, not holding it.
 
    * Security
 

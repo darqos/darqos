@@ -65,9 +65,14 @@ from . import dipc
 from .dipc import ErrorCode, ErrorReply
 from .process import EventListener, SystemCallMode, SystemCallState
 from .pcall import (
+    BootResult,
     ClosePortRequest,
     ExitReason,
+    GetBootValueRequest,
+    GetBootValueResponse,
     KillProcessRequest,
+    MAX_BOOT_VALUE_LENGTH,
+    MAX_BOOT_VALUES,
     MAX_HANDLES,
     MAX_NAME_LENGTH,
     LookupNameRequest,
@@ -81,6 +86,8 @@ from .pcall import (
     SendMessageRequest,
     SendMessageResponse,
     SendResult,
+    SetBootValueRequest,
+    SetBootValueResponse,
     Shutdown,
     SpawnProcessRequest,
     SpawnProcessResponse,
@@ -90,6 +97,7 @@ from .pcall import (
     WaitResult,
 )
 from .errors import (
+    BootVectorFullError,
     DarqError,
     DeadPortError,
     InvalidNameError,
@@ -97,11 +105,13 @@ from .errors import (
     NameTakenError,
     NoSuchChildError,
     NonExistentPortError,
+    NotPermittedError,
     PortAlreadyNamedError,
     PortRightError,
     RemoteError,
     ReservedNameError,
     TooManyHandlesError,
+    ValueTooLargeError,
 )
 from .loop import EventLoopInterface
 
@@ -131,11 +141,15 @@ __all__ = [
     "register_name_cb",
     "lookup_name",
     "lookup_name_cb",
+    "get_boot_value",
+    "set_boot_value",
     "shutdown",
     "reboot",
     "ExitReason",
     "MAX_HANDLES",
     "MAX_NAME_LENGTH",
+    "MAX_BOOT_VALUES",
+    "MAX_BOOT_VALUE_LENGTH",
     "Client",
     "Handler",
     "call",
@@ -659,6 +673,76 @@ def lookup_name_cb(name: str, blocking: bool, loop: EventLoopInterface,
     syscall.set_callback(loop, cb)
 
     _darq_process_state.queue_new_syscall(syscall)
+    return
+
+
+_BOOT_ERRORS: dict[int, type[DarqError]] = {
+    BootResult.NOT_PERMITTED: NotPermittedError,
+    BootResult.INVALID_NAME: InvalidNameError,
+    BootResult.TOO_LARGE: ValueTooLargeError,
+    BootResult.FULL: BootVectorFullError,
+}
+
+
+def _boot_error(result: int, name: str) -> DarqError:
+    try:
+        reason = BootResult(result).name
+    except ValueError:
+        reason = f"result {result}"
+    return _BOOT_ERRORS.get(result, DarqError)(f"boot value {name!r}: {reason}")
+
+
+def get_boot_value(name: str) -> bytes | None:
+    """Return a name's value in the boot vector.
+
+    The boot vector is a small, persistent name:value store, kept by the
+    p-kernel for the system services it spawns (see doc/bootstrap.rst).
+
+    :param name: Name to look up.
+    :returns: Its value, or None if it isn't set.
+    :raises NotPermittedError: if the p-kernel didn't spawn this process.
+    :raises InvalidNameError: if the name is empty or too long."""
+
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.SYNC)
+    syscall.set_request(GetBootValueRequest(0, name))
+
+    _darq_process_state.queue_new_syscall(syscall)
+    syscall.sync_wait()
+
+    response = typing.cast(GetBootValueResponse, syscall.get_response())
+    if response.result == BootResult.NOT_FOUND:
+        return None
+    if response.result != BootResult.OK:
+        raise _boot_error(response.result, name)
+    return response.value
+
+
+def set_boot_value(name: str, value: bytes | None):
+    """Set a name's value in the boot vector, or remove it.
+
+    Returns once the p-kernel has saved the change.
+
+    :param name: Name to set.
+    :param value: Value, of at most MAX_BOOT_VALUE_LENGTH bytes; None
+                  removes the name.
+    :raises NotPermittedError: if the p-kernel didn't spawn this process.
+    :raises InvalidNameError: if the name is empty or too long.
+    :raises ValueTooLargeError: if the value is too long.
+    :raises BootVectorFullError: if there are already MAX_BOOT_VALUES
+                                 names set.
+    :raises DarqError: if the p-kernel couldn't save it."""
+
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.SYNC)
+    syscall.set_request(SetBootValueRequest(0, name, value))
+
+    _darq_process_state.queue_new_syscall(syscall)
+    syscall.sync_wait()
+
+    result = typing.cast(SetBootValueResponse, syscall.get_response()).result
+    if result != BootResult.OK:
+        raise _boot_error(result, name)
     return
 
 

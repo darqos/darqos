@@ -449,6 +449,7 @@ protocol FileServer {
 
 Notes:
 
+* An enum names a set of integer values: `enum Status : uint32 { OK = 0; NOT_FOUND = 1; }`.  It's based on an integer type, which sets its layout, and is generated as an IntEnum.  Decoding a value that isn't a member fails.
 * Struct alignment and padding follow the C/C++ ABI: a struct is aligned to its most strictly aligned member, and its size is padded to a multiple of that alignment.
 * The 'library' attribute is used to name the generated Python module.
 * Specification of a return type(s) for method x implies two messages: xRequest and xResponse

@@ -14,8 +14,6 @@ import uuid
 from typing import Union
 
 from darq.services.type import TypeServiceAPI
-from darq.services.storage import StorageAPI
-from darq.services.storage import api as storage_api
 from darq.services.history import History
 
 from darq.runtime.object import ObjectIdentifier, ObjectProxy

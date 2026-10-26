@@ -8,7 +8,7 @@ version = "0.1"
 dependencies = []
 
 [tool.setuptools]
-packages = ["darq", "darq.kernel", "darq.runtime", "darq.services", "darq.type"]
+packages = ["darq", "darq.kernel", "darq.protocols", "darq.runtime", "darq.services", "darq.type"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -30,6 +30,7 @@ include = [
     "kernel/pyloader",
     "bin/didlc",
     "bin/didlpygen",
+    "services/storage/main.py",
 ]
 line-length = 120
 target-version = "py313"
@@ -50,11 +51,13 @@ include = [
     "darq/loop.py",
     "darq/pcall.py",
     "darq/process.py",
+    "darq/protocols",
     "darq/system.py",
     "kernel/pkernel",
     "kernel/pyloader",
     "bin/didlc",
     "bin/didlpygen",
+    "services/storage/main.py",
     "tests",
 ]
 pythonVersion = "3.13"

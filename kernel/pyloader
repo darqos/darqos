@@ -544,6 +544,16 @@ class PythonPProcess(darq.SocketListener):
             message.decode(message_buf)
             self.complete_syscall(message)
 
+        elif message_type == pk.MessageType.GET_BOOT_VALUE_RESP:
+            message = pk.GetBootValueResponse()
+            message.decode(message_buf)
+            self.complete_syscall(message)
+
+        elif message_type == pk.MessageType.SET_BOOT_VALUE_RESP:
+            message = pk.SetBootValueResponse()
+            message.decode(message_buf)
+            self.complete_syscall(message)
+
         elif message_type == pk.MessageType.RUN_RESPONSE:
             message = pk.RunResponse()
             message.decode(message_buf)

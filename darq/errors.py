@@ -64,6 +64,21 @@ class NoSuchChildError(DarqError):
     pass
 
 
+class NotPermittedError(DarqError):
+    """Only processes the p-kernel spawned (parent dpid 0) may do that."""
+    pass
+
+
+class ValueTooLargeError(DarqError):
+    """The value is too long."""
+    pass
+
+
+class BootVectorFullError(DarqError):
+    """The boot vector has no room for another name."""
+    pass
+
+
 class InvalidNameError(DarqError):
     """The name is empty, too long, or not valid UTF-8."""
     pass

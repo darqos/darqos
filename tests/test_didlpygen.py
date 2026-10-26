@@ -3,6 +3,7 @@
 
 # Tests for the DIDL Python generator, bin/didlpygen.
 
+import enum
 import importlib.machinery
 import importlib.util
 import json
@@ -329,6 +330,63 @@ def test_empty_message(fs):
 # Round trips
 ################################################################
 
+ENUM_SOURCE = """
+    library t;
+    enum Status : uint16 { OK = 0; MISSING = 1; FULL = 0x100; }
+    enum Level : int8 { LOW = -1; HIGH = 1; }
+    struct Item { Level level; uint8 x; }
+    protocol P { 1: Check(Item item) -> (Status status, Level level); }
+    """
+
+
+@pytest.fixture
+def enums(tmp_path):
+    return import_module(generate(ENUM_SOURCE), tmp_path, "enums")
+
+
+def test_enum_classes(enums):
+    assert issubclass(enums.Status, enum.IntEnum)
+    assert [(m.name, m.value) for m in enums.Status] == [("OK", 0), ("MISSING", 1), ("FULL", 256)]
+    assert "Status" in enums.__all__ and "Level" in enums.__all__
+
+
+def test_enum_defaults(enums):
+    # The member whose value is 0, or else the first.
+    response = enums.CheckResponse()
+    assert response.status is enums.Status.OK
+    assert response.level is enums.Level.LOW
+    assert enums.Item().level is enums.Level.LOW
+
+
+def test_enum_layout_and_round_trip(enums):
+    message = enums.CheckResponse(5, status=enums.Status.FULL, level=enums.Level.HIGH)
+    buf, _ = message.encode()
+    assert struct.unpack_from("<Hb", buf, 8) == (256, 1)
+    decoded = round_trip(message)
+    assert decoded == message
+    assert decoded.status is enums.Status.FULL
+
+    request = enums.CheckRequest(1, item=enums.Item(enums.Level.HIGH, 3))
+    assert round_trip(request).item.level is enums.Level.HIGH
+
+
+def test_unknown_enum_value(enums):
+    buf = bytearray(enums.CheckResponse(5).encode()[0])
+    struct.pack_into("<H", buf, 8, 2)
+    with pytest.raises(MessageDecodingError, match="2 is not a Status"):
+        enums.CheckResponse().decode(bytes(buf))
+
+
+def test_enum_import_only_when_used():
+    assert "from enum import IntEnum" in generate(ENUM_SOURCE)
+    assert "IntEnum" not in generate("library t;\nprotocol P { 1: Ping(); }")
+
+
+def test_enum_member_name_errors():
+    assert "may not start with '_'" in generate_error("library t;\nenum E : uint8 { _A = 0; }")
+    assert "not a valid Python identifier" in generate_error("library t;\nenum E : uint8 { None = 0; }")
+
+
 def test_round_trip_ports(tmp_path):
     module = import_module(generate("""
         library t;
@@ -537,3 +595,23 @@ def test_main_generator_error(tmp_path, monkeypatch, capsys):
 def test_main_missing_file(tmp_path, monkeypatch, capsys):
     assert run_main(monkeypatch, str(tmp_path / "missing.dir")) == 1
     assert capsys.readouterr().err.startswith("didlpygen: ")
+
+
+################################################################
+# Committed protocol modules
+################################################################
+
+ROOT = pathlib.Path(__file__).parent.parent
+
+
+def test_protocol_modules_match_sources():
+    # Each DIDL source in lib/didl has its generated module committed in
+    # darq/protocols: regenerate them with "make protocols".
+    sources = sorted((ROOT / "lib" / "didl").glob("*.didl"))
+    modules = sorted(p for p in (ROOT / "darq" / "protocols").glob("*.py") if p.name != "__init__.py")
+    assert [p.stem for p in sources] == [p.stem for p in modules]
+    for source in sources:
+        ir = didlc.compile_ir(didlc.Parser(didlc.lex(source.read_text())).parse())
+        generated = didlpygen.Generator(ir, source.stem + ".dir").generate()
+        assert generated == (ROOT / "darq" / "protocols" / (source.stem + ".py")).read_text(), \
+            f"darq/protocols/{source.stem}.py is out of date: run 'make protocols'"
