@@ -1,31 +1,57 @@
 Types
 =====
 
-Types, in the sense of MIME types and similar characterisations, are
-a fundamental aspect of DarqOS.  A Type describes an object or entity,
-classifying it by its properties and behaviour.  Types can be both
-general and specific, with a rich conformance model that allows
-generalisation of entire classes of entities.
+Types are a fundamental aspect of DarqOS.  A *Type* describes an
+*Item*, classifying it by its properties and behaviour.  Types can
+be both general and specific, with a rich conformance model that
+allows generalisation of entire classes of entities.
 
-Example types are: text document, PNG image, ZIP file, etc.
+Example types are: person, book, text document, PNG image, etc.
 
-Type Implementations
---------------------
+Strictly, a *type* is an abstract concept; the concrete artifacts
+are a *type identifier*, a *type description*, and a *type
+implementation*.
+
+Type Identifiers
+----------------
+
+A *type identifier* is a globally-unique, string identifier for a *type*
+concept.  Type identifiers are derived from IETF MIME types, and Apple's
+Uniform Type Identifiers, but do not conform to either of those
+specifications directly.
+
+A type identifier is
+
+  * A UTF-8 string
+  * May contain ASCII characters A-Za-z0-9, hyphen, dot, and any
+    Unicode codepoint over U+007f.
+    * Of note, that means it cannot contain a colon or a forward-slash.
+  * Must be less than 128 characters in length
+  * Typically have a dotted string format, eg. "public.item"
+
+The set of basic types described by Apple's Uniform Type Identifier system
+is used as the basis for DarqOS types.  That set is described in Apple's
+`System-Declared Uniform Type Identifiers <https://developer.apple.com/library/archive/documentation/Miscellaneous/Reference/UTIRef/Articles/System-DeclaredUniformTypeIdentifiers.html#//apple_ref/doc/uid/TP40009259-SW1>`_ document.
+
+Type Service
+------------
 
 Types are defined as part of the persistent state of the system.  This
 state is owned and managed by the Type Service.  Programs access the
-Type Service via an API in the usual way.
+Type Service via its port, registered with the p-kernel as "darq.type".
 
-A lot of the terminology here is adopted from Apple's Uniform Type
-system.
+The Type Service maintains four mappings:
 
-A *Type Implementation* is a program that provides actions for a type.
-Actions are things like *create*, *view* or *print*.  Type implementations
-are one of the major classes of application for the system.
+* Type identifier to type description
+* Type identifier to type implementation
+* Type identifier to active type implementation instance
+* Type identifier + context to zero or more lenses
+
+Type Descriptions
+-----------------
 
 Type descriptions consist of:
 
-* The type identifier (derived from Apple's UTI)
 * Zero or more other types to which this type conforms (to use the
   UTI terminology).  Note that this isn't a simple inheritance tree:
   types can conform to many other types.
@@ -33,228 +59,170 @@ Type descriptions consist of:
 * Zero or more file extensions that indicate equivalence
 * An icon to represent instances of this type
 * A reference to the implementation for this type
-* An optional endpoint for an active instance of the type implementation
 
-When a Type Implementation is installed in the system, it registers itself
-with the Type Service.  This process creates the description entries for
-the type(s) that the program implements.  Uninstalling will remove the
-description.  All type implementations should support these operations.
+  * For 1ed, this will be a path to the type implementation's
+    directory, suitable for spawn()ing by the p-kernel.
+  * In future editions, it should be a storage key for the
+    implementation's executable.
 
-To create type instances, a program should invoke the Type Service,
-passing it a UTI type name.  The Type Service consults its registry of
-types.  If the type implementation is not already running, it is started.
-The Type Service then requests a new instance via the Type Implementation's
-API, and receives an object reference result that is passed back to the
-initiating program.
+These are stable, persistent properties of the type.
 
-Lens Implementations
+Type Implementations
 --------------------
 
-A type implementation provides the _behaviour_ of type instances:
+A *Type Implementation* is a program that implements the behaviour for
+items of a type as represented within DarqOS.  The type implementation's
+API can be used by programs to manipulate the item's properties, and by
+*Lenses* to present the item's properties to the system operator via the
+Terminal Service.  Type implementations are one of the major classes of
+application for the system.
+
+The Type Service maintains a dynamic mapping of type identifiers to
+running Type Implementations.  A Type Implementation program is started
+as a DarqOS process.  The can be at most one instance of a Type
+Implementation active at any time; multiple Items of a Type are
+represented by a single Type Implementation.
+
+The Type Service maps the Type Identifier to the Darq *port* for each
+running Type Implementation.
+
+Note that a Type Implementation may use multiple processes in its
+implementation of the type's behaviour.  The constraint is just that
+there is a single port and process that acts as the reference point,
+and distributes the per-Item ports.
+
+New Type Implementations may be registered at runtime, and existing
+Type Implementations may be removed or replaced.  The registrations
+are persistent across system restarts.
+
+Type Instances
+--------------
+
+An instance of a Type is called an *Item*.  Type Implementations
+manage a collection of Items, and expose them to programs, and (via
+Lenses) to operators.
+
+An Item Identifier consists of a Type Identifier, a colon, and a
+type-specific identifier for the specific Item, like
+
+  `net.daringfireball.markdown:c5f1ad2a-ea33-4248-b116-9c363cbade66`
+
+Items are described in more detail in `Items <item.rst>`_.
+
+A Type Implementation supports the creation, use, and destruction
+of items.
+
+Item Creation
+~~~~~~~~~~~~~
+
+To create type instances, or *Items*, a program should first obtain
+the port for the Type Implementation by requesting it from the Type
+Service using the Type Identifier.  The Type Service consults its
+registry of types, and if the Type Implementation is not already
+running, it is started, and either way, its port is returned.
+
+The program can then request, via that port, that the Type
+Implementation create a new instance.  The implementation will
+return an Item Identifier for the newly created instance, and a
+port through which the program (possibly a Lens implementation) can
+manipulate the item.
+
+Item Use
+~~~~~~~~
+
+An existing Item can be opened similarly: get the port for the
+Type Implementation from the Type Service, and then ask it to
+open the Item using its Item Identifier, and get a port that
+addresses the Type Implementation and the specific Item.
+
+Item Destruction
+~~~~~~~~~~~~~~~~
+
+A program may request that a Type Implementation destroy an Item.
+
+A fundamental characteristic of DarqOS is that items have lots of
+linkage and annotation throughout the system: metadata, index,
+history, etc, all enmesh items.  As a result, literal destruction
+of an item would cause either a rewriting of history, update of
+indexes, etc, or an acceptance of broken linkage.
+
+Consequently, Darq does not support destruction in the literal
+sense.  Instead, items may be marked as destroyed, but all the
+web of their existence remains.
+
+In some cases, where the storage requirements are large, two
+different approaches might be taken:
+
+* The item's content might be compressed, reducing storage
+  requirements, or off-loaded to long-term storage media.  Such
+  items may not be immediately accessible.
+* In extreme cases, the item's content might be replaced by
+  a "tombstone".  Then item can still be found, but attempts
+  to access it will return an error indicating that the
+  content is no longer maintained.
+
+This choice is made and implemented by the Type Implementation,
+and is not expected to be implemented in early editions.
+
+Lenses
+------
+
+A Type Implementation provides the *behaviour* of type instances:
 basically, the code.  It also determines how instances of the type
 are persisted (for example, using the storage service, or the knowledge
 base service).
 
-Access to objects' behaviour is via the IPC system.  The type implementation
+Access to an item's behaviour is via the IPC system.  The type implementation
 essentially exports an API for instances of the type, operating on specific
 instance data loaded from and saved to a persistence backend.
 
-But ... this is just the actual behaviour of the object: the "model" in
+But ... this is just the actual behaviour of the item: the "model" in
 MVC terms.  In addition to type implementations, there is a second class
-of applications in DarqOS: Lenses.
+of applications in DarqOS: *Lenses*.
 
-A *lens* is a way to view an object of a type.  Lenses expose the object's
-data to its users via the Terminal service.
+A *lens* is a way to use an item of a type.  For example, Lenses expose
+the item's data to its operators via the Terminal service.
 
 Contexts
-~~~~~~~~
+--------
 
-A Lens is activated in a context.  There are two initial contexts defined:
-a CLI context and a GUI context.
+A Lens is activated in a *Context*.  There is initially only one context
+defined: the Terminal context.
 
-The CLI context implements a traditional command-line interface, with
-textual input and output capability provided via the standard three
-streams: stdin, stdout, and stderr.  The output stream implements the
-VT-102 escape codes interface, allowing curses-style control of a 2D
-grid of character cells.
+The Terminal context is the full DarqOS graphical shell, with high
+resolution bit-mapped graphics, a keyboard, a pointer, a set of
+pointer-relative actions (clicks), mono audio input, and stereo
+audio output.
 
-The GUI context is the full DarqOS graphical shell, with high resolution
-bit-mapped graphics.
-
-This model will likely need refinement: it should cater for things like
-Jupyter Workbooks, and Alexa-style voice interfaces, etc, as well as the
-more traditional options.
-
-In addition, the I/O channels might reasonably include sound options in
-conjunction with visual choices: you could have a CLI visual display, but
-use stereo or surround audio for a music player, for instance.
-
-Similarly, what about visual functionality: there could be a difference
-when selecting a lens for a basic frame buffer vs. a GPU-accelerated 4K
-screen?
+Additional contexts might be added in future, including things like
+Jupyter Workbooks, Alexa-style voice interfaces, etc.
 
 Lens Activation
-~~~~~~~~~~~~~~~
+---------------
 
-Within a Terminal Service, the user has a means of managing object
-references (or identifiers), and requesting actions upon them.  These
-requests combine:
+Within a Terminal Service, the user has several means of managing
+Item Identifiers, and requesting actions upon them.  These requests
+combine:
 
-* a context
-* an object reference, including the object's type
-* an action
+* a Context
+* an Item Identifier (which includes the item's Typa Identifier), and,
+* an action.
 
 The terminal must process that request and determine (with or without
 help from the user) which of its available Lenses should be used.
 
-The collection of Lenses, and their supported contexts, types, and action,
+The collection of Lenses, and their supported types and contexts,
 is maintained by the Type Service.
-
-Type Service
-------------
-
-The set of types known to the system is managed by the Type Service.
-A user can request the creation of a new type instance, or the use of an
-existing type instance, using the type service to find the implementation
-of the type.
-
-Creation
-~~~~~~~~
-
-Using a shell, the user requests a new instance of a named type.  The
-shell looks up the type name in the service registry, and obtains a
-reference to the type's implementation.  The shell uses the kernel
-to spawn a new process, running the type's implementation.
-
-* Does it make sense for each type instance to be a new process?
-
-  * Perhaps one process could manage many different type instances?
-    eg. consider displayed text documents, or HTML documents, etc
-  * Maybe it should be up to the type implementation to determine
-    what resources it requires?
-  * So perhaps a type _factory_ should exist, and be asked to create
-    a new instance?
-
-Use
-~~~
-
-For a pre-existing object, discovered through the object selector,
-its type should be available via metadata.  In this case, it's still
-necessary to create a new type instance, but it should be
-initialised from the storage server with the pre-existing content.
-
-This is another variant of the type factory.
-
-Type Collection
-===============
-
-One fundamental decision is to separate Text / Document and Code as
-different types.  Document should encompass everything from a README to
-FrameMaker, and the fundamental behaviour should be that it is displayed
-immediately as it is edited.
-
-Code, on the other hand, undergoes a process of compilation or
-interpretation to generate some artifact.  The distinction is basically
-in the workflow, rather than the content (since a lot of the time,
-they’re both just an ordered collection of Unicode code points).
-
-The interesting point is Markdown (and thus, TeX, roff, etc), where the
-Document is produced as an artifact of the Code.
-
-One of the goals of M0 is to be able to create, show, and edit simple
-text documents.  That will require a simple text editor.  There’s some
-decisions to be made here:
-
-* What, if any, boundaries are there between eg. a basic, unformatted text
-  document and a complex FrameMaker-style book?
-* How does the system deal with:
-
-  * ASCII/Unicode text files?
-  * PDF documents?
-  * Microsoft Word?
-
-* In general, I think I’d like the approach to be one of importing via
-  translation to a native capability.  Which might, perhaps ideally, be
-  an implementation of an existing standard (de facto or de jure).
-
-That said, I don’t really want to be writing a Word-compatible document
-editor: I’ll need to find a way to leverage eg. LibreOffice.
-
-That aside, and for now, just considering a simple text editor, what is
-unique about this type implementation?
-
-* Single tool that understands the type:
-
-  * Creation
-  * Editing
-  * Diff and merge
-
-* I’d like to have the GUI be a layer that simply drives the type API.
-
-  * This implies that the API is available for programmatic access
-  * Which should include scripting
-  * So type implementations should be a library, with an API, and an
-    (optional?) GUI component that exposes the API to a terminal
-
-* These APIs should be discoverable, self-documenting, and have decent
-  consistency between different types.
-
-  * ie. something more like a Smalltalk class hierarchy than an existing
-    OS application.
-
-* This is not entirely dissimilar to Windows’ COM, I guess
-* This would mean that, eg.
-
-  * Anything you can do in the GUI, you can do from a script, using the
-    same tool and the same commands
-  * The GUI could reasonably have actions (menu items, etc) defined as
-    scripts/programs, and the user could easily alter or augment these
-    with their own action scripts/programs
-  * Which means I’ll need to figure out how such programs should be
-    written
-
-    * Which comes back to the unity of the ST80 experience
-
-      * Albeit with awful performance and image-management issues
-
-        * Both of which could probably be solved
-
-          * Am I trying to talk myself into writing this in Smalltalk?
-            Srsly?
-
-* Smalltalk, Lilith, Oberon, LISP machines …
-
-  * All had a unified language experience.
-  * Unix immediately split that into shell and C: why?  Historical
-    accident?
-
-Sub-types
-=========
-
-In some cases, it makes sense to have polymorphism for types.  The
-motivating example is paper books and e-books: both have similar
-metadata, but e-books have actual content in the storage service,
-while paper books have a physical location property.
-
-Depending on how collections end up being handled though, it might
-make sense for both types of books to be handled by a single
-collection, which kinda implies a base, parent type for both book
-sub-types.
-
-How is this to be handled within the type system?
-
-I think it's the case that Apple's UTI system has sub-types as well.
-They're not indicated in the naming, which suggests some additional
-information is stored about types: this could end up make a Type an
-object, which might get kinda meta.
 
 References
 ==========
 
-https://developer.android.com/guide/components/intents-common
-https://developer.android.com/guide/components/intents-filters
-https://developer.android.com/reference/android/content/Intent
-
-https://developer.apple.com/documentation/uniformtypeidentifiers
-https://developer.apple.com/documentation/uniformtypeidentifiers/defining_file_and_data_types_for_your_app
-https://developer.apple.com/documentation/uniformtypeidentifiers/uttype
+* https://en.wikipedia.org/wiki/Uniform_Type_Identifier
+* https://developer.android.com/guide/components/intents-common
+* https://developer.android.com/guide/components/intents-filters
+* https://developer.android.com/reference/android/content/Intent
+* https://developer.apple.com/documentation/uniformtypeidentifiers
+* https://developer.apple.com/documentation/uniformtypeidentifiers/defining_file_and_data_types_for_your_app
+* https://developer.apple.com/documentation/uniformtypeidentifiers/uttype
+* https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/understanding_utis/understand_utis_intro/understand_utis_intro.html
+* https://developer.apple.com/library/archive/documentation/Miscellaneous/Reference/UTIRef/Articles/System-DeclaredUniformTypeIdentifiers.html
