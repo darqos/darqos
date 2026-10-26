@@ -1,9 +1,9 @@
 # DarqOS
 # Copyright (C) 2022-2026 David Arnold
 
-# p-Kernel System Calls
+# p-Kernel System Calls, and Requests and Responses over Ports
 #
-# How this works:
+# How the system calls work:
 # - There's a Unix process that provides the facilities to be provided
 #   eventually by the Darq kernel.  It's called the Pseudo Kernel, or
 #   p-kernel.
@@ -36,16 +36,40 @@
 #     - When a response is received from the p-kernel, the I/O thread
 #       updates the syscall object with the response data, and signals
 #       the Future.  (Not yet implemented.)
+#
+# How requests and responses work (see doc/ipc.rst):
+# - A client calls a service with call(), or with the Client class
+#   that didlpygen generates for each protocol.  A service answers
+#   with serve(), and a subclass of the protocol's generated Handler.
+# - Each thread has a reply port, opened on its first call: requests
+#   are sent from it, so the service's replies come back to it.
+# - Each request gets the next transaction identifier (txid), skipping
+#   0, which means one-way.  A reply is the message on the reply port
+#   from the service's handle, with the request's txid: anything else
+#   is a late reply to an abandoned call, and is dropped.
+# - A service answers a request it can't handle with an error reply
+#   (see darq.dipc.ErrorReply), raised in the client as RemoteError.
+#   One-way messages are never answered, even with an error.
+# - Services handle requests one at a time, in order of delivery, and
+#   run until they're killed.
 
+
+import logging
 import os
+import threading
+import time
 import typing
 import uuid
 
-from .application import EventListener, SystemCallMode, SystemCallState
-from .common import (
+from . import dipc
+from .dipc import ErrorCode, ErrorReply
+from .process import EventListener, SystemCallMode, SystemCallState
+from .pcall import (
     ClosePortRequest,
     ExitReason,
     KillProcessRequest,
+    MAX_HANDLES,
+    MAX_NAME_LENGTH,
     LookupNameRequest,
     LookupNameResponse,
     NameResult,
@@ -69,12 +93,15 @@ from .errors import (
     DarqError,
     DeadPortError,
     InvalidNameError,
+    MessageDecodingError,
     NameTakenError,
     NoSuchChildError,
     NonExistentPortError,
     PortAlreadyNamedError,
     PortRightError,
+    RemoteError,
     ReservedNameError,
+    TooManyHandlesError,
 )
 from .loop import EventLoopInterface
 
@@ -106,6 +133,16 @@ __all__ = [
     "lookup_name_cb",
     "shutdown",
     "reboot",
+    "ExitReason",
+    "MAX_HANDLES",
+    "MAX_NAME_LENGTH",
+    "Client",
+    "Handler",
+    "call",
+    "connect",
+    "send",
+    "serve",
+    "transact",
 ]
 
 
@@ -115,7 +152,7 @@ __all__ = [
 # Help Python's edit-time type-checking with an annotation on the
 # injected name.
 #
-# This name is injected by pyloader, into darq.syscall.__dict__, as
+# This name is injected by pyloader, into darq.system.__dict__, as
 # part of spawning a new process.  See pyloader.PythonPProcess.load_app
 # for the details.
 
@@ -128,7 +165,8 @@ class ProcessState(typing.Protocol):
 
     def queue_new_syscall(self, syscall_state: SystemCallState) -> None: ...
 
-    def receive_message(self, port: int, blocking: bool) -> tuple[int, bytes] | None: ...
+    def receive_message(self, port: int, blocking: bool,
+                        timeout: float | None) -> tuple[int, bytes, tuple[int, ...]] | None: ...
 
     def exit(self, status: int) -> typing.NoReturn: ...
 
@@ -271,10 +309,12 @@ _SEND_ERRORS: dict[int, type[DarqError]] = {
     SendResult.BAD_HANDLE: NonExistentPortError,
     SendResult.NOT_RECEIVE_RIGHT: PortRightError,
     SendResult.DEAD_PORT: DeadPortError,
+    SendResult.TOO_MANY_HANDLES: TooManyHandlesError,
 }
 
 
-def send_message(source: int, destination: int, message: bytes):
+def send_message(source: int, destination: int, message: bytes,
+                 ports: typing.Sequence[int] = ()):
     """Send a message to a port.
 
     Returns once the p-kernel has delivered the message (or refused
@@ -285,9 +325,16 @@ def send_message(source: int, destination: int, message: bytes):
                    replies will go.
     :param destination: Handle for the destination port.
     :param message: Buffer to be sent.
-    :raises NonExistentPortError: if either handle isn't open.
+    :param ports: Handles to transfer with the message: the receiver
+                  gets a send right to each (see doc/ipc.rst).
+    :raises NonExistentPortError: if any handle isn't open.
     :raises PortRightError: if the source isn't a receive right.
-    :raises DeadPortError: if the destination port has been destroyed."""
+    :raises DeadPortError: if the destination port, or a transferred
+                           port, has been destroyed.
+    :raises TooManyHandlesError: if there are more than MAX_HANDLES
+                                 ports."""
+    if len(ports) > MAX_HANDLES:
+        raise TooManyHandlesError(f"{len(ports)} ports, at most {MAX_HANDLES}")
 
     # Get a SystemCallState
     syscall = SystemCallState()
@@ -296,6 +343,7 @@ def send_message(source: int, destination: int, message: bytes):
     # Populate the request message
     request = SendMessageRequest(source, destination)
     request.set_payload(message)
+    request.set_handles(tuple(ports))
     syscall.set_request(request)
 
     # Enqueue.
@@ -314,7 +362,8 @@ def send_message(source: int, destination: int, message: bytes):
     return
 
 
-def receive_message(port: int, blocking: bool = True) -> tuple[int, bytes] | None:
+def receive_message(port: int, blocking: bool = True,
+                    timeout: float | None = None) -> tuple[int, bytes, tuple[int, ...]] | None:
     """Receive a message delivered to a port.
 
     Messages are received in the order they were delivered.  This needs
@@ -325,11 +374,14 @@ def receive_message(port: int, blocking: bool = True) -> tuple[int, bytes] | Non
     :param port: Open port number.
     :param blocking: If True, wait until a message is delivered;
                      otherwise, return None at once if none has been.
-    :returns: (source port, payload), or None if not blocking and no
-              message has been delivered.
+    :param timeout: If blocking, the longest to wait, in seconds, before
+                    returning None; None waits indefinitely.
+    :returns: (source handle, payload, transferred handles), or None if
+              no message was delivered, when not blocking or by the
+              timeout.
     :raises NonExistentPortError: if the port isn't open, or is closed
                                   while waiting."""
-    return _darq_process_state.receive_message(port, blocking)
+    return _darq_process_state.receive_message(port, blocking, timeout)
 
 
 # def send_chunk(self, source: int, destination: int, stream: int, offset: int, chunk: bytes):
@@ -782,3 +834,226 @@ def lookup_object(object_id: typing.Union[str, ObjectIdentifier]) -> ObjectProxy
     # Ask type implementation to activate the object, and return a
     # proxy.
     raise NotImplementedError("lookup_object")
+
+
+########################################################################
+# Requests and responses over ports
+########################################################################
+
+# Per-thread reply port.
+_local = threading.local()
+
+# Last transaction identifier allocated.
+_txid_lock = threading.Lock()
+_last_txid = 0
+
+
+def _reply_port() -> int:
+    """Return this thread's reply port, opening it if needed."""
+    port = getattr(_local, "reply_port", None)
+    if port is None:
+        port = open_port()
+        _local.reply_port = port
+    return port
+
+
+def _allocate_txid() -> int:
+    """Return the next transaction identifier: never 0."""
+    global _last_txid
+    with _txid_lock:
+        _last_txid = _last_txid % 0xFFFFFFFF + 1
+        return _last_txid
+
+
+def connect(name: str) -> int:
+    """Return a handle for a registered service, waiting until it's registered.
+
+    :param name: Service name, such as "darq.storage"."""
+    handle = lookup_name(name, blocking=True)
+    assert handle is not None, "blocking lookup returned nothing"
+    return handle
+
+
+def send(service: int, message: dipc.Message):
+    """Send a one-way message to a service.
+
+    :param service: Handle for the service's port.
+    :param message: dipc.Message to send: its txid is set to 0."""
+    message.txid = 0
+    buf, handles = message.encode()
+    send_message(_reply_port(), service, buf, handles)
+    return
+
+
+def transact[R: dipc.Message](service: int, request: dipc.Message, response_class: type[R],
+                         timeout: float | None = None) -> R:
+    """Send a request to a service, and wait for its response.
+
+    :param service: Handle for the service's port.
+    :param request: Request to send: its txid is set.
+    :param response_class: Class of the expected response.
+    :param timeout: Longest to wait for the response, in seconds; None
+                    waits indefinitely.
+    :returns: The decoded response.
+    :raises RemoteError: if the service sent an error reply.
+    :raises TimeoutError: if there's no reply within the timeout.
+    :raises MessageDecodingError: if the response can't be decoded.
+    :raises DarqError: if the request can't be sent (see send_message)."""
+    port = _reply_port()
+    request.txid = _allocate_txid()
+    buf, handles = request.encode()
+    send_message(port, service, buf, handles)
+
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while True:
+        remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+        message = receive_message(port, timeout=remaining)
+        if message is None:
+            raise TimeoutError(f"no reply to {type(request).__name__} from {service} within {timeout}s")
+
+        source, payload, reply_handles = message
+        try:
+            txid = dipc.decode_txid(payload)
+        except MessageDecodingError:
+            txid = None
+        if source != service or txid != request.txid:
+            logging.warning(f"Dropped stray message on reply port {port}, from {source} (txid {txid})")
+            continue
+
+        if dipc.decode_flags(payload) & dipc.ERROR:
+            error = ErrorReply()
+            error.decode(payload, reply_handles)
+            raise RemoteError(error.code, error.description)
+
+        response = response_class()
+        response.decode(payload, reply_handles)
+        return response
+
+
+def call(service: int, request: dipc.Message, timeout: float | None = None) -> dipc.Message | None:
+    """Send a request to a service, and return its response.
+
+    A one-way message (whose class has no RESPONSE) is just sent, and
+    None returned.  See transact() for the parameters and exceptions."""
+    if request.RESPONSE is None:
+        send(service, request)
+        return None
+    return transact(service, request, request.RESPONSE, timeout)
+
+
+class Client:
+    """Base class for the generated client of each protocol.
+
+    Its methods, one per protocol method, take the request's fields,
+    and return the response (or None, for a one-way message)."""
+
+    def __init__(self, service: int, timeout: float | None = None):
+        """Constructor.
+
+        :param service: Handle for the service's port (see connect).
+        :param timeout: Longest to wait for each response, in seconds;
+                        None waits indefinitely."""
+        self.service = service
+        self.timeout = timeout
+
+    def call[R: dipc.Message](self, request: dipc.Message, response_class: type[R]) -> R:
+        """Send a request, and return its response: see transact()."""
+        return transact(self.service, request, response_class, self.timeout)
+
+    def send(self, message: dipc.Message):
+        """Send a one-way message."""
+        send(self.service, message)
+        return
+
+
+class Handler:
+    """Base class for the generated handler of each protocol.
+
+    A service subclasses it, overriding a method for each protocol
+    method it implements: each takes the decoded request, and the
+    handle for the client's port, and returns the response (or None,
+    for a one-way message)."""
+
+    # Request class, and handler method name, by method number.
+    METHODS: dict[int, tuple[type[dipc.Message], str]] = {}
+
+    def dispatch(self, payload: bytes, source: int, handles: tuple[int, ...] = ()) -> dipc.Message | None:
+        """Handle a request.
+
+        :param payload: Received message.
+        :param source: Handle for the client's port.
+        :param handles: Handles transferred with the message.
+        :returns: The reply to send: the response, or an error reply;
+                  None for a one-way message."""
+        try:
+            txid = dipc.decode_txid(payload)
+            method = dipc.decode_method(payload)
+        except MessageDecodingError:
+            logging.warning(f"Dropped message from {source}: too short for a header")
+            return None
+
+        entry = self.METHODS.get(method)
+        if entry is None:
+            return self.error(txid, method, ErrorCode.UNKNOWN_METHOD, f"no method {method}")
+        request_class, name = entry
+
+        request = request_class()
+        try:
+            request.decode(payload, handles)
+        except MessageDecodingError as e:
+            return self.error(txid, method, ErrorCode.BAD_MESSAGE, f"{request_class.__name__}: {e}")
+
+        try:
+            response = getattr(self, name)(request, source)
+        except NotImplementedError:
+            return self.error(txid, method, ErrorCode.NOT_IMPLEMENTED, f"{name} isn't implemented")
+        except Exception as e:
+            logging.exception(f"Handler for {request_class.__name__} failed")
+            return self.error(txid, method, ErrorCode.INTERNAL_ERROR, f"{type(e).__name__}: {e}")
+
+        response_class = request_class.RESPONSE
+        if response_class is None:
+            if response is not None:
+                logging.warning(f"Handler for one-way {request_class.__name__} returned a response: dropped")
+            return None
+        if not isinstance(response, response_class):
+            return self.error(txid, method, ErrorCode.INTERNAL_ERROR,
+                              f"{name} returned {type(response).__name__}, not {response_class.__name__}")
+        response.txid = txid
+        return response
+
+    @staticmethod
+    def error(txid: int, method: int, code: ErrorCode, description: str) -> ErrorReply | None:
+        """Return an error reply, or None for a one-way message."""
+        if txid == 0:
+            logging.warning(f"Failed to handle one-way message {method}: {description}")
+            return None
+        logging.warning(f"Error reply to method {method}: {code.name}: {description}")
+        return ErrorReply(txid, method, code, description)
+
+
+def serve(name: str | None, handler: Handler) -> typing.NoReturn:
+    """Answer requests on a new port, one at a time, until killed.
+
+    :param name: Name to register for the port, or None to leave it
+                 unnamed.
+    :param handler: Handler for the protocol."""
+    port = open_port()
+    if name is not None:
+        register_name(name, port)
+    logging.info(f"Serving {name or 'unnamed port'} on port {port}")
+
+    while True:
+        message = receive_message(port)
+        assert message is not None, "blocking receive returned nothing"
+        source, payload, handles = message
+
+        reply = handler.dispatch(payload, source, handles)
+        if reply is None:
+            continue
+        buf, reply_handles = reply.encode()
+        try:
+            send_message(port, source, buf, reply_handles)
+        except DarqError as e:
+            # Most likely, the client has gone.
+            logging.warning(f"Reply to {source} failed: {e!r}")

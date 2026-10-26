@@ -33,6 +33,7 @@ import threading
 import traceback
 
 import darq
+from darq import pcall as pk
 
 
 class AppState(enum.Enum):
@@ -113,7 +114,7 @@ class PythonPProcess(darq.SocketListener):
         self.request_id: int = 0
 
         # Re-assembly buffer.
-        self.recv_buffer = darq.Buffer()
+        self.recv_buffer = pk.Buffer()
 
         # Thread running the I/O event loop.
         self._io_thread: threading.Thread | None = None
@@ -193,19 +194,19 @@ class PythonPProcess(darq.SocketListener):
 
         The value is the port, or process, the p-call was about."""
         response = syscall.get_response()
-        if isinstance(response, (darq.OpenPortResponse, darq.ClosePortResponse)):
+        if isinstance(response, (pk.OpenPortResponse, pk.ClosePortResponse)):
             return response.port, response.result
-        if isinstance(response, darq.SpawnProcessResponse):
+        if isinstance(response, pk.SpawnProcessResponse):
             return response.dpid, response.result
-        if isinstance(response, darq.KillProcessResponse):
+        if isinstance(response, pk.KillProcessResponse):
             request = syscall.get_request()
-            assert isinstance(request, darq.KillProcessRequest)
+            assert isinstance(request, pk.KillProcessRequest)
             return request.dpid, response.result
-        if isinstance(response, darq.RegisterNameResponse):
+        if isinstance(response, pk.RegisterNameResponse):
             request = syscall.get_request()
-            assert isinstance(request, darq.RegisterNameRequest)
+            assert isinstance(request, pk.RegisterNameRequest)
             return request.port, response.result
-        if isinstance(response, darq.LookupNameResponse):
+        if isinstance(response, pk.LookupNameResponse):
             return response.port, response.result
         raise TypeError(f"No callback arguments for {type(response).__name__}")
 
@@ -281,9 +282,9 @@ class PythonPProcess(darq.SocketListener):
         # Add executable module's location to system path.
         sys.path.insert(0, self._exec_path)
 
-        # Inject the process state structure into the syscall module, so
+        # Inject the process state structure into the darq.system module, so
         # the application can make p-calls (even while being imported).
-        darq.syscall.__dict__["_darq_process_state"] = self
+        darq.system.__dict__["_darq_process_state"] = self
 
         main = importlib.import_module("main")
         return main.darq_main
@@ -374,7 +375,7 @@ class PythonPProcess(darq.SocketListener):
 
         # Send any p-calls the application made before it finished first.
         self.handle_syscall_queue()
-        self.send_to_p_kernel(darq.Exited(status, error))
+        self.send_to_p_kernel(pk.Exited(status, error))
 
         if self._pkernel_sock is None:
             self._end_app()
@@ -458,7 +459,7 @@ class PythonPProcess(darq.SocketListener):
         logging.debug("Callback: socket is connected")
         pass
 
-    def send_to_p_kernel(self, message: darq.Message):
+    def send_to_p_kernel(self, message: pk.Message):
         """Send a "syscall" message to the p-Kernel.
 
         :param message: Message to send."""
@@ -484,7 +485,7 @@ class PythonPProcess(darq.SocketListener):
                 return
 
             header_buf = self.recv_buffer.peek(8)  # FIXME: check version, etc, first.
-            message_length = darq.Message.decode_length(header_buf)
+            message_length = pk.Message.decode_length(header_buf)
             if message_length < 8:
                 # The stream can't be split into messages any more: treat
                 # it like the p-kernel closing the session.
@@ -498,63 +499,63 @@ class PythonPProcess(darq.SocketListener):
 
             message_buf = self.recv_buffer.peek(message_length)
             self.recv_buffer.consume(message_length)  # FIXME: make this one operation
-            message_type = darq.Message.decode_type(message_buf)
+            message_type = pk.Message.decode_type(message_buf)
 
             self.dispatch(message_type, message_buf)
 
     def dispatch(self, message_type, message_buf):
-        if message_type == darq.MessageType.DELIVER_MESSAGE:
-            message = darq.DeliverMessage()
+        if message_type == pk.MessageType.DELIVER_MESSAGE:
+            message = pk.DeliverMessage()
             message.decode(message_buf)
             self.handle_deliver_message(message)
 
-        elif message_type == darq.MessageType.OPEN_PORT_RESP:
-            message = darq.OpenPortResponse()
+        elif message_type == pk.MessageType.OPEN_PORT_RESP:
+            message = pk.OpenPortResponse()
             message.decode(message_buf)
             self.handle_open_port_response(message)
 
-        elif message_type == darq.MessageType.CLOSE_PORT_RESP:
-            message = darq.ClosePortResponse()
+        elif message_type == pk.MessageType.CLOSE_PORT_RESP:
+            message = pk.ClosePortResponse()
             message.decode(message_buf)
             self.handle_close_port_response(message)
 
-        elif message_type == darq.MessageType.SPAWN_PROCESS_RESP:
-            message = darq.SpawnProcessResponse(0, 0, 0, None)
+        elif message_type == pk.MessageType.SPAWN_PROCESS_RESP:
+            message = pk.SpawnProcessResponse(0, 0, 0, None)
             message.decode(message_buf)
             self.complete_syscall(message)
 
-        elif message_type == darq.MessageType.SEND_MESSAGE_RESP:
-            message = darq.SendMessageResponse()
+        elif message_type == pk.MessageType.SEND_MESSAGE_RESP:
+            message = pk.SendMessageResponse()
             message.decode(message_buf)
             self.complete_syscall(message)
 
-        elif message_type == darq.MessageType.WAIT_RESP:
-            message = darq.WaitResponse()
+        elif message_type == pk.MessageType.WAIT_RESP:
+            message = pk.WaitResponse()
             message.decode(message_buf)
             self.complete_syscall(message)
 
-        elif message_type == darq.MessageType.REGISTER_NAME_RESP:
-            message = darq.RegisterNameResponse()
+        elif message_type == pk.MessageType.REGISTER_NAME_RESP:
+            message = pk.RegisterNameResponse()
             message.decode(message_buf)
             self.complete_syscall(message)
 
-        elif message_type == darq.MessageType.LOOKUP_NAME_RESP:
-            message = darq.LookupNameResponse()
+        elif message_type == pk.MessageType.LOOKUP_NAME_RESP:
+            message = pk.LookupNameResponse()
             message.decode(message_buf)
             self.complete_syscall(message)
 
-        elif message_type == darq.MessageType.RUN_RESPONSE:
-            message = darq.RunResponse()
+        elif message_type == pk.MessageType.RUN_RESPONSE:
+            message = pk.RunResponse()
             message.decode(message_buf)
             self.handle_run_response(message)
 
-        elif message_type == darq.MessageType.KILL_PROCESS_RQST:
-            message = darq.KillProcessRequest()
+        elif message_type == pk.MessageType.KILL_PROCESS_RQST:
+            message = pk.KillProcessRequest()
             message.decode(message_buf)
             self.handle_kill_process_request(message)
 
-        elif message_type == darq.MessageType.KILL_PROCESS_RESP:
-            message = darq.KillProcessResponse()
+        elif message_type == pk.MessageType.KILL_PROCESS_RESP:
+            message = pk.KillProcessResponse()
             message.decode(message_buf)
             self.complete_syscall(message)
 
@@ -573,13 +574,13 @@ class PythonPProcess(darq.SocketListener):
 
         The application is started once the p-kernel accepts: see
         handle_run_response()."""
-        message = darq.RunRequest()
+        message = pk.RunRequest()
         message.dpid = self._dpid
         message.host_pid = os.getpid()
         self.send_to_p_kernel(message)
         return
 
-    def handle_run_response(self, message: darq.RunResponse):
+    def handle_run_response(self, message: pk.RunResponse):
         """Start the application, if the p-kernel has accepted this process."""
         if self._run_decided:
             logging.warning("Duplicate RUN_RESPONSE ignored")
@@ -597,13 +598,14 @@ class PythonPProcess(darq.SocketListener):
         self._app_start.set()
         return
 
-    def handle_deliver_message(self, message: darq.DeliverMessage):
+    def handle_deliver_message(self, message: pk.DeliverMessage):
         """Pass a delivered message to the application.
 
         With the callback model (see darq.init_cb), it goes to the
         listener, on the application's loop; otherwise, it's queued on
         its port for receive_message()."""
         source, destination, payload = message.source, message.destination, message.payload
+        handles = message.handles
         port = self.ports.get(destination)
 
         listener = self.listener
@@ -618,20 +620,21 @@ class PythonPProcess(darq.SocketListener):
             logging.warning(f"Message for port {destination} dropped: port not open")
             return
 
-        port.deliver(source, payload)
+        port.deliver(source, payload, handles)
         return
 
-    def receive_message(self, port: int, blocking: bool) -> tuple[int, bytes] | None:
+    def receive_message(self, port: int, blocking: bool,
+                        timeout: float | None) -> tuple[int, bytes, tuple[int, ...]] | None:
         """Receive a message delivered to a port: see darq.receive_message().
 
         Called on the application's thread."""
         port_state = self.ports.get(port)
         if port_state is None:
             raise darq.NonExistentPortError(port)
-        return port_state.receive(blocking)
+        return port_state.receive(blocking, timeout)
 
 
-    def handle_open_port_response(self, message: darq.OpenPortResponse):
+    def handle_open_port_response(self, message: pk.OpenPortResponse):
         # Record the newly-opened port before completing the p-call, so
         # the application can use it as soon as open_port() returns.
         if message.request_id in self._pending and message.result == 0:
@@ -642,7 +645,7 @@ class PythonPProcess(darq.SocketListener):
         self.complete_syscall(message)
         return
 
-    def handle_close_port_response(self, message: darq.ClosePortResponse):
+    def handle_close_port_response(self, message: pk.ClosePortResponse):
         # Forget the port before completing the p-call, releasing any
         # receiver blocked on it.
         if message.request_id in self._pending:
@@ -653,7 +656,7 @@ class PythonPProcess(darq.SocketListener):
         self.complete_syscall(message)
         return
 
-    def handle_kill_process_request(self, message: darq.KillProcessRequest):
+    def handle_kill_process_request(self, message: pk.KillProcessRequest):
         """Handle the p-kernel's request to kill this process."""
         if message.dpid != self._dpid:
             logging.warning(f"Kill request for DPID [{message.dpid}] ignored")

@@ -20,12 +20,12 @@ TYPE_MAP = {
     'int64':   {"size": 8, "align": 8}, 'uint64':  {"size": 8, "align": 8},
     'real32':  {"size": 4, "align": 4}, 'real64':  {"size": 8, "align": 8},
     'opaque':  {"size": 8, "align": 4},  # uint32 offset and uint32 length of out-of-line bytes
-    'port':    {"size": 4, "align": 4},  # uint32, handled specially by the IPC system
+    'port':    {"size": 2, "align": 2},  # uint16 index into the message's transferred handles
 }
 
 
 # IR format version: increment on any change that breaks consumers
-IR_VERSION = 1
+IR_VERSION = 2
 
 
 # Lexer patterns for language tokens

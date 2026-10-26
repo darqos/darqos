@@ -42,16 +42,34 @@ def test_non_blocking_without_message_returns_none(port):
     assert time.monotonic() - start < 0.1
 
 
+def test_timeout_without_message_returns_none(port):
+    start = time.monotonic()
+    assert port.receive(timeout=0.1) is None
+    assert 0.09 <= time.monotonic() - start < 1
+
+
+def test_timeout_returns_message_delivered_while_waiting(port):
+    threading.Timer(0.05, port.deliver, args=(16386, b"soon", (3,))).start()
+    assert port.receive(timeout=TIMEOUT) == (16386, b"soon", (3,))
+
+
+def test_timeout_ignores_wake(port):
+    threading.Timer(0.02, port.wake).start()
+    start = time.monotonic()
+    assert port.receive(timeout=0.1) is None
+    assert time.monotonic() - start >= 0.09
+
+
 def test_receives_delivered_message(port):
     port.deliver(16386, b"hello")
-    assert port.receive(blocking=False) == (16386, b"hello")
+    assert port.receive(blocking=False) == (16386, b"hello", ())
     assert port.receive(blocking=False) is None
 
 
 def test_messages_received_in_delivery_order(port):
     for i in range(3):
         port.deliver(16386, bytes([i]))
-    assert [port.receive() for _ in range(3)] == [(16386, b"\x00"), (16386, b"\x01"), (16386, b"\x02")]
+    assert [port.receive() for _ in range(3)] == [(16386, b"\x00", ()), (16386, b"\x01", ()), (16386, b"\x02", ())]
 
 
 def test_blocking_receive_waits_for_delivery(port):
@@ -61,7 +79,7 @@ def test_blocking_receive_waits_for_delivery(port):
 
     port.deliver(16386, b"late")
     thread.join(TIMEOUT)
-    assert result == {"value": (16386, b"late")}
+    assert result == {"value": (16386, b"late", ())}
 
 
 def test_wake_without_message_keeps_waiting(port):
@@ -73,7 +91,7 @@ def test_wake_without_message_keeps_waiting(port):
 
     port.deliver(16386, b"after wake")
     thread.join(TIMEOUT)
-    assert result == {"value": (16386, b"after wake")}
+    assert result == {"value": (16386, b"after wake", ())}
 
 
 def test_close_releases_blocked_receiver(port):
@@ -87,7 +105,7 @@ def test_close_releases_blocked_receiver(port):
 def test_closed_port_still_returns_delivered_messages(port):
     port.deliver(16386, b"before close")
     port.close()
-    assert port.receive() == (16386, b"before close")
+    assert port.receive() == (16386, b"before close", ())
     with pytest.raises(darq.NonExistentPortError):
         port.receive(blocking=False)
 

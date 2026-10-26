@@ -23,6 +23,7 @@ import typing
 import pytest
 
 import darq
+from darq import pcall as pk
 
 
 PYLOADER_PATH = pathlib.Path(__file__).parent.parent / "kernel" / "pyloader"
@@ -47,22 +48,22 @@ class FakePKernel:
 
     def __init__(self, sock: socket.socket):
         self.sock = sock
-        self.received: list[darq.Message] = []
+        self.received: list[pk.Message] = []
 
         # Next handle for an opened port, or a looked-up name.
         self.next_handle = 16385
 
         # Result to give each SendMessageRequest.  Sends are answered
         # before any action for them is taken.
-        self.send_result = darq.SendResult.OK
+        self.send_result = pk.SendResult.OK
         self.send_delay = 0.0
 
         # Response to a WaitRequest: (result, dpid, reason, status, error).
-        self.wait_response = (darq.WaitResult.NO_SUCH_CHILD, 0, 0, 0, None)
+        self.wait_response = (pk.WaitResult.NO_SUCH_CHILD, 0, 0, 0, None)
 
         # Registered names, and the result to give a registration.
         self.names: dict[str, int] = {}
-        self.register_result = darq.NameResult.OK
+        self.register_result = pk.NameResult.OK
 
         # Result for the RUN_RESPONSE to a RUN_REQUEST, or None to not answer.
         self.run_result: int | None = 0
@@ -72,14 +73,14 @@ class FakePKernel:
         self.actions: dict[int, typing.Callable[[typing.Any], None]] = {}
         self.thread = threading.Thread(target=self.run, daemon=True)
 
-    def send(self, message: darq.Message):
+    def send(self, message: pk.Message):
         self.sock.sendall(message.encode())
 
     def run(self):
-        buf = darq.Buffer()
+        buf = pk.Buffer()
         while True:
             while (buf.length() < 8 or
-                   buf.length() < darq.Message.decode_length(buf.peek(8))):
+                   buf.length() < pk.Message.decode_length(buf.peek(8))):
                 try:
                     data = self.sock.recv(65536)
                 except OSError:
@@ -93,10 +94,10 @@ class FakePKernel:
                     return
                 buf.append(data)
 
-            length = darq.Message.decode_length(buf.peek(8))
+            length = pk.Message.decode_length(buf.peek(8))
             message_buf = buf.peek(length)
             buf.consume(length)
-            self.handle(darq.Message.decode_type(message_buf), message_buf)
+            self.handle(pk.Message.decode_type(message_buf), message_buf)
 
     def wait_for(self, count: int):
         """Wait until this many messages have been received."""
@@ -109,8 +110,8 @@ class FakePKernel:
         message = self.decode(message_type, message_buf)
         self.received.append(message)
 
-        if message_type == darq.MessageType.SEND_MESSAGE_RQST:
-            response = darq.SendMessageResponse(message.request_id, self.send_result)
+        if message_type == pk.MessageType.SEND_MESSAGE_RQST:
+            response = pk.SendMessageResponse(message.request_id, self.send_result)
             if self.send_delay:
                 threading.Timer(self.send_delay, self.send, args=(response,)).start()
             else:
@@ -121,60 +122,60 @@ class FakePKernel:
             action(message)
             return
 
-        if message_type == darq.MessageType.OPEN_PORT_RQST:
-            self.send(darq.OpenPortResponse(message.request_id, 0, self.next_handle))
+        if message_type == pk.MessageType.OPEN_PORT_RQST:
+            self.send(pk.OpenPortResponse(message.request_id, 0, self.next_handle))
             self.next_handle += 1
 
-        elif message_type == darq.MessageType.CLOSE_PORT_RQST:
-            self.send(darq.ClosePortResponse(message.request_id, 0, message.port))
+        elif message_type == pk.MessageType.CLOSE_PORT_RQST:
+            self.send(pk.ClosePortResponse(message.request_id, 0, message.port))
 
-        elif message_type == darq.MessageType.SPAWN_PROCESS_RQST:
-            self.send(darq.SpawnProcessResponse(message.request_id, 0, 7, None))
+        elif message_type == pk.MessageType.SPAWN_PROCESS_RQST:
+            self.send(pk.SpawnProcessResponse(message.request_id, 0, 7, None))
 
-        elif message_type == darq.MessageType.KILL_PROCESS_RQST:
-            self.send(darq.KillProcessResponse(message.request_id, 0))
+        elif message_type == pk.MessageType.KILL_PROCESS_RQST:
+            self.send(pk.KillProcessResponse(message.request_id, 0))
 
-        elif message_type == darq.MessageType.RUN_REQUEST:
+        elif message_type == pk.MessageType.RUN_REQUEST:
             if self.run_result is not None:
-                self.send(darq.RunResponse(self.run_result))
+                self.send(pk.RunResponse(self.run_result))
 
-        elif message_type == darq.MessageType.REGISTER_NAME_RQST:
-            if self.register_result == darq.NameResult.OK:
+        elif message_type == pk.MessageType.REGISTER_NAME_RQST:
+            if self.register_result == pk.NameResult.OK:
                 self.names[message.get_name()] = message.port
-            self.send(darq.RegisterNameResponse(message.request_id, self.register_result))
+            self.send(pk.RegisterNameResponse(message.request_id, self.register_result))
 
-        elif message_type == darq.MessageType.WAIT_RQST:
-            self.send(darq.WaitResponse(message.request_id, *self.wait_response))
+        elif message_type == pk.MessageType.WAIT_RQST:
+            self.send(pk.WaitResponse(message.request_id, *self.wait_response))
 
-        elif message_type == darq.MessageType.LOOKUP_NAME_RQST:
+        elif message_type == pk.MessageType.LOOKUP_NAME_RQST:
             if message.get_name() in self.names:
-                self.send(darq.LookupNameResponse(message.request_id, darq.NameResult.OK, self.next_handle))
+                self.send(pk.LookupNameResponse(message.request_id, pk.NameResult.OK, self.next_handle))
                 self.next_handle += 1
             else:
-                self.send(darq.LookupNameResponse(message.request_id, darq.NameResult.NOT_FOUND, 0))
+                self.send(pk.LookupNameResponse(message.request_id, pk.NameResult.NOT_FOUND, 0))
 
     @staticmethod
     def decode(message_type, message_buf) -> typing.Any:
-        if message_type == darq.MessageType.OPEN_PORT_RQST:
-            message = darq.OpenPortRequest()
-        elif message_type == darq.MessageType.CLOSE_PORT_RQST:
-            message = darq.ClosePortRequest()
-        elif message_type == darq.MessageType.SPAWN_PROCESS_RQST:
-            message = darq.SpawnProcessRequest(0, "")
-        elif message_type == darq.MessageType.KILL_PROCESS_RQST:
-            message = darq.KillProcessRequest()
-        elif message_type == darq.MessageType.SEND_MESSAGE_RQST:
-            message = darq.SendMessageRequest()
-        elif message_type == darq.MessageType.RUN_REQUEST:
-            message = darq.RunRequest()
-        elif message_type == darq.MessageType.REGISTER_NAME_RQST:
-            message = darq.RegisterNameRequest()
-        elif message_type == darq.MessageType.LOOKUP_NAME_RQST:
-            message = darq.LookupNameRequest()
-        elif message_type == darq.MessageType.WAIT_RQST:
-            message = darq.WaitRequest()
-        elif message_type == darq.MessageType.EXITED:
-            message = darq.Exited()
+        if message_type == pk.MessageType.OPEN_PORT_RQST:
+            message = pk.OpenPortRequest()
+        elif message_type == pk.MessageType.CLOSE_PORT_RQST:
+            message = pk.ClosePortRequest()
+        elif message_type == pk.MessageType.SPAWN_PROCESS_RQST:
+            message = pk.SpawnProcessRequest(0, "")
+        elif message_type == pk.MessageType.KILL_PROCESS_RQST:
+            message = pk.KillProcessRequest()
+        elif message_type == pk.MessageType.SEND_MESSAGE_RQST:
+            message = pk.SendMessageRequest()
+        elif message_type == pk.MessageType.RUN_REQUEST:
+            message = pk.RunRequest()
+        elif message_type == pk.MessageType.REGISTER_NAME_RQST:
+            message = pk.RegisterNameRequest()
+        elif message_type == pk.MessageType.LOOKUP_NAME_RQST:
+            message = pk.LookupNameRequest()
+        elif message_type == pk.MessageType.WAIT_RQST:
+            message = pk.WaitRequest()
+        elif message_type == pk.MessageType.EXITED:
+            message = pk.Exited()
         else:
             raise AssertionError(f"unexpected message type {message_type}")
         message.decode(message_buf)
@@ -199,7 +200,7 @@ def pproc(monkeypatch):
     process._pkernel_sock = process_sock
     process.io_loop.add_socket(process_sock, process)
 
-    monkeypatch.setitem(darq.syscall.__dict__, "_darq_process_state", process)
+    monkeypatch.setitem(darq.system.__dict__, "_darq_process_state", process)
 
     kernel = FakePKernel(kernel_sock)
     kernel.thread.start()
@@ -260,12 +261,12 @@ def run_app(process, app) -> typing.Any:
 
 
 def exited_messages(process) -> list:
-    return [m for m in process.kernel.received if isinstance(m, darq.Exited)]
+    return [m for m in process.kernel.received if isinstance(m, pk.Exited)]
 
 
 def pcalls(process) -> list:
     """The messages received by the p-kernel, other than the session's own."""
-    return [m for m in process.kernel.received if not isinstance(m, (darq.RunRequest, darq.Exited))]
+    return [m for m in process.kernel.received if not isinstance(m, (pk.RunRequest, pk.Exited))]
 
 
 def test_app_runs_on_main_thread(pproc):
@@ -313,7 +314,7 @@ def test_send_message_waits_for_response(pproc):
         darq.send_message(port, 16386, b"hello")
 
     run_app(pproc, app)
-    [sent] = [m for m in pproc.kernel.received if isinstance(m, darq.SendMessageRequest)]
+    [sent] = [m for m in pproc.kernel.received if isinstance(m, pk.SendMessageRequest)]
     assert (sent.source, sent.destination, sent.payload) == (16385, 16386, b"hello")
     assert sent.request_id == 2
     assert pproc._pending == {}
@@ -332,9 +333,9 @@ def test_send_message_blocks_until_answered(pproc):
 
 
 @pytest.mark.parametrize("result, error", [
-    (darq.SendResult.BAD_HANDLE, darq.NonExistentPortError),
-    (darq.SendResult.NOT_RECEIVE_RIGHT, darq.PortRightError),
-    (darq.SendResult.DEAD_PORT, darq.DeadPortError),
+    (pk.SendResult.BAD_HANDLE, darq.NonExistentPortError),
+    (pk.SendResult.NOT_RECEIVE_RIGHT, darq.PortRightError),
+    (pk.SendResult.DEAD_PORT, darq.DeadPortError),
     (99, darq.DarqError),
 ])
 def test_send_message_errors(pproc, result, error):
@@ -349,7 +350,7 @@ def test_send_message_errors(pproc, result, error):
 
 
 def test_unknown_response_ignored(pproc):
-    response = darq.OpenPortResponse(99, 0, 16385)
+    response = pk.OpenPortResponse(99, 0, 16385)
     assert pproc.complete_syscall(response) is None
 
 
@@ -396,11 +397,11 @@ def test_callback_runs_on_app_loop(pproc, pcall, args):
 def test_delivered_message_runs_on_app_loop(pproc):
     # The p-kernel delivers each sent message back to its destination.
     def deliver(request):
-        message = darq.DeliverMessage(request.source, request.destination)
+        message = pk.DeliverMessage(request.source, request.destination)
         message.set_payload(request.payload)
         pproc.kernel.send(message)
 
-    pproc.kernel.actions[darq.MessageType.SEND_MESSAGE_RQST] = deliver
+    pproc.kernel.actions[pk.MessageType.SEND_MESSAGE_RQST] = deliver
 
     def app():
         loop = darq.SelectEventLoop()
@@ -427,13 +428,16 @@ def test_delivered_message_runs_on_app_loop(pproc):
 ################################################################
 
 def deliver_sent_messages(process):
-    """Have the p-kernel deliver each sent message to its destination."""
+    """Have the p-kernel deliver each sent message to its destination.
+
+    Transferred handles are delivered as they were sent."""
     def deliver(request):
-        message = darq.DeliverMessage(request.source, request.destination)
+        message = pk.DeliverMessage(request.source, request.destination)
         message.set_payload(request.payload)
+        message.set_handles(request.handles)
         process.kernel.send(message)
 
-    process.kernel.actions[darq.MessageType.SEND_MESSAGE_RQST] = deliver
+    process.kernel.actions[pk.MessageType.SEND_MESSAGE_RQST] = deliver
 
 
 def test_receive_message(pproc):
@@ -444,7 +448,44 @@ def test_receive_message(pproc):
         darq.send_message(port, port, b"hello")
         return darq.receive_message(port)
 
-    assert run_app(pproc, app) == (16385, b"hello")
+    assert run_app(pproc, app) == (16385, b"hello", ())
+
+
+def test_transferred_handles_sent_and_received(pproc):
+    deliver_sent_messages(pproc)
+
+    def app():
+        port = darq.open_port()
+        darq.send_message(port, port, b"hello", ports=[port, 77])
+        return darq.receive_message(port)
+
+    assert run_app(pproc, app) == (16385, b"hello", (16385, 77))
+    [sent] = [m for m in pproc.kernel.received if isinstance(m, pk.SendMessageRequest)]
+    assert sent.handles == (16385, 77)
+
+
+def test_too_many_handles_refused_locally(pproc):
+    def app():
+        port = darq.open_port()
+        try:
+            darq.send_message(port, port, b"hello", ports=[port] * (pk.MAX_HANDLES + 1))
+        except darq.TooManyHandlesError:
+            return "refused"
+
+    assert run_app(pproc, app) == "refused"
+    assert not [m for m in pproc.kernel.received if isinstance(m, pk.SendMessageRequest)]
+
+
+def test_receive_timeout(pproc):
+    def app():
+        port = darq.open_port()
+        start = time.monotonic()
+        result = darq.receive_message(port, timeout=0.1)
+        return result, time.monotonic() - start
+
+    result, elapsed = run_app(pproc, app)
+    assert result is None
+    assert 0.09 <= elapsed < 2
 
 
 def test_receive_messages_in_order(pproc):
@@ -486,18 +527,18 @@ def test_non_blocking_receive_of_delivered_message(pproc):
         darq.spawn_process("/darq/bin/x")
         return darq.receive_message(port, blocking=False)
 
-    assert run_app(pproc, app) == (16385, b"hello")
+    assert run_app(pproc, app) == (16385, b"hello", ())
 
 
 def test_blocking_receive_waits_for_delivery(pproc):
     # The message is delivered some time after the port is opened.
     def open_then_deliver_later(request):
-        pproc.kernel.send(darq.OpenPortResponse(request.request_id, 0, 16385))
-        message = darq.DeliverMessage(16386, 16385)
+        pproc.kernel.send(pk.OpenPortResponse(request.request_id, 0, 16385))
+        message = pk.DeliverMessage(16386, 16385)
         message.set_payload(b"later")
         threading.Timer(0.1, pproc.kernel.send, args=(message,)).start()
 
-    pproc.kernel.actions[darq.MessageType.OPEN_PORT_RQST] = open_then_deliver_later
+    pproc.kernel.actions[pk.MessageType.OPEN_PORT_RQST] = open_then_deliver_later
 
     def app():
         port = darq.open_port()
@@ -505,7 +546,7 @@ def test_blocking_receive_waits_for_delivery(pproc):
         return darq.receive_message(port), time.monotonic() - start
 
     result, elapsed = run_app(pproc, app)
-    assert result == (16386, b"later")
+    assert result == (16386, b"later", ())
     assert elapsed >= 0.05
 
 
@@ -531,11 +572,11 @@ def test_receive_after_close(pproc):
 
 def test_message_for_unknown_port_dropped(pproc):
     def deliver_elsewhere(request):
-        message = darq.DeliverMessage(request.source, 16399)
+        message = pk.DeliverMessage(request.source, 16399)
         message.set_payload(request.payload)
         pproc.kernel.send(message)
 
-    pproc.kernel.actions[darq.MessageType.SEND_MESSAGE_RQST] = deliver_elsewhere
+    pproc.kernel.actions[pk.MessageType.SEND_MESSAGE_RQST] = deliver_elsewhere
 
     def app():
         port = darq.open_port()
@@ -554,7 +595,7 @@ def test_kill_app_blocked_in_receive(pproc, install_app):
             darq.send_message(port, 16386, b"started")
             darq.receive_message(port)
         """)
-    kill_on(pproc, darq.MessageType.SEND_MESSAGE_RQST)
+    kill_on(pproc, pk.MessageType.SEND_MESSAGE_RQST)
     run_process(pproc)
 
     assert pproc._app_killed
@@ -572,7 +613,7 @@ def test_register_and_lookup_name(pproc):
         return darq.lookup_name("test.service")
 
     assert run_app(pproc, app) == 16386
-    [request] = [m for m in pproc.kernel.received if isinstance(m, darq.RegisterNameRequest)]
+    [request] = [m for m in pproc.kernel.received if isinstance(m, pk.RegisterNameRequest)]
     assert (request.get_name(), request.port) == ("test.service", 16385)
 
 
@@ -580,7 +621,7 @@ def test_register_and_lookup_name(pproc):
 def test_lookup_name_sends_blocking_flag(pproc, blocking):
     pproc.kernel.names["test.service"] = 1
     run_app(pproc, lambda: darq.lookup_name("test.service", blocking=blocking))
-    [request] = [m for m in pproc.kernel.received if isinstance(m, darq.LookupNameRequest)]
+    [request] = [m for m in pproc.kernel.received if isinstance(m, pk.LookupNameRequest)]
     assert request.blocking == blocking
 
 
@@ -589,11 +630,11 @@ def test_lookup_name_not_found(pproc):
 
 
 @pytest.mark.parametrize("result, error", [
-    (darq.NameResult.BAD_HANDLE, darq.NonExistentPortError),
-    (darq.NameResult.INVALID_NAME, darq.InvalidNameError),
-    (darq.NameResult.NAME_TAKEN, darq.NameTakenError),
-    (darq.NameResult.RESERVED_NAME, darq.ReservedNameError),
-    (darq.NameResult.PORT_ALREADY_NAMED, darq.PortAlreadyNamedError),
+    (pk.NameResult.BAD_HANDLE, darq.NonExistentPortError),
+    (pk.NameResult.INVALID_NAME, darq.InvalidNameError),
+    (pk.NameResult.NAME_TAKEN, darq.NameTakenError),
+    (pk.NameResult.RESERVED_NAME, darq.ReservedNameError),
+    (pk.NameResult.PORT_ALREADY_NAMED, darq.PortAlreadyNamedError),
     (99, darq.DarqError),
 ])
 def test_register_name_errors(pproc, result, error):
@@ -694,17 +735,17 @@ def test_exit_status_checked(pproc, status):
 
 
 def test_wait_collects_child(pproc):
-    pproc.kernel.wait_response = (darq.WaitResult.OK, 7, darq.ExitReason.EXITED, 3, "failed")
+    pproc.kernel.wait_response = (pk.WaitResult.OK, 7, pk.ExitReason.EXITED, 3, "failed")
     result = run_app(pproc, lambda: darq.wait(7, blocking=False))
-    assert result == darq.ChildStatus(7, darq.ExitReason.EXITED, 3, "failed")
-    assert isinstance(result.reason, darq.ExitReason)
+    assert result == darq.ChildStatus(7, pk.ExitReason.EXITED, 3, "failed")
+    assert isinstance(result.reason, pk.ExitReason)
 
-    [request] = [m for m in pproc.kernel.received if isinstance(m, darq.WaitRequest)]
+    [request] = [m for m in pproc.kernel.received if isinstance(m, pk.WaitRequest)]
     assert (request.dpid, request.blocking) == (7, False)
 
 
 def test_wait_not_finished(pproc):
-    pproc.kernel.wait_response = (darq.WaitResult.NOT_FINISHED, 0, 0, 0, None)
+    pproc.kernel.wait_response = (pk.WaitResult.NOT_FINISHED, 0, 0, 0, None)
     assert run_app(pproc, lambda: darq.wait(blocking=False)) is None
 
 
@@ -737,7 +778,7 @@ def install_app(pproc, tmp_path, monkeypatch):
 def kill_on(process, message_type: int, dpid: int = DPID):
     """Have the p-kernel answer this message type with a kill request."""
     process.kernel.actions[message_type] = \
-        lambda request: process.kernel.send(darq.KillProcessRequest(0, dpid))
+        lambda request: process.kernel.send(pk.KillProcessRequest(0, dpid))
 
 
 @pytest.mark.parametrize("body", [
@@ -752,7 +793,7 @@ def test_kill_running_app(pproc, install_app, body):
             darq.send_message(16385, 16386, b"started")
             {body}
         """)
-    kill_on(pproc, darq.MessageType.SEND_MESSAGE_RQST)
+    kill_on(pproc, pk.MessageType.SEND_MESSAGE_RQST)
     run_process(pproc)
 
     # A killed application doesn't report its exit.
@@ -769,7 +810,7 @@ def test_kill_app_blocked_in_pcall(pproc, install_app):
         def darq_main():
             darq.spawn_process("/hang")
         """)
-    kill_on(pproc, darq.MessageType.SPAWN_PROCESS_RQST)
+    kill_on(pproc, pk.MessageType.SPAWN_PROCESS_RQST)
     run_process(pproc)
 
     assert pproc._app_killed
@@ -780,7 +821,7 @@ def test_kill_app_blocked_in_pcall(pproc, install_app):
 def test_kill_before_start(pproc):
     loaded = []
     pproc.load_app = lambda: loaded.append(True)
-    kill_on(pproc, darq.MessageType.RUN_REQUEST)
+    kill_on(pproc, pk.MessageType.RUN_REQUEST)
 
     run_process(pproc)
     assert loaded == []
@@ -794,7 +835,7 @@ def test_kill_app_not_started(pproc):
 
 
 def test_kill_process_request_other_dpid(pproc):
-    kill_on(pproc, darq.MessageType.SEND_MESSAGE_RQST, DPID + 1)
+    kill_on(pproc, pk.MessageType.SEND_MESSAGE_RQST, DPID + 1)
 
     def app():
         darq.send_message(16385, 16386, b"started")
@@ -827,9 +868,9 @@ def test_p_kernel_disconnect(pproc, install_app, blocked_in_pcall):
         pproc.kernel.sock.shutdown(socket.SHUT_RDWR)
 
     if blocked_in_pcall:
-        pproc.kernel.actions[darq.MessageType.SPAWN_PROCESS_RQST] = disconnect
+        pproc.kernel.actions[pk.MessageType.SPAWN_PROCESS_RQST] = disconnect
     else:
-        pproc.kernel.actions[darq.MessageType.SEND_MESSAGE_RQST] = disconnect
+        pproc.kernel.actions[pk.MessageType.SEND_MESSAGE_RQST] = disconnect
 
     run_process(pproc)
 
@@ -841,7 +882,7 @@ def test_p_kernel_disconnect(pproc, install_app, blocked_in_pcall):
 def test_p_kernel_disconnect_before_start(pproc):
     loaded = []
     pproc.load_app = lambda: loaded.append(True)
-    pproc.kernel.actions[darq.MessageType.RUN_REQUEST] = \
+    pproc.kernel.actions[pk.MessageType.RUN_REQUEST] = \
         lambda request: pproc.kernel.sock.shutdown(socket.SHUT_RDWR)
 
     run_process(pproc)
@@ -863,11 +904,11 @@ def test_invalid_message_length_disconnects(pproc, install_app, length):
     # A header whose length can't cover itself: the stream can't be
     # split into messages after it.
     def send_bad_header(request):
-        message = darq.Message(darq.MessageType.DELIVER_MESSAGE)
+        message = pk.Message(pk.MessageType.DELIVER_MESSAGE)
         message.set_length(length)
         pproc.kernel.sock.sendall(message.encode())
 
-    pproc.kernel.actions[darq.MessageType.SEND_MESSAGE_RQST] = send_bad_header
+    pproc.kernel.actions[pk.MessageType.SEND_MESSAGE_RQST] = send_bad_header
     run_process(pproc)
 
     assert pproc.exit_status == 1
@@ -878,12 +919,12 @@ def test_invalid_message_length_disconnects(pproc, install_app, length):
 def test_message_split_across_reads(pproc):
     # A header arriving in pieces is held until it's complete.
     def answer_in_pieces(request):
-        buf = darq.RunResponse(0).encode()
+        buf = pk.RunResponse(0).encode()
         for piece in (buf[:3], buf[3:7], buf[7:]):
             pproc.kernel.sock.sendall(piece)
             time.sleep(0.05)
 
-    pproc.kernel.actions[darq.MessageType.RUN_REQUEST] = answer_in_pieces
+    pproc.kernel.actions[pk.MessageType.RUN_REQUEST] = answer_in_pieces
     assert run_app(pproc, lambda: True)
 
 
@@ -942,7 +983,7 @@ def test_app_exit_follows_its_last_pcalls(pproc, install_app):
     run_process(pproc)
 
     kinds = [type(m) for m in pproc.kernel.received]
-    assert kinds == [darq.RunRequest, darq.SendMessageRequest, darq.Exited]
+    assert kinds == [pk.RunRequest, pk.SendMessageRequest, pk.Exited]
 
 
 @pytest.mark.parametrize("value, result", [
@@ -977,9 +1018,9 @@ def test_app_not_started_before_run_response(pproc):
     # When the p-kernel receives the request, the app hasn't been loaded.
     def answer(request):
         loaded.append(False)
-        pproc.kernel.send(darq.RunResponse(0))
+        pproc.kernel.send(pk.RunResponse(0))
 
-    pproc.kernel.actions[darq.MessageType.RUN_REQUEST] = answer
+    pproc.kernel.actions[pk.MessageType.RUN_REQUEST] = answer
     run_process(pproc)
     assert loaded == [False, True]
 
@@ -994,10 +1035,10 @@ def test_duplicate_run_response(pproc):
     pproc.load_app = load_app
 
     def answer_twice(request):
-        pproc.kernel.send(darq.RunResponse(0))
-        pproc.kernel.send(darq.RunResponse(0))
+        pproc.kernel.send(pk.RunResponse(0))
+        pproc.kernel.send(pk.RunResponse(0))
 
-    pproc.kernel.actions[darq.MessageType.RUN_REQUEST] = answer_twice
+    pproc.kernel.actions[pk.MessageType.RUN_REQUEST] = answer_twice
     run_process(pproc)
     assert loads == [True]
     assert len(exited_messages(pproc)) == 1

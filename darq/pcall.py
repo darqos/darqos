@@ -1,8 +1,11 @@
 # darqos
 # Copyright (C) 2026 David Arnold
 
-# Common classes shared between application process runtime
-# and the p-kernel code.
+# p-Call messages: the protocol between processes (pyloader and
+# darq.system) and the p-kernel.
+#
+# These aren't part of the application API, so they're not exported
+# from the darq namespace: import this module, as pcall (or pk).
 
 
 import struct
@@ -25,6 +28,7 @@ __all__ = [
     "KillProcessResponse",
     "LookupNameRequest",
     "LookupNameResponse",
+    "MAX_HANDLES",
     "MAX_NAME_LENGTH",
     "Message",
     "MessageType",
@@ -95,14 +99,17 @@ class SendResult(IntEnum):
     """Result codes for sending a message."""
     OK = 0
 
-    # The source or destination isn't an open handle.
+    # The source, destination or a transferred handle isn't open.
     BAD_HANDLE = 1
 
     # The source isn't a receive right: replies would go elsewhere.
     NOT_RECEIVE_RIGHT = 2
 
-    # The destination port has been destroyed.
+    # The destination port, or a transferred port, has been destroyed.
     DEAD_PORT = 3
+
+    # More than MAX_HANDLES handles to transfer.
+    TOO_MANY_HANDLES = 4
 
 
 class NameResult(IntEnum):
@@ -151,6 +158,9 @@ class ExitReason(IntEnum):
     # Its p-call session closed without either.
     LOST = 2
 
+
+# Most handles transferred with one message.
+MAX_HANDLES = 64
 
 # Longest registered name, in bytes of UTF-8.
 MAX_NAME_LENGTH = 255
@@ -893,51 +903,82 @@ class WaitResponse(Message):
 
 
 class PortMessage(Message):
-    """Common implementation for port-to-port messages."""
+    """Common implementation for port-to-port messages.
 
-    # Length of fixed fields following the header.
+    The fixed fields are followed by the handles transferred with the
+    message (uint64 each), and then the payload."""
+
+    # Format of fixed fields following the header: source, destination,
+    # payload length, handle count.
+    BODY_FORMAT = ">QQLHxx"
     BODY_LENGTH = 24
 
     def __init__(self, message_type: int, source: int = 0, destination: int = 0):
         super().__init__(message_type)
         self.source: int = UInt64(source)
         self.destination: int = UInt64(destination)
+        self.handles: tuple[int, ...] = ()
         self.payload = b''
-        self.set_length(self.header_length + self.BODY_LENGTH)
+        self.get_length()
 
     def set_payload(self, payload: bytes):
         self.payload = payload
-        self.set_length(self.header_length + self.BODY_LENGTH + self.padded_length(payload))
+        self.get_length()
+
+    def set_handles(self, handles: tuple[int, ...] | list[int]):
+        self.handles = tuple(handles)
+        self.get_length()
 
     def get_length(self) -> int:
-        self.set_length(self.header_length + self.BODY_LENGTH + self.padded_length(self.payload))
+        self.set_length(self.header_length + self.BODY_LENGTH + 8 * len(self.handles) +
+                        self.padded_length(self.payload))
         return self.length
 
     def encode(self) -> bytes:
+        self.get_length()
         buf = super().encode()
-        buf += struct.pack(">QQLxxxx", self.source, self.destination, len(self.payload))
+        buf += struct.pack(self.BODY_FORMAT, self.source, self.destination, len(self.payload), len(self.handles))
+        buf += struct.pack(f">{len(self.handles)}Q", *self.handles)
         buf += self.pad_bytes(self.payload)
         return buf
 
     def decode(self, buffer: bytes):
         super().decode(buffer)
-        if len(buffer) < self.length:
+        if len(buffer) < self.length or self.length < self.header_length + self.BODY_LENGTH:
             raise MessageDecodingError("buffer too short for packet")
 
-        payload_start = self.header_length + self.BODY_LENGTH
-        bits = struct.unpack(">QQLxxxx", buffer[self.header_length:payload_start])
+        handles_start = self.header_length + self.BODY_LENGTH
+        bits = struct.unpack(self.BODY_FORMAT, buffer[self.header_length:handles_start])
         self.source = bits[0]
         self.destination = bits[1]
-        payload_length = bits[2]
-        self.payload = buffer[payload_start:payload_start + payload_length]
+        self.handles, self.payload = decode_handles_and_payload(buffer, handles_start, self.length,
+                                                                 bits[3], bits[2])
         return
 
 
-class SendMessageRequest(Message):
-    """Request to send a message from one of the sender's ports, to a handle."""
+def decode_handles_and_payload(buffer: bytes, start: int, end: int,
+                               handle_count: int, payload_length: int) -> tuple[tuple[int, ...], bytes]:
+    """Decode the transferred handles and payload of a port message.
 
-    # Length of fixed fields following the header.
-    BODY_LENGTH = 24
+    :param start: Offset of the first handle.
+    :param end: Message length."""
+    payload_start = start + 8 * handle_count
+    if payload_start + payload_length > end:
+        raise MessageDecodingError("handles and payload overrun message")
+    handles = struct.unpack(f">{handle_count}Q", buffer[start:payload_start])
+    return handles, bytes(buffer[payload_start:payload_start + payload_length])
+
+
+class SendMessageRequest(Message):
+    """Request to send a message from one of the sender's ports, to a handle.
+
+    The fixed fields are followed by the handles to transfer with the
+    message (uint64 each), and then the payload."""
+
+    # Format of fixed fields following the header: request id, payload
+    # length, source, destination, handle count.
+    BODY_FORMAT = ">LLQQH6x"
+    BODY_LENGTH = 32
 
     def __init__(self, source: int = 0, destination: int = 0, request_id: int = 0):
         """Constructor.
@@ -950,33 +991,45 @@ class SendMessageRequest(Message):
         self.request_id: int = UInt32(request_id)
         self.source: int = UInt64(source)
         self.destination: int = UInt64(destination)
+        self.handles: tuple[int, ...] = ()
         self.payload = b''
-        self.set_length(self.header_length + self.BODY_LENGTH)
+        self.get_length()
 
     def set_payload(self, payload: bytes):
         self.payload = payload
-        self.set_length(self.header_length + self.BODY_LENGTH + self.padded_length(payload))
+        self.get_length()
+
+    def set_handles(self, handles: tuple[int, ...] | list[int]):
+        """Set the sender's handles to transfer with the message."""
+        self.handles = tuple(handles)
+        self.get_length()
+
+    def get_length(self) -> int:
+        self.set_length(self.header_length + self.BODY_LENGTH + 8 * len(self.handles) +
+                        self.padded_length(self.payload))
+        return self.length
 
     def encode(self) -> bytes:
+        self.get_length()
         buf = super().encode()
-        buf += struct.pack(">LLQQ", self.request_id, len(self.payload), self.source, self.destination)
+        buf += struct.pack(self.BODY_FORMAT, self.request_id, len(self.payload),
+                           self.source, self.destination, len(self.handles))
+        buf += struct.pack(f">{len(self.handles)}Q", *self.handles)
         buf += self.pad_bytes(self.payload)
         return buf
 
     def decode(self, buffer: bytes):
         super().decode(buffer)
-        if len(buffer) < self.length:
+        if len(buffer) < self.length or self.length < self.header_length + self.BODY_LENGTH:
             raise MessageDecodingError("buffer too short for packet")
 
-        payload_start = self.header_length + self.BODY_LENGTH
-        bits = struct.unpack(">LLQQ", buffer[self.header_length:payload_start])
+        handles_start = self.header_length + self.BODY_LENGTH
+        bits = struct.unpack(self.BODY_FORMAT, buffer[self.header_length:handles_start])
         self.request_id = bits[0]
-        payload_length = bits[1]
         self.source = bits[2]
         self.destination = bits[3]
-        if payload_start + payload_length > self.length:
-            raise MessageDecodingError("payload overruns message")
-        self.payload = buffer[payload_start:payload_start + payload_length]
+        self.handles, self.payload = decode_handles_and_payload(buffer, handles_start, self.length,
+                                                                 bits[4], bits[1])
         return
 
 

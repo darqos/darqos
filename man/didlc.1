@@ -72,8 +72,9 @@ length.
 The bytes themselves are appended to the end of the message.
 .TP
 .B port
-4-byte IPC port number, identified for special handling by the IPC
-system.
+2-byte index into the list of handles transferred with the message,
+or 0xFFFF for no port.
+A message can transfer at most 64 handles.
 .PP
 A struct may be used as a field type, before or after its
 declaration, but may not contain itself.
@@ -94,7 +95,9 @@ messages.
 .TP
 .B flags
 .BR uint16 :
-reserved, must be 0.
+bit 0 marks an error reply (see
+.BR darq.dipc.ErrorReply );
+the others are reserved, and must be 0.
 .TP
 .B method
 .BR uint16 :

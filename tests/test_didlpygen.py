@@ -13,7 +13,7 @@ import textwrap
 
 import pytest
 
-from darq import dipc
+from darq import dipc, system
 from darq.errors import MessageDecodingError
 
 
@@ -89,7 +89,7 @@ def fs(tmp_path):
 
 def round_trip(message):
     decoded = type(message)()
-    decoded.decode(message.encode())
+    decoded.decode(*message.encode())
     return decoded
 
 
@@ -118,11 +118,13 @@ def test_no_boilerplate(fs):
 
 
 def test_imports_only_what_is_used():
-    assert generate("library t;\nprotocol P { 1: Ping(); }").splitlines()[4] == \
-        "from darq.dipc import Message"
+    assert generate("library t;\nprotocol P { 1: Ping(); }").splitlines()[4:8] == [
+        "import typing", "", "from darq import system", "from darq.dipc import Message"]
     text = generate("library t;\nstruct S { uint8 x; }")
     assert "from darq.dipc import Record" in text
     assert "import struct" not in text
+    assert "import typing" not in text
+    assert "system" not in text
     assert "MessageDecodingError" not in text
 
 
@@ -162,6 +164,58 @@ def test_empty_protocol(tmp_path):
     module = import_module(generate("library t;\nprotocol P {}"), tmp_path)
     assert module.P.REQUESTS == {}
     assert module.P.RESPONSES == {}
+    assert module.P.Handler.METHODS == {}
+
+
+def test_request_response_class(fs):
+    assert fs.GetAttributesRequest.RESPONSE is fs.GetAttributesResponse
+    assert fs.RenameRequest.RESPONSE is fs.RenameResponse
+    assert fs.Foo.RESPONSE is None
+    assert fs.GetAttributesResponse.RESPONSE is None
+
+
+def test_client_methods(fs):
+    client = fs.FileServer.Client(5, timeout=1.5)
+    assert isinstance(client, system.Client)
+    assert (client.service, client.timeout) == (5, 1.5)
+    for name in ("get_attributes", "foo", "ping", "rename", "list"):
+        assert callable(getattr(client, name))
+
+
+def test_client_builds_requests(fs, monkeypatch):
+    calls = []
+    monkeypatch.setattr(system.Client, "call", lambda self, request, cls: calls.append((request, cls)) or cls())
+    monkeypatch.setattr(system.Client, "send", lambda self, message: calls.append((message, None)))
+    client = fs.FileServer.Client(5)
+
+    assert client.get_attributes(fd=9) == fs.GetAttributesResponse()
+    assert client.foo(a=1, h=77) is None
+    assert client.rename(old=fs.Named(1, b"a"), new_name=b"b") == fs.RenameResponse()
+    assert calls == [
+        (fs.GetAttributesRequest(fd=9), fs.GetAttributesResponse),
+        (fs.Foo(a=1, h=77), None),
+        (fs.RenameRequest(old=fs.Named(1, b"a"), new_name=b"b"), fs.RenameResponse),
+    ]
+
+
+def test_handler_methods(fs):
+    assert issubclass(fs.FileServer.Handler, system.Handler)
+    assert fs.FileServer.Handler.METHODS == {
+        1: (fs.GetAttributesRequest, "get_attributes"), 2: (fs.Foo, "foo"), 3: (fs.Ping, "ping"),
+        4: (fs.RenameRequest, "rename"), 5: (fs.ListRequest, "list")}
+    with pytest.raises(NotImplementedError):
+        getattr(fs.FileServer.Handler(), "get_attributes")(fs.GetAttributesRequest(), 0)
+
+
+@pytest.mark.parametrize("name, snake", [
+    ("Get", "get"),
+    ("GetAttributes", "get_attributes"),
+    ("GetHTTPStatus", "get_http_status"),
+    ("HTTP", "http"),
+    ("lower_case", "lower_case"),
+])
+def test_snake_case(name, snake):
+    assert didlpygen.snake_case(name) == snake
 
 
 def test_method_numbers(fs):
@@ -191,7 +245,7 @@ def test_records_compare_by_value(fs):
 ################################################################
 
 def test_header(fs):
-    buf = fs.GetAttributesRequest(0x01020304, 7).encode()
+    buf = fs.GetAttributesRequest(0x01020304, 7).encode()[0]
     assert buf[:8] == bytes.fromhex("04030201" "0000" "0100")
     assert dipc.decode_txid(buf) == 0x01020304
     assert dipc.decode_method(buf) == 1
@@ -202,37 +256,39 @@ def test_fields_at_ir_offsets(fs):
     foo = next(m for m in ir["protocols"][0]["methods"] if m["name"] == "Foo")
     offsets = {f["name"]: 8 + f["offset"] for f in foo["request"]["fields"]}
 
-    buf = fs.Foo(0, a=0x11, b=0x2233, c=-1, d=1.5, e=-2.25, f=True, g=b'', h=0x44556677).encode()
+    buf, handles = fs.Foo(0, a=0x11, b=0x2233, c=-1, d=1.5, e=-2.25, f=True, g=b'', h=0x44556677).encode()
     assert buf[offsets["a"]] == 0x11
     assert struct.unpack_from("<H", buf, offsets["b"])[0] == 0x2233
     assert struct.unpack_from("<b", buf, offsets["c"])[0] == -1
     assert struct.unpack_from("<f", buf, offsets["d"])[0] == 1.5
     assert struct.unpack_from("<d", buf, offsets["e"])[0] == -2.25
     assert buf[offsets["f"]] == 1
-    assert struct.unpack_from("<I", buf, offsets["h"])[0] == 0x44556677
+    # A port is an index into the transferred handles.
+    assert struct.unpack_from("<H", buf, offsets["h"])[0] == 0
+    assert handles == [0x44556677]
     assert len(buf) == fs.Foo.LENGTH == 8 + foo["request"]["total_size"]
 
 
 def test_padding_is_zero(fs):
-    buf = fs.Foo(0, a=0xff, b=0xffff, c=-1, d=-1.0, e=-1.0, f=True, h=0xffffffff).encode()
+    buf = fs.Foo(0, a=0xff, b=0xffff, c=-1, d=-1.0, e=-1.0, f=True, h=0xffffffff).encode()[0]
     assert buf[9] == 0                      # between a and b
     assert buf[13:16] == b'\0\0\0'          # between c and d
     assert buf[33:36] == b'\0\0\0'          # between f and g
 
     buf = fs.GetAttributesResponse(0, fs.FileAttributes(2 ** 64 - 1, 2 ** 32 - 1, 2 ** 32 - 1),
-                                   2 ** 32 - 1).encode()
+                                   2 ** 32 - 1).encode()[0]
     assert buf[28:32] == b'\0\0\0\0'        # trailing
 
 
 def test_nested_struct_layout(fs):
-    buf = fs.GetAttributesResponse(0, fs.FileAttributes(1, 2, 3), 4).encode()
+    buf = fs.GetAttributesResponse(0, fs.FileAttributes(1, 2, 3), 4).encode()[0]
     assert struct.unpack_from("<QIII", buf, 8) == (1, 2, 3, 4)
     assert len(buf) == 32
 
 
 def test_struct_in_struct_layout(fs):
     # struct Entry { uint16 flags; FileAttributes attr; }: attr at 8, 24 bytes.
-    buf = fs.ListResponse(0, fs.Entry(9, fs.FileAttributes(1, 2, 3)), 5).encode()
+    buf = fs.ListResponse(0, fs.Entry(9, fs.FileAttributes(1, 2, 3)), 5).encode()[0]
     assert struct.unpack_from("<H", buf, 8)[0] == 9
     assert struct.unpack_from("<QII", buf, 16) == (1, 2, 3)
     assert buf[32] == 5
@@ -241,7 +297,7 @@ def test_struct_in_struct_layout(fs):
 
 def test_opaque_layout(fs):
     message = fs.RenameRequest(0, fs.Named(1, b"abc"), b"0123456789")
-    buf = message.encode()
+    buf = message.encode()[0]
 
     # struct Named { uint8 kind; opaque name; } is 12 bytes, 4-aligned.
     assert fs.RenameRequest.LENGTH == 28
@@ -259,19 +315,43 @@ def test_opaque_layout(fs):
 
 
 def test_empty_opaque(fs):
-    buf = fs.Foo(0, g=b'').encode()
+    buf = fs.Foo(0, g=b'').encode()[0]
     assert struct.unpack_from("<II", buf, 8 + 28) == (fs.Foo.DATA_START, 0)
     assert len(buf) == fs.Foo.DATA_START == fs.Foo.LENGTH == 48
 
 
 def test_empty_message(fs):
-    assert fs.Ping(3).encode() == bytes.fromhex("03000000" "0000" "0300")
-    assert fs.RenameResponse(3).encode() == bytes.fromhex("03000000" "0000" "0400")
+    assert fs.Ping(3).encode()[0] == bytes.fromhex("03000000" "0000" "0300")
+    assert fs.RenameResponse(3).encode()[0] == bytes.fromhex("03000000" "0000" "0400")
 
 
 ################################################################
 # Round trips
 ################################################################
+
+def test_round_trip_ports(tmp_path):
+    module = import_module(generate("""
+        library t;
+        struct S { port a; port b; }
+        protocol P { 1: M(port x, S s, port y) -> (); }
+        """), tmp_path)
+    message = module.MRequest(1, x=100, s=module.S(200, None), y=100)
+    buf, handles = message.encode()
+    # The same handle twice is transferred once.
+    assert handles == [100, 200]
+    assert struct.unpack_from("<HHHH", buf, 8) == (0, 1, 0xFFFF, 0)
+    assert round_trip(message) == message
+
+    # Handles as the receiver has them.
+    decoded = module.MRequest()
+    decoded.decode(buf, (7, 8))
+    assert (decoded.x, decoded.s.a, decoded.s.b, decoded.y) == (7, 8, None, 7)
+
+
+def test_port_defaults_to_none(fs):
+    assert fs.Foo().h is None
+    assert fs.Foo().encode()[1] == []
+
 
 def test_round_trip_primitives(fs):
     message = fs.Foo(7, 1, 2, -3, 1.5, 2.25, True, b"\x00\xffdata", 16385)
@@ -297,7 +377,7 @@ def test_round_trip_empty(fs):
 def test_decode_ignores_trailing_bytes(fs):
     message = fs.GetAttributesRequest(1, 2)
     decoded = fs.GetAttributesRequest()
-    decoded.decode(message.encode() + b"extra")
+    decoded.decode(message.encode()[0] + b"extra")
     assert decoded == message
 
 
@@ -311,20 +391,20 @@ def test_decode_short_header(fs):
 
 
 def test_decode_short_body(fs):
-    buf = fs.GetAttributesRequest(1, 2).encode()
+    buf = fs.GetAttributesRequest(1, 2).encode()[0]
     with pytest.raises(MessageDecodingError, match="too short"):
         fs.GetAttributesRequest().decode(buf[:-1])
 
 
 def test_decode_wrong_method(fs):
     with pytest.raises(MessageDecodingError, match="method 3, expected 1"):
-        fs.GetAttributesRequest().decode(fs.Ping().encode() + b"\0" * 8)
+        fs.GetAttributesRequest().decode(fs.Ping().encode()[0] + b"\0" * 8)
 
 
 def test_decode_flags_set(fs):
-    buf = bytearray(fs.Ping().encode())
+    buf = bytearray(fs.Ping().encode()[0])
     buf[5] = 1
-    with pytest.raises(MessageDecodingError, match="reserved flags"):
+    with pytest.raises(MessageDecodingError, match="flags 0x100, expected 0x0"):
         fs.Ping().decode(bytes(buf))
 
 
@@ -335,7 +415,7 @@ def test_decode_flags_set(fs):
     (16, 3),     # inside the fixed part
 ])
 def test_decode_bad_opaque_descriptor(fs, offset, length):
-    buf = bytearray(fs.RenameRequest(0, fs.Named(1, b"abc"), b"0123456789").encode())
+    buf = bytearray(fs.RenameRequest(0, fs.Named(1, b"abc"), b"0123456789").encode()[0])
     struct.pack_into("<II", buf, 12, offset, length)
     with pytest.raises(MessageDecodingError, match="opaque"):
         fs.RenameRequest().decode(bytes(buf))
@@ -349,6 +429,22 @@ def generate_error(source: str) -> str:
     with pytest.raises(didlpygen.GenError) as info:
         generate(source)
     return str(info.value)
+
+
+@pytest.mark.parametrize("name", ["Call", "Send", "Dispatch", "Error", "Timeout", "Service"])
+def test_reserved_method_name(name):
+    assert "reserved in the Client and Handler" in generate_error(
+        f"library t;\nprotocol P {{ 1: {name}(); }}")
+
+
+def test_methods_with_same_snake_case():
+    assert "both become 'get_x'" in generate_error(
+        "library t;\nprotocol P { 1: GetX(); 2: get_x(); }")
+
+
+def test_keyword_method_name_in_snake_case():
+    assert "not a valid Python identifier" in generate_error(
+        "library t;\nprotocol P { 1: Import(); }")
 
 
 def test_keyword_field_name():

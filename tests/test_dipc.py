@@ -31,7 +31,7 @@ def test_header_layout():
 
 
 def test_encode_header():
-    assert Ping(0x01020304).encode() == bytes.fromhex("04030201" "0000" "0300")
+    assert Ping(0x01020304).encode()[0] == bytes.fromhex("04030201" "0000" "0300")
 
 
 def test_decode_header():
@@ -41,7 +41,7 @@ def test_decode_header():
 
 
 def test_decode_txid_and_method():
-    buf = Ping(7).encode()
+    buf = Ping(7).encode()[0]
     assert dipc.decode_txid(buf) == 7
     assert dipc.decode_method(buf) == 3
 
@@ -59,7 +59,7 @@ def test_decode_wrong_method():
 
 
 def test_decode_flags_set():
-    with pytest.raises(MessageDecodingError, match="reserved flags"):
+    with pytest.raises(MessageDecodingError, match="flags 0x1, expected 0x0"):
         Ping().decode(bytes.fromhex("00000000" "0100" "0300"))
 
 
@@ -107,3 +107,57 @@ def test_decode_opaque():
 def test_decode_opaque_errors(offset, length, error):
     with pytest.raises(MessageDecodingError, match=error):
         dipc.Message.decode_opaque(b"\0" * 24, 16, offset, length)
+
+
+################################################################
+# Ports
+################################################################
+
+def test_encode_port():
+    handles: list[int] = []
+    assert dipc.Message.encode_port(handles, 500) == 0
+    assert dipc.Message.encode_port(handles, None) == dipc.NO_PORT == 0xFFFF
+    assert dipc.Message.encode_port(handles, 600) == 1
+    # A handle already in the list keeps its index.
+    assert dipc.Message.encode_port(handles, 500) == 0
+    assert handles == [500, 600]
+
+
+def test_decode_port():
+    assert dipc.Message.decode_port((500, 600), 1) == 600
+    assert dipc.Message.decode_port((), dipc.NO_PORT) is None
+    with pytest.raises(MessageDecodingError, match="port index 2, but 2 handles"):
+        dipc.Message.decode_port((500, 600), 2)
+
+
+################################################################
+# Error replies
+################################################################
+
+def test_error_reply_round_trip():
+    reply = dipc.ErrorReply(7, 3, dipc.ErrorCode.INTERNAL_ERROR, "it broke: ü")
+    buf, handles = reply.encode()
+    assert handles == []
+    assert dipc.decode_flags(buf) == dipc.ERROR
+    assert (dipc.decode_txid(buf), dipc.decode_method(buf)) == (7, 3)
+    assert len(buf) % 8 == 0
+
+    decoded = dipc.ErrorReply()
+    decoded.decode(buf)
+    assert (decoded.txid, decoded.METHOD, decoded.code, decoded.description) == \
+        (7, 3, dipc.ErrorCode.INTERNAL_ERROR, "it broke: ü")
+
+
+def test_error_reply_is_not_a_response():
+    # The flag stops an error reply decoding as an ordinary message.
+    buf, _ = dipc.ErrorReply(7, 3, dipc.ErrorCode.UNKNOWN_METHOD, "").encode()
+    with pytest.raises(MessageDecodingError, match="flags 0x1, expected 0x0"):
+        Ping().decode(buf)
+    with pytest.raises(MessageDecodingError, match="flags 0x0, expected 0x1"):
+        dipc.ErrorReply().decode(Ping(7).encode()[0])
+
+
+def test_error_reply_truncated():
+    buf, _ = dipc.ErrorReply(7, 3, 1, "description").encode()
+    with pytest.raises(MessageDecodingError):
+        dipc.ErrorReply().decode(buf[:-8])

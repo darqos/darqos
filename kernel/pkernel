@@ -30,6 +30,7 @@ import time
 from enum import IntEnum
 
 import darq
+from darq import pcall as pk
 from darq.loop import SocketListener, TimerListener
 
 
@@ -199,7 +200,7 @@ class KernelProcessState:
         self._send_buffer: bytes = b''
 
         # Inbound (from p-process) data queue.
-        self._recv_buffer = darq.Buffer()
+        self._recv_buffer = pk.Buffer()
 
         # Kill requests awaiting this process' exit: (requester, request_id).
         self._kill_requests: list[tuple["KernelProcessState | None", int]] = []
@@ -216,7 +217,7 @@ class KernelProcessState:
         self._exit_error: str | None = None
 
         # How the process finished, once it's a ZOMBIE or LOST.
-        self._exit_reason: darq.ExitReason | None = None
+        self._exit_reason: pk.ExitReason | None = None
 
     def name(self) -> str:
         """(Internal) Log message prefix."""
@@ -341,10 +342,10 @@ class KernelProcessState:
         """Return the description of the application's failure, if any."""
         return self._exit_error
 
-    def set_exit_reason(self, reason: darq.ExitReason):
+    def set_exit_reason(self, reason: pk.ExitReason):
         self._exit_reason = reason
 
-    def get_exit_reason(self) -> darq.ExitReason | None:
+    def get_exit_reason(self) -> pk.ExitReason | None:
         """Return how the process finished, or None if it hasn't."""
         return self._exit_reason
 
@@ -369,7 +370,7 @@ class KernelProcessState:
 
     # p-call Session
 
-    def get_buffer(self) -> darq.Buffer:
+    def get_buffer(self) -> pk.Buffer:
         """Return reference to the receive buffer."""
         return self._recv_buffer
 
@@ -440,12 +441,12 @@ class TemporaryReader:
     def __init__(self, kernel, sock: socket.socket):
         self._kernel = kernel
         self._sock = sock
-        self._recv_buffer = darq.Buffer()
+        self._recv_buffer = pk.Buffer()
 
     def name(self) -> str:
         return f"sock  {self._sock.fileno()}"
 
-    def get_buffer(self) -> darq.Buffer:
+    def get_buffer(self) -> pk.Buffer:
         return self._recv_buffer
 
     def get_socket(self) -> socket.socket:
@@ -679,13 +680,13 @@ class PseudoKernel(SocketListener, TimerListener):
         # its parent collects it; otherwise, it was lost.
         if process.has_exited():
             process.set_status(KernelProcessStatus.ZOMBIE)
-            process.set_exit_reason(darq.ExitReason.EXITED)
+            process.set_exit_reason(pk.ExitReason.EXITED)
         elif kill_requests:
             process.set_status(KernelProcessStatus.ZOMBIE)
-            process.set_exit_reason(darq.ExitReason.KILLED)
+            process.set_exit_reason(pk.ExitReason.KILLED)
         else:
             process.set_status(KernelProcessStatus.LOST)
-            process.set_exit_reason(darq.ExitReason.LOST)
+            process.set_exit_reason(pk.ExitReason.LOST)
 
         # Abandon its lookups and waits, and release its rights, destroying
         # the ports it owns.
@@ -717,7 +718,7 @@ class PseudoKernel(SocketListener, TimerListener):
         self.process_finished(process)
         return
 
-    def handle_exited(self, process: KernelProcessState, message: darq.Exited):
+    def handle_exited(self, process: KernelProcessState, message: pk.Exited):
         """Record a process' report that its application has finished.
 
         The process then closes its p-call session, which makes it a
@@ -773,20 +774,20 @@ class PseudoKernel(SocketListener, TimerListener):
         return name == "darq" or name.startswith("darq.")
 
     @staticmethod
-    def decode_name(message: darq.RegisterNameRequest | darq.LookupNameRequest) -> str | None:
+    def decode_name(message: pk.RegisterNameRequest | pk.LookupNameRequest) -> str | None:
         """Return a request's name, or None if it's not a valid name."""
-        if not 0 < len(message.name) <= darq.MAX_NAME_LENGTH:
+        if not 0 < len(message.name) <= pk.MAX_NAME_LENGTH:
             return None
         try:
             return message.get_name()
         except UnicodeDecodeError:
             return None
 
-    def handle_reboot(self, process: KernelProcessState, message: darq.Reboot):
+    def handle_reboot(self, process: KernelProcessState, message: pk.Reboot):
         if self.may_shut_down(process, "reboot"):
             self.begin_shutdown(reboot=True)
 
-    def handle_shutdown(self, process: KernelProcessState, message: darq.Shutdown):
+    def handle_shutdown(self, process: KernelProcessState, message: pk.Shutdown):
         if self.may_shut_down(process, "shutdown"):
             self.begin_shutdown(reboot=False)
 
@@ -823,7 +824,7 @@ class PseudoKernel(SocketListener, TimerListener):
             status = process.get_status()
             if status == KernelProcessStatus.RUNNING:
                 process.add_kill_request(None, 0)
-                process.send_data(darq.KillProcessRequest(0, process.get_dpid()).encode())
+                process.send_data(pk.KillProcessRequest(0, process.get_dpid()).encode())
             elif status == KernelProcessStatus.SPAWNED:
                 self.kill_host_process(process)
 
@@ -925,7 +926,7 @@ class PseudoKernel(SocketListener, TimerListener):
 
     def handle_spawn_process(self,
                              process: KernelProcessState,
-                             request: darq.SpawnProcessRequest):
+                             request: pk.SpawnProcessRequest):
         """Handle request to spawn a new user process.
 
         The request is answered once the new process reports that it's
@@ -967,7 +968,7 @@ class PseudoKernel(SocketListener, TimerListener):
                                     dpid: int,
                                     result: int,
                                     error: str|None = None):
-        response = darq.SpawnProcessResponse(request_id, result, dpid, error)
+        response = pk.SpawnProcessResponse(request_id, result, dpid, error)
         buf = response.encode()
         process.send_data(buf)
         logging.info(f"spawn_process response: "
@@ -976,7 +977,7 @@ class PseudoKernel(SocketListener, TimerListener):
 
     def handle_kill_process_request(self,
                                     process: KernelProcessState,
-                                    request: darq.KillProcessRequest):
+                                    request: pk.KillProcessRequest):
         """Handle request to kill a user process.
 
         The request is forwarded to the target process, and answered
@@ -1000,7 +1001,7 @@ class PseudoKernel(SocketListener, TimerListener):
             self.kill_host_process(target)
             return
 
-        target.send_data(darq.KillProcessRequest(0, request.dpid).encode())
+        target.send_data(pk.KillProcessRequest(0, request.dpid).encode())
         self.after(KILL_TIMEOUT, lambda: self.check_killed(target))
         return
 
@@ -1017,7 +1018,7 @@ class PseudoKernel(SocketListener, TimerListener):
                                    process: KernelProcessState,
                                    request_id: int,
                                    result: int):
-        response = darq.KillProcessResponse(request_id, result)
+        response = pk.KillProcessResponse(request_id, result)
         process.send_data(response.encode())
         logging.info(f"kill_process response: "
                      f"request_id={request_id}, result={result}")
@@ -1058,7 +1059,7 @@ class PseudoKernel(SocketListener, TimerListener):
             # so it's never a child to wait for: forget it.
             if process.get_status() == KernelProcessStatus.SPAWNED:
                 process.set_status(KernelProcessStatus.LOST)
-                process.set_exit_reason(darq.ExitReason.LOST)
+                process.set_exit_reason(pk.ExitReason.LOST)
                 self.remove_process(process)
                 spawn_request = process.take_spawn_request()
                 if spawn_request is not None:
@@ -1119,7 +1120,7 @@ class PseudoKernel(SocketListener, TimerListener):
         return any(child.get_parent_dpid() == parent.get_dpid() and dpid in (0, child.get_dpid())
                    for child in self._process_table.values())
 
-    def handle_wait_request(self, process: KernelProcessState, request: darq.WaitRequest):
+    def handle_wait_request(self, process: KernelProcessState, request: pk.WaitRequest):
         """Collect a finished child of the process.
 
         A finished child is reported and removed from the process table.
@@ -1127,7 +1128,7 @@ class PseudoKernel(SocketListener, TimerListener):
         a non-blocking one is answered at once, with NOT_FINISHED."""
         if not self.has_child(process, request.dpid):
             logging.warning(f"{process.name()} wait({request.dpid}) failed: no such child")
-            response = darq.WaitResponse(request.request_id, darq.WaitResult.NO_SUCH_CHILD)
+            response = pk.WaitResponse(request.request_id, pk.WaitResult.NO_SUCH_CHILD)
             process.send_data(response.encode())
             return
 
@@ -1142,7 +1143,7 @@ class PseudoKernel(SocketListener, TimerListener):
                 (process, request.request_id, request.dpid))
             return
 
-        response = darq.WaitResponse(request.request_id, darq.WaitResult.NOT_FINISHED)
+        response = pk.WaitResponse(request.request_id, pk.WaitResult.NOT_FINISHED)
         process.send_data(response.encode())
         return
 
@@ -1167,12 +1168,12 @@ class PseudoKernel(SocketListener, TimerListener):
         reason = child.get_exit_reason()
         assert reason is not None, "finished process has no exit reason"
         status = child.get_exit_status()
-        if reason != darq.ExitReason.EXITED or status is None:
+        if reason != pk.ExitReason.EXITED or status is None:
             status = -1
 
         logging.info(f"{parent.name()} collected {child.name()}: {reason.name}, status {status}")
         self.remove_process(child)
-        response = darq.WaitResponse(request_id, darq.WaitResult.OK, child.get_dpid(),
+        response = pk.WaitResponse(request_id, pk.WaitResult.OK, child.get_dpid(),
                                      reason, status, child.get_exit_error())
         parent.send_data(response.encode())
         return
@@ -1239,7 +1240,7 @@ class PseudoKernel(SocketListener, TimerListener):
         self.kill_host_process(process)
         return
 
-    def handle_run_request(self, incoming_connection, message: darq.RunRequest):
+    def handle_run_request(self, incoming_connection, message: pk.RunRequest):
         """Handle a newly-spawned user process asking to run.
 
         The process waits for the RunResponse before starting its
@@ -1272,7 +1273,7 @@ class PseudoKernel(SocketListener, TimerListener):
         process.set_host_pid(message.host_pid)
 
         # Let the process start its application.
-        process.send_data(darq.RunResponse(0).encode())
+        process.send_data(pk.RunResponse(0).encode())
 
         # Answer the request that spawned this process.
         spawn_request = process.take_spawn_request()
@@ -1293,7 +1294,7 @@ class PseudoKernel(SocketListener, TimerListener):
     def reject_run_request(self, incoming_connection):
         """Refuse a RunRequest, and close the connection."""
         try:
-            incoming_connection.get_socket().sendall(darq.RunResponse(1).encode())  # FIXME: better errno
+            incoming_connection.get_socket().sendall(pk.RunResponse(1).encode())  # FIXME: better errno
         except OSError as e:
             logging.warning(f"{incoming_connection.name()} couldn't send RUN_RESPONSE: {e}")
         self.handle_incoming_disconnect(incoming_connection)
@@ -1301,7 +1302,7 @@ class PseudoKernel(SocketListener, TimerListener):
 
     def handle_open_port_request(self,
                                  process: KernelProcessState,
-                                 request: darq.OpenPortRequest):
+                                 request: pk.OpenPortRequest):
         """Handle request for a new port: the process gets its receive right."""
         port = self.create_port(process)
         handle = process.add_right(port, PortRight.RECEIVE)
@@ -1312,7 +1313,7 @@ class PseudoKernel(SocketListener, TimerListener):
 
     def handle_close_port_request(self,
                                   process: KernelProcessState,
-                                  request: darq.ClosePortRequest):
+                                  request: pk.ClosePortRequest):
         """Handle request to close a handle.
 
         Closing a receive right destroys the port; closing a send right
@@ -1334,7 +1335,7 @@ class PseudoKernel(SocketListener, TimerListener):
 
     def handle_send_message_request(self,
                                     sender: KernelProcessState,
-                                    message: darq.SendMessageRequest):
+                                    message: pk.SendMessageRequest):
         """Handle request to send a message from connected client.
 
         The source and destination are the sender's handles: they're
@@ -1346,53 +1347,73 @@ class PseudoKernel(SocketListener, TimerListener):
         :param message: Received message."""
         name = sender.name()
 
-        def refuse(result: darq.SendResult, reason: str):
+        def refuse(result: pk.SendResult, reason: str):
             logging.warning(f"{name} send_message({message.source}, {message.destination}) "
                             f"refused: {reason}")
-            response = darq.SendMessageResponse(message.request_id, result)
+            response = pk.SendMessageResponse(message.request_id, result)
             sender.send_data(response.encode())
 
         # The source must be one of the sender's own ports, since that's
         # where replies go.
         source = sender.get_handle(message.source)
         if source is None:
-            refuse(darq.SendResult.BAD_HANDLE, "bad source handle")
+            refuse(pk.SendResult.BAD_HANDLE, "bad source handle")
             return
         if source.right != PortRight.RECEIVE:
-            refuse(darq.SendResult.NOT_RECEIVE_RIGHT, "source isn't a receive right")
+            refuse(pk.SendResult.NOT_RECEIVE_RIGHT, "source isn't a receive right")
             return
 
         destination = sender.get_handle(message.destination)
         if destination is None:
-            refuse(darq.SendResult.BAD_HANDLE, "bad destination handle")
+            refuse(pk.SendResult.BAD_HANDLE, "bad destination handle")
             return
 
         port = destination.port
         receiver = port.owner
         if not port.alive or receiver is None:
-            refuse(darq.SendResult.DEAD_PORT, f"{port} is dead")
+            refuse(pk.SendResult.DEAD_PORT, f"{port} is dead")
             return
 
+        # Check all the transferred handles before granting any rights,
+        # so a refused message transfers nothing.
+        if len(message.handles) > pk.MAX_HANDLES:
+            refuse(pk.SendResult.TOO_MANY_HANDLES,
+                   f"{len(message.handles)} handles, at most {pk.MAX_HANDLES}")
+            return
+        transferred = []
+        for handle in message.handles:
+            entry = sender.get_handle(handle)
+            if entry is None:
+                refuse(pk.SendResult.BAD_HANDLE, f"bad transferred handle {handle}")
+                return
+            if not entry.port.alive:
+                refuse(pk.SendResult.DEAD_PORT, f"transferred {entry.port} is dead")
+                return
+            transferred.append(entry.port)
+
         # Translate into the receiver's handles.  It gets a send right to
-        # the source port, so it can reply.
+        # the source port, so it can reply, and to each transferred port.
         destination_handle = receiver.handle_for(port)
         assert destination_handle is not None, "owner has no handle for its port"
         source_handle = receiver.add_right(source.port, PortRight.SEND)
+        handles = [receiver.add_right(p, PortRight.SEND) for p in transferred]
 
-        deliver = darq.DeliverMessage(source_handle, destination_handle)
+        deliver = pk.DeliverMessage(source_handle, destination_handle)
         deliver.set_payload(message.payload)
+        deliver.set_handles(handles)
         receiver.send_data(deliver.encode())
 
         logging.info(f"{name} send_message() from {source.port} to {port}, "
                      f"delivered to {receiver.name()} "
-                     f"(handles {source_handle} to {destination_handle})")
-        response = darq.SendMessageResponse(message.request_id, darq.SendResult.OK)
+                     f"(handles {source_handle} to {destination_handle}"
+                     f"{f', transferring {handles}' if handles else ''})")
+        response = pk.SendMessageResponse(message.request_id, pk.SendResult.OK)
         sender.send_data(response.encode())
         return
 
     def handle_register_name_request(self,
                                      process: KernelProcessState,
-                                     request: darq.RegisterNameRequest):
+                                     request: pk.RegisterNameRequest):
         """Register a name for one of the process' ports.
 
         Names reserved for system services (see is_reserved_name) may
@@ -1403,22 +1424,22 @@ class PseudoKernel(SocketListener, TimerListener):
         entry = process.get_handle(request.port)
 
         if name is None:
-            result = darq.NameResult.INVALID_NAME
+            result = pk.NameResult.INVALID_NAME
         elif entry is None or entry.right != PortRight.RECEIVE:
-            result = darq.NameResult.BAD_HANDLE
+            result = pk.NameResult.BAD_HANDLE
         elif self.is_reserved_name(name) and process.get_parent_dpid() != 0:
-            result = darq.NameResult.RESERVED_NAME
+            result = pk.NameResult.RESERVED_NAME
         elif name in self._names:
-            result = darq.NameResult.NAME_TAKEN
+            result = pk.NameResult.NAME_TAKEN
         elif entry.port.name is not None:
-            result = darq.NameResult.PORT_ALREADY_NAMED
+            result = pk.NameResult.PORT_ALREADY_NAMED
         else:
-            result = darq.NameResult.OK
+            result = pk.NameResult.OK
 
-        if result != darq.NameResult.OK:
+        if result != pk.NameResult.OK:
             logging.warning(f"{process.name()} register_name({name!r}, {request.port}) "
                             f"failed: {result.name}")
-            process.send_data(darq.RegisterNameResponse(request.request_id, result).encode())
+            process.send_data(pk.RegisterNameResponse(request.request_id, result).encode())
             return
 
         assert name is not None and entry is not None
@@ -1426,7 +1447,7 @@ class PseudoKernel(SocketListener, TimerListener):
         port.name = name
         self._names[name] = port
         logging.info(f"{process.name()} registered '{name}' for {port}")
-        process.send_data(darq.RegisterNameResponse(request.request_id, result).encode())
+        process.send_data(pk.RegisterNameResponse(request.request_id, result).encode())
 
         for waiter, request_id, _ in self._name_waiters.pop(name, []):
             self.answer_lookup(waiter, request_id, port)
@@ -1434,7 +1455,7 @@ class PseudoKernel(SocketListener, TimerListener):
 
     def handle_lookup_name_request(self,
                                    process: KernelProcessState,
-                                   request: darq.LookupNameRequest):
+                                   request: pk.LookupNameRequest):
         """Give the process a send right to a named port.
 
         If the name isn't registered, a blocking lookup is answered once
@@ -1442,7 +1463,7 @@ class PseudoKernel(SocketListener, TimerListener):
         name = self.decode_name(request)
         if name is None:
             logging.warning(f"{process.name()} lookup_name() failed: invalid name")
-            response = darq.LookupNameResponse(request.request_id, darq.NameResult.INVALID_NAME, 0)
+            response = pk.LookupNameResponse(request.request_id, pk.NameResult.INVALID_NAME, 0)
             process.send_data(response.encode())
             return
 
@@ -1458,7 +1479,7 @@ class PseudoKernel(SocketListener, TimerListener):
             return
 
         logging.info(f"{process.name()} lookup_name({name!r}): not found")
-        response = darq.LookupNameResponse(request.request_id, darq.NameResult.NOT_FOUND, 0)
+        response = pk.LookupNameResponse(request.request_id, pk.NameResult.NOT_FOUND, 0)
         process.send_data(response.encode())
         return
 
@@ -1467,18 +1488,18 @@ class PseudoKernel(SocketListener, TimerListener):
         """Give a process a send right to a port, answering its lookup."""
         handle = process.add_right(port, PortRight.SEND)
         logging.info(f"{process.name()} lookup_name({port.name!r}) gave handle {handle} for {port}")
-        response = darq.LookupNameResponse(request_id, darq.NameResult.OK, handle)
+        response = pk.LookupNameResponse(request_id, pk.NameResult.OK, handle)
         process.send_data(response.encode())
         return
 
     def handle_send_chunk(self,
                           process: KernelProcessState,
-                          message: darq.SendChunk):
+                          message: pk.SendChunk):
         logging.info("send_chunk")
 
     def handle_deliver_chunk(self,
                              process: KernelProcessState,
-                             message: darq.DeliverChunk):
+                             message: pk.DeliverChunk):
         logging.info("deliver_chunk")
 
     def send_open_port_response(self,
@@ -1486,7 +1507,7 @@ class PseudoKernel(SocketListener, TimerListener):
                                 request_id: int,
                                 result: int,
                                 port: int):
-        response = darq.OpenPortResponse()
+        response = pk.OpenPortResponse()
         response.request_id = request_id
         response.result = result
         response.port = port
@@ -1501,7 +1522,7 @@ class PseudoKernel(SocketListener, TimerListener):
                                  request_id: int,
                                  result: int,
                                  port: int):
-        response = darq.ClosePortResponse()
+        response = pk.ClosePortResponse()
         response.request_id = request_id
         response.result = result
         response.port = port
@@ -1512,7 +1533,7 @@ class PseudoKernel(SocketListener, TimerListener):
         return
 
     @staticmethod
-    def next_message(buffer: darq.Buffer) -> tuple[int, bytes] | None:
+    def next_message(buffer: pk.Buffer) -> tuple[int, bytes] | None:
         """Take the next complete message from a receive buffer.
 
         :param buffer: Receive buffer.
@@ -1523,8 +1544,8 @@ class PseudoKernel(SocketListener, TimerListener):
         if buffer.length() < 8:
             return None
 
-        message_type = darq.Message.decode_type(buffer.peek(8))
-        message_length = darq.Message.decode_length(buffer.peek(8))
+        message_type = pk.Message.decode_type(buffer.peek(8))
+        message_length = pk.Message.decode_length(buffer.peek(8))
 
         if message_length < 8:
             raise darq.MessageDecodingError(f"invalid message length {message_length}")
@@ -1549,13 +1570,13 @@ class PseudoKernel(SocketListener, TimerListener):
                 return
 
             message_type, message_bytes = next_message
-            if message_type != darq.MessageType.RUN_REQUEST:
+            if message_type != pk.MessageType.RUN_REQUEST:
                 logging.error(f"{reader.name()} sent message type "
                               f"[{message_type}] before RUN_REQUEST")
                 self.handle_incoming_disconnect(reader)
                 return
 
-            message = darq.RunRequest()
+            message = pk.RunRequest()
             message.decode(message_bytes)
         except darq.MessageDecodingError as e:
             logging.error(f"{reader.name()} invalid message: {e}")
@@ -1591,58 +1612,58 @@ class PseudoKernel(SocketListener, TimerListener):
                          message_bytes: bytes):
         """Decode one message from a client, and call its handler."""
 
-        if message_type == darq.MessageType.OPEN_PORT_RQST:
-            message = darq.OpenPortRequest()
+        if message_type == pk.MessageType.OPEN_PORT_RQST:
+            message = pk.OpenPortRequest()
             message.decode(message_bytes)
             self.handle_open_port_request(process, message)
 
-        elif message_type == darq.MessageType.CLOSE_PORT_RQST:
-            message = darq.ClosePortRequest()
+        elif message_type == pk.MessageType.CLOSE_PORT_RQST:
+            message = pk.ClosePortRequest()
             message.decode(message_bytes)
             self.handle_close_port_request(process, message)
 
-        elif message_type == darq.MessageType.SEND_MESSAGE_RQST:
-            message = darq.SendMessageRequest()
+        elif message_type == pk.MessageType.SEND_MESSAGE_RQST:
+            message = pk.SendMessageRequest()
             message.decode(message_bytes)
             self.handle_send_message_request(process, message)
 
-        elif message_type == darq.MessageType.SPAWN_PROCESS_RQST:
-            message = darq.SpawnProcessRequest(0, "")
+        elif message_type == pk.MessageType.SPAWN_PROCESS_RQST:
+            message = pk.SpawnProcessRequest(0, "")
             message.decode(message_bytes)
             self.handle_spawn_process(process, message)
 
-        elif message_type == darq.MessageType.REGISTER_NAME_RQST:
-            message = darq.RegisterNameRequest()
+        elif message_type == pk.MessageType.REGISTER_NAME_RQST:
+            message = pk.RegisterNameRequest()
             message.decode(message_bytes)
             self.handle_register_name_request(process, message)
 
-        elif message_type == darq.MessageType.LOOKUP_NAME_RQST:
-            message = darq.LookupNameRequest()
+        elif message_type == pk.MessageType.LOOKUP_NAME_RQST:
+            message = pk.LookupNameRequest()
             message.decode(message_bytes)
             self.handle_lookup_name_request(process, message)
 
-        elif message_type == darq.MessageType.WAIT_RQST:
-            message = darq.WaitRequest()
+        elif message_type == pk.MessageType.WAIT_RQST:
+            message = pk.WaitRequest()
             message.decode(message_bytes)
             self.handle_wait_request(process, message)
 
-        elif message_type == darq.MessageType.KILL_PROCESS_RQST:
-            message = darq.KillProcessRequest()
+        elif message_type == pk.MessageType.KILL_PROCESS_RQST:
+            message = pk.KillProcessRequest()
             message.decode(message_bytes)
             self.handle_kill_process_request(process, message)
 
-        elif message_type == darq.MessageType.EXITED:
-            message = darq.Exited()
+        elif message_type == pk.MessageType.EXITED:
+            message = pk.Exited()
             message.decode(message_bytes)
             self.handle_exited(process, message)
 
-        elif message_type == darq.MessageType.REBOOT:
-            message = darq.Reboot()
+        elif message_type == pk.MessageType.REBOOT:
+            message = pk.Reboot()
             message.decode(message_bytes)
             self.handle_reboot(process, message)
 
-        elif message_type == darq.MessageType.SHUTDOWN:
-            message = darq.Shutdown()
+        elif message_type == pk.MessageType.SHUTDOWN:
+            message = pk.Shutdown()
             message.decode(message_bytes)
             self.handle_shutdown(process, message)
 

@@ -239,7 +239,7 @@ def test_no_message_header_in_ir():
     ("int64", 8, 8), ("uint64", 8, 8),
     ("real32", 4, 4), ("real64", 8, 8),
     ("opaque", 8, 4),
-    ("port", 4, 4),
+    ("port", 2, 2),
 ])
 def test_primitive_types(type_, size, align):
     layout = request_layout(f"uint8 pad, {type_} v")

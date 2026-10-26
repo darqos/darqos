@@ -25,11 +25,10 @@ from darq.runtime.tool import Tool
 from darq.runtime.type import Type
 from darq.runtime.util import Facility, Level, log
 
-from .application import *
-from .common import *
 from .errors import *
 from .loop import *
-from .syscall import *
+from .process import *
+from .system import *
 
 
 # Globals

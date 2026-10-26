@@ -270,11 +270,53 @@ poll for arriving messages, or to block control flow until one a
 message is delivered (or the request times out).
 
 Future releases might add better support for multiple threads, and/or
-adopt a coroutine-style asynchronous model.  Depending on how that
-evolves, an explicit RPC structure might also be provided.
+adopt a coroutine-style asynchronous model.
 
-On the service side, the blocking dispatch loop model will be directly
-supported by the runtime.
+Requests and Responses
+~~~~~~~~~~~~~~~~~~~~~~
+
+`darq.system` provides requests and responses over ports, for DIDL
+protocols.  For each protocol, didlpygen generates a `Client` and a
+`Handler` class, with a method for each protocol method, named in
+snake case:
+
+```
+storage = Storage.Client(darq.connect("darq.storage"))
+response = storage.get(key=b"foo")
+
+class StorageService(Storage.Handler):
+    def get(self, request, source):
+        return GetResponse(value=..., status=0)
+
+def darq_main():
+    darq.serve("darq.storage", StorageService())
+```
+
+* A client's requests are sent from its thread's *reply port*, opened
+  on first use, so the service's replies come back to it.
+* Each request gets the next transaction identifier (txid), skipping
+  0, which marks one-way messages.  The reply is the message on the
+  reply port from the service's handle (the same handle, since handles
+  coalesce), with the request's txid.  Anything else is a late reply
+  to an abandoned call, and is dropped.
+* The client waits for the reply indefinitely, or for the Client's
+  `timeout`, raising `TimeoutError`.  Until there are dead-port
+  notifications, a timeout is the only way to notice a service that
+  died after receiving the request.
+* `darq.serve()` opens a port, registers its name, and then handles
+  requests one at a time, in order of delivery, until the process is
+  killed.  Each reply is sent to the request's source.
+* A request the service can't handle gets an *error reply*, in place
+  of its response: the request's txid and method, with the header's
+  ERROR flag set, and a body of a uint32 code and an opaque UTF-8
+  description (`darq.dipc.ErrorReply`).  The codes are
+  `UNKNOWN_METHOD`, `BAD_MESSAGE` (it can't be decoded),
+  `NOT_IMPLEMENTED` (the Handler doesn't override the method), and
+  `INTERNAL_ERROR` (the handler raised an exception, or returned the
+  wrong response).  The client raises it as `RemoteError`.  Failures a
+  protocol expects, such as "not found", belong in its response fields
+  instead.
+* One-way messages are never answered, even with an error reply.
 
 Establishing a Connection
 -------------------------
@@ -383,7 +425,7 @@ For 1ed, the IDL compiler (didlc) should be a Linux command line
 utility.  It should generate one Python file/module for each DIDL file
 processed, and each message should be a class, with encode() and
 decode() functions (in a similar style to the p-call message classes
-from darq/common.py).
+from darq/pcall.py).
 
 Syntax
 ~~~~~~

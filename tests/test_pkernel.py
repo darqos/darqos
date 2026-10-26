@@ -22,6 +22,7 @@ import typing
 import pytest
 
 import darq
+from darq import pcall as pk
 
 
 PKERNEL_PATH = pathlib.Path(__file__).parent.parent / "kernel" / "pkernel"
@@ -78,7 +79,7 @@ def add_running_process(kernel, dpid: int):
     return process, peer
 
 
-def send_to_kernel(kernel, process, message: darq.Message):
+def send_to_kernel(kernel, process, message: pk.Message):
     """Deliver a message from a process to the kernel."""
     process.get_buffer().append(message.encode())
     kernel.dispatch(process)
@@ -94,7 +95,7 @@ def receive(peer: socket.socket) -> bytes:
 
 def read_run_response(peer: socket.socket) -> int:
     """Read the kernel's RunResponse to a process, and return its result."""
-    response = darq.RunResponse()
+    response = pk.RunResponse()
     response.decode(peer.recv(response.get_length()))
     return response.result
 
@@ -103,9 +104,9 @@ def test_kill_process_forwarded_to_target(pkernel):
     caller, caller_peer = add_running_process(pkernel, 1)
     target, target_peer = add_running_process(pkernel, 2)
 
-    send_to_kernel(pkernel, caller, darq.KillProcessRequest(5, 2))
+    send_to_kernel(pkernel, caller, pk.KillProcessRequest(5, 2))
 
-    forwarded = darq.KillProcessRequest()
+    forwarded = pk.KillProcessRequest()
     forwarded.decode(receive(target_peer))
     assert forwarded.dpid == 2
 
@@ -117,10 +118,10 @@ def test_kill_process_answered_on_target_exit(pkernel):
     caller, caller_peer = add_running_process(pkernel, 1)
     target, target_peer = add_running_process(pkernel, 2)
 
-    send_to_kernel(pkernel, caller, darq.KillProcessRequest(5, 2))
+    send_to_kernel(pkernel, caller, pk.KillProcessRequest(5, 2))
     pkernel.handle_disconnect(target)
 
-    response = darq.KillProcessResponse()
+    response = pk.KillProcessResponse()
     response.decode(receive(caller_peer))
     assert (response.request_id, response.result) == (5, 0)
     assert target.get_status() == pkernel.module.KernelProcessStatus.ZOMBIE
@@ -130,9 +131,9 @@ def test_kill_process_answered_on_target_exit(pkernel):
 def test_kill_process_no_such_process(pkernel):
     caller, caller_peer = add_running_process(pkernel, 1)
 
-    send_to_kernel(pkernel, caller, darq.KillProcessRequest(5, 99))
+    send_to_kernel(pkernel, caller, pk.KillProcessRequest(5, 99))
 
-    response = darq.KillProcessResponse()
+    response = pk.KillProcessResponse()
     response.decode(receive(caller_peer))
     assert response.request_id == 5
     assert response.result != 0
@@ -144,9 +145,9 @@ def test_kill_process_not_running(pkernel):
     pkernel.handle_disconnect(target)
     assert target.get_status() == pkernel.module.KernelProcessStatus.LOST
 
-    send_to_kernel(pkernel, caller, darq.KillProcessRequest(5, 2))
+    send_to_kernel(pkernel, caller, pk.KillProcessRequest(5, 2))
 
-    response = darq.KillProcessResponse()
+    response = pk.KillProcessResponse()
     response.decode(receive(caller_peer))
     assert response.result != 0
 
@@ -154,8 +155,8 @@ def test_kill_process_not_running(pkernel):
 def test_kill_self(pkernel):
     process, peer = add_running_process(pkernel, 1)
 
-    send_to_kernel(pkernel, process, darq.KillProcessRequest(5, 1))
-    forwarded = darq.KillProcessRequest()
+    send_to_kernel(pkernel, process, pk.KillProcessRequest(5, 1))
+    forwarded = pk.KillProcessRequest()
     forwarded.decode(receive(peer))
     assert forwarded.dpid == 1
 
@@ -175,7 +176,7 @@ def test_running_hands_socket_to_process(pkernel):
     reader = module.TemporaryReader(kernel=pkernel, sock=kernel_sock)
     pkernel.incoming_connections[kernel_sock] = reader
 
-    running = darq.RunRequest(dpid=3)
+    running = pk.RunRequest(dpid=3)
     running.host_pid = 1234
     pkernel.handle_run_request(reader, running)
 
@@ -226,14 +227,14 @@ def connect_spawned_process(kernel, dpid: int):
 
     reader = module.TemporaryReader(kernel=kernel, sock=kernel_sock)
     kernel.incoming_connections[kernel_sock] = reader
-    kernel.handle_run_request(reader, darq.RunRequest(dpid=dpid))
+    kernel.handle_run_request(reader, pk.RunRequest(dpid=dpid))
 
 
 def test_spawn_process_starts_stub(pkernel, fake_popen, executable):
     parent, parent_peer = add_running_process(pkernel, 1)
     pkernel._next_dpid = 2
 
-    send_to_kernel(pkernel, parent, darq.SpawnProcessRequest(5, executable))
+    send_to_kernel(pkernel, parent, pk.SpawnProcessRequest(5, executable))
 
     module = pkernel.module
     port = str(pkernel.socket.getsockname()[1])
@@ -250,10 +251,10 @@ def test_spawn_process_answered_when_running(pkernel, fake_popen, executable):
     parent, parent_peer = add_running_process(pkernel, 1)
     pkernel._next_dpid = 2
 
-    send_to_kernel(pkernel, parent, darq.SpawnProcessRequest(5, executable))
+    send_to_kernel(pkernel, parent, pk.SpawnProcessRequest(5, executable))
     connect_spawned_process(pkernel, 2)
 
-    response = darq.SpawnProcessResponse(0, 0, 0, None)
+    response = pk.SpawnProcessResponse(0, 0, 0, None)
     response.decode(receive(parent_peer))
     assert (response.request_id, response.result, response.dpid) == (5, 0, 2)
     assert response.get_error() == ""
@@ -262,9 +263,9 @@ def test_spawn_process_answered_when_running(pkernel, fake_popen, executable):
 def test_spawn_process_no_main(pkernel, fake_popen, tmp_path):
     parent, parent_peer = add_running_process(pkernel, 1)
 
-    send_to_kernel(pkernel, parent, darq.SpawnProcessRequest(5, str(tmp_path)))
+    send_to_kernel(pkernel, parent, pk.SpawnProcessRequest(5, str(tmp_path)))
 
-    response = darq.SpawnProcessResponse(0, 0, 0, None)
+    response = pk.SpawnProcessResponse(0, 0, 0, None)
     response.decode(receive(parent_peer))
     assert response.request_id == 5
     assert response.result != 0
@@ -280,9 +281,9 @@ def test_spawn_process_stub_fails(pkernel, executable, monkeypatch):
     parent, parent_peer = add_running_process(pkernel, 1)
     table_size = len(pkernel._process_table)
 
-    send_to_kernel(pkernel, parent, darq.SpawnProcessRequest(5, executable))
+    send_to_kernel(pkernel, parent, pk.SpawnProcessRequest(5, executable))
 
-    response = darq.SpawnProcessResponse(0, 0, 0, None)
+    response = pk.SpawnProcessResponse(0, 0, 0, None)
     response.decode(receive(parent_peer))
     assert response.result != 0
     assert "No such file" in response.get_error()
@@ -293,7 +294,7 @@ def test_spawn_process_sets_pythonpath(pkernel, fake_popen, executable, monkeypa
     monkeypatch.setenv("PYTHONPATH", "/existing")
     parent, _ = add_running_process(pkernel, 1)
 
-    send_to_kernel(pkernel, parent, darq.SpawnProcessRequest(5, executable))
+    send_to_kernel(pkernel, parent, pk.SpawnProcessRequest(5, executable))
 
     darq_root = pathlib.Path(darq.__file__).resolve().parent.parent
     paths = fake_popen.envs[0]["PYTHONPATH"].split(os.pathsep)
@@ -385,7 +386,7 @@ def test_kill_spawned_process(live_pkernel, tmp_path):
     report = json.loads(results.read_text())
     child_dpid = report["dpid"]
     assert child_dpid != parent_dpid
-    assert report["child"] == [child_dpid, darq.ExitReason.KILLED, -1, None]
+    assert report["child"] == [child_dpid, pk.ExitReason.KILLED, -1, None]
 
     # Collecting the child removed it from the process table, and the
     # kernel reaps its host process.
@@ -410,7 +411,7 @@ def test_spawn_process_exits_before_running(live_pkernel, executable):
 
     # A loader that exits at once, without connecting to the p-kernel.
     module.PYTHON_IMAGE_LOADER = shutil.which("false")
-    send_to_kernel(kernel, parent, darq.SpawnProcessRequest(5, executable))
+    send_to_kernel(kernel, parent, pk.SpawnProcessRequest(5, executable))
 
     child = kernel._process_table[2]
     run_kernel_until(kernel, lambda: child.get_child().returncode is not None,
@@ -419,7 +420,7 @@ def test_spawn_process_exits_before_running(live_pkernel, executable):
     # Its spawn failed, so it isn't a child to wait for.
     assert 2 not in kernel._process_table
 
-    response = darq.SpawnProcessResponse(0, 0, 0, None)
+    response = pk.SpawnProcessResponse(0, 0, 0, None)
     response.decode(receive(parent_peer))
     assert response.request_id == 5
     assert response.result != 0
@@ -470,7 +471,7 @@ def test_getppid_of_spawned_process(live_pkernel, tmp_path):
 def test_exited_recorded(pkernel):
     process, peer = add_running_process(pkernel, 3)
 
-    send_to_kernel(pkernel, process, darq.Exited(7, "it broke"))
+    send_to_kernel(pkernel, process, pk.Exited(7, "it broke"))
     assert process.get_exit_status() == 7
     assert process.get_exit_error() == "it broke"
 
@@ -483,7 +484,7 @@ def test_exited_recorded(pkernel):
 
 def test_exited_without_error(pkernel):
     process, _ = add_running_process(pkernel, 3)
-    send_to_kernel(pkernel, process, darq.Exited(0))
+    send_to_kernel(pkernel, process, pk.Exited(0))
     assert (process.get_exit_status(), process.get_exit_error()) == (0, None)
 
 
@@ -525,7 +526,7 @@ def test_spawned_process_receives_its_own_message(live_pkernel, tmp_path):
         def darq_main():
             port = darq.open_port()
             darq.send_message(port, port, b"ping")
-            source, payload = darq.receive_message(port)
+            source, payload, _ = darq.receive_message(port)
             if (source, payload) != (port, b"ping"):
                 return f"received {(source, payload)!r}"
             if darq.receive_message(port, blocking=False) is not None:
@@ -550,7 +551,7 @@ def test_running_with_unknown_dpid(pkernel):
     pkernel.incoming_connections[kernel_sock] = reader
     pkernel._loop.add_socket(kernel_sock, pkernel)
 
-    pkernel.handle_run_request(reader, darq.RunRequest(dpid=99))
+    pkernel.handle_run_request(reader, pk.RunRequest(dpid=99))
 
     # The process is refused, then its connection is dropped, and the loop
     # no longer watches it.
@@ -577,7 +578,7 @@ def test_running_for_running_process_rejected(pkernel):
     original_sock = process.get_socket()
 
     reader, kernel_sock, peer = accept_connection(pkernel)
-    pkernel.handle_run_request(reader, darq.RunRequest(dpid=3))
+    pkernel.handle_run_request(reader, pk.RunRequest(dpid=3))
 
     # The impostor is refused and dropped, and the running process is untouched.
     assert kernel_sock.fileno() == -1
@@ -598,7 +599,7 @@ def test_running_for_non_spawned_process_rejected(pkernel, status):
     pkernel._process_table[3] = process
 
     reader, kernel_sock, peer = accept_connection(pkernel)
-    pkernel.handle_run_request(reader, darq.RunRequest(dpid=3))
+    pkernel.handle_run_request(reader, pk.RunRequest(dpid=3))
 
     assert kernel_sock.fileno() == -1
     assert read_run_response(peer) != 0
@@ -627,7 +628,7 @@ def assert_incoming_dropped(kernel, kernel_sock, peer):
 
 
 def header_with_length(message_type: int, length: int) -> bytes:
-    message = darq.Message(message_type)
+    message = pk.Message(message_type)
     message.set_length(length)
     return message.encode()
 
@@ -646,7 +647,7 @@ def test_disconnect_before_running(pkernel):
 
 def test_other_message_before_running(pkernel):
     reader, kernel_sock, peer = accept_connection(pkernel)
-    peer.sendall(darq.OpenPortRequest(1).encode())
+    peer.sendall(pk.OpenPortRequest(1).encode())
 
     reader.on_readable(kernel_sock)
 
@@ -655,7 +656,7 @@ def test_other_message_before_running(pkernel):
 
 def test_invalid_length_before_running(pkernel):
     reader, kernel_sock, peer = accept_connection(pkernel)
-    peer.sendall(header_with_length(darq.MessageType.RUN_REQUEST, 4))
+    peer.sendall(header_with_length(pk.MessageType.RUN_REQUEST, 4))
 
     reader.on_readable(kernel_sock)
 
@@ -665,7 +666,7 @@ def test_invalid_length_before_running(pkernel):
 def test_running_split_across_reads(pkernel):
     process = add_spawned_process(pkernel, 3)
     reader, kernel_sock, peer = accept_connection(pkernel)
-    running = darq.RunRequest(dpid=3).encode()
+    running = pk.RunRequest(dpid=3).encode()
 
     peer.sendall(running[:5])
     reader.on_readable(kernel_sock)
@@ -681,7 +682,7 @@ def test_second_running_from_registered_process(pkernel):
     process, peer = add_running_process(pkernel, 3)
     sock = process.get_socket()
 
-    send_to_kernel(pkernel, process, darq.RunRequest(dpid=3))
+    send_to_kernel(pkernel, process, pk.RunRequest(dpid=3))
 
     # Ignored: the process keeps its connection and state.
     assert process.get_socket() is sock
@@ -694,12 +695,12 @@ def test_pcall_in_same_read_as_running(pkernel):
     process = add_spawned_process(pkernel, 3)
     reader, kernel_sock, peer = accept_connection(pkernel)
 
-    peer.sendall(darq.RunRequest(dpid=3).encode() + darq.OpenPortRequest(7).encode())
+    peer.sendall(pk.RunRequest(dpid=3).encode() + pk.OpenPortRequest(7).encode())
     reader.on_readable(kernel_sock)
 
     assert process.get_status() == pkernel.module.KernelProcessStatus.RUNNING
     assert read_run_response(peer) == 0
-    response = darq.OpenPortResponse()
+    response = pk.OpenPortResponse()
     response.decode(peer.recv(65536))
     assert response.request_id == 7
     assert response.result == 0
@@ -711,23 +712,23 @@ def test_pcall_in_same_read_as_running(pkernel):
 
 def received_messages(peer: socket.socket) -> list[tuple[int, bytes]]:
     """Return the messages the kernel has sent to a process, as (type, bytes)."""
-    buf = darq.Buffer()
+    buf = pk.Buffer()
     buf.append(receive(peer))
     messages = []
     while buf.length() >= 8:
-        length = darq.Message.decode_length(buf.peek(8))
+        length = pk.Message.decode_length(buf.peek(8))
         message = buf.peek(length)
         buf.consume(length)
-        messages.append((darq.Message.decode_type(message), message))
+        messages.append((pk.Message.decode_type(message), message))
     return messages
 
 
 def open_port(kernel, process, peer, request_id: int = 1) -> int:
     """Open a port for a process, returning its handle."""
-    send_to_kernel(kernel, process, darq.OpenPortRequest(request_id))
+    send_to_kernel(kernel, process, pk.OpenPortRequest(request_id))
     [(message_type, buf)] = received_messages(peer)
-    assert message_type == darq.MessageType.OPEN_PORT_RESP
-    response = darq.OpenPortResponse()
+    assert message_type == pk.MessageType.OPEN_PORT_RESP
+    response = pk.OpenPortResponse()
     response.decode(buf)
     assert (response.request_id, response.result) == (request_id, 0)
     return response.port
@@ -735,29 +736,30 @@ def open_port(kernel, process, peer, request_id: int = 1) -> int:
 
 def close_port(kernel, process, peer, handle: int) -> int:
     """Close a process' handle, returning the result."""
-    send_to_kernel(kernel, process, darq.ClosePortRequest(1, handle))
+    send_to_kernel(kernel, process, pk.ClosePortRequest(1, handle))
     [(message_type, buf)] = received_messages(peer)
-    assert message_type == darq.MessageType.CLOSE_PORT_RESP
-    response = darq.ClosePortResponse()
+    assert message_type == pk.MessageType.CLOSE_PORT_RESP
+    response = pk.ClosePortResponse()
     response.decode(buf)
     assert response.port == handle
     return response.result
 
 
-def send(kernel, process, source: int, destination: int, payload: bytes) -> int:
+def send(kernel, process, source: int, destination: int, payload: bytes, handles=()) -> int:
     """Send a message from a process, returning the SendResult.
 
     Anything else the process received meanwhile (such as a message to
     its own port) is kept for delivered(pkernel, )."""
-    message = darq.SendMessageRequest(source, destination, request_id=9)
+    message = pk.SendMessageRequest(source, destination, request_id=9)
     message.set_payload(payload)
+    message.set_handles(handles)
     send_to_kernel(kernel, process, message)
 
     results = []
     peer = process_peer(kernel, process)
     for message_type, buf in received_messages(peer):
-        if message_type == darq.MessageType.SEND_MESSAGE_RESP:
-            response = darq.SendMessageResponse()
+        if message_type == pk.MessageType.SEND_MESSAGE_RESP:
+            response = pk.SendMessageResponse()
             response.decode(buf)
             assert response.request_id == 9
             results.append(response.result)
@@ -778,10 +780,21 @@ def delivered(kernel, peer: socket.socket) -> list[tuple[int, int, bytes]]:
     """Return the messages delivered to a process, as (source, destination, payload)."""
     messages = []
     for message_type, buf in kernel.unread.pop(peer, []) + received_messages(peer):
-        assert message_type == darq.MessageType.DELIVER_MESSAGE
-        message = darq.DeliverMessage()
+        assert message_type == pk.MessageType.DELIVER_MESSAGE
+        message = pk.DeliverMessage()
         message.decode(buf)
         messages.append((message.source, message.destination, message.payload))
+    return messages
+
+
+def delivered_handles(kernel, peer: socket.socket) -> list[tuple[int, ...]]:
+    """Return the handles transferred with each message delivered to a process."""
+    messages = []
+    for message_type, buf in kernel.unread.pop(peer, []) + received_messages(peer):
+        assert message_type == pk.MessageType.DELIVER_MESSAGE
+        message = pk.DeliverMessage()
+        message.decode(buf)
+        messages.append(message.handles)
     return messages
 
 
@@ -859,7 +872,7 @@ def test_send_translates_handles(pkernel):
     a_to_b = grant_send_right(pkernel, a, b, b_port)
     assert a_to_b == 3
 
-    assert send(pkernel, a, a_port, a_to_b, b"ping") == darq.SendResult.OK
+    assert send(pkernel, a, a_port, a_to_b, b"ping") == pk.SendResult.OK
 
     # B receives on its own handle, and gets a send right to A's port.
     [(source, destination, payload)] = delivered(pkernel, b_peer)
@@ -869,7 +882,7 @@ def test_send_translates_handles(pkernel):
     assert entry.port is a.get_handle(a_port).port
 
     # B replies to the source: A sees its existing handle for B's port.
-    assert send(pkernel, b, b_port, source, b"pong") == darq.SendResult.OK
+    assert send(pkernel, b, b_port, source, b"pong") == pk.SendResult.OK
     assert delivered(pkernel, a_peer) == [(a_to_b, a_port, b"pong")]
 
 
@@ -880,8 +893,8 @@ def test_reply_right_reuses_handle(pkernel):
     b_port = open_port(pkernel, b, b_peer)
     a_to_b = grant_send_right(pkernel, a, b, b_port)
 
-    assert send(pkernel, a, a_port, a_to_b, b"one") == darq.SendResult.OK
-    assert send(pkernel, a, a_port, a_to_b, b"two") == darq.SendResult.OK
+    assert send(pkernel, a, a_port, a_to_b, b"one") == pk.SendResult.OK
+    assert send(pkernel, a, a_port, a_to_b, b"two") == pk.SendResult.OK
 
     [(first, _, _), (second, _, _)] = delivered(pkernel, b_peer)
     assert first == second
@@ -893,18 +906,86 @@ def test_send_answered_after_delivery(pkernel):
     process, peer = add_running_process(pkernel, 1)
     handle = open_port(pkernel, process, peer)
 
-    message = darq.SendMessageRequest(handle, handle, request_id=4)
+    message = pk.SendMessageRequest(handle, handle, request_id=4)
     send_to_kernel(pkernel, process, message)
     types = [message_type for message_type, _ in received_messages(peer)]
-    assert types == [darq.MessageType.DELIVER_MESSAGE, darq.MessageType.SEND_MESSAGE_RESP]
+    assert types == [pk.MessageType.DELIVER_MESSAGE, pk.MessageType.SEND_MESSAGE_RESP]
 
 
 def test_send_to_own_port(pkernel):
     process, peer = add_running_process(pkernel, 1)
     handle = open_port(pkernel, process, peer)
 
-    assert send(pkernel, process, handle, handle, b"self") == darq.SendResult.OK
+    assert send(pkernel, process, handle, handle, b"self") == pk.SendResult.OK
     assert delivered(pkernel, peer) == [(handle, handle, b"self")]
+
+
+def test_transferred_handles_become_send_rights(pkernel):
+    a, a_peer = add_running_process(pkernel, 1)
+    b, b_peer = add_running_process(pkernel, 2)
+    c, c_peer = add_running_process(pkernel, 3)
+    a_port = open_port(pkernel, a, a_peer)
+    extra = open_port(pkernel, a, a_peer, request_id=2)
+    b_port = open_port(pkernel, b, b_peer)
+    c_port = open_port(pkernel, c, c_peer)
+    a_to_b = grant_send_right(pkernel, a, b, b_port)
+    a_to_c = grant_send_right(pkernel, a, c, c_port)
+
+    # A receive right and a send right, both transferred as send rights.
+    assert send(pkernel, a, a_port, a_to_b, b"x", (extra, a_to_c)) == pk.SendResult.OK
+    [(b_extra, b_to_c)] = delivered_handles(pkernel, b_peer)
+    PortRight = pkernel.module.PortRight
+    assert b.get_handle(b_extra).port is a.get_handle(extra).port
+    assert b.get_handle(b_extra).right == PortRight.SEND
+    assert b.get_handle(b_to_c).port is c.get_handle(c_port).port
+    assert b.get_handle(b_to_c).right == PortRight.SEND
+
+
+def test_transferred_handles_coalesce(pkernel):
+    # The receiver's own port comes back as its receive handle, and the
+    # source port as the same handle as the message's source.
+    a, a_peer = add_running_process(pkernel, 1)
+    b, b_peer = add_running_process(pkernel, 2)
+    a_port = open_port(pkernel, a, a_peer)
+    b_port = open_port(pkernel, b, b_peer)
+    a_to_b = grant_send_right(pkernel, a, b, b_port)
+
+    assert send(pkernel, a, a_port, a_to_b, b"x", (a_to_b, a_port, a_port)) == pk.SendResult.OK
+    [message] = received_messages(b_peer)
+    deliver = pk.DeliverMessage()
+    deliver.decode(message[1])
+    assert deliver.handles == (b_port, deliver.source, deliver.source)
+
+
+@pytest.mark.parametrize("problem", ["bad", "dead", "too many"])
+def test_bad_transfer_refused(pkernel, problem):
+    a, a_peer = add_running_process(pkernel, 1)
+    b, b_peer = add_running_process(pkernel, 2)
+    a_port = open_port(pkernel, a, a_peer)
+    b_port = open_port(pkernel, b, b_peer)
+    a_to_b = grant_send_right(pkernel, a, b, b_port)
+    c, c_peer = add_running_process(pkernel, 3)
+    c_port = open_port(pkernel, c, c_peer)
+    a_to_c = grant_send_right(pkernel, a, c, c_port)
+    handles: tuple[int, ...]
+    if problem == "bad":
+        handles = (a_to_c, 999)
+        expected = pk.SendResult.BAD_HANDLE
+    elif problem == "dead":
+        extra = open_port(pkernel, b, b_peer, request_id=2)
+        a_to_extra = grant_send_right(pkernel, a, b, extra)
+        assert close_port(pkernel, b, b_peer, extra) == 0
+        handles = (a_to_c, a_to_extra)
+        expected = pk.SendResult.DEAD_PORT
+    else:
+        handles = (a_to_c,) * (pk.MAX_HANDLES + 1)
+        expected = pk.SendResult.TOO_MANY_HANDLES
+
+    assert send(pkernel, a, a_port, a_to_b, b"x", handles) == expected
+    assert delivered(pkernel, b_peer) == []
+    # Nothing was granted: not even the rights that could be.
+    assert b.handle_for(c.get_handle(c_port).port) is None
+    assert b.handle_for(a.get_handle(a_port).port) is None
 
 
 def test_send_from_send_right_refused(pkernel):
@@ -914,7 +995,7 @@ def test_send_from_send_right_refused(pkernel):
     a_to_b = grant_send_right(pkernel, a, b, b_port)
 
     # A can't send from B's port: replies would go to B.
-    assert send(pkernel, a, a_to_b, a_to_b, b"spoof") == darq.SendResult.NOT_RECEIVE_RIGHT
+    assert send(pkernel, a, a_to_b, a_to_b, b"spoof") == pk.SendResult.NOT_RECEIVE_RIGHT
     assert delivered(pkernel, b_peer) == []
 
 
@@ -923,8 +1004,8 @@ def test_send_with_bad_handle_refused(pkernel, bad_handle):
     process, peer = add_running_process(pkernel, 1)
     handle = open_port(pkernel, process, peer)
 
-    assert send(pkernel, process, handle, bad_handle, b"nowhere") == darq.SendResult.BAD_HANDLE
-    assert send(pkernel, process, bad_handle, handle, b"from nowhere") == darq.SendResult.BAD_HANDLE
+    assert send(pkernel, process, handle, bad_handle, b"nowhere") == pk.SendResult.BAD_HANDLE
+    assert send(pkernel, process, bad_handle, handle, b"from nowhere") == pk.SendResult.BAD_HANDLE
     assert delivered(pkernel, peer) == []
 
 
@@ -936,7 +1017,7 @@ def test_send_to_closed_port_refused(pkernel):
     a_to_b = grant_send_right(pkernel, a, b, b_port)
     close_port(pkernel, b, b_peer, b_port)
 
-    assert send(pkernel, a, a_port, a_to_b, b"too late") == darq.SendResult.DEAD_PORT
+    assert send(pkernel, a, a_port, a_to_b, b"too late") == pk.SendResult.DEAD_PORT
     assert delivered(pkernel, b_peer) == []
 
     # A's handle remains, but is dead.
@@ -956,7 +1037,7 @@ def test_disconnect_destroys_owned_ports(pkernel):
     assert not port.alive
     assert list(pkernel._ports.values()) == [a.get_handle(a_port).port]
     assert b.get_handle(b_port) is None
-    assert send(pkernel, a, a_port, a_to_b, b"gone") == darq.SendResult.DEAD_PORT
+    assert send(pkernel, a, a_port, a_to_b, b"gone") == pk.SendResult.DEAD_PORT
     assert delivered(pkernel, b_peer) == []
 
 
@@ -966,10 +1047,10 @@ def test_disconnect_destroys_owned_ports(pkernel):
 
 def register_name(kernel, process, peer, name: str, handle: int) -> int:
     """Register a name for a process' port, returning the result."""
-    send_to_kernel(kernel, process, darq.RegisterNameRequest(1, name, handle))
+    send_to_kernel(kernel, process, pk.RegisterNameRequest(1, name, handle))
     [(message_type, buf)] = received_messages(peer)
-    assert message_type == darq.MessageType.REGISTER_NAME_RESP
-    response = darq.RegisterNameResponse()
+    assert message_type == pk.MessageType.REGISTER_NAME_RESP
+    response = pk.RegisterNameResponse()
     response.decode(buf)
     return response.result
 
@@ -978,8 +1059,8 @@ def lookup_responses(peer) -> list[tuple[int, int, int]]:
     """Return the lookup responses sent to a process, as (request_id, result, handle)."""
     responses = []
     for message_type, buf in received_messages(peer):
-        assert message_type == darq.MessageType.LOOKUP_NAME_RESP
-        response = darq.LookupNameResponse()
+        assert message_type == pk.MessageType.LOOKUP_NAME_RESP
+        response = pk.LookupNameResponse()
         response.decode(buf)
         responses.append((response.request_id, response.result, response.port))
     return responses
@@ -988,7 +1069,7 @@ def lookup_responses(peer) -> list[tuple[int, int, int]]:
 def lookup_name(kernel, process, peer, name: str, blocking: bool = False,
                 request_id: int = 1) -> tuple[int, int] | None:
     """Look up a name for a process: (result, handle), or None if unanswered."""
-    send_to_kernel(kernel, process, darq.LookupNameRequest(request_id, name, blocking))
+    send_to_kernel(kernel, process, pk.LookupNameRequest(request_id, name, blocking))
     responses = lookup_responses(peer)
     if not responses:
         return None
@@ -1014,13 +1095,13 @@ def test_register_and_lookup(pkernel):
     answer = lookup_name(pkernel, client, client_peer, "test.service")
     assert answer is not None
     result, handle = answer
-    assert result == darq.NameResult.OK
+    assert result == pk.NameResult.OK
     entry = client.get_handle(handle)
     assert entry.right == pkernel.module.PortRight.SEND
     assert entry.port is service.get_handle(service_port).port
 
     # The looked-up handle reaches the service.
-    assert send(pkernel, client, client_port, handle, b"hello") == darq.SendResult.OK
+    assert send(pkernel, client, client_port, handle, b"hello") == pk.SendResult.OK
     [(source, destination, payload)] = delivered(pkernel, service_peer)
     assert (destination, payload) == (service_port, b"hello")
 
@@ -1040,12 +1121,12 @@ def test_lookup_of_own_name_returns_receive_handle(pkernel):
     handle = open_port(pkernel, process, peer)
     register_name(pkernel, process, peer, "test.self", handle)
 
-    assert lookup_name(pkernel, process, peer, "test.self") == (darq.NameResult.OK, handle)
+    assert lookup_name(pkernel, process, peer, "test.self") == (pk.NameResult.OK, handle)
 
 
 def test_non_blocking_lookup_not_found(pkernel):
     process, peer = add_running_process(pkernel, 1)
-    assert lookup_name(pkernel, process, peer, "test.missing") == (darq.NameResult.NOT_FOUND, 0)
+    assert lookup_name(pkernel, process, peer, "test.missing") == (pk.NameResult.NOT_FOUND, 0)
 
 
 def test_blocking_lookup_answered_on_registration(pkernel):
@@ -1061,10 +1142,10 @@ def test_blocking_lookup_answered_on_registration(pkernel):
 
     port = service.get_handle(service_port).port
     [(request_id, result, handle)] = lookup_responses(a_peer)
-    assert (request_id, result) == (5, darq.NameResult.OK)
+    assert (request_id, result) == (5, pk.NameResult.OK)
     assert a.get_handle(handle).port is port
     [(request_id, result, handle)] = lookup_responses(b_peer)
-    assert (request_id, result) == (6, darq.NameResult.OK)
+    assert (request_id, result) == (6, pk.NameResult.OK)
     assert b.get_handle(handle).port is port
     assert pkernel._name_waiters == {}
 
@@ -1088,7 +1169,7 @@ def test_name_taken(pkernel):
     register_name(pkernel, a, a_peer, "test.name", open_port(pkernel, a, a_peer))
 
     result = register_name(pkernel, b, b_peer, "test.name", open_port(pkernel, b, b_peer))
-    assert result == darq.NameResult.NAME_TAKEN
+    assert result == pk.NameResult.NAME_TAKEN
 
 
 def test_port_already_named(pkernel):
@@ -1096,7 +1177,7 @@ def test_port_already_named(pkernel):
     handle = open_port(pkernel, process, peer)
     register_name(pkernel, process, peer, "test.first", handle)
 
-    assert register_name(pkernel, process, peer, "test.second", handle) == darq.NameResult.PORT_ALREADY_NAMED
+    assert register_name(pkernel, process, peer, "test.second", handle) == pk.NameResult.PORT_ALREADY_NAMED
 
 
 def test_register_needs_receive_right(pkernel):
@@ -1105,8 +1186,8 @@ def test_register_needs_receive_right(pkernel):
     b_port = open_port(pkernel, b, b_peer)
     a_to_b = grant_send_right(pkernel, a, b, b_port)
 
-    assert register_name(pkernel, a, a_peer, "test.stolen", a_to_b) == darq.NameResult.BAD_HANDLE
-    assert register_name(pkernel, a, a_peer, "test.nothing", 99) == darq.NameResult.BAD_HANDLE
+    assert register_name(pkernel, a, a_peer, "test.stolen", a_to_b) == pk.NameResult.BAD_HANDLE
+    assert register_name(pkernel, a, a_peer, "test.nothing", 99) == pk.NameResult.BAD_HANDLE
 
 
 @pytest.mark.parametrize("name", ["", "x" * 256])
@@ -1114,25 +1195,25 @@ def test_invalid_name(pkernel, name):
     process, peer = add_running_process(pkernel, 1)
     handle = open_port(pkernel, process, peer)
 
-    assert register_name(pkernel, process, peer, name, handle) == darq.NameResult.INVALID_NAME
-    assert lookup_name(pkernel, process, peer, name) == (darq.NameResult.INVALID_NAME, 0)
+    assert register_name(pkernel, process, peer, name, handle) == pk.NameResult.INVALID_NAME
+    assert lookup_name(pkernel, process, peer, name) == (pk.NameResult.INVALID_NAME, 0)
 
 
 def test_name_not_utf8(pkernel):
     process, peer = add_running_process(pkernel, 1)
-    request = darq.RegisterNameRequest(1, "", open_port(pkernel, process, peer))
+    request = pk.RegisterNameRequest(1, "", open_port(pkernel, process, peer))
     request.name = b"\xff\xfe"
     request.set_length(request.header_length + 16 + request.padded_length(request.name))
     send_to_kernel(pkernel, process, request)
 
-    response = darq.RegisterNameResponse()
+    response = pk.RegisterNameResponse()
     response.decode(receive(peer))
-    assert response.result == darq.NameResult.INVALID_NAME
+    assert response.result == pk.NameResult.INVALID_NAME
 
 
 def test_longest_name(pkernel):
     process, peer = add_running_process(pkernel, 1)
-    name = "x" * darq.MAX_NAME_LENGTH
+    name = "x" * pk.MAX_NAME_LENGTH
     assert register_name(pkernel, process, peer, name, open_port(pkernel, process, peer)) == 0
 
 
@@ -1141,12 +1222,12 @@ def test_reserved_names(pkernel, name):
     # A user process can't register a reserved name ...
     user, user_peer = user_process(pkernel, 2)
     result = register_name(pkernel, user, user_peer, name, open_port(pkernel, user, user_peer))
-    assert result == darq.NameResult.RESERVED_NAME
+    assert result == pk.NameResult.RESERVED_NAME
 
     # ... but a process the kernel spawned (parent dpid 0) can.
     system, system_peer = add_running_process(pkernel, 1)
     result = register_name(pkernel, system, system_peer, name, open_port(pkernel, system, system_peer))
-    assert result == darq.NameResult.OK
+    assert result == pk.NameResult.OK
 
 
 def test_names_like_reserved_are_not(pkernel):
@@ -1160,7 +1241,7 @@ def test_name_removed_with_port(pkernel):
     register_name(pkernel, process, peer, "test.name", handle)
 
     close_port(pkernel, process, peer, handle)
-    assert lookup_name(pkernel, process, peer, "test.name") == (darq.NameResult.NOT_FOUND, 0)
+    assert lookup_name(pkernel, process, peer, "test.name") == (pk.NameResult.NOT_FOUND, 0)
 
     # The name can be registered again, for another port.
     assert register_name(pkernel, process, peer, "test.name", open_port(pkernel, process, peer, 2)) == 0
@@ -1172,7 +1253,7 @@ def test_name_removed_on_disconnect(pkernel):
     register_name(pkernel, service, service_peer, "test.name", open_port(pkernel, service, service_peer))
 
     pkernel.handle_disconnect(service)
-    assert lookup_name(pkernel, client, client_peer, "test.name") == (darq.NameResult.NOT_FOUND, 0)
+    assert lookup_name(pkernel, client, client_peer, "test.name") == (pk.NameResult.NOT_FOUND, 0)
 
 
 def test_two_processes_ping_pong(live_pkernel, tmp_path):
@@ -1195,7 +1276,7 @@ def test_two_processes_ping_pong(live_pkernel, tmp_path):
             port = darq.open_port()
             for n in (b"1", b"2", b"3"):
                 darq.send_message(port, service, b"ping " + n)
-                source, payload = darq.receive_message(port)
+                source, payload, _ = darq.receive_message(port)
                 if (source, payload) != (service, b"pong " + n):
                     return f"received {(source, payload)!r}"
             darq.send_message(port, service, b"done")
@@ -1208,7 +1289,7 @@ def test_two_processes_ping_pong(live_pkernel, tmp_path):
             darq.register_name("darq.test.ping", port)
             client = darq.spawn_process({client_path!r})
             while True:
-                source, payload = darq.receive_message(port)
+                source, payload, _ = darq.receive_message(port)
                 if payload == b"done":
                     break
                 if not payload.startswith(b"ping "):
@@ -1234,6 +1315,110 @@ def test_two_processes_ping_pong(live_pkernel, tmp_path):
     assert kernel._names == {}
 
 
+def write_didl_module(directory: pathlib.Path, source: str):
+    """Compile DIDL source, with didlc and didlpygen, into a module in directory."""
+    bin_dir = pathlib.Path(__file__).parent.parent / "bin"
+    didl = directory / "protocol.didl"
+    didl.write_text(textwrap.dedent(source))
+    subprocess.run([sys.executable, str(bin_dir / "didlc"), str(didl)], check=True)
+    subprocess.run([sys.executable, str(bin_dir / "didlpygen"), str(didl.with_suffix(".dir"))], check=True)
+
+
+def test_rpc_service_and_client(live_pkernel, tmp_path):
+    # Phase 3's exit test: a service answers a DIDL protocol with
+    # darq.serve(), and a client calls it with the generated Client,
+    # through the p-kernel.
+    kernel = live_pkernel
+    module = kernel.module
+    protocol = """
+        library test_kv;
+        protocol KV {
+            1: Put(opaque key, opaque value) -> ();
+            2: Get(opaque key) -> (opaque value, uint32 found);
+            3: Forget(opaque key);
+            4: Fail() -> ();
+            5: Missing() -> ();
+            6: Share(port p) -> (port echoed);
+        }
+        """
+    service_path = write_app(tmp_path / "service", """
+        import darq
+        from test_kv import KV, GetResponse, PutResponse, ShareResponse
+
+        class Handler(KV.Handler):
+            def __init__(self):
+                self.store = {}
+
+            def put(self, request, source):
+                self.store[request.key] = request.value
+                return PutResponse()
+
+            def get(self, request, source):
+                if request.key not in self.store:
+                    return GetResponse(found=0)
+                return GetResponse(value=self.store[request.key], found=1)
+
+            def forget(self, request, source):
+                self.store.pop(request.key, None)
+
+            def fail(self, request, source):
+                raise ValueError("as requested")
+
+            def share(self, request, source):
+                # The client's own port, back to it.
+                return ShareResponse(echoed=request.p)
+
+        def darq_main():
+            darq.serve("darq.test.kv", Handler())
+        """)
+    client_path = write_app(tmp_path / "client", """
+        import darq
+        from darq import dipc
+        from test_kv import KV, GetRequest, GetResponse
+
+        def darq_main():
+            kv = KV.Client(darq.connect("darq.test.kv"), timeout=10)
+            kv.put(key=b"k", value=b"v")
+            response = kv.get(key=b"k")
+            if (response.value, response.found) != (b"v", 1):
+                return f"get returned {response!r}"
+
+            # A one-way message is handled before the next request.
+            kv.forget(key=b"k")
+            if kv.get(key=b"k").found != 0:
+                return "forget didn't"
+
+            for method, code in (("fail", dipc.ErrorCode.INTERNAL_ERROR),
+                                 ("missing", dipc.ErrorCode.NOT_IMPLEMENTED)):
+                try:
+                    getattr(kv, method)()
+                    return f"{method} succeeded"
+                except darq.RemoteError as e:
+                    if e.code != code:
+                        return f"{method} raised {e!r}"
+
+            # A port transferred to the service, and back, is the same
+            # handle again.
+            port = darq.open_port()
+            if kv.share(p=port).echoed != port:
+                return "port didn't come back"
+
+            response = darq.call(kv.service, GetRequest(key=b"k"))
+            if not isinstance(response, GetResponse):
+                return f"call returned {response!r}"
+            return 0
+        """)
+    for path in (service_path, client_path):
+        write_didl_module(pathlib.Path(path), protocol)
+
+    kernel.do_spawn_process(None, service_path)
+    dpid = kernel.do_spawn_process(None, client_path)
+    client = kernel._process_table[dpid]
+    run_kernel_until(kernel, lambda: client.get_status() == module.KernelProcessStatus.ZOMBIE,
+                     "the client to exit")
+    assert (client.get_exit_status(), client.get_exit_error()) == (0, None)
+
+
 ################################################################
 # Waiting for children
 ################################################################
@@ -1248,26 +1433,26 @@ def add_child(kernel, parent, dpid: int):
 def finish(kernel, process, how: str = "exited", status: int = 0, error: str | None = None):
     """Have a process finish: it exited (with a status), was killed, or was lost."""
     if how == "exited":
-        send_to_kernel(kernel, process, darq.Exited(status, error))
+        send_to_kernel(kernel, process, pk.Exited(status, error))
     elif how == "killed":
         process.add_kill_request(None, 0)
     kernel.handle_disconnect(process)
 
 
-def wait_responses(peer) -> list[darq.WaitResponse]:
+def wait_responses(peer) -> list[pk.WaitResponse]:
     responses = []
     for message_type, buf in received_messages(peer):
-        assert message_type == darq.MessageType.WAIT_RESP
-        response = darq.WaitResponse()
+        assert message_type == pk.MessageType.WAIT_RESP
+        response = pk.WaitResponse()
         response.decode(buf)
         responses.append(response)
     return responses
 
 
 def wait(kernel, process, peer, dpid: int = 0, blocking: bool = False,
-         request_id: int = 1) -> darq.WaitResponse | None:
+         request_id: int = 1) -> pk.WaitResponse | None:
     """Send a wait for a process: its response, or None if unanswered."""
-    send_to_kernel(kernel, process, darq.WaitRequest(request_id, dpid, blocking))
+    send_to_kernel(kernel, process, pk.WaitRequest(request_id, dpid, blocking))
     responses = wait_responses(peer)
     if not responses:
         return None
@@ -1276,7 +1461,7 @@ def wait(kernel, process, peer, dpid: int = 0, blocking: bool = False,
     return response
 
 
-def waited(kernel, process, peer, dpid: int = 0, request_id: int = 1) -> darq.WaitResponse:
+def waited(kernel, process, peer, dpid: int = 0, request_id: int = 1) -> pk.WaitResponse:
     """Send a non-blocking wait for a process, returning its response."""
     response = wait(kernel, process, peer, dpid, request_id=request_id)
     assert response is not None
@@ -1296,20 +1481,20 @@ def test_zombie_kept_until_collected(pkernel):
     assert child.get_status() == pkernel.module.KernelProcessStatus.ZOMBIE
 
     response = wait(pkernel, parent, parent_peer, 2)
-    assert collected(response) == (darq.WaitResult.OK, 2, darq.ExitReason.EXITED, 3, "failed")
+    assert collected(response) == (pk.WaitResult.OK, 2, pk.ExitReason.EXITED, 3, "failed")
     assert 2 not in pkernel._process_table
 
 
 @pytest.mark.parametrize("how, reason", [
-    ("killed", darq.ExitReason.KILLED),
-    ("lost", darq.ExitReason.LOST),
+    ("killed", pk.ExitReason.KILLED),
+    ("lost", pk.ExitReason.LOST),
 ])
 def test_wait_reports_how_child_finished(pkernel, how, reason):
     parent, parent_peer = add_running_process(pkernel, 1)
     child, _ = add_child(pkernel, parent, 2)
     finish(pkernel, child, how)
 
-    assert collected(wait(pkernel, parent, parent_peer)) == (darq.WaitResult.OK, 2, reason, -1, None)
+    assert collected(wait(pkernel, parent, parent_peer)) == (pk.WaitResult.OK, 2, reason, -1, None)
 
 
 def test_wait_for_any_child_collects_earliest(pkernel):
@@ -1327,7 +1512,7 @@ def test_non_blocking_wait_not_finished(pkernel):
     parent, parent_peer = add_running_process(pkernel, 1)
     add_child(pkernel, parent, 2)
 
-    assert waited(pkernel, parent, parent_peer).result == darq.WaitResult.NOT_FINISHED
+    assert waited(pkernel, parent, parent_peer).result == pk.WaitResult.NOT_FINISHED
     assert 2 in pkernel._process_table
 
 
@@ -1338,9 +1523,9 @@ def test_wait_without_children(pkernel):
     add_child(pkernel, grandchild_parent, 4)
 
     for dpid in (2, 4, 99):
-        assert waited(pkernel, other, process_peer(pkernel, other), dpid).result == darq.WaitResult.NO_SUCH_CHILD
-        assert waited(pkernel, parent, parent_peer, dpid).result == darq.WaitResult.NO_SUCH_CHILD
-    assert waited(pkernel, other, process_peer(pkernel, other)).result == darq.WaitResult.NO_SUCH_CHILD
+        assert waited(pkernel, other, process_peer(pkernel, other), dpid).result == pk.WaitResult.NO_SUCH_CHILD
+        assert waited(pkernel, parent, parent_peer, dpid).result == pk.WaitResult.NO_SUCH_CHILD
+    assert waited(pkernel, other, process_peer(pkernel, other)).result == pk.WaitResult.NO_SUCH_CHILD
 
 
 def test_blocking_wait_answered_when_child_finishes(pkernel):
@@ -1402,11 +1587,11 @@ def test_shutdown_kills_processes(pkernel):
     a, a_peer = add_running_process(pkernel, 1)
     b, b_peer = add_running_process(pkernel, 2)
 
-    send_to_kernel(pkernel, a, darq.Shutdown())
+    send_to_kernel(pkernel, a, pk.Shutdown())
     for process, peer in ((a, a_peer), (b, b_peer)):
         [(message_type, buf)] = received_messages(peer)
-        assert message_type == darq.MessageType.KILL_PROCESS_RQST
-        request = darq.KillProcessRequest()
+        assert message_type == pk.MessageType.KILL_PROCESS_RQST
+        request = pk.KillProcessRequest()
         request.decode(buf)
         assert request.dpid == process.get_dpid()
 
@@ -1416,7 +1601,7 @@ def test_shutdown_kills_processes(pkernel):
     pkernel.handle_disconnect(b)
     assert pkernel._stopped
     assert not pkernel.reboot_requested()
-    assert b.get_exit_reason() == darq.ExitReason.KILLED
+    assert b.get_exit_reason() == pk.ExitReason.KILLED
 
 
 def test_shutdown_without_processes(pkernel):
@@ -1426,7 +1611,7 @@ def test_shutdown_without_processes(pkernel):
 
 def test_reboot_requested(pkernel):
     process, _ = add_running_process(pkernel, 1)
-    send_to_kernel(pkernel, process, darq.Reboot())
+    send_to_kernel(pkernel, process, pk.Reboot())
     pkernel.handle_disconnect(process)
     assert pkernel._stopped
     assert pkernel.reboot_requested()
@@ -1469,8 +1654,8 @@ def test_no_spawning_during_shutdown(pkernel, executable):
     pkernel.begin_shutdown(reboot=False)
     receive(peer)
 
-    send_to_kernel(pkernel, process, darq.SpawnProcessRequest(5, executable))
-    response = darq.SpawnProcessResponse(0, 0, 0, None)
+    send_to_kernel(pkernel, process, pk.SpawnProcessRequest(5, executable))
+    response = pk.SpawnProcessResponse(0, 0, 0, None)
     response.decode(receive(peer))
     assert response.result != 0
     assert response.get_error() == "shutting down"
@@ -1501,7 +1686,7 @@ def test_live_shutdown(live_pkernel, tmp_path):
 
     kernel.begin_shutdown(reboot=False)
     run_kernel_until(kernel, lambda: kernel._stopped, "shutdown to complete")
-    assert process.get_exit_reason() == darq.ExitReason.KILLED
+    assert process.get_exit_reason() == pk.ExitReason.KILLED
     run_kernel_until(kernel, lambda: process.get_child().returncode is not None,
                      "the kernel to reap the process")
 
@@ -1533,12 +1718,12 @@ def test_spawn_timeout(live_pkernel, silent_loader, executable, caplog, monkeypa
     parent, parent_peer = add_running_process(kernel, 1)
     kernel._next_dpid = 2
 
-    send_to_kernel(kernel, parent, darq.SpawnProcessRequest(5, executable))
+    send_to_kernel(kernel, parent, pk.SpawnProcessRequest(5, executable))
     [(message_type, buf)] = run_until_received(kernel, parent_peer, 1)
 
     # The spawn fails, as if the process had exited before running.
-    assert message_type == darq.MessageType.SPAWN_PROCESS_RESP
-    response = darq.SpawnProcessResponse(0, 0, 0, None)
+    assert message_type == pk.MessageType.SPAWN_PROCESS_RESP
+    response = pk.SpawnProcessResponse(0, 0, 0, None)
     response.decode(buf)
     assert (response.request_id, response.result) == (5, 1)
     assert "before running" in response.get_error()
@@ -1550,17 +1735,17 @@ def test_kill_before_running(live_pkernel, silent_loader, executable):
     kernel = live_pkernel
     parent, parent_peer = add_running_process(kernel, 1)
     kernel._next_dpid = 2
-    send_to_kernel(kernel, parent, darq.SpawnProcessRequest(5, executable))
+    send_to_kernel(kernel, parent, pk.SpawnProcessRequest(5, executable))
     assert kernel._process_table[2].get_status() == kernel.module.KernelProcessStatus.SPAWNED
 
     # Killing it kills its host process: the kill succeeds, and the spawn fails.
-    send_to_kernel(kernel, parent, darq.KillProcessRequest(6, 2))
+    send_to_kernel(kernel, parent, pk.KillProcessRequest(6, 2))
     messages = run_until_received(kernel, parent_peer, 2)
     assert sorted(message_type for message_type, _ in messages) == \
-        [darq.MessageType.SPAWN_PROCESS_RESP, darq.MessageType.KILL_PROCESS_RESP]
+        [pk.MessageType.SPAWN_PROCESS_RESP, pk.MessageType.KILL_PROCESS_RESP]
     for message_type, buf in messages:
-        if message_type == darq.MessageType.KILL_PROCESS_RESP:
-            response = darq.KillProcessResponse()
+        if message_type == pk.MessageType.KILL_PROCESS_RESP:
+            response = pk.KillProcessResponse()
             response.decode(buf)
             assert (response.request_id, response.result) == (6, 0)
     assert 2 not in kernel._process_table
@@ -1586,15 +1771,15 @@ def test_kill_timeout(live_pkernel, tmp_path, caplog, monkeypatch):
     run_kernel_until(kernel, started.exists, "the application to start")
 
     start = time.monotonic()
-    send_to_kernel(kernel, requester, darq.KillProcessRequest(6, dpid))
+    send_to_kernel(kernel, requester, pk.KillProcessRequest(6, dpid))
     [(message_type, buf)] = run_until_received(kernel, requester_peer, 1)
     assert time.monotonic() - start < 1.0
 
-    response = darq.KillProcessResponse()
+    response = pk.KillProcessResponse()
     response.decode(buf)
     assert (message_type, response.request_id, response.result) == \
-        (darq.MessageType.KILL_PROCESS_RESP, 6, 0)
-    assert target.get_exit_reason() == darq.ExitReason.KILLED
+        (pk.MessageType.KILL_PROCESS_RESP, 6, 0)
+    assert target.get_exit_reason() == pk.ExitReason.KILLED
     assert "didn't exit within" in caplog.text
 
 
@@ -1613,7 +1798,7 @@ def test_slow_lookup_warning(pkernel, caplog):
     assert pkernel._name_waiters["test.later"][0][0] is process
 
 
-@pytest.mark.parametrize("message", [darq.Shutdown(), darq.Reboot()])
+@pytest.mark.parametrize("message", [pk.Shutdown(), pk.Reboot()])
 def test_user_process_cannot_shut_down(pkernel, message, caplog):
     process, _ = user_process(pkernel, 2)
     send_to_kernel(pkernel, process, message)
@@ -1696,7 +1881,7 @@ def test_spawned_process_exit_call(live_pkernel, tmp_path):
     run_kernel_until(kernel, lambda: process.get_status() == module.KernelProcessStatus.ZOMBIE,
                      "the process to exit")
     assert (process.get_exit_reason(), process.get_exit_status(), process.get_exit_error()) == \
-        (darq.ExitReason.EXITED, 7, None)
+        (pk.ExitReason.EXITED, 7, None)
     run_kernel_until(kernel, lambda: process.get_child().returncode is not None,
                      "the kernel to reap the process")
     assert process.get_child().returncode == 7
@@ -1709,12 +1894,12 @@ def test_spawned_process_exit_call(live_pkernel, tmp_path):
 def test_dispatch_handles_every_message(pkernel):
     process, peer = add_running_process(pkernel, 1)
 
-    process.get_buffer().append(darq.OpenPortRequest(1).encode() +
-                                darq.OpenPortRequest(2).encode())
+    process.get_buffer().append(pk.OpenPortRequest(1).encode() +
+                                pk.OpenPortRequest(2).encode())
     pkernel.dispatch(process)
 
     received = receive(peer)
-    response = darq.OpenPortResponse()
+    response = pk.OpenPortResponse()
     ids = []
     while received:
         response.decode(received)
@@ -1726,7 +1911,7 @@ def test_dispatch_handles_every_message(pkernel):
 def test_dispatch_invalid_length_disconnects(pkernel):
     process, peer = add_running_process(pkernel, 1)
 
-    process.get_buffer().append(header_with_length(darq.MessageType.OPEN_PORT_RQST, 0))
+    process.get_buffer().append(header_with_length(pk.MessageType.OPEN_PORT_RQST, 0))
     pkernel.dispatch(process)
 
     assert process.get_socket() is None

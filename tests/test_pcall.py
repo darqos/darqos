@@ -1,9 +1,9 @@
 # darqos
 # Copyright (C) 2026 David Arnold
 
-# Encode/decode tests for the p-kernel messages in darq.common.
+# Encode/decode tests for the p-kernel messages in darq.pcall.
 #
-# Tests marked xfail document known defects in darq.common.  They are
+# Tests marked xfail document known defects in darq.pcall.  They are
 # strict, so once a defect is fixed the test will report XPASS and the
 # marker should be removed.
 
@@ -11,7 +11,7 @@ import struct
 
 import pytest
 
-from darq.common import (
+from darq.pcall import (
     ClosePortRequest,
     ClosePortResponse,
     DeliverChunk,
@@ -403,6 +403,32 @@ class TestPortMessages:
             cls().decode(m.encode()[:-1])
 
 
+@pytest.mark.parametrize("cls", [DeliverMessage, SendMessageRequest])
+class TestTransferredHandles:
+    @pytest.mark.parametrize("handles", [(), (1,), (UInt64.max(), 2, 2)])
+    def test_roundtrip(self, cls, handles):
+        m = cls(source=5, destination=6)
+        m.set_payload(b"hello")
+        m.set_handles(handles)
+        buf = m.encode()
+        assert len(buf) == m.get_length() == HEADER_LENGTH + cls.BODY_LENGTH + 8 * len(handles) + 8
+        assert len(buf) % 4 == 0
+
+        d = cls()
+        d.decode(buf)
+        assert (d.source, d.destination, d.handles, d.payload) == (5, 6, handles, b"hello")
+
+    def test_handles_overrun_raises(self, cls):
+        m = cls(source=5, destination=6)
+        m.set_handles((1, 2))
+        buf = bytearray(m.encode())
+        # Claim a third handle, which isn't there.
+        count_offset = HEADER_LENGTH + (20 if cls is DeliverMessage else 24)
+        buf[count_offset:count_offset + 2] = (3).to_bytes(2, "big")
+        with pytest.raises(MessageDecodingError):
+            cls().decode(bytes(buf))
+
+
 class TestSendMessageRequest:
     @pytest.mark.parametrize("payload", PAYLOADS)
     def test_roundtrip(self, payload):
@@ -411,7 +437,7 @@ class TestSendMessageRequest:
         buf = m.encode()
         check_header(buf, MessageType.SEND_MESSAGE_RQST)
         assert len(buf) % 4 == 0
-        assert len(buf) == HEADER_LENGTH + 24 + m.padded_length(payload)
+        assert len(buf) == HEADER_LENGTH + 32 + m.padded_length(payload)
 
         d = SendMessageRequest()
         d.decode(buf)

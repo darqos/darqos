@@ -1,19 +1,21 @@
 # darqos
-# Copyright (c) 2026 Daid Arnold
+# Copyright (C) 2026 David Arnold
 #
-# Application support.
+# Process support.
 #
-# Uses darq.common and darq.loop to provide the foundation for
-# Darq applicaations.
+# Uses darq.pcall and darq.loop to provide the per-process state
+# that pyloader and darq.system build on: p-call state, port state,
+# and the callback model's listener interface.
 
 import collections
 import threading
+import time
 import typing
 
 from enum import IntEnum
 from warnings import deprecated
 
-from .common import Buffer, Message
+from .pcall import Buffer, Message
 from .errors import NonExistentPortError
 from .loop import EventLoopInterface
 
@@ -147,7 +149,7 @@ class PortState:
         # so the queue is guarded by the lock.  A blocked receiver waits
         # for the event, which is set when a message is delivered, or the
         # port is closed.
-        self.messages: collections.deque[tuple[int, bytes]] = collections.deque()
+        self.messages: collections.deque[tuple[int, bytes, tuple[int, ...]]] = collections.deque()
         self._lock = threading.Lock()
         self._event = threading.Event()
 
@@ -159,25 +161,30 @@ class PortState:
         """Append received bytes to the reassembly buffer."""
         return self.buffer.append(buf)
 
-    def deliver(self, source: int, payload: bytes):
+    def deliver(self, source: int, payload: bytes, handles: tuple[int, ...] = ()):
         """Queue a delivered message, releasing a blocked receiver.
 
         :param source: Sending port number.
-        :param payload: Message contents."""
+        :param payload: Message contents.
+        :param handles: Handles transferred with the message."""
         with self._lock:
-            self.messages.append((source, payload))
+            self.messages.append((source, payload, handles))
             self._event.set()
         return
 
-    def receive(self, blocking: bool = True) -> tuple[int, bytes] | None:
+    def receive(self, blocking: bool = True,
+                timeout: float | None = None) -> tuple[int, bytes, tuple[int, ...]] | None:
         """Take the next delivered message, in order of delivery.
 
         :param blocking: If True, wait for a message to be delivered;
                          otherwise, return None if there isn't one.
-        :returns: (source port, payload), or None if not blocking and
-                  no message has been delivered.
+        :param timeout: If blocking, the longest to wait, in seconds;
+                        None waits indefinitely.
+        :returns: (source port, payload, handles), or None if no message
+                  was delivered, when not blocking or by the timeout.
         :raises NonExistentPortError: if the port is closed, before or
                                       while waiting."""
+        deadline = None if timeout is None else time.monotonic() + timeout
         while True:
             with self._lock:
                 if self.messages:
@@ -191,7 +198,13 @@ class PortState:
                 # from here on sets it again.
                 self._event.clear()
 
-            self._event.wait()
+            if deadline is None:
+                self._event.wait()
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not self._event.wait(remaining):
+                # Timed out: take a message delivered at the last moment.
+                blocking = False
 
     def close(self):
         """Mark the port closed, releasing any blocked receiver.

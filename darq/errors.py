@@ -42,6 +42,23 @@ class DeadPortError(DarqError):
     pass
 
 
+class TooManyHandlesError(DarqError):
+    """A message can't transfer that many handles (see MAX_HANDLES)."""
+    pass
+
+
+class RemoteError(DarqError):
+    """A service failed to handle a request: it sent an error reply.
+
+    :ivar code: The reply's error code (see darq.dipc.ErrorCode).
+    :ivar description: The service's description of the failure."""
+
+    def __init__(self, code: int, description: str):
+        super().__init__(f"error {code}: {description}")
+        self.code = code
+        self.description = description
+
+
 class NoSuchChildError(DarqError):
     """The process isn't a child of the caller, or the caller has no children."""
     pass

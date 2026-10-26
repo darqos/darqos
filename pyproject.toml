@@ -45,12 +45,12 @@ select = ["E", "F"]
 # The core runtime, p-kernel and tools.  The ZMQ-era services, runtime
 # and type modules are added as they're ported to the new IPC.
 include = [
-    "darq/application.py",
-    "darq/common.py",
     "darq/dipc.py",
     "darq/errors.py",
     "darq/loop.py",
-    "darq/syscall.py",
+    "darq/pcall.py",
+    "darq/process.py",
+    "darq/system.py",
     "kernel/pkernel",
     "kernel/pyloader",
     "bin/didlc",

@@ -8,8 +8,9 @@
 #
 # Wire format:
 # - Fields are little-endian, at the offsets given in the IR.
-# - Every message starts with the header: uint32 txid, uint16 flags
-#   (reserved, must be 0), and uint16 method number.
+# - Every message starts with the header: uint32 txid, uint16 flags,
+#   and uint16 method number.  The only flag is ERROR, set on an error
+#   reply (see ErrorReply); the others are reserved, and must be 0.
 # - The message body follows the header, aligned to the body's
 #   alignment.
 # - An 'opaque' field is a sequence of bytes, encoded as a descriptor:
@@ -17,9 +18,14 @@
 #   uint32 length.  The values are appended to the message, after the
 #   fixed part, in field order: each starts on an 8-byte boundary, and
 #   is padded to a multiple of 8 bytes.
+# - A 'port' field is a uint16 index into the list of handles
+#   transferred with the message, or NO_PORT.  encode() returns the
+#   list along with the bytes, and decode() takes it back.
 
 
 import struct
+import typing
+from enum import IntEnum
 
 from .errors import MessageDecodingError
 
@@ -27,10 +33,15 @@ from .errors import MessageDecodingError
 # Control exports
 __all__ = [
     "BYTE_ORDER",
+    "ERROR",
+    "ErrorCode",
+    "ErrorReply",
     "HEADER_FORMAT",
     "HEADER_LENGTH",
     "Message",
+    "NO_PORT",
     "Record",
+    "decode_flags",
     "decode_method",
     "decode_txid",
 ]
@@ -43,12 +54,25 @@ BYTE_ORDER = "<"
 HEADER_FORMAT = BYTE_ORDER + "IHH"
 HEADER_LENGTH = 8
 
+# Header flag: the message is an error reply.
+ERROR = 0x0001
+
+# Port index meaning "no port".
+NO_PORT = 0xFFFF
+
 
 def decode_txid(buffer: bytes) -> int:
     """Decode the transaction identifier from a message buffer."""
     if len(buffer) < HEADER_LENGTH:
         raise MessageDecodingError("buffer too short for header")
     return struct.unpack_from(HEADER_FORMAT, buffer)[0]
+
+
+def decode_flags(buffer: bytes) -> int:
+    """Decode the header flags from a message buffer."""
+    if len(buffer) < HEADER_LENGTH:
+        raise MessageDecodingError("buffer too short for header")
+    return struct.unpack_from(HEADER_FORMAT, buffer)[1]
 
 
 def decode_method(buffer: bytes) -> int:
@@ -75,28 +99,58 @@ class Message(Record):
     # Method number, set by each message class.
     METHOD = 0
 
+    # Header flags, set by each message class.
+    FLAGS = 0
+
+    # For a request, its response class; None for a one-way message.
+    RESPONSE: "type[Message] | None" = None
+
     def __init__(self, txid: int = 0):
         """Constructor."""
 
         # Transaction identifier; 0 for one-way messages.
         self.txid = txid
 
-    def encode(self) -> bytes:
-        """Encode message header to wire format."""
-        return struct.pack(HEADER_FORMAT, self.txid, 0, self.METHOD)
+    def encode(self) -> tuple[bytes, list[int]]:
+        """Encode message header to wire format.
 
-    def decode(self, buffer: bytes):
-        """Decode message header from byte buffer."""
+        :returns: (bytes, handles to transfer with them)."""
+        return struct.pack(HEADER_FORMAT, self.txid, self.FLAGS, self.METHOD), []
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        """Decode message header from byte buffer.
+
+        :param handles: Handles transferred with the message."""
         if len(buffer) < HEADER_LENGTH:
             raise MessageDecodingError("buffer too short for header")
 
         bits = struct.unpack_from(HEADER_FORMAT, buffer)
-        if bits[1] != 0:
-            raise MessageDecodingError(f"reserved flags set: {bits[1]:#x}")
+        if bits[1] != self.FLAGS:
+            raise MessageDecodingError(f"flags {bits[1]:#x}, expected {self.FLAGS:#x}")
         if bits[2] != self.METHOD:
             raise MessageDecodingError(f"method {bits[2]}, expected {self.METHOD}")
         self.txid = bits[0]
         return
+
+    @staticmethod
+    def encode_port(handles: list[int], handle: int | None) -> int:
+        """Return the index for a port field, adding it to the handles.
+
+        A handle already in the list keeps its index."""
+        if handle is None:
+            return NO_PORT
+        if handle not in handles:
+            handles.append(handle)
+        return handles.index(handle)
+
+    @staticmethod
+    def decode_port(handles: typing.Sequence[int], index: int) -> int | None:
+        """Return the handle for a port field's index."""
+        if index == NO_PORT:
+            return None
+        if index >= len(handles):
+            raise MessageDecodingError(f"port index {index}, but {len(handles)} handles")
+        return handles[index]
 
     @staticmethod
     def pad_bytes(raw_bytes: bytes) -> bytes:
@@ -113,3 +167,61 @@ class Message(Record):
         if offset < start or offset + length > len(buffer):
             raise MessageDecodingError(f"opaque value out of range: offset {offset}, length {length}")
         return bytes(buffer[offset:offset + length])
+
+
+class ErrorCode(IntEnum):
+    """Error reply codes."""
+
+    # The service has no such method.
+    UNKNOWN_METHOD = 1
+
+    # The request couldn't be decoded.
+    BAD_MESSAGE = 2
+
+    # The service doesn't implement the method.
+    NOT_IMPLEMENTED = 3
+
+    # The service failed while handling the request.
+    INTERNAL_ERROR = 4
+
+
+class ErrorReply(Message):
+    """Reply to a request that failed, in place of its response.
+
+    It has the request's txid and method, and the ERROR flag set.  Its
+    body is a uint32 code (see ErrorCode), and an opaque UTF-8
+    description."""
+
+    FLAGS = ERROR
+    BODY_FORMAT = BYTE_ORDER + "III"
+    BODY_START = HEADER_LENGTH
+    LENGTH = 20
+    DATA_START = 24
+
+    def __init__(self, txid: int = 0, method: int = 0, code: int = 0, description: str = ""):
+        super().__init__(txid)
+        self.METHOD = method
+        self.code = code
+        self.description = description
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        description = self.description.encode("utf-8", errors="replace")
+        buf += struct.pack(self.BODY_FORMAT, self.code, self.DATA_START, len(description))
+        buf += b'\0' * (self.DATA_START - self.LENGTH)
+        buf += self.pad_bytes(description)
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        # Any method: it's the request's.
+        if len(buffer) >= HEADER_LENGTH:
+            self.METHOD = decode_method(buffer)
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        self.code = bits[0]
+        description = self.decode_opaque(buffer, self.DATA_START, bits[1], bits[2])
+        self.description = description.decode("utf-8", errors="replace")
+        return

@@ -35,15 +35,27 @@ followed by its fields,
 .B encode()
 returning the message as
 .BR bytes ,
+with the list of handles to transfer with it,
 and
-.BI decode( buffer )
-filling the object from a buffer holding the whole message.
+.BI decode( buffer ", " handles )
+filling the object from a buffer holding the whole message, and the
+handles transferred with it.
+A
+.B port
+field holds a handle, or
+.B None
+for no port.
 .B decode()
 raises
 .B darq.errors.MessageDecodingError
 if the buffer is too short, the method number doesn't match, the
-reserved flags are set, or an opaque value is out of range or not
-8-byte aligned.
+flags are wrong, an opaque value is out of range or not 8-byte
+aligned, or a port index is past the end of the handles.
+Each request class's
+.B RESPONSE
+is its response class;
+.B None
+for a one-way message.
 .TP
 .I protocol classes
 One class per protocol, whose
@@ -51,6 +63,20 @@ One class per protocol, whose
 and
 .B RESPONSES
 dictionaries map method numbers to message classes.
+It holds two nested classes, built on
+.BR darq.system ,
+each with a method per protocol method, named in snake case
+.RB ( GetAttributes
+becomes
+.BR get_attributes ):
+.B Client
+takes a service's handle, and its methods take the request's fields,
+and return the response;
+.B Handler
+is the base class for a service's handler, for
+.BR darq.serve() ,
+and its methods take the request and the client's handle, and return
+the response.
 .PP
 The module contains no boilerplate: the struct and message classes
 derive from
@@ -113,6 +139,15 @@ defines itself (such as
 or
 .BR Record ,
 which it imports).
+Two methods of a protocol may not have the same name in snake case, nor
+one the
+.B Client
+and
+.B Handler
+base classes use, such as
+.B call
+or
+.BR dispatch .
 .SH BUGS
 Message class names are not qualified by protocol, so two protocols in
 one library can't both have a method with the same name.
