@@ -42,6 +42,11 @@ class DeadPortError(DarqError):
     pass
 
 
+class NoSuchChildError(DarqError):
+    """The process isn't a child of the caller, or the caller has no children."""
+    pass
+
+
 class InvalidNameError(DarqError):
     """The name is empty, too long, or not valid UTF-8."""
     pass

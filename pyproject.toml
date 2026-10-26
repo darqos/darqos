@@ -13,6 +13,13 @@ packages = ["darq", "darq.kernel", "darq.runtime", "darq.services", "darq.type"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+# Fail on leaked sockets (and other resources).  The ResourceWarning is
+# raised in a finaliser, where pytest reports it as unraisable, so that
+# must be an error too.
+filterwarnings = [
+    "error::ResourceWarning",
+    "error::pytest.PytestUnraisableExceptionWarning",
+]
 
 [tool.ruff]
 # Files without a .py extension must be listed explicitly.

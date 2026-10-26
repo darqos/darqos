@@ -19,6 +19,7 @@ __all__ = [
     "DeliverChunk",
     "DeliverMessage",
     "Exited",
+    "ExitReason",
     "IPC_PORT",
     "KillProcessRequest",
     "KillProcessResponse",
@@ -47,6 +48,9 @@ __all__ = [
     "UInt16",
     "UInt32",
     "UInt64",
+    "WaitRequest",
+    "WaitResponse",
+    "WaitResult",
 ]
 
 
@@ -83,6 +87,8 @@ class MessageType(IntEnum):
     LOOKUP_NAME_RQST = 22
     LOOKUP_NAME_RESP = 23
     SEND_MESSAGE_RESP = 24
+    WAIT_RQST = 25
+    WAIT_RESP = 26
 
 
 class SendResult(IntEnum):
@@ -120,6 +126,30 @@ class NameResult(IntEnum):
 
     # No port is registered with the name (non-blocking lookup only).
     NOT_FOUND = 6
+
+
+class WaitResult(IntEnum):
+    """Result codes for waiting for a child process."""
+    OK = 0
+
+    # The process isn't a child of the caller, or it has no children.
+    NO_SUCH_CHILD = 1
+
+    # No matching child has finished (non-blocking wait only).
+    NOT_FINISHED = 2
+
+
+class ExitReason(IntEnum):
+    """How a process finished."""
+
+    # Its application finished, reporting an exit status.
+    EXITED = 0
+
+    # It was killed (by kill_process, or at shutdown).
+    KILLED = 1
+
+    # Its p-call session closed without either.
+    LOST = 2
 
 
 # Longest registered name, in bytes of UTF-8.
@@ -777,6 +807,88 @@ class LookupNameResponse(Message):
         self.request_id = bits[0]
         self.result = bits[1]
         self.port = bits[2]
+        return
+
+
+class WaitRequest(Message):
+    """Request to collect a finished child process."""
+    def __init__(self, request_id: int = 0, dpid: int = 0, blocking: bool = True):
+        """Constructor.
+
+        :param request_id: Request identifier.
+        :param dpid: Child's dpid, or zero for any child.
+        :param blocking: If True, the p-kernel answers once a matching
+                         child has finished; otherwise, at once."""
+        super().__init__(MessageType.WAIT_RQST)
+        self.set_length(self.header_length + 16)
+        self.request_id: int = UInt32(request_id)
+        self.dpid: int = UInt64(dpid)
+        self.blocking: bool = blocking
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LLQ", self.request_id, 1 if self.blocking else 0, self.dpid)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        bits = struct.unpack(">LLQ", buffer[self.header_length:self.length])
+        self.request_id = bits[0]
+        self.blocking = bool(bits[1] & 1)
+        self.dpid = bits[2]
+        return
+
+
+class WaitResponse(Message):
+    """A collected child: a WaitResult code, and how the child finished.
+
+    The status is the application's exit status if the reason is
+    EXITED, and -1 otherwise.  The error is the application's failure
+    description, if any."""
+
+    # Length of fixed fields following the header.
+    BODY_LENGTH = 32
+
+    def __init__(self, request_id: int = 0, result: int = 0, dpid: int = 0,
+                 reason: int = 0, status: int = 0, error: str | None = None):
+        super().__init__(MessageType.WAIT_RESP)
+        self.request_id: int = UInt32(request_id)
+        self.result: int = UInt32(result)
+        self.dpid: int = UInt64(dpid)
+        self.reason: int = UInt32(reason)
+        self.status: int = status
+        self.error = b'' if error is None else error.encode("utf-8")
+        self.set_length(self.header_length + self.BODY_LENGTH + self.padded_length(self.error))
+
+    def get_error(self) -> str | None:
+        return self.error.decode("utf-8") if self.error else None
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LLQLlLxxxx", self.request_id, self.result, self.dpid,
+                           self.reason, self.status, len(self.error))
+        buf += self.pad_bytes(self.error)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        error_start = self.header_length + self.BODY_LENGTH
+        bits = struct.unpack(">LLQLlLxxxx", buffer[self.header_length:error_start])
+        self.request_id = bits[0]
+        self.result = bits[1]
+        self.dpid = bits[2]
+        self.reason = bits[3]
+        self.status = bits[4]
+        error_length = bits[5]
+        if error_start + error_length > self.length:
+            raise MessageDecodingError("error string overruns message")
+        self.error = buffer[error_start:error_start + error_length]
         return
 
 

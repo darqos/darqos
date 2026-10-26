@@ -8,7 +8,8 @@ Requires=multi-user.target
 [Service]
 Type=simple
 ExecStart=/darq/kernel/darqos-pkernel
-Restart=always
+# A clean exit (shutdown) is final: only restart after a failure.
+Restart=on-failure
 RestartSec=1
 
 [Install]

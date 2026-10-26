@@ -101,6 +101,9 @@ class PythonPProcess(darq.SocketListener):
         # by itself.
         self._app_killed: bool = False
 
+        # Exit status requested by darq.exit(), if it was called.
+        self._exit_requested: int | None = None
+
         # Set once the application's exit has been reported, and the
         # p-call session is closing.
         self._exiting: bool = False
@@ -214,16 +217,24 @@ class PythonPProcess(darq.SocketListener):
             return
 
         args = self.callback_args(syscall)
-        loop.post(lambda: callback(*args))
+        try:
+            loop.post(lambda: callback(*args))
+        except RuntimeError:
+            logging.warning("Callback dropped: its event loop is closed")
         return
 
     def post_to_app(self, function):
         """Call function on the application's event loop.
 
-        :returns: False if the application has no event loop."""
+        :returns: False if the application has no event loop, or it's
+                  closed."""
         if self.loop is None:
             return False
-        self.loop.post(function)
+        try:
+            self.loop.post(function)
+        except RuntimeError:
+            logging.warning("Event dropped: the application's event loop is closed")
+            return False
         return True
 
     def run_app(self):
@@ -254,7 +265,10 @@ class PythonPProcess(darq.SocketListener):
             if self._app_killed:
                 logging.debug("Application killed.")
                 return
-            status, error = self.status_from_result(e.code, "sys.exit() with")
+            if self._exit_requested is not None:
+                status, error = self._exit_requested, None
+            else:
+                status, error = self.status_from_result(e.code, "sys.exit() with")
         except BaseException:
             status, error = 1, traceback.format_exc()
 
@@ -273,6 +287,44 @@ class PythonPProcess(darq.SocketListener):
 
         main = importlib.import_module("main")
         return main.darq_main
+
+    def exit(self, status: int):
+        """End the application, with an exit status: see darq.exit().
+
+        Called on any of the application's threads.  On the main thread,
+        it raises SystemExit; on another, it raises SystemExit in the main
+        thread (waking any p-call it's blocked in), and in this one."""
+        if not isinstance(status, int) or not -2 ** 31 <= status < 2 ** 31:
+            raise ValueError(f"exit status must be a 32 bit signed integer: {status!r}")
+
+        with self._app_lock:
+            self._exit_requested = int(status)
+            if self._app_state == AppState.RUNNING and threading.get_ident() != self._app_ident:
+                assert self._app_ident is not None  # set while running
+                ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(self._app_ident),
+                                                           ctypes.py_object(SystemExit))
+                self.io_loop.post(self.wake_app)
+        raise SystemExit(status)
+
+    def wake_app(self):
+        """Wake any p-call the application is blocked in.
+
+        Called on the I/O thread, so the blocked call can see an exception
+        raised in its thread (by kill_app or exit)."""
+        while True:
+            try:
+                self._requests.get_nowait().notify()
+            except queue.Empty:
+                break
+
+        for syscall in self._pending.values():
+            syscall.notify()
+        self._pending.clear()
+
+        # And any receive_message() it's blocked in.
+        for port_state in list(self.ports.values()):
+            port_state.wake()
+        return
 
     def app_finished(self):
         """Record that the application code is no longer running.
@@ -364,7 +416,7 @@ class PythonPProcess(darq.SocketListener):
         assert sock is not None, "already disconnected"
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.io_loop.add_socket(sock, self)
-        sock.connect(('localhost', self._pkernel_port))
+        sock.connect(('127.0.0.1', self._pkernel_port))
         return
 
     def on_readable(self, sock: socket.socket):
@@ -473,6 +525,11 @@ class PythonPProcess(darq.SocketListener):
 
         elif message_type == darq.MessageType.SEND_MESSAGE_RESP:
             message = darq.SendMessageResponse()
+            message.decode(message_buf)
+            self.complete_syscall(message)
+
+        elif message_type == darq.MessageType.WAIT_RESP:
+            message = darq.WaitResponse()
             message.decode(message_buf)
             self.complete_syscall(message)
 
@@ -639,20 +696,7 @@ class PythonPProcess(darq.SocketListener):
 
         # Wake any p-calls the application is blocked on, so it sees the
         # exception.
-        while True:
-            try:
-                self._requests.get_nowait().notify()
-            except queue.Empty:
-                break
-
-        for syscall in self._pending.values():
-            syscall.notify()
-        self._pending.clear()
-
-        # And any receive_message() it's blocked in.
-        for port_state in list(self.ports.values()):
-            port_state.wake()
-
+        self.wake_app()
         return self._app_finished.wait(timeout)
 
     def _end_app(self):
@@ -709,6 +753,7 @@ class PythonPProcess(darq.SocketListener):
                 raise
 
         self._io_thread.join()
+        self.io_loop.close()
         return
 
 
@@ -756,6 +801,10 @@ if __name__ == "__main__":
     # this thread.  The I/O thread disconnects from the p-kernel.
     pproc.run()
 
-    # Exit.
+    # Exit, even if the application left threads running: the p-kernel
+    # already considers this process finished.
     logging.info("Exiting.")
-    sys.exit(pproc.exit_status)
+    logging.shutdown()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(pproc.exit_status)

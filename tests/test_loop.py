@@ -27,7 +27,9 @@ class Recorder(TimerListener):
 
 @pytest.fixture
 def loop():
-    return SelectEventLoop()
+    loop = SelectEventLoop()
+    yield loop
+    loop.close()
 
 
 def run_for(loop, seconds: float):
@@ -318,7 +320,9 @@ def qt_loop():
     # deliver events once it's gone.
     app = QCoreApplication.instance() or QCoreApplication([])
     assert app is not None
-    yield QtEventLoop()
+    loop = QtEventLoop()
+    yield loop
+    loop.close()
     del app
 
 
@@ -400,3 +404,45 @@ def test_qt_deferred_runs_once(qt_loop):
 
     assert calls == [threading.current_thread()]
     assert len(qt_loop.timers) == 1
+
+
+################################################################
+# Closing
+################################################################
+
+def test_close_releases_wakeup_sockets(loop):
+    reader, writer = loop.posted.reader, loop.posted.writer
+    loop.close()
+    assert reader.fileno() == -1 and writer.fileno() == -1
+    assert reader not in loop.sockets
+
+
+def test_close_is_idempotent(loop):
+    loop.close()
+    loop.close()
+
+
+def test_post_to_closed_loop_raises(loop):
+    loop.close()
+    with pytest.raises(RuntimeError):
+        loop.post(lambda: None)
+
+
+def test_close_leaves_registered_sockets_open(loop, sockets):
+    a, _ = sockets
+    loop.add_socket(a, SocketRecorder())
+    loop.close()
+    assert a.fileno() != -1
+
+
+def test_qt_close(qt_loop):
+    timer_id = qt_loop.add_timer(1.0, Recorder())
+    reader = qt_loop.posted.reader
+    qt_loop.close()
+
+    assert reader.fileno() == -1
+    assert qt_loop.timers == {}
+    assert not qt_loop.cancel_timer(timer_id)
+    with pytest.raises(RuntimeError):
+        qt_loop.post(lambda: None)
+    qt_loop.close()

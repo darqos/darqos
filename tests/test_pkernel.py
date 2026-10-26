@@ -325,8 +325,8 @@ def live_pkernel(pkernel, monkeypatch):
 
     yield pkernel
 
-    for process in pkernel._process_table.values():
-        child = process.get_child()
+    children = [p.get_child() for p in pkernel._process_table.values()] + pkernel._unreaped
+    for child in children:
         if child is not None and child.poll() is None:
             child.kill()
             child.wait()
@@ -363,38 +363,35 @@ def test_kill_spawned_process(live_pkernel, tmp_path):
                 time.sleep(0.01)
         """)
 
-    # The parent spawns the child, kills it, and reports the results.
+    # The parent spawns the child, kills it, collects it, and reports the
+    # results.
     parent_path = write_app(tmp_path / "parent", f"""
         import json
+        import os
         import darq
 
         def darq_main():
             dpid = darq.spawn_process({child_path!r})
             darq.kill_process(dpid)
+            child = darq.wait(dpid)
             with open({str(results)!r} + ".tmp", "w") as f:
-                json.dump({{"dpid": dpid}}, f)
-            import os
+                json.dump({{"dpid": dpid, "child": list(child)}}, f)
             os.rename({str(results)!r} + ".tmp", {str(results)!r})
         """)
 
     parent_dpid = kernel.do_spawn_process(None, parent_path)
     run_kernel_until(kernel, results.exists, "the parent to kill its child")
 
-    child_dpid = json.loads(results.read_text())["dpid"]
+    report = json.loads(results.read_text())
+    child_dpid = report["dpid"]
     assert child_dpid != parent_dpid
-    child = kernel._process_table[child_dpid]
+    assert report["child"] == [child_dpid, darq.ExitReason.KILLED, -1, None]
 
-    # The kernel has cleaned up its state for the child.
-    assert child.get_parent_dpid() == parent_dpid
-    assert child.get_status() == module.KernelProcessStatus.ZOMBIE
-    assert child.get_socket() is None
-    assert child not in kernel._processes.values()
-    assert child.take_kill_requests() == []
-
-    # The kernel has reaped the child's host process, which exited cleanly.
-    run_kernel_until(kernel, lambda: child.get_child().returncode is not None,
-                     "the kernel to reap the child")
-    assert child.get_child().returncode == 0
+    # Collecting the child removed it from the process table, and the
+    # kernel reaps its host process.
+    assert child_dpid not in kernel._process_table
+    assert not any(p.get_dpid() == child_dpid for p in kernel._processes.values())
+    run_kernel_until(kernel, lambda: kernel._unreaped == [], "the kernel to reap the child")
 
     # The parent is unaffected: it finishes normally, and reports success.
     parent = kernel._process_table[parent_dpid]
@@ -418,7 +415,9 @@ def test_spawn_process_exits_before_running(live_pkernel, executable):
     child = kernel._process_table[2]
     run_kernel_until(kernel, lambda: child.get_child().returncode is not None,
                      "the kernel to reap the child")
-    assert child.get_status() == module.KernelProcessStatus.ZOMBIE
+
+    # Its spawn failed, so it isn't a child to wait for.
+    assert 2 not in kernel._process_table
 
     response = darq.SpawnProcessResponse(0, 0, 0, None)
     response.decode(receive(parent_peer))
@@ -1200,35 +1199,507 @@ def test_two_processes_ping_pong(live_pkernel, tmp_path):
                 if (source, payload) != (service, b"pong " + n):
                     return f"received {(source, payload)!r}"
             darq.send_message(port, service, b"done")
-            return 0
+            return 3
         """)
     service_path = write_app(tmp_path / "service", f"""
         import darq
         def darq_main():
             port = darq.open_port()
             darq.register_name("darq.test.ping", port)
-            darq.spawn_process({client_path!r})
+            client = darq.spawn_process({client_path!r})
             while True:
                 source, payload = darq.receive_message(port)
                 if payload == b"done":
-                    return 0
+                    break
                 if not payload.startswith(b"ping "):
                     return f"received {{payload!r}}"
                 darq.send_message(port, source, b"pong " + payload[5:])
+
+            # The client exits with status 3, and its parent collects it.
+            finished = darq.wait(client)
+            if finished != (client, darq.ExitReason.EXITED, 3, None):
+                return f"collected {{finished!r}}"
+            return 0
         """)
 
     dpid = kernel.do_spawn_process(None, service_path)
     service = kernel._process_table[dpid]
-    zombie = module.KernelProcessStatus.ZOMBIE
-    run_kernel_until(kernel, lambda: len(kernel._process_table) == 2 and
-                     all(p.get_status() == zombie for p in kernel._process_table.values()),
-                     "both processes to exit")
+    run_kernel_until(kernel, lambda: service.get_status() == module.KernelProcessStatus.ZOMBIE,
+                     "the service to exit")
 
-    [client] = [p for p in kernel._process_table.values() if p is not service]
-    assert client.get_parent_dpid() == service.get_dpid()
-    assert (client.get_exit_status(), client.get_exit_error()) == (0, None)
+    # The client was collected by the service; the service, spawned by
+    # the kernel, remains for the kernel.
+    assert list(kernel._process_table) == [dpid]
     assert (service.get_exit_status(), service.get_exit_error()) == (0, None)
     assert kernel._names == {}
+
+
+################################################################
+# Waiting for children
+################################################################
+
+def add_child(kernel, parent, dpid: int):
+    """Add a running process, spawned by parent.  Returns (process, peer)."""
+    process, peer = add_running_process(kernel, dpid)
+    process.set_parent_dpid(parent.get_dpid())
+    return process, peer
+
+
+def finish(kernel, process, how: str = "exited", status: int = 0, error: str | None = None):
+    """Have a process finish: it exited (with a status), was killed, or was lost."""
+    if how == "exited":
+        send_to_kernel(kernel, process, darq.Exited(status, error))
+    elif how == "killed":
+        process.add_kill_request(None, 0)
+    kernel.handle_disconnect(process)
+
+
+def wait_responses(peer) -> list[darq.WaitResponse]:
+    responses = []
+    for message_type, buf in received_messages(peer):
+        assert message_type == darq.MessageType.WAIT_RESP
+        response = darq.WaitResponse()
+        response.decode(buf)
+        responses.append(response)
+    return responses
+
+
+def wait(kernel, process, peer, dpid: int = 0, blocking: bool = False,
+         request_id: int = 1) -> darq.WaitResponse | None:
+    """Send a wait for a process: its response, or None if unanswered."""
+    send_to_kernel(kernel, process, darq.WaitRequest(request_id, dpid, blocking))
+    responses = wait_responses(peer)
+    if not responses:
+        return None
+    [response] = responses
+    assert response.request_id == request_id
+    return response
+
+
+def waited(kernel, process, peer, dpid: int = 0, request_id: int = 1) -> darq.WaitResponse:
+    """Send a non-blocking wait for a process, returning its response."""
+    response = wait(kernel, process, peer, dpid, request_id=request_id)
+    assert response is not None
+    return response
+
+
+def collected(response) -> tuple:
+    return (response.result, response.dpid, response.reason, response.status, response.get_error())
+
+
+def test_zombie_kept_until_collected(pkernel):
+    parent, parent_peer = add_running_process(pkernel, 1)
+    child, _ = add_child(pkernel, parent, 2)
+    finish(pkernel, child, "exited", 3, "failed")
+
+    assert pkernel._process_table[2] is child
+    assert child.get_status() == pkernel.module.KernelProcessStatus.ZOMBIE
+
+    response = wait(pkernel, parent, parent_peer, 2)
+    assert collected(response) == (darq.WaitResult.OK, 2, darq.ExitReason.EXITED, 3, "failed")
+    assert 2 not in pkernel._process_table
+
+
+@pytest.mark.parametrize("how, reason", [
+    ("killed", darq.ExitReason.KILLED),
+    ("lost", darq.ExitReason.LOST),
+])
+def test_wait_reports_how_child_finished(pkernel, how, reason):
+    parent, parent_peer = add_running_process(pkernel, 1)
+    child, _ = add_child(pkernel, parent, 2)
+    finish(pkernel, child, how)
+
+    assert collected(wait(pkernel, parent, parent_peer)) == (darq.WaitResult.OK, 2, reason, -1, None)
+
+
+def test_wait_for_any_child_collects_earliest(pkernel):
+    parent, parent_peer = add_running_process(pkernel, 1)
+    later, _ = add_child(pkernel, parent, 3)
+    earlier, _ = add_child(pkernel, parent, 2)
+    finish(pkernel, later)
+    finish(pkernel, earlier)
+
+    assert waited(pkernel, parent, parent_peer).dpid == 2
+    assert waited(pkernel, parent, parent_peer, request_id=2).dpid == 3
+
+
+def test_non_blocking_wait_not_finished(pkernel):
+    parent, parent_peer = add_running_process(pkernel, 1)
+    add_child(pkernel, parent, 2)
+
+    assert waited(pkernel, parent, parent_peer).result == darq.WaitResult.NOT_FINISHED
+    assert 2 in pkernel._process_table
+
+
+def test_wait_without_children(pkernel):
+    parent, parent_peer = add_running_process(pkernel, 1)
+    other, _ = add_running_process(pkernel, 2)
+    grandchild_parent, _ = add_child(pkernel, parent, 3)
+    add_child(pkernel, grandchild_parent, 4)
+
+    for dpid in (2, 4, 99):
+        assert waited(pkernel, other, process_peer(pkernel, other), dpid).result == darq.WaitResult.NO_SUCH_CHILD
+        assert waited(pkernel, parent, parent_peer, dpid).result == darq.WaitResult.NO_SUCH_CHILD
+    assert waited(pkernel, other, process_peer(pkernel, other)).result == darq.WaitResult.NO_SUCH_CHILD
+
+
+def test_blocking_wait_answered_when_child_finishes(pkernel):
+    parent, parent_peer = add_running_process(pkernel, 1)
+    first, _ = add_child(pkernel, parent, 2)
+    second, _ = add_child(pkernel, parent, 3)
+
+    # One wait for the second child, one for any.
+    assert wait(pkernel, parent, parent_peer, 3, blocking=True, request_id=5) is None
+    assert wait(pkernel, parent, parent_peer, 0, blocking=True, request_id=6) is None
+
+    finish(pkernel, first)
+    [response] = wait_responses(parent_peer)
+    assert (response.request_id, response.dpid) == (6, 2)
+
+    finish(pkernel, second)
+    [response] = wait_responses(parent_peer)
+    assert (response.request_id, response.dpid) == (5, 3)
+    assert pkernel._wait_requests == {}
+
+
+def test_waits_abandoned_on_disconnect(pkernel):
+    parent, parent_peer = add_running_process(pkernel, 1)
+    add_child(pkernel, parent, 2)
+    wait(pkernel, parent, parent_peer, blocking=True)
+
+    pkernel.handle_disconnect(parent)
+    assert pkernel._wait_requests == {}
+
+
+def test_orphans_removed(pkernel):
+    parent, _ = add_running_process(pkernel, 1)
+    finished, _ = add_child(pkernel, parent, 2)
+    running, _ = add_child(pkernel, parent, 3)
+    finish(pkernel, finished)
+
+    # The parent finishes: its finished child can never be collected.
+    finish(pkernel, parent)
+    assert 2 not in pkernel._process_table
+
+    # Its running child keeps its parent's dpid (it doesn't become the
+    # kernel's), and is removed when it finishes.
+    assert running.get_parent_dpid() == 1
+    finish(pkernel, running)
+    assert 3 not in pkernel._process_table
+
+
+def test_kernel_spawned_processes_kept(pkernel):
+    process, _ = add_running_process(pkernel, 1)
+    finish(pkernel, process)
+    assert pkernel._process_table[1] is process
+
+
+################################################################
+# Shutdown and reboot
+################################################################
+
+def test_shutdown_kills_processes(pkernel):
+    a, a_peer = add_running_process(pkernel, 1)
+    b, b_peer = add_running_process(pkernel, 2)
+
+    send_to_kernel(pkernel, a, darq.Shutdown())
+    for process, peer in ((a, a_peer), (b, b_peer)):
+        [(message_type, buf)] = received_messages(peer)
+        assert message_type == darq.MessageType.KILL_PROCESS_RQST
+        request = darq.KillProcessRequest()
+        request.decode(buf)
+        assert request.dpid == process.get_dpid()
+
+    # Shutdown completes once they've all gone.
+    pkernel.handle_disconnect(a)
+    assert not pkernel._stopped
+    pkernel.handle_disconnect(b)
+    assert pkernel._stopped
+    assert not pkernel.reboot_requested()
+    assert b.get_exit_reason() == darq.ExitReason.KILLED
+
+
+def test_shutdown_without_processes(pkernel):
+    pkernel.begin_shutdown(reboot=False)
+    assert pkernel._stopped
+
+
+def test_reboot_requested(pkernel):
+    process, _ = add_running_process(pkernel, 1)
+    send_to_kernel(pkernel, process, darq.Reboot())
+    pkernel.handle_disconnect(process)
+    assert pkernel._stopped
+    assert pkernel.reboot_requested()
+
+
+def test_restart_replaces_process(pkernel, monkeypatch):
+    calls = []
+    monkeypatch.setattr(pkernel.module.os, "execv", lambda path, argv: calls.append((path, argv)))
+    monkeypatch.setattr(pkernel.module.logging, "shutdown", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["pkernel"])
+
+    pkernel.restart()
+    assert calls == [(sys.executable, [sys.executable, str(PKERNEL_PATH.resolve())])]
+
+
+def test_shutdown_forces_stuck_processes(pkernel):
+    process, _ = add_running_process(pkernel, 1)
+    stuck = subprocess.Popen(["sleep", "60"])
+    process.set_child(stuck)
+
+    pkernel.begin_shutdown(reboot=False)
+    assert not pkernel._stopped
+
+    # After the timeout, its host process is killed, ending its session.
+    pkernel.force_shutdown()
+    assert stuck.wait(E2E_TIMEOUT) != 0
+    pkernel.handle_disconnect(process)
+    assert pkernel._stopped
+
+
+def test_shutdown_ends_sessions_without_host_process(pkernel):
+    add_running_process(pkernel, 1)
+    pkernel.begin_shutdown(reboot=False)
+    pkernel.force_shutdown()
+    assert pkernel._stopped
+
+
+def test_no_spawning_during_shutdown(pkernel, executable):
+    process, peer = add_running_process(pkernel, 1)
+    pkernel.begin_shutdown(reboot=False)
+    receive(peer)
+
+    send_to_kernel(pkernel, process, darq.SpawnProcessRequest(5, executable))
+    response = darq.SpawnProcessResponse(0, 0, 0, None)
+    response.decode(receive(peer))
+    assert response.result != 0
+    assert response.get_error() == "shutting down"
+
+
+def test_interrupt_shuts_down(pkernel):
+    def interrupt():
+        raise KeyboardInterrupt
+
+    pkernel._loop.add_deferred(interrupt)
+    pkernel.run()
+    assert pkernel._stopped
+
+
+def test_live_shutdown(live_pkernel, tmp_path):
+    kernel = live_pkernel
+    module = kernel.module
+    path = write_app(tmp_path / "app", """
+        import time
+        def darq_main():
+            while True:
+                time.sleep(0.01)
+        """)
+    dpid = kernel.do_spawn_process(None, path)
+    process = kernel._process_table[dpid]
+    run_kernel_until(kernel, lambda: process.get_status() == module.KernelProcessStatus.RUNNING,
+                     "the process to run")
+
+    kernel.begin_shutdown(reboot=False)
+    run_kernel_until(kernel, lambda: kernel._stopped, "shutdown to complete")
+    assert process.get_exit_reason() == darq.ExitReason.KILLED
+    run_kernel_until(kernel, lambda: process.get_child().returncode is not None,
+                     "the kernel to reap the process")
+
+
+################################################################
+# Timeouts
+################################################################
+
+@pytest.fixture
+def silent_loader(pkernel, tmp_path, monkeypatch):
+    """Make spawned processes run a loader that never connects."""
+    loader = tmp_path / "silent-loader"
+    loader.write_text("#!/bin/sh\nexec sleep 60\n")
+    loader.chmod(0o755)
+    monkeypatch.setattr(pkernel.module, "PYTHON_IMAGE_LOADER", str(loader))
+
+
+def run_until_received(kernel, peer, count: int) -> list[tuple[int, bytes]]:
+    """Run the kernel's loop until a process has been sent this many messages."""
+    messages = []
+    run_kernel_until(kernel, lambda: len(messages.__iadd__(received_messages(peer))) >= count,
+                     f"{count} messages")
+    return messages
+
+
+def test_spawn_timeout(live_pkernel, silent_loader, executable, caplog, monkeypatch):
+    kernel = live_pkernel
+    monkeypatch.setattr(kernel.module, "SPAWN_TIMEOUT", 0.2)
+    parent, parent_peer = add_running_process(kernel, 1)
+    kernel._next_dpid = 2
+
+    send_to_kernel(kernel, parent, darq.SpawnProcessRequest(5, executable))
+    [(message_type, buf)] = run_until_received(kernel, parent_peer, 1)
+
+    # The spawn fails, as if the process had exited before running.
+    assert message_type == darq.MessageType.SPAWN_PROCESS_RESP
+    response = darq.SpawnProcessResponse(0, 0, 0, None)
+    response.decode(buf)
+    assert (response.request_id, response.result) == (5, 1)
+    assert "before running" in response.get_error()
+    assert "didn't send RUN_REQUEST" in caplog.text
+    assert 2 not in kernel._process_table
+
+
+def test_kill_before_running(live_pkernel, silent_loader, executable):
+    kernel = live_pkernel
+    parent, parent_peer = add_running_process(kernel, 1)
+    kernel._next_dpid = 2
+    send_to_kernel(kernel, parent, darq.SpawnProcessRequest(5, executable))
+    assert kernel._process_table[2].get_status() == kernel.module.KernelProcessStatus.SPAWNED
+
+    # Killing it kills its host process: the kill succeeds, and the spawn fails.
+    send_to_kernel(kernel, parent, darq.KillProcessRequest(6, 2))
+    messages = run_until_received(kernel, parent_peer, 2)
+    assert sorted(message_type for message_type, _ in messages) == \
+        [darq.MessageType.SPAWN_PROCESS_RESP, darq.MessageType.KILL_PROCESS_RESP]
+    for message_type, buf in messages:
+        if message_type == darq.MessageType.KILL_PROCESS_RESP:
+            response = darq.KillProcessResponse()
+            response.decode(buf)
+            assert (response.request_id, response.result) == (6, 0)
+    assert 2 not in kernel._process_table
+
+
+def test_kill_timeout(live_pkernel, tmp_path, caplog, monkeypatch):
+    # The application is stuck in native code, so pyloader can't stop it
+    # (it would give up after a second); the kernel kills its host first.
+    kernel = live_pkernel
+    module = kernel.module
+    monkeypatch.setattr(module, "KILL_TIMEOUT", 0.2)
+    started = tmp_path / "started"
+    path = write_app(tmp_path / "app", f"""
+        import time
+        def darq_main():
+            open({str(started)!r}, "w").close()
+            time.sleep(60)
+        """)
+    requester, requester_peer = add_running_process(kernel, 1)
+    kernel._next_dpid = 2
+    dpid = kernel.do_spawn_process(None, path)
+    target = kernel._process_table[dpid]
+    run_kernel_until(kernel, started.exists, "the application to start")
+
+    start = time.monotonic()
+    send_to_kernel(kernel, requester, darq.KillProcessRequest(6, dpid))
+    [(message_type, buf)] = run_until_received(kernel, requester_peer, 1)
+    assert time.monotonic() - start < 1.0
+
+    response = darq.KillProcessResponse()
+    response.decode(buf)
+    assert (message_type, response.request_id, response.result) == \
+        (darq.MessageType.KILL_PROCESS_RESP, 6, 0)
+    assert target.get_exit_reason() == darq.ExitReason.KILLED
+    assert "didn't exit within" in caplog.text
+
+
+def test_slow_lookup_warning(pkernel, caplog):
+    process, peer = add_running_process(pkernel, 1)
+    start = time.monotonic()
+    lookup_name(pkernel, process, peer, "test.later", blocking=True)
+
+    pkernel.warn_slow_lookups(start + 1)
+    assert "still waiting" not in caplog.text
+
+    pkernel.warn_slow_lookups(start + pkernel.module.LOOKUP_WARNING_INTERVAL + 1)
+    assert "lookup_name('test.later') still waiting" in caplog.text
+
+    # It's still waiting: a slow lookup isn't failed.
+    assert pkernel._name_waiters["test.later"][0][0] is process
+
+
+@pytest.mark.parametrize("message", [darq.Shutdown(), darq.Reboot()])
+def test_user_process_cannot_shut_down(pkernel, message, caplog):
+    process, _ = user_process(pkernel, 2)
+    send_to_kernel(pkernel, process, message)
+
+    assert not pkernel._stopping
+    assert "refused: not a system process" in caplog.text
+
+
+################################################################
+# Sockets
+################################################################
+
+def test_listens_on_loopback(pkernel):
+    assert pkernel.socket.getsockname()[0] == "127.0.0.1"
+
+
+def test_sockets_not_inherited(pkernel):
+    process, _ = add_running_process(pkernel, 1)
+    for sock in (pkernel.socket, pkernel._sigchld_reader, pkernel._sigchld_writer, process.get_socket()):
+        assert not sock.get_inheritable()
+
+
+def test_spawned_process_inherits_no_kernel_sockets(live_pkernel, tmp_path):
+    # A spawned process' open sockets don't include any of the kernel's.
+    kernel = live_pkernel
+    module = kernel.module
+    other, _ = add_running_process(kernel, 99)
+    report = tmp_path / "sockets.json"
+    path = write_app(tmp_path / "app", f"""
+        import json
+        import os
+        def darq_main():
+            inodes = []
+            for fd in os.listdir("/proc/self/fd"):
+                try:
+                    target = os.readlink(f"/proc/self/fd/{{fd}}")
+                except OSError:
+                    continue
+                if target.startswith("socket:["):
+                    inodes.append(int(target[8:-1]))
+            with open({str(report)!r}, "w") as f:
+                json.dump(inodes, f)
+        """)
+    kernel._next_dpid = 2
+    dpid = kernel.do_spawn_process(None, path)
+    process = kernel._process_table[dpid]
+    run_kernel_until(kernel, lambda: process.get_status() == module.KernelProcessStatus.ZOMBIE,
+                     "the process to exit")
+
+    inodes = set(json.loads(report.read_text()))
+    kernel_sockets = (kernel.socket, kernel._sigchld_reader, kernel._sigchld_writer, other.get_socket())
+    assert inodes.isdisjoint(os.fstat(sock.fileno()).st_ino for sock in kernel_sockets)
+
+
+################################################################
+# Exit
+################################################################
+
+def test_spawned_process_exit_call(live_pkernel, tmp_path):
+    # darq.exit() from another thread of the application, while the main
+    # thread is blocked: the status reaches the parent, and the host
+    # process exits with it.
+    kernel = live_pkernel
+    module = kernel.module
+    path = write_app(tmp_path / "app", """
+        import threading
+        import darq
+        def darq_main():
+            port = darq.open_port()
+            threading.Timer(0.1, darq.exit, args=(7,)).start()
+            try:
+                darq.receive_message(port)
+            finally:
+                # Cleanup runs on exit.
+                darq.close_port(port)
+            return "not reached"
+        """)
+    dpid = kernel.do_spawn_process(None, path)
+    process = kernel._process_table[dpid]
+    run_kernel_until(kernel, lambda: process.get_status() == module.KernelProcessStatus.ZOMBIE,
+                     "the process to exit")
+    assert (process.get_exit_reason(), process.get_exit_status(), process.get_exit_error()) == \
+        (darq.ExitReason.EXITED, 7, None)
+    run_kernel_until(kernel, lambda: process.get_child().returncode is not None,
+                     "the kernel to reap the process")
+    assert process.get_child().returncode == 7
 
 
 ################################################################

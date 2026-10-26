@@ -57,6 +57,9 @@ class FakePKernel:
         self.send_result = darq.SendResult.OK
         self.send_delay = 0.0
 
+        # Response to a WaitRequest: (result, dpid, reason, status, error).
+        self.wait_response = (darq.WaitResult.NO_SUCH_CHILD, 0, 0, 0, None)
+
         # Registered names, and the result to give a registration.
         self.names: dict[str, int] = {}
         self.register_result = darq.NameResult.OK
@@ -140,6 +143,9 @@ class FakePKernel:
                 self.names[message.get_name()] = message.port
             self.send(darq.RegisterNameResponse(message.request_id, self.register_result))
 
+        elif message_type == darq.MessageType.WAIT_RQST:
+            self.send(darq.WaitResponse(message.request_id, *self.wait_response))
+
         elif message_type == darq.MessageType.LOOKUP_NAME_RQST:
             if message.get_name() in self.names:
                 self.send(darq.LookupNameResponse(message.request_id, darq.NameResult.OK, self.next_handle))
@@ -165,6 +171,8 @@ class FakePKernel:
             message = darq.RegisterNameRequest()
         elif message_type == darq.MessageType.LOOKUP_NAME_RQST:
             message = darq.LookupNameRequest()
+        elif message_type == darq.MessageType.WAIT_RQST:
+            message = darq.WaitRequest()
         elif message_type == darq.MessageType.EXITED:
             message = darq.Exited()
         else:
@@ -198,6 +206,7 @@ def pproc(monkeypatch):
     process.kernel = kernel
 
     yield process
+    process.io_loop.close()
 
     # Stop the fake p-kernel before closing its socket (unless pyloader
     # has already closed it).
@@ -377,6 +386,7 @@ def test_callback_runs_on_app_loop(pproc, pcall, args):
 
         pcall(loop, callback)
         loop.run()
+        loop.close()
         return calls
 
     assert run_app(pproc, app) == [(*args, True)]
@@ -406,6 +416,7 @@ def test_delivered_message_runs_on_app_loop(pproc):
         port = darq.open_port()
         darq.send_message(port, port, b"hello")
         loop.run()
+        loop.close()
         return delivered
 
     assert run_app(pproc, app) == [(16385, 16385, b"hello", True)]
@@ -612,9 +623,98 @@ def test_name_callbacks_run_on_app_loop(pproc):
 
         darq.register_name_cb("test.service", darq.open_port(), loop, registered)
         loop.run()
+        loop.close()
         return calls
 
     assert run_app(pproc, app) == [("registered", 16385, 0), ("looked up", 16386, 0, True)]
+
+
+################################################################
+# Exit and wait
+################################################################
+
+def test_exit_on_main_thread(pproc, install_app, tmp_path):
+    cleaned = tmp_path / "cleaned"
+    install_app(f"""
+        import darq
+        def darq_main():
+            try:
+                darq.exit(5)
+            finally:
+                open({str(cleaned)!r}, "w").close()
+            return "not reached"
+        """)
+    run_process(pproc)
+
+    [exited] = exited_messages(pproc)
+    assert (exited.status, exited.get_error()) == (5, None)
+    assert pproc.exit_status == 5
+    assert cleaned.exists()
+
+
+# darq.exit() ends the thread calling it with SystemExit, which threading
+# ignores, but pytest reports.
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+@pytest.mark.parametrize("blocked_in", ["sleep", "receive"])
+def test_exit_from_another_thread(pproc, install_app, blocked_in):
+    block = "time.sleep(0.01)" if blocked_in == "sleep" else "darq.receive_message(port)"
+    install_app(f"""
+        import threading
+        import time
+        import darq
+        def darq_main():
+            port = darq.open_port()
+            threading.Timer(0.05, darq.exit, args=(300,)).start()
+            while True:
+                {block}
+        """)
+    run_process(pproc)
+
+    # Let the exiting thread finish within this test, so its SystemExit is
+    # reported (and ignored) here.
+    for thread in threading.enumerate():
+        if isinstance(thread, threading.Timer):
+            thread.join(TIMEOUT)
+
+    [exited] = exited_messages(pproc)
+    assert exited.status == 300
+
+    # The host exit status is limited to 0 to 255.
+    assert pproc.exit_status == 1
+
+
+@pytest.mark.parametrize("status", [2 ** 31, -2 ** 31 - 1, "1", 1.0])
+def test_exit_status_checked(pproc, status):
+    def app():
+        with pytest.raises(ValueError):
+            darq.exit(status)
+        return True
+
+    assert run_app(pproc, app)
+
+
+def test_wait_collects_child(pproc):
+    pproc.kernel.wait_response = (darq.WaitResult.OK, 7, darq.ExitReason.EXITED, 3, "failed")
+    result = run_app(pproc, lambda: darq.wait(7, blocking=False))
+    assert result == darq.ChildStatus(7, darq.ExitReason.EXITED, 3, "failed")
+    assert isinstance(result.reason, darq.ExitReason)
+
+    [request] = [m for m in pproc.kernel.received if isinstance(m, darq.WaitRequest)]
+    assert (request.dpid, request.blocking) == (7, False)
+
+
+def test_wait_not_finished(pproc):
+    pproc.kernel.wait_response = (darq.WaitResult.NOT_FINISHED, 0, 0, 0, None)
+    assert run_app(pproc, lambda: darq.wait(blocking=False)) is None
+
+
+def test_wait_no_such_child(pproc):
+    def app():
+        with pytest.raises(darq.NoSuchChildError):
+            darq.wait()
+        return True
+
+    assert run_app(pproc, app)
 
 
 ################################################################

@@ -77,16 +77,25 @@ or 0, or calling
 with no code, is status 0;
 .IP \(bu
 returning an integer, or calling
-.BI sys.exit( n )\fR,
+.BI sys.exit( n )
+or
+.BI darq.exit( n )\fR,
 is that status;
 .IP \(bu
 anything else, including an uncaught exception, is status 1, with a
 description of the failure (the traceback, for an exception).
 .PP
+.B darq.exit()
+can be called from any of the application's threads: it ends the main
+thread by raising
+.B SystemExit
+in it, so its cleanup code runs.
+.PP
 Any p-calls the application made before it finished are sent first.
 .B pyloader
 then closes its side of the connection, waits for the p-kernel to
-close its side, and exits.
+close its side, and exits, even if the application left other threads
+running.
 .PP
 A killed application is stopped by raising
 .B SystemExit

@@ -44,6 +44,7 @@ import uuid
 from .application import EventListener, SystemCallMode, SystemCallState
 from .common import (
     ClosePortRequest,
+    ExitReason,
     KillProcessRequest,
     LookupNameRequest,
     LookupNameResponse,
@@ -60,12 +61,16 @@ from .common import (
     SpawnProcessRequest,
     SpawnProcessResponse,
     UInt64,
+    WaitRequest,
+    WaitResponse,
+    WaitResult,
 )
 from .errors import (
     DarqError,
     DeadPortError,
     InvalidNameError,
     NameTakenError,
+    NoSuchChildError,
     NonExistentPortError,
     PortAlreadyNamedError,
     PortRightError,
@@ -92,6 +97,9 @@ __all__ = [
     "spawn_process_cb",
     "kill_process",
     "kill_process_cb",
+    "exit",
+    "wait",
+    "ChildStatus",
     "register_name",
     "register_name_cb",
     "lookup_name",
@@ -121,6 +129,8 @@ class ProcessState(typing.Protocol):
     def queue_new_syscall(self, syscall_state: SystemCallState) -> None: ...
 
     def receive_message(self, port: int, blocking: bool) -> tuple[int, bytes] | None: ...
+
+    def exit(self, status: int) -> typing.NoReturn: ...
 
     def getpid(self) -> int: ...
 
@@ -425,6 +435,68 @@ def kill_process_cb(dpid: int, loop: EventLoopInterface, cb: typing.Callable[[in
     return
 
 
+def exit(status: int = 0) -> typing.NoReturn:
+    """End the application, with an exit status.
+
+    The application's main thread is ended by raising SystemExit in it,
+    so its finally blocks and context managers run.  This can be called
+    from any of the application's threads.  The status is reported to the
+    p-kernel (and collected by the parent's wait()), and becomes the host
+    process' exit status, if it's from 0 to 255 (or 1, otherwise).
+
+    :param status: Exit status: zero for success.
+    :raises ValueError: if the status isn't a 32 bit signed integer."""
+    _darq_process_state.exit(status)
+
+
+class ChildStatus(typing.NamedTuple):
+    """How a child process finished, as collected by wait()."""
+
+    # The child's dpid.
+    dpid: int
+
+    # Whether it exited, was killed, or was lost.
+    reason: ExitReason
+
+    # Its application's exit status, if it EXITED; otherwise, -1.
+    status: int
+
+    # Description of its application's failure (such as a traceback), if any.
+    error: str | None
+
+
+def wait(dpid: int = 0, blocking: bool = True) -> ChildStatus | None:
+    """Collect a finished child process.
+
+    A finished child (one that exited, was killed, or was lost) stays in
+    the p-kernel's process table until its parent collects it.
+
+    :param dpid: Child to wait for, or zero for any child (the earliest
+                 spawned, if several have finished).
+    :param blocking: If True, wait until a matching child finishes;
+                     otherwise, return None at once if none has.
+    :returns: How the child finished, or None if not blocking, and no
+              matching child has finished.
+    :raises NoSuchChildError: if the process isn't a child of this one,
+                              or (for any child) there are none."""
+
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.SYNC)
+    syscall.set_request(WaitRequest(0, dpid, blocking))
+
+    _darq_process_state.queue_new_syscall(syscall)
+    syscall.sync_wait()
+
+    response = typing.cast(WaitResponse, syscall.get_response())
+    if response.result == WaitResult.NOT_FINISHED:
+        return None
+    if response.result == WaitResult.NO_SUCH_CHILD:
+        raise NoSuchChildError(f"no such child process: {dpid or 'any'}")
+    if response.result != WaitResult.OK:
+        raise DarqError(f"wait({dpid}): result {response.result}")
+    return ChildStatus(response.dpid, ExitReason(response.reason), response.status, response.get_error())
+
+
 # Exceptions for the name registry's result codes.
 _NAME_ERRORS: dict[int, type[DarqError]] = {
     NameResult.BAD_HANDLE: NonExistentPortError,
@@ -553,7 +625,11 @@ def shutdown():
 
     All active services, tools, lens, etc, are shutdown.  Once these
     shutdown processes are complete, the system will exit, and
-    power-off the host hardware."""
+    power-off the host hardware.
+
+    Only system processes (those the p-kernel spawned itself) may shut
+    down the system.  There's no response: the p-kernel ignores (and
+    logs) a request from any other process."""
 
     # Get a SystemCallState
     syscall = SystemCallState()
@@ -573,7 +649,11 @@ def reboot():
 
     All active services, tools, lens, etc, are shutdown.  Once these
     shutdown processes are complete, the system will re-initialise,
-    as if starting afresh."""
+    as if starting afresh.
+
+    Only system processes (those the p-kernel spawned itself) may reboot
+    the system.  There's no response: the p-kernel ignores (and logs) a
+    request from any other process."""
 
     # Get a SystemCallState
     syscall = SystemCallState()

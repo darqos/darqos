@@ -37,6 +37,8 @@ from darq.common import (
     SpawnProcessRequest,
     SpawnProcessResponse,
     UInt64,
+    WaitRequest,
+    WaitResponse,
 )
 from darq.errors import MessageDecodingError
 
@@ -272,6 +274,36 @@ class TestLookupNameResponse:
         d = LookupNameResponse()
         d.decode(buf)
         assert (d.request_id, d.result, d.port) == (7, 0, UInt64.max())
+
+
+class TestWaitRequest:
+    @pytest.mark.parametrize("blocking", [True, False])
+    def test_roundtrip(self, blocking):
+        buf = WaitRequest(7, UInt64.max(), blocking).encode()
+        check_header(buf, MessageType.WAIT_RQST)
+
+        d = WaitRequest(0, 0, not blocking)
+        d.decode(buf)
+        assert (d.request_id, d.dpid, d.blocking) == (7, UInt64.max(), blocking)
+
+
+class TestWaitResponse:
+    @pytest.mark.parametrize("status, error", [(0, None), (-1, None), (-2 ** 31, "Traceback ...")])
+    def test_roundtrip(self, status, error):
+        buf = WaitResponse(7, 0, 9, 2, status, error).encode()
+        check_header(buf, MessageType.WAIT_RESP)
+        assert len(buf) % 4 == 0
+
+        d = WaitResponse()
+        d.decode(buf)
+        assert (d.request_id, d.result, d.dpid, d.reason, d.status, d.get_error()) == \
+            (7, 0, 9, 2, status, error)
+
+    def test_error_overrun_raises(self):
+        buf = bytearray(WaitResponse(1, 0, 2, 0, 0, "abc").encode())
+        buf[32:36] = (99).to_bytes(4, "big")
+        with pytest.raises(MessageDecodingError):
+            WaitResponse().decode(bytes(buf))
 
 
 class TestClosePortResponse:

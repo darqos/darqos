@@ -25,6 +25,7 @@ import signal
 import socket
 import subprocess
 import sys
+import time
 
 from enum import IntEnum
 
@@ -32,8 +33,27 @@ import darq
 from darq.loop import SocketListener, TimerListener
 
 
-# TCP listening port for connection of IPC clients.
+# TCP listening port for connection of IPC clients, on the loopback
+# interface only.
+TCP_HOST = "127.0.0.1"
 TCP_PORT = 11000
+
+# Seconds to wait for processes to exit at shutdown, before killing their
+# host processes.
+SHUTDOWN_TIMEOUT = 5.0
+
+# Seconds to wait for a spawned process to send RUN_REQUEST, before killing
+# its host process (so the spawn fails).
+SPAWN_TIMEOUT = 10.0
+
+# Seconds to wait for a killed process to disconnect, before killing its
+# host process (so the kill succeeds).
+KILL_TIMEOUT = 5.0
+
+# Seconds between warnings about blocking name lookups still waiting.
+# They're legitimate, so they don't time out, but a long wait is likely a
+# boot ordering problem.
+LOOKUP_WARNING_INTERVAL = 30.0
 
 # Loader for Python executables, installed alongside the p-kernel.
 PYTHON_IMAGE_LOADER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pyloader")
@@ -182,7 +202,7 @@ class KernelProcessState:
         self._recv_buffer = darq.Buffer()
 
         # Kill requests awaiting this process' exit: (requester, request_id).
-        self._kill_requests: list[tuple["KernelProcessState", int]] = []
+        self._kill_requests: list[tuple["KernelProcessState | None", int]] = []
 
         # Spawn request awaiting this process' RunRequest, if any.
         self._spawn_request: tuple["KernelProcessState", int] | None = None
@@ -194,6 +214,9 @@ class KernelProcessState:
         # reported its exit (see the future wait() p-call).
         self._exit_status: int | None = None
         self._exit_error: str | None = None
+
+        # How the process finished, once it's a ZOMBIE or LOST.
+        self._exit_reason: darq.ExitReason | None = None
 
     def name(self) -> str:
         """(Internal) Log message prefix."""
@@ -318,13 +341,27 @@ class KernelProcessState:
         """Return the description of the application's failure, if any."""
         return self._exit_error
 
+    def set_exit_reason(self, reason: darq.ExitReason):
+        self._exit_reason = reason
+
+    def get_exit_reason(self) -> darq.ExitReason | None:
+        """Return how the process finished, or None if it hasn't."""
+        return self._exit_reason
+
+    def is_finished(self) -> bool:
+        """Return True if the process has finished: a ZOMBIE, or LOST."""
+        return self._status in (KernelProcessStatus.ZOMBIE, KernelProcessStatus.LOST)
+
     # Kill requests
 
-    def add_kill_request(self, requester: "KernelProcessState", request_id: int):
-        """Record a request to kill this process, to be answered on exit."""
+    def add_kill_request(self, requester: "KernelProcessState | None", request_id: int):
+        """Record a request to kill this process, to be answered on exit.
+
+        :param requester: Process to answer, or None for the p-kernel's
+                          own kill (at shutdown)."""
         self._kill_requests.append((requester, request_id))
 
-    def take_kill_requests(self) -> list[tuple["KernelProcessState", int]]:
+    def take_kill_requests(self) -> list[tuple["KernelProcessState | None", int]]:
         """Return and clear the pending kill requests for this process."""
         requests = self._kill_requests
         self._kill_requests = []
@@ -469,9 +506,27 @@ class PseudoKernel(SocketListener, TimerListener):
         self._next_port_id: int = 1
 
         # Name registry: named ports, and blocking lookups waiting for a
-        # name to be registered, as (process, request_id).
+        # name to be registered, as (process, request_id, monotonic time).
         self._names: dict[str, KernelPortState] = {}
-        self._name_waiters: dict[str, list[tuple[KernelProcessState, int]]] = {}
+        self._name_waiters: dict[str, list[tuple[KernelProcessState, int, float]]] = {}
+
+        # Blocking waits for children to finish, by parent dpid: (parent,
+        # request_id, child dpid or zero for any child).
+        self._wait_requests: dict[int, list[tuple[KernelProcessState, int, int]]] = {}
+
+        # Host processes of processes removed from the process table, not
+        # yet reaped.
+        self._unreaped: list[subprocess.Popen] = []
+
+        # Set once shutdown has started, and whether to restart afterwards.
+        self._stopping: bool = False
+        self._reboot: bool = False
+
+        # Set once shutdown is complete: no process is left running.
+        self._stopped: bool = False
+
+        # Timer to force shutdown, while it's in progress.
+        self._shutdown_timer: int | None = None
 
         # Registries.
         self.types = []
@@ -489,9 +544,12 @@ class PseudoKernel(SocketListener, TimerListener):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.socket.setblocking(False)
-        self.socket.bind(('0.0.0.0', TCP_PORT))
+        self.socket.bind((TCP_HOST, TCP_PORT))
         self.socket.listen()
         self._loop.add_socket(self.socket, self)
+
+        # Periodic warnings about slow name lookups (see on_timeout).
+        self._loop.add_timer(LOOKUP_WARNING_INTERVAL, self)
 
         # Child process exit notification.  SIGCHLD writes a byte to this
         # socket pair, waking the event loop to reap exited children.
@@ -507,7 +565,7 @@ class PseudoKernel(SocketListener, TimerListener):
         logging.info(f"On a {self.device} ({self.cpu})")
         logging.info(f"Running Python v{self.python_version}")
         logging.info("")
-        logging.info(f"Listening for IPC sessions on {TCP_PORT}")
+        logging.info(f"Listening for IPC sessions on {TCP_HOST}:{TCP_PORT}")
 
         # Complete.
         logging.info("Initialized.")
@@ -518,12 +576,20 @@ class PseudoKernel(SocketListener, TimerListener):
         return "p-kernel"
 
     def close(self):
-        """Release the p-call socket and child exit notification."""
+        """Release the p-call sockets, child exit notification, and event loop."""
         signal.set_wakeup_fd(-1)
         signal.signal(signal.SIGCHLD, signal.SIG_DFL)
         self._sigchld_reader.close()
         self._sigchld_writer.close()
         self.socket.close()
+
+        # Sessions still open, identified or not.
+        for sock in list(self._processes) + list(self.incoming_connections):
+            sock.close()
+        self._processes.clear()
+        self.incoming_connections.clear()
+
+        self._loop.close()
         return
 
     def on_readable(self, sock: socket.socket):
@@ -563,17 +629,37 @@ class PseudoKernel(SocketListener, TimerListener):
         pass
 
     def on_timeout(self, timer_id: int, expiry_time: float, actual_time: float):
-        pass
+        """Periodic timer: warn about slow name lookups."""
+        self.warn_slow_lookups(actual_time)
+
+    def warn_slow_lookups(self, now: float):
+        """Log a warning for each blocking lookup waiting longer than the interval.
+
+        :param now: Current time.monotonic() value."""
+        for name, waiters in self._name_waiters.items():
+            for process, _, since in waiters:
+                if now - since >= LOOKUP_WARNING_INTERVAL:
+                    logging.warning(f"{process.name()} lookup_name({name!r}) "
+                                    f"still waiting after {now - since:.0f}s")
+        return
+
+    def after(self, seconds: float, function):
+        """Call function once, after a delay."""
+        self._loop.add_timer(seconds, darq.DeferredListener(self._loop, function))
+        return
 
     def run(self):
         """Main loop."""
 
         logging.info("Entering main loop.")
-        try:
-            self._loop.run()
-        except KeyboardInterrupt:
-            self.do_shutdown()
-        return
+        while not self._stopped:
+            try:
+                self._loop.run()
+                return
+            except KeyboardInterrupt:
+                # Shut down cleanly, running the loop until it's done
+                # (unless there was nothing to wait for).
+                self.begin_shutdown(reboot=False)
 
     def handle_disconnect(self, process: KernelProcessState):
         """Handle disconnection of a client process.
@@ -586,24 +672,30 @@ class PseudoKernel(SocketListener, TimerListener):
         # Answer anyone waiting for this process to be killed.
         kill_requests = process.take_kill_requests()
         for requester, request_id in kill_requests:
-            if requester is not process:
+            if requester is not None and requester is not process:
                 self.send_kill_process_response(requester, request_id, 0)
 
-        # A process that was killed, or reported its exit, is a zombie until
-        # its exit status is collected; otherwise, it was lost.
-        if kill_requests or process.has_exited():
+        # A process that reported its exit, or was killed, is a zombie until
+        # its parent collects it; otherwise, it was lost.
+        if process.has_exited():
             process.set_status(KernelProcessStatus.ZOMBIE)
+            process.set_exit_reason(darq.ExitReason.EXITED)
+        elif kill_requests:
+            process.set_status(KernelProcessStatus.ZOMBIE)
+            process.set_exit_reason(darq.ExitReason.KILLED)
         else:
             process.set_status(KernelProcessStatus.LOST)
+            process.set_exit_reason(darq.ExitReason.LOST)
 
-        # Abandon its lookups, and release its rights, destroying the
-        # ports it owns.
-        for name in list(self._name_waiters):
-            waiters = [w for w in self._name_waiters[name] if w[0] is not process]
+        # Abandon its lookups and waits, and release its rights, destroying
+        # the ports it owns.
+        for waited_name in list(self._name_waiters):
+            waiters = [w for w in self._name_waiters[waited_name] if w[0] is not process]
             if waiters:
-                self._name_waiters[name] = waiters
+                self._name_waiters[waited_name] = waiters
             else:
-                del self._name_waiters[name]
+                del self._name_waiters[waited_name]
+        self._wait_requests.pop(process.get_dpid(), None)
 
         for entry in process.take_handles():
             if entry.right == PortRight.RECEIVE:
@@ -622,6 +714,7 @@ class PseudoKernel(SocketListener, TimerListener):
         process.set_socket(None)
 
         logging.info(f"{name} disconnected.")
+        self.process_finished(process)
         return
 
     def handle_exited(self, process: KernelProcessState, message: darq.Exited):
@@ -690,28 +783,109 @@ class PseudoKernel(SocketListener, TimerListener):
             return None
 
     def handle_reboot(self, process: KernelProcessState, message: darq.Reboot):
-        logging.info("System rebooting.")
-
-        # Shutdown first.
-        self.do_shutdown()
-
-        # Then restart.
-        self.do_boot()
+        if self.may_shut_down(process, "reboot"):
+            self.begin_shutdown(reboot=True)
 
     def handle_shutdown(self, process: KernelProcessState, message: darq.Shutdown):
-        logging.info("System shutdown requested.")
+        if self.may_shut_down(process, "shutdown"):
+            self.begin_shutdown(reboot=False)
 
-        self.do_shutdown()
+    @staticmethod
+    def may_shut_down(process: KernelProcessState, action: str) -> bool:
+        """Return True if a process may shut down or reboot the system.
 
-    def do_shutdown(self):
-        logging.info("Starting shutdown")
+        Only processes the p-kernel spawned itself (parent dpid 0) may.
+        There's no response to the request, so a refusal is only logged."""
+        if process.get_parent_dpid() != 0:
+            logging.warning(f"{process.name()} {action} refused: not a system process")
+            return False
 
-        # Walk list of tools, and kill them all.
-        # Walk list of lenses, and kill them all.
-        # Walk list of types, and kill them all.
+        logging.info(f"{process.name()} requested {action}.")
+        return True
 
-        logging.info("Completed shutdown")
+    def begin_shutdown(self, reboot: bool):
+        """Kill every process, then leave the event loop.
+
+        Running processes are asked to exit, as by kill_process, and
+        spawned ones not yet running have their host processes killed.
+        Any still running after SHUTDOWN_TIMEOUT have their host processes
+        killed too.  Once none are left, the event loop stops: the caller
+        of run() then exits, or restarts the p-kernel (see restart()).
+
+        :param reboot: If True, restart the p-kernel afterwards."""
+        if self._stopping:
+            return
+        self._stopping = True
+        self._reboot = reboot
+        logging.info(f"Starting {'reboot' if reboot else 'shutdown'}.")
+
+        for process in list(self._process_table.values()):
+            status = process.get_status()
+            if status == KernelProcessStatus.RUNNING:
+                process.add_kill_request(None, 0)
+                process.send_data(darq.KillProcessRequest(0, process.get_dpid()).encode())
+            elif status == KernelProcessStatus.SPAWNED:
+                self.kill_host_process(process)
+
+        self._shutdown_timer = self._loop.add_timer(
+            SHUTDOWN_TIMEOUT, darq.DeferredListener(self._loop, self.force_shutdown))
+        self.check_shutdown()
         return
+
+    @staticmethod
+    def kill_host_process(process: KernelProcessState):
+        """Kill a process' host (Linux) process, if it's still running."""
+        child = process.get_child()
+        if child is not None and child.poll() is None:
+            logging.warning(f"{process.name()} killing host process [{child.pid}]")
+            child.kill()
+        return
+
+    def force_shutdown(self):
+        """Kill the host processes of processes still running at shutdown."""
+        for process in list(self._process_table.values()):
+            if process.get_status() in (KernelProcessStatus.RUNNING, KernelProcessStatus.SPAWNED):
+                logging.error(f"{process.name()} didn't exit at shutdown")
+                if process.get_child() is not None:
+                    self.kill_host_process(process)
+                elif process.get_status() == KernelProcessStatus.RUNNING:
+                    # Nothing to kill: just end its session.
+                    self.handle_disconnect(process)
+        self.check_shutdown()
+        return
+
+    def check_shutdown(self):
+        """Finish shutting down, once no process is running or spawned."""
+        if not self._stopping:
+            return
+
+        for process in self._process_table.values():
+            if process.get_status() in (KernelProcessStatus.RUNNING, KernelProcessStatus.SPAWNED):
+                return
+
+        if not self._stopped:
+            logging.info("All processes have exited.")
+            self._stopped = True
+            if self._shutdown_timer is not None:
+                self._loop.cancel_timer(self._shutdown_timer)
+                self._shutdown_timer = None
+        self._loop.stop()
+        return
+
+    def reboot_requested(self) -> bool:
+        """Return True if the p-kernel should restart after its event loop ends."""
+        return self._reboot
+
+    def restart(self):
+        """Replace this process with a new p-kernel.
+
+        The process is replaced (with exec), not left to exit after
+        starting another, so a service manager (systemd) sees the same
+        process continue.  All sockets are close-on-exec."""
+        logging.info("Restarting p-kernel.")
+        self.close()
+        logging.shutdown()
+        os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)] + sys.argv[1:])
 
     def do_boot(self):
         """Start system."""
@@ -758,6 +932,14 @@ class PseudoKernel(SocketListener, TimerListener):
         running, or immediately if it couldn't be started."""
 
         exec_path = request.get_exec_path()
+        if self._stopping:
+            logging.warning(f"{process.name()} spawn_process({exec_path}) "
+                            f"refused: shutting down")
+            self.send_spawn_process_response(process, request.request_id, 0,
+                                             1,  # FIXME: better errno
+                                             "shutting down")
+            return
+
         if not os.path.isfile(os.path.join(exec_path, "main.py")):
             logging.warning(f"{process.name()} spawn_process({exec_path}) "
                             f"failed: no main.py")
@@ -801,7 +983,8 @@ class PseudoKernel(SocketListener, TimerListener):
         once the target's p-call session closes."""
 
         target = self._process_table.get(request.dpid)
-        if target is None or target.get_status() != KernelProcessStatus.RUNNING:
+        status = target.get_status() if target is not None else None
+        if target is None or status not in (KernelProcessStatus.RUNNING, KernelProcessStatus.SPAWNED):
             logging.warning(f"{process.name()} kill_process({request.dpid}) "
                             f"failed: no such running process")
             self.send_kill_process_response(process, request.request_id,
@@ -810,7 +993,24 @@ class PseudoKernel(SocketListener, TimerListener):
 
         logging.info(f"{process.name()} kill_process({request.dpid})")
         target.add_kill_request(process, request.request_id)
+
+        if status == KernelProcessStatus.SPAWNED:
+            # It can't be asked to exit yet: kill its host process.  The
+            # kill is answered when that's reaped.
+            self.kill_host_process(target)
+            return
+
         target.send_data(darq.KillProcessRequest(0, request.dpid).encode())
+        self.after(KILL_TIMEOUT, lambda: self.check_killed(target))
+        return
+
+    def check_killed(self, process: KernelProcessState):
+        """Kill the host process of a killed process that hasn't disconnected."""
+        if process.get_status() != KernelProcessStatus.RUNNING:
+            return
+
+        logging.error(f"{process.name()} didn't exit within {KILL_TIMEOUT}s of being killed")
+        self.kill_host_process(process)
         return
 
     def send_kill_process_response(self,
@@ -823,9 +1023,25 @@ class PseudoKernel(SocketListener, TimerListener):
                      f"request_id={request_id}, result={result}")
         return
 
+    def remove_process(self, process: KernelProcessState):
+        """Remove a process from the process table.
+
+        Its host process is still reaped, when it exits."""
+        self._process_table.pop(process.get_dpid(), None)
+        # Poll now: if it has already exited, no SIGCHLD will prompt it.
+        child = process.get_child()
+        if child is not None and child.poll() is None:
+            self._unreaped.append(child)
+        return
+
     def reap_children(self):
         """Collect the exit status of any exited child processes."""
-        for process in self._process_table.values():
+        for child in list(self._unreaped):
+            if child.poll() is not None:
+                logging.info(f"Host process [{child.pid}] exited with status {child.returncode}")
+                self._unreaped.remove(child)
+
+        for process in list(self._process_table.values()):
             child = process.get_child()
             if child is None or child.returncode is not None:
                 continue
@@ -838,9 +1054,12 @@ class PseudoKernel(SocketListener, TimerListener):
                          f"exited with status {status}")
 
             # A process that exits before it's running won't disconnect,
-            # so its spawn request must be answered here.
+            # so its spawn request must be answered here.  Its spawn failed,
+            # so it's never a child to wait for: forget it.
             if process.get_status() == KernelProcessStatus.SPAWNED:
-                process.set_status(KernelProcessStatus.ZOMBIE)
+                process.set_status(KernelProcessStatus.LOST)
+                process.set_exit_reason(darq.ExitReason.LOST)
+                self.remove_process(process)
                 spawn_request = process.take_spawn_request()
                 if spawn_request is not None:
                     requester, request_id = spawn_request
@@ -848,6 +1067,114 @@ class PseudoKernel(SocketListener, TimerListener):
                         requester, request_id, 0,
                         1,  # FIXME: better errno
                         f"process exited with status {status} before running")
+
+                for requester, request_id in process.take_kill_requests():
+                    if requester is not None:
+                        self.send_kill_process_response(requester, request_id, 0)
+
+        self.check_shutdown()
+        return
+
+    # Waiting for children
+
+    def process_finished(self, process: KernelProcessState):
+        """Handle a process becoming a ZOMBIE or LOST.
+
+        It's kept until its parent collects it with wait.  A process the
+        p-kernel spawned (parent dpid 0) is kept for the p-kernel; an
+        orphan, whose parent has already finished, can never be
+        collected, so it's removed at once.  So are the parent's own
+        finished children, which become orphans."""
+        dpid = process.get_dpid()
+
+        for child in list(self._process_table.values()):
+            if child.get_parent_dpid() == dpid and child.is_finished():
+                logging.info(f"{child.name()} removed: orphaned")
+                self.remove_process(child)
+
+        parent_dpid = process.get_parent_dpid()
+        if parent_dpid != 0:
+            parent = self._process_table.get(parent_dpid)
+            if parent is None or parent.is_finished():
+                logging.info(f"{process.name()} removed: orphaned")
+                self.remove_process(process)
+            else:
+                self.answer_wait_requests(parent)
+
+        self.check_shutdown()
+        return
+
+    def finished_child(self, parent: KernelProcessState, dpid: int) -> KernelProcessState | None:
+        """Return a finished child of a process, or None.
+
+        :param dpid: Child's dpid, or zero for any (the earliest spawned)."""
+        for child in sorted(self._process_table.values(), key=lambda p: p.get_dpid()):
+            if (child.get_parent_dpid() == parent.get_dpid() and child.is_finished()
+                    and dpid in (0, child.get_dpid())):
+                return child
+        return None
+
+    def has_child(self, parent: KernelProcessState, dpid: int) -> bool:
+        """Return True if a process has a child (any, if dpid is zero)."""
+        return any(child.get_parent_dpid() == parent.get_dpid() and dpid in (0, child.get_dpid())
+                   for child in self._process_table.values())
+
+    def handle_wait_request(self, process: KernelProcessState, request: darq.WaitRequest):
+        """Collect a finished child of the process.
+
+        A finished child is reported and removed from the process table.
+        If none has finished, a blocking wait is answered when one does;
+        a non-blocking one is answered at once, with NOT_FINISHED."""
+        if not self.has_child(process, request.dpid):
+            logging.warning(f"{process.name()} wait({request.dpid}) failed: no such child")
+            response = darq.WaitResponse(request.request_id, darq.WaitResult.NO_SUCH_CHILD)
+            process.send_data(response.encode())
+            return
+
+        child = self.finished_child(process, request.dpid)
+        if child is not None:
+            self.collect_child(process, request.request_id, child)
+            return
+
+        if request.blocking:
+            logging.info(f"{process.name()} wait({request.dpid}) waiting")
+            self._wait_requests.setdefault(process.get_dpid(), []).append(
+                (process, request.request_id, request.dpid))
+            return
+
+        response = darq.WaitResponse(request.request_id, darq.WaitResult.NOT_FINISHED)
+        process.send_data(response.encode())
+        return
+
+    def answer_wait_requests(self, parent: KernelProcessState):
+        """Answer a parent's blocking waits, with its finished children."""
+        requests = self._wait_requests.pop(parent.get_dpid(), [])
+        remaining = []
+        for request in requests:
+            _, request_id, dpid = request
+            child = self.finished_child(parent, dpid)
+            if child is None:
+                remaining.append(request)
+            else:
+                self.collect_child(parent, request_id, child)
+
+        if remaining:
+            self._wait_requests[parent.get_dpid()] = remaining
+        return
+
+    def collect_child(self, parent: KernelProcessState, request_id: int, child: KernelProcessState):
+        """Report a finished child to its parent, and remove it."""
+        reason = child.get_exit_reason()
+        assert reason is not None, "finished process has no exit reason"
+        status = child.get_exit_status()
+        if reason != darq.ExitReason.EXITED or status is None:
+            status = -1
+
+        logging.info(f"{parent.name()} collected {child.name()}: {reason.name}, status {status}")
+        self.remove_process(child)
+        response = darq.WaitResponse(request_id, darq.WaitResult.OK, child.get_dpid(),
+                                     reason, status, child.get_exit_error())
+        parent.send_data(response.encode())
         return
 
     def get_next_dpid(self) -> int:
@@ -897,12 +1224,20 @@ class PseudoKernel(SocketListener, TimerListener):
         entry.set_parent_dpid(parent_dpid)
         self._process_table[dpid] = entry  # No fd/socket yet
 
-        # Start error timer.
-        # FIXME
-
-        # That's it: when the stub starts, it'll connect and send a
-        # RunRequest, triggering the spawn_process_response.
+        # When the stub starts, it'll connect and send a RunRequest,
+        # triggering the spawn_process_response.  If it doesn't, kill it,
+        # so the spawn fails.
+        self.after(SPAWN_TIMEOUT, lambda: self.check_spawned(entry))
         return dpid
+
+    def check_spawned(self, process: KernelProcessState):
+        """Kill the host process of a spawned process that isn't running yet."""
+        if process.get_status() != KernelProcessStatus.SPAWNED:
+            return
+
+        logging.error(f"{process.name()} didn't send RUN_REQUEST within {SPAWN_TIMEOUT}s")
+        self.kill_host_process(process)
+        return
 
     def handle_run_request(self, incoming_connection, message: darq.RunRequest):
         """Handle a newly-spawned user process asking to run.
@@ -1093,7 +1428,7 @@ class PseudoKernel(SocketListener, TimerListener):
         logging.info(f"{process.name()} registered '{name}' for {port}")
         process.send_data(darq.RegisterNameResponse(request.request_id, result).encode())
 
-        for waiter, request_id in self._name_waiters.pop(name, []):
+        for waiter, request_id, _ in self._name_waiters.pop(name, []):
             self.answer_lookup(waiter, request_id, port)
         return
 
@@ -1118,7 +1453,8 @@ class PseudoKernel(SocketListener, TimerListener):
 
         if request.blocking:
             logging.info(f"{process.name()} lookup_name({name!r}) waiting for registration")
-            self._name_waiters.setdefault(name, []).append((process, request.request_id))
+            self._name_waiters.setdefault(name, []).append(
+                (process, request.request_id, time.monotonic()))
             return
 
         logging.info(f"{process.name()} lookup_name({name!r}): not found")
@@ -1285,6 +1621,11 @@ class PseudoKernel(SocketListener, TimerListener):
             message.decode(message_bytes)
             self.handle_lookup_name_request(process, message)
 
+        elif message_type == darq.MessageType.WAIT_RQST:
+            message = darq.WaitRequest()
+            message.decode(message_bytes)
+            self.handle_wait_request(process, message)
+
         elif message_type == darq.MessageType.KILL_PROCESS_RQST:
             message = darq.KillProcessRequest()
             message.decode(message_bytes)
@@ -1417,8 +1758,11 @@ if __name__ == "__main__":
     # Queue up the boot process.
     service.schedule_boot()
 
-    # Run the event loop.
+    # Run the event loop, until shutdown.
     service.run()
+
+    if service.reboot_requested():
+        service.restart()
 
     logging.info("Exiting p-Kernel.")
     sys.exit(0)

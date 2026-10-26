@@ -73,6 +73,13 @@ class EventLoopInterface:
         """Process the next event only."""
         pass
 
+    def close(self):
+        """Release the loop's own resources, once it's no longer used.
+
+        Sockets registered with add_socket() belong to their owners, and
+        aren't closed.  Nothing may be posted to a closed loop."""
+        pass
+
 class TimerListener:
     def on_timeout(self, timer_id: int, expiry_time: float, actual_time: float):
         pass
@@ -100,10 +107,16 @@ class PostedCalls(SocketListener):
         self.lock = threading.Lock()
         self.reader, self.writer = socket.socketpair()
         self.reader.setblocking(False)
+        self.closed: bool = False
         return
 
     def post(self, function: typing.Callable[[], None]):
+        """Queue a function, waking the loop.
+
+        :raises RuntimeError: if the loop has been closed."""
         with self.lock:
+            if self.closed:
+                raise RuntimeError("event loop is closed")
             wake = not self.calls
             self.calls.append(function)
 
@@ -125,6 +138,15 @@ class PostedCalls(SocketListener):
 
         for function in calls:
             function()
+        return
+
+    def close(self):
+        """Close the wakeup sockets: nothing can be posted afterwards."""
+        with self.lock:
+            self.closed = True
+            self.calls.clear()
+        self.reader.close()
+        self.writer.close()
         return
 
 
@@ -355,6 +377,13 @@ class SelectEventLoop(EventLoopInterface):
         """Exit event loop at next iteration."""
         self.active = False
 
+    def close(self):
+        """Release the loop's wakeup sockets, once it's no longer used."""
+        if self.posted.closed:
+            return
+        self.cancel_socket(self.posted.reader)
+        self.posted.close()
+
 
 class QtSocketState:
     def __init__(self, sock: socket.socket, listener: SocketListener):
@@ -513,3 +542,13 @@ class QtEventLoop(EventLoopInterface):
         """Exit inner-most event loop instance."""
         if self.loop is not None:
             self.loop.exit(0)
+
+    def close(self):
+        """Stop the loop's timers, and release its wakeup sockets."""
+        for timer_id in list(self.timers):
+            self.cancel_timer(timer_id)
+
+        if self.posted.closed:
+            return
+        self.cancel_socket(self.posted.reader)
+        self.posted.close()

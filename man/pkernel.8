@@ -28,8 +28,8 @@ is not itself a DarqOS process: it has no DarqOS process identifier
 .PP
 On startup,
 .B pkernel
-listens on TCP port 11000, schedules the boot sequence, and runs its
-event loop until interrupted.
+listens on TCP port 11000 on the loopback interface (127.0.0.1),
+schedules the boot sequence, and runs its event loop until shut down.
 .SS Processes
 A process is created by a
 .B spawn_process
@@ -66,15 +66,64 @@ When a process' application finishes, it reports its exit status, and
 a description of any failure, in an EXITED message, then closes its
 connection.
 .B pkernel
-records both in the process table, for a future
-.B wait
-p-call.
+records both in the process table.
 .PP
-Exited children are reaped on
-.BR SIGCHLD .
+A finished process (ZOMBIE or LOST) stays in the process table until
+its parent collects it with the
+.B wait
+p-call, which reports whether it exited (with its status and error),
+was killed, or was lost.
+A process the p-kernel spawned itself stays for the p-kernel.
+A finished process whose parent has also finished is an orphan, which
+nothing can collect: it's removed at once.
+An orphan keeps its parent's dpid (dpids are never reused), rather than
+becoming the p-kernel's.
+.PP
+Exited host processes are reaped on
+.BR SIGCHLD ,
+including those of processes already removed from the table.
 If a child exits before it sends RUN_REQUEST, its
 .B spawn_process
-call is answered with an error.
+call is answered with an error, and it's removed.
+.SS Timeouts
+A spawned process that hasn't sent RUN_REQUEST within 10 seconds has
+its host process killed (and an error logged), so its
+.B spawn_process
+call fails.
+A killed process that hasn't disconnected within 5 seconds has its
+host process killed (and an error logged), so its
+.B kill_process
+call succeeds.
+A process killed before it sends RUN_REQUEST has its host process
+killed at once.
+Blocking name lookups don't time out, but one still waiting is logged
+as a warning every 30 seconds.
+.SS Shutdown and reboot
+A
+.B shutdown
+or
+.B reboot
+p-call from a process the p-kernel spawned itself (parent dpid 0), or
+an interrupt (SIGINT), shuts the system down; the p-call from any other
+process is ignored, and logged.
+Shutting down, every running
+process is killed, as by
+.BR kill_process ,
+and spawned processes not yet running have their host processes
+killed.
+Processes still running after 5 seconds have their host processes
+killed.
+Once none are left,
+.B pkernel
+exits with status 0 for a shutdown, or replaces itself with a new
+p-kernel (with
+.BR execve (2))
+for a reboot.
+Replacing itself, rather than starting another process and exiting,
+lets
+.BR systemd (1)
+see the same service continue.
+Spawning is refused during shutdown.
 .SS Process states
 .TP
 .B ALLOCATED
@@ -87,12 +136,12 @@ The loader has been started, but has not sent RUN_REQUEST.
 The process is connected and able to make p-calls.
 .TP
 .B ZOMBIE
-The process disconnected after reporting its exit, or after a
-.BR kill_process ;
-its exit status has not yet been collected.
+The process disconnected after reporting its exit, or after being
+killed; its parent has not yet collected it.
 .TP
 .B LOST
-The process disconnected without reporting its exit or being killed.
+The process disconnected without reporting its exit or being killed;
+its parent has not yet collected it.
 .SH OPTIONS
 None.
 .SH ENVIRONMENT
@@ -121,16 +170,14 @@ Loader for Python executables, started for each new process.
 unit that runs the p-kernel as part of
 .IR darqos.target .
 .SH EXIT STATUS
-0 when the event loop exits.
+0 after a shutdown.
 .SH BUGS
 The listening port is fixed at 11000.
 .PP
-The boot sequence does not yet start any system services, and
-shutdown does not yet stop any processes.
+The boot sequence does not yet start any system services.
 .PP
-There is no timeout on a spawned process sending RUN_REQUEST, on a
-killed process disconnecting, or on a blocking name lookup.
-ZOMBIE entries are never removed from the process table.
+Finished processes the p-kernel spawned itself are never removed from
+the process table.
 .SH SEE ALSO
 .BR pyloader (8),
 .BR install (8),
