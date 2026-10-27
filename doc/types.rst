@@ -97,7 +97,7 @@ application for the system.
 
 The Type Service maintains a dynamic mapping of type identifiers to
 running Type Implementations.  A Type Implementation program is started
-as a DarqOS process.  The can be at most one instance of a Type
+as a DarqOS process.  There can be at most one instance of a Type
 Implementation active at any time; multiple Items of a Type are
 represented by a single Type Implementation.
 
@@ -121,9 +121,9 @@ manage a collection of Items, and expose them to programs, and (via
 Lenses) to operators.
 
 An Item Identifier  (aka *iid*) consists of a Type Identifier, a
-colon, and a type-specific identifier for the specific Item, like
+colon, and an *item specifier* for the specific Item, like
 
-  `net.daringfireball.markdown:c5f1ad2a-ea33-4248-b116-9c363cbade66`
+  ``net.daringfireball.markdown:c5f1ad2a-ea33-4248-b116-9c363cbade66``
 
 Items are described in more detail in :doc:`item`.
 
@@ -223,7 +223,7 @@ Item Identifiers, and requesting actions upon them.  These requests
 combine:
 
 * a Context
-* an Item Identifier (which includes the item's Typa Identifier), and,
+* an Item Identifier (which includes the item's Type Identifier), and,
 * an action.
 
 The terminal must process that request and determine (with or without

@@ -8,8 +8,8 @@ but larger things like a document, a spreadsheet, an image, etc. They
 are also used to represent real-world items, like people or places.
 
 Items are identified using an *Item Identifier* (aka *iid*).
-An item identifier is a string, with two parts: a type name and an
-identifier specifier, separated by a colon character.  A type
+An item identifier is a string, with two parts: a type identifier and an
+item specifier, separated by a colon character.  A type
 identifier never contains a colon, but an item specifier may (so it
 can hold a URL, for instance): an item identifier is parsed by
 splitting it at its first colon.
@@ -90,7 +90,7 @@ Other items, for instance person, group, or location items from an
 address book application, are represented using a generic knowledge
 graph service.
 
-The *iid*'s type name provides the link between code that uses an
+The *iid*'s type identifier provides the link between code that uses an
 item and its stored state.  The system itself knows nothing about how
 the item is stored.
 
