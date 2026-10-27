@@ -179,7 +179,8 @@ its window is closed, or it's asked to `Close`.
   service counts repeats.
 * Keys follow Emacs, with Alt as Meta: C-f, C-b, C-n, C-p, C-a, C-e,
   M-f, M-b, M-<, M->, C-v, M-v to move; C-d, M-d and C-k to delete and
-  kill; C-SPC to set the mark, C-g to cancel it, C-w and M-w to kill
+  kill; M-u, M-l and M-c to upper-case, lower-case and capitalize to
+  the end of the word; C-SPC to set the mark, C-g to cancel it, C-w and M-w to kill
   and copy the region, C-y to yank; C-/ to undo; C-x C-q to toggle read
   only, C-x C-c to close; F1 for help, F11 for full screen.  The kill
   buffer is the clipboard.

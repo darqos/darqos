@@ -17,6 +17,7 @@
 # Editing keys follow Emacs (see BINDINGS, and F1 for help).
 
 import logging
+import typing
 
 from PyQt6 import QtCore
 from PyQt6.QtGui import QAction, QKeyEvent, QMouseEvent, QTextCursor
@@ -61,6 +62,9 @@ BINDINGS: dict[tuple[bool, bool, Key], tuple[str, str]] = {
     (False, True, Key.Key_V): ("page_up", "Up a page"),
     (True, False, Key.Key_D): ("delete_char", "Delete a character"),
     (False, True, Key.Key_D): ("kill_word", "Kill to the end of the word"),
+    (False, True, Key.Key_U): ("upcase_word", "Upper-case to the end of the word"),
+    (False, True, Key.Key_L): ("downcase_word", "Lower-case to the end of the word"),
+    (False, True, Key.Key_C): ("capitalize_word", "Capitalize to the end of the word"),
     (True, False, Key.Key_K): ("kill_line", "Kill to the end of the line"),
     (True, False, Key.Key_Space): ("set_mark", "Set the mark"),
     (True, False, Key.Key_G): ("cancel", "Cancel the mark"),
@@ -98,6 +102,15 @@ def common_affixes(old: str, new: str) -> tuple[int, int, int]:
     while suffix < limit - start and old[-1 - suffix] == new[-1 - suffix]:
         suffix += 1
     return start, len(old) - suffix, len(new) - suffix
+
+
+def capitalize(text: str) -> str:
+    """Return text with its first letter or digit in title case, and
+    the rest in lower case, as Emacs's M-c does to a word."""
+    for index, c in enumerate(text):
+        if c.isalnum():
+            return text[:index] + c.title() + text[index + 1:].lower()
+    return text
 
 
 def utf16_length(text: str) -> int:
@@ -324,7 +337,9 @@ class LensEdit(QPlainTextEdit):
         self.setTextCursor(cursor)
         self.mark_active = False
 
-    def kill_word(self):
+    def word_cursor(self) -> QTextCursor:
+        """Return a cursor selecting from the cursor to the end of this
+        word, or the next, as forward_word moves."""
         cursor = self.textCursor()
         cursor.clearSelection()
         position = cursor.position()
@@ -332,7 +347,34 @@ class LensEdit(QPlainTextEdit):
         if cursor.position() == position:
             cursor.movePosition(Move.NextWord, QTextCursor.MoveMode.KeepAnchor)
             cursor.movePosition(Move.EndOfWord, QTextCursor.MoveMode.KeepAnchor)
-        self.kill(cursor)
+        return cursor
+
+    def kill_word(self):
+        self.kill(self.word_cursor())
+
+    def convert_word(self, convert: typing.Callable[[str], str]):
+        """Convert the text to the end of the word, leaving the cursor
+        after it."""
+        if not self.editable():
+            return
+        cursor = self.word_cursor()
+        # The word may run on from a line break: keep it a line break.
+        text = cursor.selectedText().replace("\u2029", "\n")
+        new = convert(text)
+        if new != text:
+            cursor.insertText(new)
+        cursor.clearSelection()
+        self.setTextCursor(cursor)
+        self.mark_active = False
+
+    def upcase_word(self):
+        self.convert_word(str.upper)
+
+    def downcase_word(self):
+        self.convert_word(str.lower)
+
+    def capitalize_word(self):
+        self.convert_word(capitalize)
 
     def kill_line(self):
         # To the end of the line, or the line break, if it's there.

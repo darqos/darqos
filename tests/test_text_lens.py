@@ -310,6 +310,63 @@ def test_delete_and_kill_word(window, clipboard):
     assert (client.text, clipboard.text()) == ("", " two")
 
 
+@pytest.mark.parametrize("text, expected", [
+    ("", ""),
+    ("hello", "Hello"),
+    ("HELLO", "Hello"),
+    ("  (wORLD", "  (World"),
+    ("2nd", "2nd"),
+    ("ǆemal", "ǅemal"),
+    ("...", "..."),
+])
+def test_capitalize(text, expected):
+    assert lens.capitalize(text) == expected
+
+
+def test_word_case(window):
+    from PyQt6.QtCore import Qt
+    K = Qt.Key
+    w, client, _ = window("one two three four")
+    key(w, K.Key_U, alt=True)
+    assert (client.text, position(w)) == ("ONE two three four", 3)
+    key(w, K.Key_C, alt=True)
+    assert (client.text, position(w)) == ("ONE Two three four", 7)
+
+    # From the middle of a word, to its end.
+    key(w, K.Key_B, alt=True)
+    key(w, K.Key_F, ctrl=True)
+    key(w, K.Key_U, alt=True)
+    assert (client.text, position(w)) == ("ONE TWO three four", 7)
+    key(w, K.Key_L, alt=True)
+    assert (client.text, position(w)) == ("ONE TWO three four", 13)
+    key(w, K.Key_E, ctrl=True)
+    key(w, K.Key_B, alt=True)
+    key(w, K.Key_F, ctrl=True)
+    key(w, K.Key_U, alt=True)
+    assert (client.text, position(w)) == ("ONE TWO three fOUR", 18)
+
+    # At the end, there's no word left.
+    key(w, K.Key_L, alt=True)
+    assert (client.text, position(w)) == ("ONE TWO three fOUR", 18)
+
+
+def test_word_case_across_lines(window):
+    from PyQt6.QtCore import Qt
+    w, client, _ = window("one\ntwo")
+    key(w, Qt.Key.Key_E, ctrl=True)
+    key(w, Qt.Key.Key_C, alt=True)
+    assert (client.text, position(w)) == ("one\nTwo", 7)
+
+
+def test_word_case_read_only(window):
+    from PyQt6.QtCore import Qt
+    w, client, _ = window("one")
+    w.set_read_only(True)
+    key(w, Qt.Key.Key_U, alt=True)
+    assert (w.edit.toPlainText(), position(w)) == ("one", 0)
+    assert w.status.text() == "Read only"
+
+
 def test_undo(window):
     from PyQt6.QtCore import Qt
     w, client, _ = window("abc")
