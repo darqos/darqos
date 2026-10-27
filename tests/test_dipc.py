@@ -161,3 +161,61 @@ def test_error_reply_truncated():
     buf, _ = dipc.ErrorReply(7, 3, 1, "description").encode()
     with pytest.raises(MessageDecodingError):
         dipc.ErrorReply().decode(buf[:-8])
+
+
+################################################################
+# Out-of-line values
+################################################################
+
+def test_encoder_appends_aligned_values():
+    out = dipc.Encoder(16, [])
+    assert out.opaque(b"abc") == (16, 3)
+    assert out.string("é") == (24, 2)
+    assert out.opaque(b"") == (32, 0)
+    assert bytes(out.data) == b"abc\0\0\0\0\0" + "é".encode() + b"\0" * 6
+
+
+def test_decoder_reads_in_order():
+    out = dipc.Encoder(8, [])
+    descriptors = [out.opaque(b"one"), out.string("two")]
+    buf = b"\0" * 8 + bytes(out.data)
+    inp = dipc.Decoder(buf, 8)
+    assert inp.opaque(*descriptors[0]) == b"one"
+    assert inp.string(*descriptors[1]) == "two"
+
+
+def test_decoder_rejects_reordered_values():
+    out = dipc.Encoder(8, [])
+    out.opaque(b"one")
+    second = out.opaque(b"two")
+    inp = dipc.Decoder(b"\0" * 8 + bytes(out.data), 8)
+    with pytest.raises(MessageDecodingError, match="at offset 16, expected 8"):
+        inp.opaque(*second)
+
+
+def test_sequence_of_scalars():
+    out = dipc.Encoder(8, [])
+    descriptor = out.sequence([1, 2, 3], dipc.Codec("H"))
+    assert descriptor == (8, 3)
+    assert bytes(out.data) == struct.pack("<HHH", 1, 2, 3) + b"\0\0"
+    assert dipc.Decoder(b"\0" * 8 + bytes(out.data), 8).sequence(dipc.Codec("H"), *descriptor) == [1, 2, 3]
+
+
+def test_empty_elements_rejected():
+    with pytest.raises(MessageDecodingError, match="can't be empty"):
+        dipc.Decoder(b"\0" * 8, 8).sequence(dipc.Codec(""), 8, 0xFFFFFFFF)
+
+
+def test_struct_codec_format():
+    class S(dipc.Record):
+        def __init__(self, a=0, b=b""):
+            self.a = a
+            self.b = b
+
+    # uint8 at 0, opaque at 4, 12 bytes.
+    codec = dipc.StructCodec(S, 12, [("a", 0, dipc.Codec("B")), ("b", 4, dipc.OPAQUE_CODEC)])
+    assert (codec.format, codec.size) == ("B3xII", 12)
+    out = dipc.Encoder(8, [])
+    descriptor = out.sequence([S(1, b"x"), S(2, b"")], codec)
+    decoded = dipc.Decoder(b"\0" * 8 + bytes(out.data), 8).sequence(codec, *descriptor)
+    assert decoded == [S(1, b"x"), S(2, b"")]

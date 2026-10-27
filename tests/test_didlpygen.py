@@ -480,6 +480,152 @@ def test_decode_bad_opaque_descriptor(fs, offset, length):
 
 
 ################################################################
+# Strings and sequences
+################################################################
+
+SEQUENCE_SOURCE = """
+    library t;
+    enum Kind : uint8 { A = 0; B = 1; }
+    struct Point { int32 x; int32 y; }
+    struct Tagged { Kind kind; string label; sequence<Point> points; port p; }
+    struct Holder { uint8 n; sequence<uint16> values; }
+    protocol P {
+        1: Strings(string a, opaque b, string c) -> (string echo);
+        2: Numbers(sequence<uint32> xs, sequence<bool> flags, sequence<Kind> kinds) -> ();
+        3: Nested(sequence<sequence<string>> rows, sequence<Tagged> items) -> ();
+        4: Ports(sequence<port> ports) -> ();
+        5: Hold(Holder holder) -> ();
+    }
+    """
+
+
+@pytest.fixture
+def seqs(tmp_path):
+    return import_module(generate(SEQUENCE_SOURCE), tmp_path, "seqs")
+
+
+def test_string_and_sequence_defaults(seqs):
+    request = seqs.StringsRequest()
+    assert (request.a, request.b, request.c) == ("", b"", "")
+    # Each message gets its own list.
+    first, second = seqs.NumbersRequest(), seqs.NumbersRequest()
+    assert first.xs == [] and first.xs is not second.xs
+    assert seqs.Tagged().points == []
+
+
+@pytest.mark.parametrize("message", [
+    "StringsRequest(0, 'plain', b'raw', 'naïve 😀')",
+    "StringsRequest(0, '', b'', '')",
+    "NumbersRequest(0, [1, 2, 0xFFFFFFFF], [True, False, True], [Kind.B, Kind.A])",
+    "NumbersRequest(0, [], [], [])",
+    "NestedRequest(0, [['a', 'bc'], [], ['', 'd']], [])",
+    "NestedRequest(0, [], [Tagged(Kind.B, 'one', [Point(1, -2), Point(3, 4)], 77), Tagged(), "
+    "Tagged(label='three', p=78)])",
+    "HoldRequest(0, Holder(3, [5, 6, 7]))",
+])
+def test_round_trip_strings_and_sequences(seqs, message):
+    original = eval(message, vars(seqs))
+    assert round_trip(original) == original
+
+
+def test_round_trip_ports_in_sequences(seqs):
+    message = seqs.PortsRequest(0, [100, None, 200, 100])
+    buf, handles = message.encode()
+    assert handles == [100, 200]
+    decoded = seqs.PortsRequest()
+    decoded.decode(buf, handles)
+    assert decoded.ports == [100, None, 200, 100]
+
+    # Ports in a struct in a sequence share the message's handles.
+    message = seqs.NestedRequest(0, [], [seqs.Tagged(p=300), seqs.Tagged(p=100)])
+    assert message.encode()[1] == [300, 100]
+
+
+def test_string_layout(seqs):
+    buf = seqs.StringsRequest(0, "é", b"xy", "abc").encode()[0]
+    # Strings are encoded like opaques: UTF-8, out of line, in field order.
+    assert struct.unpack_from("<IIIIII", buf, 8) == (32, 2, 40, 2, 48, 3)
+    assert buf[32:40] == "é".encode() + b"\0" * 6
+    assert buf[48:56] == b"abc\0\0\0\0\0"
+
+
+def test_sequence_layout(seqs):
+    buf = seqs.NestedRequest(0, [["ab", "c"]], []).encode()[0]
+    # rows: an array of one descriptor, then its element's array of two
+    # string descriptors, then the strings.  The empty items comes after
+    # all of those.
+    assert struct.unpack_from("<IIII", buf, 8) == (24, 1, 64, 0)
+    assert struct.unpack_from("<II", buf, 24) == (32, 2)
+    assert struct.unpack_from("<IIII", buf, 32) == (48, 2, 56, 1)
+    assert buf[48:64] == b"ab\0\0\0\0\0\0c\0\0\0\0\0\0\0"
+    assert len(buf) == 64
+
+
+def test_struct_sequence_stride(seqs):
+    # Point is 8 bytes: elements are packed at that stride.
+    message = seqs.NestedRequest(0, [], [seqs.Tagged(points=[seqs.Point(1, 2), seqs.Point(3, 4)])])
+    buf = message.encode()[0]
+    items_offset, count = struct.unpack_from("<II", buf, 16)
+    assert count == 1
+    # Tagged: kind at 0, label at 4, points at 12, port at 20; 24 bytes.
+    points_offset, points = struct.unpack_from("<II", buf, items_offset + 12)
+    assert points == 2
+    assert struct.unpack_from("<iiii", buf, points_offset) == (1, 2, 3, 4)
+
+
+def test_struct_codecs_only_where_needed(seqs):
+    # Point and Tagged are in sequences; Holder only contains one.
+    assert isinstance(seqs.Point.CODEC, dipc.StructCodec)
+    assert isinstance(seqs.Tagged.CODEC, dipc.StructCodec)
+    assert "CODEC" not in vars(seqs.Holder)
+
+
+def test_codec_imports_only_when_used():
+    text = generate("library t;\nprotocol P { 1: M(string s) -> (); }")
+    assert "from darq.dipc import Decoder, Encoder, Message" in text
+    assert "Codec" not in text
+    assert "Encoder" not in generate("library t;\nprotocol P { 1: M(uint8 x) -> (); }")
+
+
+def test_invalid_utf8(seqs):
+    buf = bytearray(seqs.StringsRequest(0, "ab").encode()[0])
+    buf[32] = 0xFF
+    with pytest.raises(MessageDecodingError, match="not valid UTF-8"):
+        seqs.StringsRequest().decode(bytes(buf))
+
+
+def test_sequence_out_of_range(seqs):
+    buf = bytearray(seqs.NumbersRequest(0, [1, 2]).encode()[0])
+    struct.pack_into("<I", buf, 12, 1000)
+    with pytest.raises(MessageDecodingError, match="sequence value out of range"):
+        seqs.NumbersRequest().decode(bytes(buf))
+
+
+def test_values_must_not_overlap(seqs):
+    # Two descriptors for the same value: decoding requires each value
+    # where the encoder would have put it, so one can't be referred to twice.
+    buf = bytearray(seqs.StringsRequest(0, "abc", b"", "abc").encode()[0])
+    assert struct.unpack_from("<II", buf, 24) == (40, 3)
+    struct.pack_into("<II", buf, 24, 32, 3)
+    with pytest.raises(MessageDecodingError, match="string value at offset 32, expected 40"):
+        seqs.StringsRequest().decode(bytes(buf))
+
+
+def test_bad_enum_in_sequence(seqs):
+    buf = bytearray(seqs.NumbersRequest(0, [], [], [seqs.Kind.A]).encode()[0])
+    offset = struct.unpack_from("<I", buf, 24)[0]
+    buf[offset] = 9
+    with pytest.raises(MessageDecodingError, match="9 is not a Kind"):
+        seqs.NumbersRequest().decode(bytes(buf))
+
+
+def test_bad_port_index_in_sequence(seqs):
+    buf, _ = seqs.PortsRequest(0, [100]).encode()
+    with pytest.raises(MessageDecodingError, match="port index 0, but 0 handles"):
+        seqs.PortsRequest().decode(buf, ())
+
+
+################################################################
 # Generator errors
 ################################################################
 
@@ -527,6 +673,11 @@ def test_class_name_collision_with_struct():
 
 def test_reserved_name():
     assert "reserved" in generate_error("library t;\nstruct Message {}")
+
+
+@pytest.mark.parametrize("name", ["Encoder", "Decoder", "StructCodec", "STRING_CODEC"])
+def test_codec_names_reserved(name):
+    assert "reserved" in generate_error(f"library t;\nstruct {name} {{}}")
 
 
 ################################################################

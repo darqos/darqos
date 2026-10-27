@@ -89,13 +89,34 @@ offset and a
 length.
 The bytes themselves are appended to the end of the message.
 .TP
+.B string
+UTF-8 text, laid out and encoded as an
+.BR opaque .
+.TP
+.BI sequence< type >
+A sequence of elements of any type, including other sequences: for
+example,
+.BR sequence<string> .
+In the message, an 8-byte, 4-byte aligned descriptor: a
+.B uint32
+offset and a
+.B uint32
+count of elements.
+The elements are appended to the end of the message, as an array at a
+stride of the element type's size.
+The element type can't be an empty struct.
+In the IR, a sequence field, and a sequence element, have an
+.B element
+giving the element type, its size and its alignment.
+.TP
 .B port
 2-byte index into the list of handles transferred with the message,
 or 0xFFFF for no port.
 A message can transfer at most 64 handles.
 .PP
 A struct or enum may be used as a field type, before or after its
-declaration, but a struct may not contain itself.
+declaration, but a struct may not contain itself, even in a
+sequence.
 Enum and struct names must be distinct, and not the names of
 primitive types.
 .SS Layout

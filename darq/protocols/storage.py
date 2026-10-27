@@ -8,7 +8,7 @@ import typing
 from enum import IntEnum
 
 from darq import system
-from darq.dipc import Message, Record
+from darq.dipc import Decoder, Encoder, Message, Record
 from darq.errors import MessageDecodingError
 
 
@@ -118,13 +118,10 @@ class CreateRequest(Message):
 
     def encode(self) -> tuple[bytes, list[int]]:
         buf, handles = super().encode()
-        data = b''
-        offset0 = self.DATA_START + len(data)
-        data += self.pad_bytes(self.value)
+        out = Encoder(self.DATA_START, handles)
         buf += struct.pack(self.BODY_FORMAT,
-                           offset0,
-                           len(self.value))
-        buf += data
+                           *out.opaque(self.value))
+        buf += out.data
         return buf, handles
 
     def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
@@ -133,7 +130,8 @@ class CreateRequest(Message):
             raise MessageDecodingError("buffer too short for message")
 
         bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
-        self.value = self.decode_opaque(buffer, self.DATA_START, bits[0], bits[1])
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.value = inp.opaque(bits[0], bits[1])
         return
 
 
@@ -158,15 +156,12 @@ class GetResponse(Message):
 
     def encode(self) -> tuple[bytes, list[int]]:
         buf, handles = super().encode()
-        data = b''
-        offset0 = self.DATA_START + len(data)
-        data += self.pad_bytes(self.value)
+        out = Encoder(self.DATA_START, handles)
         buf += struct.pack(self.BODY_FORMAT,
-                           offset0,
-                           len(self.value),
+                           *out.opaque(self.value),
                            self.generation,
                            self.status)
-        buf += data
+        buf += out.data
         return buf, handles
 
     def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
@@ -175,7 +170,8 @@ class GetResponse(Message):
             raise MessageDecodingError("buffer too short for message")
 
         bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
-        self.value = self.decode_opaque(buffer, self.DATA_START, bits[0], bits[1])
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.value = inp.opaque(bits[0], bits[1])
         self.generation = bits[2]
         self.status = self.decode_enum(Status, bits[3])
         return
@@ -266,16 +262,13 @@ class PutRequest(Message):
 
     def encode(self) -> tuple[bytes, list[int]]:
         buf, handles = super().encode()
-        data = b''
-        offset0 = self.DATA_START + len(data)
-        data += self.pad_bytes(self.value)
+        out = Encoder(self.DATA_START, handles)
         buf += struct.pack(self.BODY_FORMAT,
                            self.key.high,
                            self.key.low,
                            self.expected,
-                           offset0,
-                           len(self.value))
-        buf += data
+                           *out.opaque(self.value))
+        buf += out.data
         return buf, handles
 
     def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
@@ -284,11 +277,12 @@ class PutRequest(Message):
             raise MessageDecodingError("buffer too short for message")
 
         bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
         self.key = Key()
         self.key.high = bits[0]
         self.key.low = bits[1]
         self.expected = bits[2]
-        self.value = self.decode_opaque(buffer, self.DATA_START, bits[3], bits[4])
+        self.value = inp.opaque(bits[3], bits[4])
         return
 
 

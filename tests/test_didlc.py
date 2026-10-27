@@ -239,6 +239,8 @@ def test_no_message_header_in_ir():
     ("int64", 8, 8), ("uint64", 8, 8),
     ("real32", 4, 4), ("real64", 8, 8),
     ("opaque", 8, 4),
+    ("string", 8, 4),
+    ("sequence<uint8>", 8, 4),
     ("port", 2, 2),
 ])
 def test_primitive_types(type_, size, align):
@@ -362,6 +364,51 @@ def test_recursive_struct():
 def test_self_containing_struct():
     error = compile_error("library t;\nstruct A { A a; }")
     assert "Recursive struct containment: A -> A" in str(error)
+
+
+################################################################
+# Sequences
+################################################################
+
+def test_sequence_element_in_ir():
+    layout = request_layout("sequence<uint16> xs, string s")
+    assert layout["fields"][0] == {
+        "name": "xs", "type": "sequence", "offset": 0, "size": 8, "alignment": 4,
+        "element": {"type": "uint16", "size": 2, "alignment": 2}}
+    assert "element" not in layout["fields"][1]
+
+
+def test_nested_sequence_of_structs():
+    layout = request_layout("sequence<sequence<S>> deep", "struct S { uint8 a; uint64 b; }")
+    assert layout["fields"][0]["element"] == {
+        "type": "sequence", "size": 8, "alignment": 4,
+        "element": {"type": "S", "size": 16, "alignment": 8}}
+
+
+def test_sequence_of_enum():
+    layout = request_layout("sequence<E> es", "enum E : uint32 { A = 0; }")
+    assert layout["fields"][0]["element"] == {"type": "E", "size": 4, "alignment": 4}
+
+
+def test_sequence_in_struct():
+    ir = compile_source("library t;\nstruct S { uint8 x; sequence<string> names; }")
+    assert offsets(ir["structs"][0]) == [("x", 0), ("names", 4)]
+    assert ir["structs"][0]["fields"][1]["element"]["type"] == "string"
+
+
+@pytest.mark.parametrize("source, message, position", [
+    ("protocol P { 1: M(sequence<float32> x); }", "Unknown type: float32", (2, 28)),
+    ("protocol P { 1: M(sequence x); }", "Expected LT", (2, 28)),
+    ("protocol P { 1: M(sequence<uint8 x); }", "Expected GT", (2, 34)),
+    ("struct E {}\nprotocol P { 1: M(sequence<E> x); }", "Sequence element type E is empty", (3, 28)),
+    ("struct A { sequence<A> children; }", "Recursive struct containment: A -> A", (2, 21)),
+    ("struct string {}", "struct string has the name of a primitive type", (2, 8)),
+    ("struct sequence {}", "struct sequence has the name of a primitive type", (2, 8)),
+])
+def test_sequence_errors(source, message, position):
+    error = compile_error("library t;\n" + source)
+    assert message in str(error)
+    assert (error.line, error.col) == position
 
 
 ################################################################

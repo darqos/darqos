@@ -451,4 +451,7 @@ Notes:
 * Specification of a return type(s) for method x implies two messages: xRequest and xResponse
 * The 'port' type is a uint16 index into the list of handles transferred with the message, or 0xFFFF for no port (see Ports in Messages): the generated code converts between indexes and handles.  A message can transfer at most 64 handles.
 * The 'opaque' type is a sequence of bytes.  It's encoded as a uint32 offset (from the start of the message) and a uint32 length, and the bytes are appended to the end of the message, 8-byte aligned.
+* The 'string' type is UTF-8 text, encoded as an opaque.  Decoding invalid UTF-8 fails.
+* The 'sequence<T>' type is a sequence of elements of any type T, including other sequences: `sequence<string>`, `sequence<sequence<Key>>`.  It's encoded as a uint32 offset and a uint32 count of elements, and the elements are appended to the end of the message as an array, at a stride of T's size.  The elements' own strings, opaques and sequences follow the array.  T can't be an empty struct, and a struct can't contain itself through a sequence.
+* Out-of-line values (opaques, strings and sequences) are appended in the order they're encoded: fields in order, and a sequence's array before its elements' values.  Decoding requires exactly that order, so one value can't be referred to many times.
   

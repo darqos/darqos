@@ -16,8 +16,19 @@
 # - An 'opaque' field is a sequence of bytes, encoded as a descriptor:
 #   uint32 offset of its value from the start of the message, then
 #   uint32 length.  The values are appended to the message, after the
-#   fixed part, in field order: each starts on an 8-byte boundary, and
-#   is padded to a multiple of 8 bytes.
+#   fixed part: each starts on an 8-byte boundary, and is padded to a
+#   multiple of 8 bytes.
+# - A 'string' field is encoded as an opaque, holding UTF-8.  Decoding
+#   a value that isn't valid UTF-8 fails.
+# - A 'sequence<T>' field is a descriptor: uint32 offset of an array of
+#   elements, then uint32 count of elements.  The array is a value, like
+#   an opaque's, holding each element's fixed part, at a stride of T's
+#   size.  Out-of-line values of the elements (their strings, opaques
+#   and sequences) follow the array, in element order.
+# - Values are appended in the order they're encoded: fields in order,
+#   and a sequence's array before its elements' values.  Decoding
+#   requires exactly that order, with no gaps or overlaps, so a message
+#   can't refer to one value many times.
 # - A 'port' field is a uint16 index into the list of handles
 #   transferred with the message, or NO_PORT.  encode() returns the
 #   list along with the bytes, and decode() takes it back.
@@ -35,14 +46,27 @@ from .errors import MessageDecodingError
 # Control exports
 __all__ = [
     "BYTE_ORDER",
+    "Codec",
+    "Decoder",
     "ERROR",
+    "Encoder",
+    "EnumCodec",
     "ErrorCode",
     "ErrorReply",
     "HEADER_FORMAT",
     "HEADER_LENGTH",
     "Message",
     "NO_PORT",
+    "OPAQUE_CODEC",
+    "OpaqueCodec",
+    "PORT_CODEC",
+    "PortCodec",
     "Record",
+    "STRING_CODEC",
+    "ScalarCodec",
+    "SequenceCodec",
+    "StringCodec",
+    "StructCodec",
     "decode_flags",
     "decode_method",
     "decode_txid",
@@ -86,6 +110,10 @@ def decode_method(buffer: bytes) -> int:
 
 class Record:
     """Base class for structs and messages: compared and shown by value."""
+
+    # A struct's codec, set by the generated module when the struct is
+    # used in a sequence.
+    CODEC: "typing.ClassVar[StructCodec]"
 
     def __eq__(self, other) -> bool:
         return type(other) is type(self) and vars(other) == vars(self)
@@ -177,6 +205,219 @@ class Message(Record):
         if offset < start or offset + length > len(buffer):
             raise MessageDecodingError(f"opaque value out of range: offset {offset}, length {length}")
         return bytes(buffer[offset:offset + length])
+
+
+def _align8(n: int) -> int:
+    return (n + 7) // 8 * 8
+
+
+class Encoder:
+    """Appends a message's out-of-line values, after its fixed part.
+
+    Each value starts on an 8-byte boundary, and is padded to a multiple
+    of 8 bytes."""
+
+    def __init__(self, start: int, handles: list[int]):
+        """Constructor.
+
+        :param start: Offset of the first value in the message.
+        :param handles: The message's handles, added to by port fields."""
+        self.start = start
+        self.handles = handles
+        self.data = bytearray()
+
+    def _append(self, value: bytes) -> int:
+        offset = self.start + len(self.data)
+        self.data += value
+        self.data += b'\0' * (-len(value) % 8)
+        return offset
+
+    def opaque(self, value: bytes) -> tuple[int, int]:
+        """Append an opaque value, and return its descriptor."""
+        return self._append(value), len(value)
+
+    def string(self, value: str) -> tuple[int, int]:
+        """Append a string value, and return its descriptor."""
+        return self.opaque(value.encode("utf-8"))
+
+    def port(self, handle: int | None) -> int:
+        """Return the index for a port, adding it to the handles."""
+        return Message.encode_port(self.handles, handle)
+
+    def sequence(self, values: typing.Sequence[typing.Any], element: "Codec") -> tuple[int, int]:
+        """Append a sequence's array, and its elements' values, and
+        return its descriptor."""
+        offset = self._append(bytes(len(values) * element.size))
+        for n, value in enumerate(values):
+            # The element's values are appended before its fixed part is
+            # packed into the array.
+            element.struct.pack_into(self.data, offset - self.start + n * element.size,
+                                     *element.flatten(value, self))
+        return offset, len(values)
+
+
+class Decoder:
+    """Reads a message's out-of-line values, checking that they're laid
+    out exactly as an Encoder would."""
+
+    def __init__(self, buffer: bytes, start: int, handles: typing.Sequence[int] = ()):
+        """Constructor.
+
+        :param start: Offset of the first value in the message.
+        :param handles: Handles transferred with the message."""
+        self.buffer = buffer
+        self.handles = handles
+        self.position = start
+
+    def _block(self, what: str, offset: int, length: int) -> int:
+        if offset != self.position:
+            raise MessageDecodingError(f"{what} value at offset {offset}, expected {self.position}")
+        if offset + length > len(self.buffer):
+            raise MessageDecodingError(f"{what} value out of range: offset {offset}, length {length}")
+        self.position += _align8(length)
+        return offset
+
+    def opaque(self, offset: int, length: int) -> bytes:
+        """Return the value for an opaque descriptor."""
+        self._block("opaque", offset, length)
+        return bytes(self.buffer[offset:offset + length])
+
+    def string(self, offset: int, length: int) -> str:
+        """Return the value for a string descriptor."""
+        self._block("string", offset, length)
+        try:
+            return bytes(self.buffer[offset:offset + length]).decode("utf-8")
+        except UnicodeDecodeError as e:
+            raise MessageDecodingError(f"string value is not valid UTF-8: {e.reason}") from None
+
+    def port(self, index: int) -> int | None:
+        """Return the handle for a port index."""
+        return Message.decode_port(self.handles, index)
+
+    def sequence(self, element: "Codec", offset: int, count: int) -> list[typing.Any]:
+        """Return the elements for a sequence descriptor."""
+        # Otherwise, a short message could hold a vast count of them.
+        if element.size == 0:
+            raise MessageDecodingError("sequence elements can't be empty")
+        self._block("sequence", offset, count * element.size)
+        return [element.unflatten(iter(element.struct.unpack_from(self.buffer, offset + n * element.size)), self)
+                for n in range(count)]
+
+
+class Codec:
+    """How a sequence's elements are encoded: the format of each one's
+    fixed part, and how it's converted to and from the values packed in
+    that format.
+
+    This one is for numbers and bools."""
+
+    def __init__(self, format: str):
+        """Constructor.
+
+        :param format: struct module format, without byte order."""
+        self.format = format
+        self.struct = struct.Struct(BYTE_ORDER + format)
+        self.size = self.struct.size
+
+    def flatten(self, value: typing.Any, out: Encoder) -> tuple[typing.Any, ...]:
+        """Return the values to pack for an element."""
+        return (value,)
+
+    def unflatten(self, bits: typing.Iterator[typing.Any], inp: Decoder) -> typing.Any:
+        """Return an element, from the values unpacked for it."""
+        return next(bits)
+
+
+ScalarCodec = Codec
+
+
+class EnumCodec(Codec):
+    def __init__(self, enum: type[IntEnum], format: str):
+        super().__init__(format)
+        self.enum = enum
+
+    def unflatten(self, bits: typing.Iterator[typing.Any], inp: Decoder) -> typing.Any:
+        return Message.decode_enum(self.enum, next(bits))
+
+
+class PortCodec(Codec):
+    def __init__(self):
+        super().__init__("H")
+
+    def flatten(self, value: typing.Any, out: Encoder) -> tuple[typing.Any, ...]:
+        return (out.port(value),)
+
+    def unflatten(self, bits: typing.Iterator[typing.Any], inp: Decoder) -> typing.Any:
+        return inp.port(next(bits))
+
+
+class OpaqueCodec(Codec):
+    def __init__(self):
+        super().__init__("II")
+
+    def flatten(self, value: typing.Any, out: Encoder) -> tuple[typing.Any, ...]:
+        return out.opaque(value)
+
+    def unflatten(self, bits: typing.Iterator[typing.Any], inp: Decoder) -> typing.Any:
+        return inp.opaque(next(bits), next(bits))
+
+
+class StringCodec(Codec):
+    def __init__(self):
+        super().__init__("II")
+
+    def flatten(self, value: typing.Any, out: Encoder) -> tuple[typing.Any, ...]:
+        return out.string(value)
+
+    def unflatten(self, bits: typing.Iterator[typing.Any], inp: Decoder) -> typing.Any:
+        return inp.string(next(bits), next(bits))
+
+
+class SequenceCodec(Codec):
+    def __init__(self, element: Codec):
+        super().__init__("II")
+        self.element = element
+
+    def flatten(self, value: typing.Any, out: Encoder) -> tuple[typing.Any, ...]:
+        return out.sequence(value, self.element)
+
+    def unflatten(self, bits: typing.Iterator[typing.Any], inp: Decoder) -> typing.Any:
+        return inp.sequence(self.element, next(bits), next(bits))
+
+
+class StructCodec(Codec):
+    """A struct: its fields' codecs, at their offsets, padded to its size."""
+
+    def __init__(self, cls: type[Record], size: int, fields: list[tuple[str, int, Codec]]):
+        format = ""
+        position = 0
+        for _, offset, codec in fields:
+            if offset > position:
+                format += f"{offset - position}x"
+            format += codec.format
+            position = offset + codec.size
+        if size > position:
+            format += f"{size - position}x"
+        super().__init__(format)
+        self.cls = cls
+        self.fields = fields
+
+    def flatten(self, value: typing.Any, out: Encoder) -> tuple[typing.Any, ...]:
+        bits: list[typing.Any] = []
+        for name, _, codec in self.fields:
+            bits.extend(codec.flatten(getattr(value, name), out))
+        return tuple(bits)
+
+    def unflatten(self, bits: typing.Iterator[typing.Any], inp: Decoder) -> typing.Any:
+        value = self.cls()
+        for name, _, codec in self.fields:
+            setattr(value, name, codec.unflatten(bits, inp))
+        return value
+
+
+PORT_CODEC = PortCodec()
+OPAQUE_CODEC = OpaqueCodec()
+STRING_CODEC = StringCodec()
 
 
 class ErrorCode(IntEnum):

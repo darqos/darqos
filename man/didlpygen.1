@@ -26,6 +26,11 @@ member.
 .TP
 .I struct classes
 One class per DIDL struct, holding its fields.
+A struct used in a sequence also has a
+.BR CODEC ,
+a
+.B darq.dipc.StructCodec
+for its elements.
 .TP
 .I message classes
 For a method
@@ -51,14 +56,22 @@ A
 .B port
 field holds a handle, or
 .B None
-for no port.
+for no port; a
+.B string
+field holds a
+.BR str ,
+and a
+.B sequence
+field a
+.BR list .
 .B decode()
 raises
 .B darq.errors.MessageDecodingError
 if the buffer is too short, the method number doesn't match, the
-flags are wrong, an opaque value is out of range or not 8-byte
-aligned, a port index is past the end of the handles, or an enum
-field's value isn't one of its members.
+flags are wrong, an out-of-line value is out of range or not where the
+encoder would have put it, a string isn't valid UTF-8, a port index is
+past the end of the handles, or an enum field's value isn't one of its
+members.
 Each request class's
 .B RESPONSE
 is its response class;
@@ -109,9 +122,31 @@ field is an 8-byte descriptor: a
 offset of its value from the start of the message, then a
 .B uint32
 length.
-The values are appended after the fixed part of the message, in field
-order, each starting on an 8-byte boundary and padded with zeros to a
+A
+.B string
+is encoded as an opaque, holding UTF-8.
+A
+.B sequence
+is an 8-byte descriptor: a
+.B uint32
+offset of an array of its elements, then a
+.B uint32
+count.
+The array holds each element's fixed part, at a stride of the element
+type's size; the elements' own out-of-line values follow it, in
+element order.
+.PP
+The values are appended after the fixed part of the message, in the
+order they're encoded: fields in order, and a sequence's array before
+its elements' values.
+Each starts on an 8-byte boundary, and is padded with zeros to a
 multiple of 8 bytes.
+Decoding requires exactly that order, so a value can't be referred to
+more than once.
+.PP
+Message fields are encoded by generated code; sequence elements by the
+codecs in
+.BR darq.dipc .
 .SH OPTIONS
 .TP
 .BI \-o " output\fR, " \-\-output " output"

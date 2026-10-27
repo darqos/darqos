@@ -14,6 +14,10 @@
 # classes (see darq/system.py), with a method for each protocol method,
 # named in snake case.
 #
+# Message fields are encoded by generated code.  A sequence's elements
+# are encoded by codecs from darq/dipc.py: a struct used in a sequence
+# has a CODEC, assigned after the struct classes.
+#
 # The common classes, the message header and the wire format are
 # defined in darq/dipc.py: the generated module imports them, and
 # contains no boilerplate of its own.
@@ -37,22 +41,32 @@ TYPE_CODES = {
     'int64':  ('q', 'int'),   'uint64': ('Q', 'int'),
     'real32': ('f', 'float'), 'real64': ('d', 'float'),
     'opaque': ('II', 'bytes'),
+    'string': ('II', 'str'),
+    'sequence': ('II', 'list'),
     'port':   ('H', 'int | None'),
 }
+
+# Types encoded out of line, after the message's fixed part
+OUT_OF_LINE = {'opaque', 'string', 'sequence'}
+
+# Codecs for primitive types that aren't numbers or bools
+CODECS = {'opaque': 'OPAQUE_CODEC', 'string': 'STRING_CODEC', 'port': 'PORT_CODEC'}
 
 # struct module byte order prefix, matching darq.dipc.BYTE_ORDER
 BYTE_ORDER = "<"
 
-DEFAULTS = {'bool': 'False', 'float': '0.0', 'bytes': "b''", 'int': '0', 'int | None': 'None'}
+DEFAULTS = {'bool': 'False', 'float': '0.0', 'bytes': "b''", 'str': "''", 'int': '0', 'int | None': 'None'}
 
 # IR format version this generator reads, matching didlc's IR_VERSION
-IR_VERSION = 3
+IR_VERSION = 4
 
 # Message header length, matching darq.dipc.HEADER_LENGTH
 HEADER_LENGTH = 8
 
 # Names the generated module imports
-RESERVED_NAMES = {"IntEnum", "Message", "Record", "struct", "typing", "system", "MessageDecodingError"}
+RESERVED_NAMES = {"IntEnum", "Message", "Record", "struct", "typing", "system", "MessageDecodingError",
+                  "Decoder", "Encoder", "Codec", "EnumCodec", "SequenceCodec", "StructCodec",
+                  "OPAQUE_CODEC", "PORT_CODEC", "STRING_CODEC"}
 
 # Names used by the darq.system Client and Handler base classes
 RESERVED_METHOD_NAMES = {"call", "send", "service", "timeout", "dispatch", "error"}
@@ -113,7 +127,7 @@ class Generator:
                 result.append({"path": f_path, "type": self.enums[f["type"]]["type"], "enum": f["type"],
                                "offset": base + f["offset"], "size": f["size"]})
             elif f["type"] in TYPE_CODES:
-                result.append({"path": f_path, "type": f["type"],
+                result.append({"path": f_path, "type": f["type"], "element": f.get("element"),
                                "offset": base + f["offset"], "size": f["size"]})
             else:
                 raise GenError(f"Unknown type '{f['type']}' for field {f_path}")
@@ -136,14 +150,20 @@ class Generator:
         return fmt
 
     def hint(self, f: Dict[str, Any]) -> str:
-        if f["type"] in self.structs:
-            return f"{f['type']} | None"
-        if f["type"] in self.enums:
+        if f["type"] in self.structs or f["type"] == "sequence":
+            return f"{self.value_hint(f)} | None"
+        return self.value_hint(f)
+
+    def value_hint(self, f: Dict[str, Any]) -> str:
+        """The type of a field's value, or a sequence's element."""
+        if f["type"] in self.structs or f["type"] in self.enums:
             return f["type"]
+        if f["type"] == "sequence":
+            return f"list[{self.value_hint(f['element'])}]"
         return TYPE_CODES[f["type"]][1]
 
     def default(self, f: Dict[str, Any]) -> str:
-        if f["type"] in self.structs:
+        if f["type"] in self.structs or f["type"] == "sequence":
             return "None"
         if f["type"] in self.enums:
             return f"{f['type']}.{self.enum_default(self.enums[f['type']])}"
@@ -156,6 +176,58 @@ class Generator:
             if m["value"] == 0:
                 return m["name"]
         return e["members"][0]["name"]
+
+    ################################################################
+    # Codecs, for sequences' elements
+
+    def codec(self, ref: Dict[str, Any]) -> str:
+        """An expression for the codec of a type, noting what it uses from darq.dipc."""
+        f_type = ref["type"]
+        if f_type in self.structs:
+            return f"{f_type}.CODEC"
+        if f_type in self.enums:
+            self.dipc_names.add("EnumCodec")
+            return f'EnumCodec({f_type}, "{TYPE_CODES[self.enums[f_type]["type"]][0]}")'
+        if f_type == "sequence":
+            self.dipc_names.add("SequenceCodec")
+            return f"SequenceCodec({self.codec(ref['element'])})"
+        if f_type in CODECS:
+            self.dipc_names.add(CODECS[f_type])
+            return CODECS[f_type]
+        self.dipc_names.add("Codec")
+        return f'Codec("{TYPE_CODES[f_type][0]}")'
+
+    def coded_structs(self, layouts: List[Dict[str, Any]]) -> List[str]:
+        """The structs that need a CODEC, because they're used in a sequence,
+        in an order where each comes after those it contains."""
+        order: List[str] = []
+
+        def need(ref: Dict[str, Any]):
+            if ref["type"] == "sequence":
+                need(ref["element"])
+            elif ref["type"] in self.structs and ref["type"] not in order:
+                for f in self.structs[ref["type"]]["fields"]:
+                    need(f)
+                order.append(ref["type"])
+
+        def scan(fields: List[Dict[str, Any]]):
+            for f in fields:
+                if f["type"] == "sequence":
+                    need(f["element"])
+
+        for s in self.ir["structs"]:
+            scan(s["fields"])
+        for layout in layouts:
+            scan(layout["fields"])
+        return order
+
+    def emit_struct_codec(self, name: str):
+        s = self.structs[name]
+        self.dipc_names.add("StructCodec")
+        self.emit(f"{name}.CODEC = StructCodec({name}, {s['total_size']}, [")
+        for f in s["fields"]:
+            self.emit(f'    ("{f["name"]}", {f["offset"]}, {self.codec(f)}),')
+        self.emit("])")
 
     def constructor(self, fields: List[Dict[str, Any]], leading: List[str], super_call: str | None):
         params = ["self"] + leading + [f"{f['name']}: {self.hint(f)} = {self.default(f)}" for f in fields]
@@ -171,6 +243,8 @@ class Generator:
         for f in fields:
             if f["type"] in self.structs:
                 self.emit(f"        self.{f['name']} = {f['type']}() if {f['name']} is None else {f['name']}")
+            elif f["type"] == "sequence":
+                self.emit(f"        self.{f['name']} = [] if {f['name']} is None else {f['name']}")
             else:
                 self.emit(f"        self.{f['name']} = {f['name']}")
         if not fields and not super_call:
@@ -210,9 +284,22 @@ class Generator:
         self.emit("#")
         self.emit(f"# DIDL library: {self.ir['library']}")
         self.emit()
-        # Import only what the module uses.
+        # Import only what the module uses.  The codecs are generated
+        # here, and discarded, to find what they use.
         packed = any(body["fields"] for _, _, _, body, _ in messages)
-        dipc_names = (["Message"] if messages else []) + (["Record"] if self.ir["structs"] else [])
+        self.dipc_names = set((["Message"] if messages else []) + (["Record"] if self.ir["structs"] else []))
+        coded = self.coded_structs([body for _, _, _, body, _ in messages])
+        mark = len(self.lines)
+        for name in coded:
+            self.emit_struct_codec(name)
+        for _, _, _, body, _ in messages:
+            for leaf in self.leaves(body, 0, "self"):
+                if leaf.get("type") in OUT_OF_LINE:
+                    self.dipc_names.update(["Encoder", "Decoder"])
+                if leaf.get("type") == "sequence":
+                    self.codec(leaf["element"])
+        del self.lines[mark:]
+        dipc_names = sorted(self.dipc_names, key=lambda name: (name.isupper(), name))
         stdlib = (["import struct"] if packed else []) + (["import typing"] if messages else [])
         if stdlib:
             self.emit("\n".join(stdlib))
@@ -223,7 +310,14 @@ class Generator:
         if self.ir["protocols"]:
             self.emit("from darq import system")
         if dipc_names:
-            self.emit(f"from darq.dipc import {', '.join(dipc_names)}")
+            line = f"from darq.dipc import {', '.join(dipc_names)}"
+            if len(line) <= 100:
+                self.emit(line)
+            else:
+                self.emit("from darq.dipc import (")
+                for name in dipc_names:
+                    self.emit(f"    {name},")
+                self.emit(")")
         if packed:
             self.emit("from darq.errors import MessageDecodingError")
         if packed or dipc_names or self.ir["protocols"]:
@@ -246,6 +340,10 @@ class Generator:
             self.emit_banner("Structs")
             for s in self.ir["structs"]:
                 self.emit_struct(s)
+            for name in coded:
+                self.emit_struct_codec(name)
+                self.emit()
+                self.emit()
 
         if messages:
             self.emit_banner("Messages")
@@ -311,7 +409,8 @@ class Generator:
         leaves = self.leaves(layout, 0, "self")
         fmt = self.struct_format(leaves, layout["total_size"])
         length = body_start + layout["total_size"]
-        opaques = [leaf for leaf in leaves if leaf.get("type") == "opaque"]
+        out_of_line = [leaf for leaf in leaves if leaf.get("type") in OUT_OF_LINE]
+        sequences = [leaf for leaf in leaves if leaf.get("type") == "sequence"]
         data_start = align_up(length, 8)
 
         self.emit(f"class {class_name}(Message):")
@@ -324,8 +423,11 @@ class Generator:
             self.emit(f'    BODY_FORMAT = "{fmt}"')
             self.emit(f"    BODY_START = {body_start}")
         self.emit(f"    LENGTH = {length}")
-        if opaques:
+        if out_of_line:
             self.emit(f"    DATA_START = {data_start}")
+        # Codecs for the sequences' elements
+        for n, leaf in enumerate(sequences):
+            self.emit(f"    CODEC_{n} = {self.codec(leaf['element'])}")
         self.emit()
         self.constructor(layout["fields"], ["txid: int = 0"], "super().__init__(txid)")
         self.emit()
@@ -334,17 +436,17 @@ class Generator:
         self.emit("    def encode(self) -> tuple[bytes, list[int]]:")
         self.emit("        buf, handles = super().encode()")
         if layout["fields"]:
-            if opaques:
-                self.emit("        data = b''")
-                for n, leaf in enumerate(opaques):
-                    self.emit(f"        offset{n} = self.DATA_START + len(data)")
-                    self.emit(f"        data += self.pad_bytes({leaf['path']})")
+            if out_of_line:
+                # The values are appended as the descriptors are packed, in field order.
+                self.emit("        out = Encoder(self.DATA_START, handles)")
             values = []
             for leaf in leaves:
                 if "init" in leaf:
                     continue
-                if leaf["type"] == "opaque":
-                    values += [f"offset{opaques.index(leaf)}", f"len({leaf['path']})"]
+                if leaf["type"] in ("opaque", "string"):
+                    values.append(f"*out.{leaf['type']}({leaf['path']})")
+                elif leaf["type"] == "sequence":
+                    values.append(f"*out.sequence({leaf['path']}, self.CODEC_{sequences.index(leaf)})")
                 elif leaf["type"] == "port":
                     values.append(f"self.encode_port(handles, {leaf['path']})")
                 else:
@@ -354,10 +456,10 @@ class Generator:
             self.emit("        buf += struct.pack(self.BODY_FORMAT,")
             for n, value in enumerate(values):
                 self.emit(f"                           {value}{')' if n == len(values) - 1 else ','}")
-            if opaques:
+            if out_of_line:
                 if data_start > length:
                     self.emit(f"        buf += b'\\0' * {data_start - length}")
-                self.emit("        buf += data")
+                self.emit("        buf += out.data")
         self.emit("        return buf, handles")
         self.emit()
 
@@ -369,12 +471,17 @@ class Generator:
             self.emit('            raise MessageDecodingError("buffer too short for message")')
             self.emit()
             self.emit("        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)")
+            if out_of_line:
+                self.emit("        inp = Decoder(buffer, self.DATA_START, handles)")
             index = 0
             for leaf in leaves:
                 if "init" in leaf:
                     self.emit(f"        {leaf['init']} = {leaf['struct']}()")
-                elif leaf["type"] == "opaque":
-                    self.emit(f"        {leaf['path']} = self.decode_opaque(buffer, self.DATA_START, "
+                elif leaf["type"] in ("opaque", "string"):
+                    self.emit(f"        {leaf['path']} = inp.{leaf['type']}(bits[{index}], bits[{index + 1}])")
+                    index += 2
+                elif leaf["type"] == "sequence":
+                    self.emit(f"        {leaf['path']} = inp.sequence(self.CODEC_{sequences.index(leaf)}, "
                               f"bits[{index}], bits[{index + 1}])")
                     index += 2
                 elif leaf["type"] == "port":

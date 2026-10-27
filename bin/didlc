@@ -20,12 +20,14 @@ TYPE_MAP = {
     'int64':   {"size": 8, "align": 8}, 'uint64':  {"size": 8, "align": 8},
     'real32':  {"size": 4, "align": 4}, 'real64':  {"size": 8, "align": 8},
     'opaque':  {"size": 8, "align": 4},  # uint32 offset and uint32 length of out-of-line bytes
+    'string':  {"size": 8, "align": 4},  # as opaque, holding UTF-8
+    'sequence': {"size": 8, "align": 4},  # uint32 offset and uint32 count of out-of-line elements
     'port':    {"size": 2, "align": 2},  # uint16 index into the message's transferred handles
 }
 
 
 # IR format version: increment on any change that breaks consumers
-IR_VERSION = 3
+IR_VERSION = 4
 
 
 # Integer types an enum may be based on, with their value ranges
@@ -48,6 +50,7 @@ TOKEN_SPEC = [
     ('NUMBER',    r'-?(?:0[xX][0-9a-fA-F]+|\d+)'),
     ('ID',        r'[a-zA-Z_][a-zA-Z0-9_\.]*'),
     ('LBRACE',    r'\{'), ('RBRACE',    r'\}'),
+    ('LT',        r'<'),   ('GT',        r'>'),
     ('LPAR',      r'\('), ('RPAR',      r'\)'),
     ('SEMI',      r';'),   ('COMMA',     r','),
     ('COLON',     r':'),   ('EQUALS',    r'='),
@@ -154,16 +157,26 @@ class Parser:
         return {"name": name.value, "type": base.value, "members": members,
                 "line": name.line, "col": name.col, "type_line": base.line, "type_col": base.col}
 
+    def parse_type(self) -> Dict[str, Any]:
+        """A type reference: a name, or sequence<type>."""
+        t = self.consume('ID')
+        if t.value != 'sequence':
+            return {"type": t.value, "line": t.line, "col": t.col}
+        self.consume('LT')
+        element = self.parse_type()
+        self.consume('GT')
+        return {"type": t.value, "element": element, "line": t.line, "col": t.col}
+
     def parse_struct(self) -> Dict[str, Any]:
         self.consume('STRUCT')
         name = self.consume('ID')
         self.consume('LBRACE')
         fields = []
         while self.peek().type != 'RBRACE':
-            type_ = self.consume('ID')
+            type_ = self.parse_type()
             f_name = self.consume('ID').value
             self.consume('SEMI')
-            fields.append({"name": f_name, "type": type_.value, "line": type_.line, "col": type_.col})
+            fields.append({"name": f_name, **type_})
         self.consume('RBRACE')
         return {"name": name.value, "raw_fields": fields, "line": name.line, "col": name.col}
 
@@ -198,9 +211,9 @@ class Parser:
         if self.peek().type == 'RPAR':
             return args
         while True:
-            type_ = self.consume('ID')
+            type_ = self.parse_type()
             name = self.consume('ID').value
-            args.append({"type": type_.value, "name": name, "line": type_.line, "col": type_.col})
+            args.append({"name": name, **type_})
             if self.peek().type == 'COMMA':
                 self.consume('COMMA')
                 continue
@@ -226,6 +239,38 @@ def compile_ir(ast: Dict[str, Any]) -> Dict[str, Any]:
     layouts: Dict[str, Dict[str, Any]] = {}
     in_progress: List[str] = []  # structs whose layout is being computed, for cycle detection
 
+    def layout_type(ref: Dict[str, Any]) -> Dict[str, Any]:
+        """The size and alignment of a type reference, and for a
+        sequence, its element type's."""
+        f_type = ref["type"]
+        if f_type in TYPE_MAP:
+            size = TYPE_MAP[f_type]["size"]
+            align = TYPE_MAP[f_type]["align"]
+        elif f_type in declared_enums:
+            base = TYPE_MAP[declared_enums[f_type]["type"]]
+            size = base["size"]
+            align = base["align"]
+        elif f_type in declared_structs:
+            # Nested structures are laid out on demand, so declaration order doesn't matter.
+            # A struct can't contain itself, even in a sequence.
+            if f_type in in_progress:
+                cycle = " -> ".join(in_progress[in_progress.index(f_type):] + [f_type])
+                raise DidlError(f"Recursive struct containment: {cycle}", ref["line"], ref["col"])
+            nested = layout_struct(declared_structs[f_type])
+            size = nested["total_size"]
+            align = nested["alignment"]
+        else:
+            raise DidlError(f"Unknown type: {f_type}", ref["line"], ref["col"])
+
+        layout = {"type": f_type, "size": size, "alignment": align}
+        if f_type == "sequence":
+            element = layout_type(ref["element"])
+            if element["size"] == 0:
+                raise DidlError(f"Sequence element type {element['type']} is empty",
+                                ref["element"]["line"], ref["element"]["col"])
+            layout["element"] = element
+        return layout
+
     def layout_fields(fields: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Lays out fields in order with C-ABI padding, as for a struct body."""
         current_offset = 0
@@ -233,36 +278,20 @@ def compile_ir(ast: Dict[str, Any]) -> Dict[str, Any]:
         compiled_fields = []
 
         for field in fields:
-            f_type = field["type"]
-            if f_type in TYPE_MAP:
-                size = TYPE_MAP[f_type]["size"]
-                align = TYPE_MAP[f_type]["align"]
-            elif f_type in declared_enums:
-                base = TYPE_MAP[declared_enums[f_type]["type"]]
-                size = base["size"]
-                align = base["align"]
-            elif f_type in declared_structs:
-                # Nested structures are laid out on demand, so declaration order doesn't matter
-                if f_type in in_progress:
-                    cycle = " -> ".join(in_progress[in_progress.index(f_type):] + [f_type])
-                    raise DidlError(f"Recursive struct containment: {cycle}", field["line"], field["col"])
-                nested = layout_struct(declared_structs[f_type])
-                size = nested["total_size"]
-                align = nested["alignment"]
-            else:
-                raise DidlError(f"Unknown type: {f_type}", field["line"], field["col"])
-
+            layout = layout_type(field)
+            align = layout["alignment"]
             max_alignment = max(max_alignment, align)
 
             # Pad current offset out to match natural field boundaries
             if current_offset % align != 0:
                 current_offset += (align - (current_offset % align))
 
-            compiled_fields.append({
-                "name": field["name"], "type": f_type,
-                "offset": current_offset, "size": size, "alignment": align
-            })
-            current_offset += size
+            compiled = {"name": field["name"], "type": layout["type"],
+                        "offset": current_offset, "size": layout["size"], "alignment": align}
+            if "element" in layout:
+                compiled["element"] = layout["element"]
+            compiled_fields.append(compiled)
+            current_offset += layout["size"]
 
         # Structural trailer padding guarantees total structure aligns perfectly
         if current_offset % max_alignment != 0:
