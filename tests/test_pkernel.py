@@ -1146,6 +1146,21 @@ def test_notified_when_owner_disconnects(pkernel, watched):
     assert delivered(pkernel, a_peer) == [(0, a_port, notification(a_to_b))]
 
 
+def test_watcher_gone_before_its_disconnection_is_seen(pkernel, watched, caplog):
+    # At shutdown, A has gone, but the kernel hasn't yet read its
+    # socket's end when B's disconnection notifies it: the notification
+    # is dropped, rather than the kernel crashing.
+    a, a_peer, a_port, a_to_b, b, b_peer, b_port = watched
+    a_peer.close()
+    pkernel.peers.remove(a_peer)
+    pkernel.handle_disconnect(b)
+    assert "kproc [1]: dropped" in caplog.text
+
+    # A's disconnection is handled when its socket is next read.
+    a.on_readable(a.get_socket())
+    assert a.get_status() == pkernel.module.KernelProcessStatus.LOST
+
+
 def test_notified_once(pkernel, watched):
     a, a_peer, a_port, a_to_b, b, b_peer, b_port = watched
     assert notify_on_death(pkernel, a, a_to_b, a_port) == pk.NotifyResult.OK   # again: no change

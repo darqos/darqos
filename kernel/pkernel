@@ -225,8 +225,11 @@ class KernelProcessState:
         self._port_handles: dict[KernelPortState, int] = {}
         self._next_handle: int = 1
 
-        # Socket for this p-process' connection to the p-kernel.
+        # Socket for this p-process' connection to the p-kernel, and its
+        # peer's address, for logging: it can't be asked once the peer
+        # has gone.
         self._sock: socket.socket | None = None
+        self._peer: str = ""
 
         # Outbound (to p-process) data queue.
         self._send_buffer: bytes = b''
@@ -265,6 +268,10 @@ class KernelProcessState:
 
     def set_socket(self, sock: socket.socket | None):
         self._sock = sock
+        try:
+            self._peer = str(sock.getpeername()) if sock is not None else ""
+        except OSError:
+            self._peer = "(disconnected)"
 
     def set_dpid(self, dpid: int):
         self._dpid = dpid
@@ -442,8 +449,15 @@ class KernelProcessState:
         if not self._sock:
             return 0
 
-        self._sock.sendall(data)
-        logging.info(f"Sent {len(data)} bytes to socket {self._sock.getpeername()}")
+        # The process may have gone, with its disconnection not yet seen
+        # (while another's is being handled, say): the message is
+        # dropped, and the disconnection handled when its socket closes.
+        try:
+            self._sock.sendall(data)
+        except OSError as e:
+            logging.warning(f"{self.name()}: dropped {len(data)} bytes: {e!r}")
+            return 0
+        logging.info(f"Sent {len(data)} bytes to socket {self._peer}")
         return len(data)
 
     def on_readable(self, sock: socket.socket):
