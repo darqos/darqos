@@ -30,6 +30,20 @@ On startup,
 .B pkernel
 listens on TCP port 11000 on the loopback interface (127.0.0.1),
 schedules the boot sequence, and runs its event loop until shut down.
+.PP
+The boot sequence spawns, in order, the Storage service
+.RI ( services/storage ),
+the Type service
+.RI ( services/type ),
+and the type sync
+.RI ( tools/type-sync ),
+which registers the installed types and lenses with the Type service
+and then exits.
+They're found under the directory above the p-kernel's own,
+.IR /darq .
+They're spawned at once, without waiting for each other: each
+process' blocking name lookup waits for the service it needs.
+One that can't be started is logged, and the rest are started anyway.
 .SS Processes
 A process is created by a
 .B spawn_process
@@ -224,7 +238,8 @@ unit that runs the p-kernel as part of
 .SH BUGS
 The listening port is fixed at 11000.
 .PP
-The boot sequence does not yet start any system services.
+The boot sequence doesn't yet start the Index, History or Terminal
+services.
 .PP
 Finished processes the p-kernel spawned itself are never removed from
 the process table.

@@ -38,7 +38,6 @@ from test_rpc import FakePorts
 ROOT = pathlib.Path(__file__).parent.parent
 SERVICE_PATH = ROOT / "services" / "type"
 SYNC_PATH = ROOT / "tools" / "type-sync"
-STORAGE_PATH = ROOT / "services" / "storage"
 
 
 def load(name: str, path: pathlib.Path):
@@ -603,9 +602,9 @@ def test_type_service(live_pkernel, tmp_path, monkeypatch):  # noqa: F811
             return 0
         """)
 
-    kernel.do_spawn_process(None, str(STORAGE_PATH))
-    kernel.do_spawn_process(None, str(SERVICE_PATH))
-    sync = kernel._process_table[kernel.do_spawn_process(None, str(SYNC_PATH))]
+    # The boot starts Storage, the Type service, and the sync.
+    kernel.do_boot()
+    sync = next(p for p in kernel._process_table.values() if p._image_path == str(SYNC_PATH))
     client = kernel._process_table[kernel.do_spawn_process(None, client_path)]
     zombie = kernel.module.KernelProcessStatus.ZOMBIE
     run_kernel_until(kernel, lambda: client.get_status() == zombie and sync.get_status() == zombie,

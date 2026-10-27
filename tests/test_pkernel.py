@@ -294,6 +294,38 @@ def test_spawn_process_stub_fails(pkernel, executable, monkeypatch):
     assert len(pkernel._process_table) == table_size
 
 
+def test_boot_starts_services_in_order(pkernel, fake_popen):
+    module = pkernel.module
+    pkernel.do_boot()
+
+    paths = [args[-1] for args in fake_popen.calls]
+    assert paths == [os.path.join(module.DARQ_ROOT, path) for path in module.BOOT_PROCESSES]
+    assert paths[0].endswith("services/storage") and paths[-1].endswith("tools/type-sync")
+    for args in fake_popen.calls:
+        assert args[3] == "0"
+
+
+def test_boot_skips_missing_process(pkernel, fake_popen, tmp_path, monkeypatch):
+    for name in ("broken", "good"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "main.py").write_text("def darq_main():\n    pass\n")
+    broken, good = str(tmp_path / "broken"), str(tmp_path / "good")
+
+    def popen(args, **kwargs):
+        if args[-1] == broken:
+            raise FileNotFoundError(2, "No such file or directory")
+        FakePopen(args, **kwargs)
+    monkeypatch.setattr(pkernel.module.subprocess, "Popen", popen)
+    monkeypatch.setattr(pkernel.module, "DARQ_ROOT", str(tmp_path))
+    monkeypatch.setattr(pkernel.module, "BOOT_PROCESSES", ("missing", "broken", "good"))
+
+    pkernel.do_boot()
+
+    # The first has no main.py, and the second can't be started: the
+    # third is started anyway.
+    assert [args[-1] for args in fake_popen.calls] == [good]
+
+
 def test_spawn_process_sets_pythonpath(pkernel, fake_popen, executable, monkeypatch):
     monkeypatch.setenv("PYTHONPATH", "/existing")
     parent, _ = add_running_process(pkernel, 1)

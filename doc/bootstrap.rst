@@ -52,7 +52,11 @@ Bootstrap
 
      * p-kernel systemd unit is automatically started, as the `darq`
        user's login session; it's the only DarqOS systemd unit
-     * p-kernel will spawn system services
+     * p-kernel spawns the system services, in order: Storage, Type,
+       then the type sync (`tools/type-sync`), which registers the
+       installed types and lenses and exits.  They're started at
+       once: each waits, with a blocking name lookup, for the services
+       it uses.
      * Until the session is set up, the p-kernel runs as root
 
    * Storage
@@ -76,7 +80,7 @@ Bootstrap
        for this, in the run directory, accessible only to processes it
        spawned itself (parent dpid 0), with the `get_boot_value` and
        `set_boot_value` p-calls.  For example, the Type service keeps
-       the key of its registry blob there.
+       the key of its catalogue blob there.
      * It holds at most 64 names, with values of at most 1 KiB, so it
        stays small: it's for finding state, not holding it.
 

@@ -97,11 +97,8 @@ Issues
   rely on clients calling Item.Close for now (see doc/types.rst), so an
   implementation never learns of a client that crashed or forgot, and
   its open items accumulate.
-- Have pkernel.do_boot start the Storage service, then the Type
-  service, then the type sync (tools/type-sync), which registers the
-  base catalogue and every installed type and lens.  On a first boot,
-  the sync's ~70 registrations each save the catalogue, taking about 6
-  seconds: a batch Register would cut that.
+- On a first boot, the type sync's ~70 registrations each save the
+  catalogue, taking about 6 seconds: a batch Register would cut that.
 - The DIPC header's ERROR and NOTIFICATION flags (see darq/dipc.py)
   are a stopgap: error replies and p-kernel notifications are told
   apart from ordinary messages by header bits, with notifications also

@@ -99,8 +99,8 @@ kept in the boot vector, as `darq.type.catalogue`, so the Type Service
 must be spawned by the p-kernel, after the Storage service.  On a fresh
 system there's no key: the blob is created on the first change.
 
-The catalogue is filled by the *type sync*, `tools/type-sync`, run at
-boot after the Type Service.  It registers:
+The catalogue is filled by the *type sync*, `tools/type-sync`, spawned
+by the p-kernel at boot, after the Type Service.  It registers:
 
 * The base catalogue (`tools/type-sync/catalogue.json`): descriptions
   of the common types, from Apple's Uniform Type Identifiers, with their
