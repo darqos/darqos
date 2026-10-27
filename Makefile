@@ -1,5 +1,5 @@
 # darqos
-# Copyright (C) 2022 David Arnold
+# Copyright (C) 2022-2026 David Arnold
 
 all: world
 
@@ -20,11 +20,6 @@ darq/protocols/%.py: lib/didl/%.didl bin/didlc bin/didlpygen
 docs:
 	$(MAKE) -C doc html latexpdf SPHINXBUILD=$(abspath venv313/bin/sphinx-build)
 
-.PHONY: all world clean protocols docs
+world: docs protocols
 
-world clean:
-	# Services
-	(cd services/index; make $@)
-	(cd services/metadata; make $@)
-	(cd services/security; make $@)
-	(cd services/terminal; make $@)
+.PHONY: all world protocols docs
