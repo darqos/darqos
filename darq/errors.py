@@ -37,6 +37,16 @@ class PortRightError(DarqError):
     pass
 
 
+class InvalidIdentifierError(DarqError, ValueError):
+    """The string isn't a valid type or item identifier."""
+    pass
+
+
+class InvalidURLError(DarqError, ValueError):
+    """The string can't be parsed as a URL."""
+    pass
+
+
 class DeadPortError(DarqError):
     """The port has been destroyed."""
     pass

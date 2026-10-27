@@ -7,13 +7,10 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = 'DarqOS: Design, Implementation, and Use'
-copyright = '2023, David Arnold'
+copyright = '2023-2026, David Arnold'
 author = 'David Arnold'
 
 release = ''
-latex_elements = { 'releasename': '' }
-
-theme = "sphinx_book_theme"
 
 
 # -- General configuration ---------------------------------------------------
@@ -21,20 +18,26 @@ theme = "sphinx_book_theme"
 
 extensions = []
 
-templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
-
 
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
 html_theme = 'alabaster'
-html_static_path = ['_static']
 
 
-# Avoid "Too deeply nested" errors from LaTeX
+# -- Options for LaTeX (PDF) output ------------------------------------------
+# https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-latex-output
+
+latex_documents = [
+    ('index', 'darqos.tex', project, author, 'manual'),
+]
+
 latex_elements = {
+    'releasename': '',
+
+    # Avoid "Too deeply nested" errors from LaTeX
     'preamble': r'''
 \usepackage{enumitem}
 \setlistdepth{20}
@@ -47,4 +50,5 @@ latex_elements = {
 \setlist[itemize,4]{label=\textbullet}
 \setlist[itemize,5]{label=\textbullet}
 \setlist[itemize,6]{label=\textbullet}
-'''}
+''',
+}

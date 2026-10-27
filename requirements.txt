@@ -1,6 +1,7 @@
 PyInstaller
 PyQt5
 
+ada-url
 orjson
 pillow
 setproctitle

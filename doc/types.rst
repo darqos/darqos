@@ -23,20 +23,23 @@ specifications directly.
 A type identifier is
 
   * A UTF-8 string
-  * Normalized using Unicode NFKC normalization
+  * Stored and compared in its Unicode NFKC_Casefold form, so type
+    identifiers are case-insensitive, and canonically lower-case.  The
+    rules below apply to that form.
   * The first character must be from the set:
 
     * Unicode UAX#31 core property XID_Start
-  * Subsequent characters must from from the set:
+  * Subsequent characters must be from the set:
 
     * Unicode UAX#31 core property XID_Continue
     * U+002D (hyphen)
     * U+002E (period)
     * U+002F (forward slash)
-    * U+003A (colon)
-  * Less than 128 bytes in length (NOT including any terminating U+0000)
+  * Never contains a colon (U+003A), so that an Item Identifier can be
+    split into its parts at its first colon (see :doc:`item`)
+  * Less than 128 bytes in length, after NFKC_Casefold (NOT including
+    any terminating U+0000)
   * Typically have a dotted string format, eg. "public.item"
-  * Is case-insensitive, but canonically, all lower-case
 
 The set of basic types described by Apple's Uniform Type Identifier system
 is used as the basis for DarqOS types.  That set is described in Apple's
@@ -116,7 +119,7 @@ colon, and a type-specific identifier for the specific Item, like
 
   `net.daringfireball.markdown:c5f1ad2a-ea33-4248-b116-9c363cbade66`
 
-Items are described in more detail in `Items <item.rst>`_.
+Items are described in more detail in :doc:`item`.
 
 A Type Implementation supports the creation, use, and destruction
 of items.
@@ -226,6 +229,7 @@ is maintained by the Type Service.
 References
 ==========
 
+* https://www.unicode.org/reports/tr31/ (UAX#31: Unicode Identifiers and Syntax)
 * https://en.wikipedia.org/wiki/Uniform_Type_Identifier
 * https://developer.android.com/guide/components/intents-common
 * https://developer.android.com/guide/components/intents-filters

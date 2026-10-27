@@ -278,19 +278,17 @@ Requests and Responses
 `darq.system` provides requests and responses over ports, for DIDL
 protocols.  For each protocol, didlpygen generates a `Client` and a
 `Handler` class, with a method for each protocol method, named in
-snake case:
+snake case::
 
-```
-storage = Storage.Client(darq.connect("darq.storage"))
-response = storage.get(key=b"foo")
+    storage = Storage.Client(darq.connect("darq.storage"))
+    response = storage.get(key=b"foo")
 
-class StorageService(Storage.Handler):
-    def get(self, request, source):
-        return GetResponse(value=..., status=0)
+    class StorageService(Storage.Handler):
+        def get(self, request, source):
+            return GetResponse(value=..., status=0)
 
-def darq_main():
-    darq.serve("darq.storage", StorageService())
-```
+    def darq_main():
+        darq.serve("darq.storage", StorageService())
 
 * A client's requests are sent from its thread's *reply port*, opened
   on first use, so the service's replies come back to it.
@@ -430,22 +428,20 @@ from darq/pcall.py).
 Syntax
 ~~~~~~
 
-Example
+Example::
 
-```
-library filesystem;
+    library filesystem;
 
-struct FileAttributes {
-    uint64 size;
-    uint32 permissions;
-    uint32 owner_id;
-}
+    struct FileAttributes {
+        uint64 size;
+        uint32 permissions;
+        uint32 owner_id;
+    }
 
-protocol FileServer {
-    1: GetAttributes(uint64 fd) -> (FileAttributes attr, uint32 status);
-    2: Foo(uint8 a, uint16 b, int8 c, real32 d, real64 e, bool f, opaque g, port h);
-}
-```
+    protocol FileServer {
+        1: GetAttributes(uint64 fd) -> (FileAttributes attr, uint32 status);
+        2: Foo(uint8 a, uint16 b, int8 c, real32 d, real64 e, bool f, opaque g, port h);
+    }
 
 Notes:
 

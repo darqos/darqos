@@ -9,31 +9,42 @@ are also used to represent real-world items, like people or places.
 
 Items are identified using an *Item Identifier* (aka *iid*).
 An item identifier is a string, with two parts: a type name and an
-identifier specifier, separated by a colon character.
+identifier specifier, separated by a colon character.  A type
+identifier never contains a colon, but an item specifier may (so it
+can hold a URL, for instance): an item identifier is parsed by
+splitting it at its first colon.
 
-The type identifier is defined in `Types <types.rst>`_.  The item
+The type identifier is defined in :doc:`types`.  The item
 specifier constraints are:
 
-  * A UTF-8 string
-  * Normalized using Unicode NFKC normalization
-  * The first character must be from the set:
+  * A non-empty UTF-8 string
+  * Normalized using Unicode NFKC normalization, but case-sensitive
+  * Characters must be from the set:
 
-    * Unicode UAX#31 core property XID_Start
-    * U+002E (period)
-    * U+002F (forward slash)
-    * U+005F (underscore)
-  * Subsequent characters must from from the set:
+    * Unicode UAX#31 core property XID_Continue, excluding
+      default-ignorable code points (which are invisible, like
+      U+200D ZERO WIDTH JOINER)
+    * Printable ASCII, U+0021 (``!``) to U+007E (``~``), which includes
+      U+003A (colon)
 
-    * Unicode UAX#31 core property XID_Continue
-    * U+002E (period)
-    * U+002F (forward slash)
-    * U+003A (colon)
-    * Underscore is already permitted in XID_Continue
-  * Less than 128 bytes in length (NOT including any terminating U+0000)
+    This rules out spaces, controls, and other invisible or
+    formatting characters, so an item identifier can be safely logged
+    or displayed.  Unlike a type identifier, there's no special rule
+    for the first character.
+  * A URL used as an item specifier must be in its serialized form,
+    as produced by the WHATWG URL Standard's serializer: non-ASCII host
+    names are converted to Punycode, and other non-ASCII characters are
+    percent-encoded.  The serialized form is printable ASCII.
+  * At most 895 bytes in length (NOT including any terminating U+0000)
 
-    * Thus making the entire *iid* a maximum of 255 bytes
-  * Typically have a dotted string format, eg. "public.item"
-  * Is case-insensitive, but canonically, all lower-case
+    * Thus making the entire *iid* a maximum of 1023 bytes: at most 127
+      for the type identifier, 1 for the colon, and 895 for the item
+      specifier, so it fits in 1024 bytes with a terminating U+0000
+
+The ``darq`` module provides functions to check and canonicalize
+identifiers, and to serialize URLs: ``canonical_type_id()``,
+``canonical_item_id()``, ``split_item_id()``, ``make_item_id()``, and
+``serialize_url()``.
 
 The type of the object determines its functionality.  Type
 implementations are installed in the system, and enable the use of
@@ -55,12 +66,12 @@ UTIs describe sub-type conformance, representing, for example that a
 PNG also conforms to the type of Image, which in turn conforms to the
 Content type.
 
-For more information on UTIs, see `Types <types.rst>`_.
+For more information on UTIs, see :doc:`types`.
 
 Item Metadata
 -------------
 
-The `Metadata Service <metadata.md`_ can be used to store additional
+The :doc:`Metadata Service <metadata>` can be used to store additional
 information about items.  This includes things like a canonical,
 human-oriented name for the item, any tags the operator
 might associate with it, etc.
@@ -90,3 +101,9 @@ Implementation that interprets it, and the *Lens* that presents
 the item's properties to the system operator.  A typical Unix or
 Windows application is broken into one or more lenses and type
 implementations in DarqOS.
+
+References
+==========
+
+* https://www.unicode.org/reports/tr31/ (UAX#31: Unicode Identifiers and Syntax)
+* https://url.spec.whatwg.org/ (WHATWG URL Standard)

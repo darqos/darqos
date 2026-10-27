@@ -2,3 +2,4 @@
 pyright==1.1.414
 pytest
 ruff==0.17.2
+sphinx==9.2.0

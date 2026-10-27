@@ -48,6 +48,7 @@ select = ["E", "F"]
 include = [
     "darq/dipc.py",
     "darq/errors.py",
+    "darq/identifier.py",
     "darq/loop.py",
     "darq/pcall.py",
     "darq/process.py",

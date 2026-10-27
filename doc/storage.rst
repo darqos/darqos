@@ -17,7 +17,7 @@ Storage keeps *blobs*: sequences of bytes, each identified by a key.
 It knows nothing about what they hold.
 
 * Type implementations decide where their objects' state lives (see
-  :doc:`object`).  Types whose objects would be files on a Unix-like
+  :doc:`item`).  Types whose objects would be files on a Unix-like
   system, such as text documents, images and source code, keep it in
   Storage.  Others use the knowledge graph instead.
 * The link from an object to its blob, and the object's name, tags

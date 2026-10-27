@@ -25,18 +25,22 @@
    terminal
    security
    storage
+   file
    metadata
    history
-   search
+   search-service
    network
 
    types
-   object
+   item
+   code
    bib
    book
    calculation
    document-types
+   text
    email
+   message-type
    audio
    pim
    project

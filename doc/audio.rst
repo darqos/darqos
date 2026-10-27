@@ -255,8 +255,10 @@ Single file import
     * The system should ideally identify the device, and remember it
       so future mounts can match it with previous usage?
     * Offer to import the device's content?
+
       * Iterate the files, creating appropriate metadata entries for
         them, indexing them, adding them to the history?
+
     * Offer to copy the device's content?
 
       * Beyond just registering the devices content, actually copy the

@@ -16,7 +16,11 @@ darq/protocols/%.py: lib/didl/%.didl bin/didlc bin/didlpygen
 	bin/didlpygen -o $@ darq/protocols/$*.dir
 	rm -f darq/protocols/$*.dir
 
-.PHONY: all world clean protocols
+# HTML and PDF documentation, in doc/_build/html and doc/_build/latex.
+docs:
+	$(MAKE) -C doc html latexpdf SPHINXBUILD=$(abspath venv313/bin/sphinx-build)
+
+.PHONY: all world clean protocols docs
 
 world clean:
 	# Services

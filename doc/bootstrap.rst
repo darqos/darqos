@@ -15,14 +15,18 @@ Bootstrap
    * Use *Debian* (64 bit) as the base image
 
      * Configure with Wayland, but no desktop environment
+
        * DarqOS has its own compositor, forked from wlroots' `tinywl`,
          started by the Terminal service (see :doc:`terminal`)
+
      * auto-login into default user (`darq`)
+
        * Implemented by the p-kernel's `systemd` unit, which is a
          logind session for `darq` on tty1 (`PAMName=`, `TTYPath=`)
        * `getty@tty1` is not used: the unit conflicts with it
        * DarqOS users exist only within this session: the Terminal
          manages DarqOS login
+
      * Install single `dui` script that can fetch/install Darq when
        run as root.
 
