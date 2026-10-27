@@ -109,6 +109,10 @@ Text Lens
 
 * This should be a plain, unadorned window.
 
+  * No titlebar
+  * No menubar
+  * No toolbar
+  * Subtle scrollbar
   * The help shortcut should show a usage "cheatsheet"
 
     * More detailed usage document should be launched from a button on
@@ -120,6 +124,16 @@ Text Lens
   * Maybe with a toggle shortcut?
 
 * Movement and editing controls should mirror emacs
+
+  * Character, word, line, and paragraph movements
+  * Line start / line end
+  * Doc start / doc end
+  * Delete character, delete word, kill rest of line
+  * Mark
+  * Yank region
+  * Kill ring
+  * Auto save
+
 * Traditional clipboard cut, copy, paste of UTF-8 strings should be supported
 
   * I'd like an ability to select an area (rectangular?) as a
@@ -133,3 +147,4 @@ Text Lens
 
   * The downside of this is that the emacs-style editing operations
     are not available for scripting.
+
