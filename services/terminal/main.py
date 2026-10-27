@@ -19,9 +19,9 @@ import typing
 
 from urllib.parse import urlparse
 
-from PyQt5 import QtCore
-from PyQt5.QtGui import QKeySequence, QIcon, QScreen
-from PyQt5.QtWidgets import QAction, QShortcut, QApplication, QWidget, QPushButton, QMenu, QHBoxLayout, QVBoxLayout, QLineEdit, QLabel, QToolButton, QToolBar, QTableWidget, QTableWidgetItem, QGroupBox, QMainWindow
+from PyQt6 import QtCore
+from PyQt6.QtGui import QAction, QKeySequence, QIcon, QScreen, QShortcut
+from PyQt6.QtWidgets import QApplication, QWidget, QPushButton, QMenu, QHBoxLayout, QVBoxLayout, QLineEdit, QLabel, QToolButton, QToolBar, QTableWidget, QTableWidgetItem, QGroupBox, QMainWindow
 
 import qdarktheme
 

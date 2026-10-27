@@ -74,8 +74,8 @@ apt-get -y autoremove
 apt-get install -y \
         foot \
         python3.13-venv \
-        python3-pyqt5 \
-        qtwayland5 \
+        python3-pyqt6 \
+        qt6-wayland \
         libgl1-mesa-dri \
         wayfire
 

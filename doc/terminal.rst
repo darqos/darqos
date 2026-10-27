@@ -42,14 +42,14 @@ First Edition Graphical Terminal
 --------------------------------
 
 The initial graphical terminal is implemented using Wayland and
-PyQt5.
+PyQt6.
 
 Wayland provides a display server: a process that controls access to
 the display hardware and allows multiple other processes to share
 it.  DarqOS uses its own small compositor, rather than an existing one
 (see Compositor, below).
 
-PyQt5 (and/or PyQt6 or PySide6) offer one primary benefit: a
+PyQt6 offers one primary benefit: a
 pre-existing widget set, which avoids us having to implement our own.
 Longer term, a simpler widget set should be implemented, avoiding Qt's
 breadth and cross-platform support.
@@ -58,7 +58,7 @@ The Terminal Service will manage: 1 or 2 HDMI screens, a USB
 keyboard, a USB mouse, stereo audio out, mono audio in, and a USB
 camera.  The camera is the lowest priority.
 
-On startup, the Terminal Service will use PyQt5 to identify all
+On startup, the Terminal Service will use PyQt6 to identify all
 available screen, and display a full-screen, most-distant Z-order root
 window on each of them.  There will be no support for multi-seat
 configuration: multiple screens will all be used by the one
@@ -93,7 +93,9 @@ compositor:
   so only the compositor can block access to the machine.
 - Window layering: Wayland has no "keep this window at the bottom (or
   top)" hint.  Desktop surfaces normally use the layer-shell protocol,
-  but PyQt5 can't use it (Debian 13's ``layer-shell-qt`` is Qt 6 only).
+  but ``layer-shell-qt`` has no Python bindings.  Our compositor
+  doesn't need it: it identifies the Terminal's connection, and places
+  its surfaces by policy.
 - No decorations, with windows moved by dragging their margin, and
   resized by dragging their border.
 
@@ -312,8 +314,7 @@ Architecture
 ------------
 
 The Terminal service will be implemented as a Linux Python process,
-using PyQt5 to provide the GUI, and a callback-based Qt event loop (as
-is used by various Qt-based type lenses).
+using PyQt6 to provide the GUI, on a Qt event loop (as lenses are).
 
 It will communicate using the system IPC with the p-kernel.  It will
 interact with other services to populate the New, Search, and Event

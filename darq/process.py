@@ -9,6 +9,7 @@
 
 import collections
 import itertools
+import logging
 import threading
 import time
 import typing
@@ -23,6 +24,7 @@ from .loop import EventLoopInterface
 # Default exported symbols.
 __all__ = [
     "EventListener",
+    "PortListener",
     "PortState",
     "SystemCallState",
     "SystemCallMode"
@@ -130,6 +132,11 @@ class SystemCallState:
 
 
 
+# Called on an event loop with each message delivered to a port: the
+# port, the source handle, the payload, and the transferred handles.
+PortListener = typing.Callable[[int, int, bytes, tuple[int, ...]], None]
+
+
 class PortState:
     """Process-side state for an open port."""
 
@@ -157,6 +164,11 @@ class PortState:
         self._event = threading.Event()
         self._waiters: set[threading.Event] = set()
 
+        # If set, delivered messages are posted to the listener on its
+        # event loop, rather than queued: see set_listener().
+        self._listener: PortListener | None = None
+        self._loop: EventLoopInterface | None = None
+
         # Reassembly buffer for received bytes.
         self.buffer = Buffer()
         return
@@ -172,8 +184,43 @@ class PortState:
         :param payload: Message contents.
         :param handles: Handles transferred with the message."""
         with self._lock:
+            if self._listener is not None:
+                self._post(source, payload, handles)
+                return
             self.messages.append((next(_delivery_order), source, payload, handles))
             self._notify()
+        return
+
+    def set_listener(self, listener: PortListener | None, loop: EventLoopInterface | None = None):
+        """Post delivered messages to a listener on an event loop, rather
+        than queuing them, or queue them again.
+
+        Messages already queued are posted first, in order.  Messages
+        already posted still go to the listener they were posted to.
+
+        :param listener: Called on the loop with each message, or None
+                         to queue them for receive() again.
+        :param loop: Event loop to call the listener on."""
+        if listener is not None and loop is None:
+            raise ValueError("A port listener needs an event loop")
+        with self._lock:
+            self._listener, self._loop = (listener, loop) if listener is not None else (None, None)
+            while listener is not None and self.messages:
+                self._post(*self.messages.popleft()[1:])
+        return
+
+    def has_listener(self) -> bool:
+        """Return True if delivered messages are posted to a listener."""
+        return self._listener is not None
+
+    def _post(self, source: int, payload: bytes, handles: tuple[int, ...]):
+        """Post a message to the listener.  Called with the lock held."""
+        listener, port = self._listener, self.port_id
+        assert listener is not None and self._loop is not None
+        try:
+            self._loop.post(lambda: listener(port, source, payload, handles))
+        except RuntimeError:
+            logging.warning(f"Message for port {port} dropped: its event loop is closed")
         return
 
     def _notify(self):

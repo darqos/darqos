@@ -80,6 +80,11 @@
       the doc?
     - Or timed autosave?
     - How much of this is in history vs. in the document storage itself?
+- Async generated clients: a call with a callback or future, its reply
+  posted to the app's event loop, so a GUI app doesn't block its loop
+  on calls (or deadlock, when two loop-served apps call each other).
+  Ports can already be served on a loop (set_port_listener,
+  Server.attach).
 - Implement GUI Text lens
   - Record History events (created, opened, edited), with source
     "lens": type implementations don't record them.

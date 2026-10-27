@@ -631,6 +631,12 @@ class PythonPProcess(darq.SocketListener):
         handles = message.handles
         port = self.ports.get(destination)
 
+        # A port with its own listener posts it there (see
+        # darq.set_port_listener), even with the callback model.
+        if port is not None and port.has_listener():
+            port.deliver(source, payload, handles)
+            return
+
         listener = self.listener
         if listener is not None and self.loop is not None:
             if port is None:
@@ -644,6 +650,18 @@ class PythonPProcess(darq.SocketListener):
             return
 
         port.deliver(source, payload, handles)
+        return
+
+    def set_port_listener(self, port: int, listener: darq.PortListener | None,
+                          loop: darq.EventLoopInterface | None):
+        """Post a port's messages to a listener on an event loop: see
+        darq.set_port_listener().
+
+        Called on the application's thread."""
+        port_state = self.ports.get(port)
+        if port_state is None:
+            raise darq.NonExistentPortError(port)
+        port_state.set_listener(listener, loop)
         return
 
     def receive_message(self, port: int, blocking: bool,

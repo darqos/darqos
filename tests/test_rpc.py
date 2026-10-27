@@ -680,3 +680,172 @@ def test_forged_port_destroyed_refused(kv, handler):
     # It has txid 0, so it's taken as a one-way message: no reply.
     assert reply is None
     assert dead == []
+
+
+################################################################
+# Server attached to an event loop, with faked p-calls
+################################################################
+
+class FakeLoop:
+    """Stands in for an event loop: posted functions and timers run
+    only when told."""
+
+    def __init__(self):
+        self.posted = []
+        self.timers = {}
+        self.next_id = 1
+
+    def post(self, function):
+        self.posted.append(function)
+
+    def add_timer(self, duration, listener):
+        timer_id, self.next_id = self.next_id, self.next_id + 1
+        self.timers[timer_id] = (duration, listener)
+        return timer_id
+
+    def cancel_timer(self, timer_id):
+        return self.timers.pop(timer_id, None) is not None
+
+    def run_posted(self):
+        posted, self.posted = self.posted, []
+        for function in posted:
+            function()
+
+    def fire_timers(self):
+        """Fire every timer, in order of duration."""
+        for timer_id, (duration, listener) in sorted(self.timers.items(), key=lambda t: t[1][0]):
+            if timer_id in self.timers:
+                listener.on_timeout(timer_id, 0.0, 0.0)
+
+
+class FakeListeners:
+    """Stands in for set_port_listener, posting delivered messages to
+    each port's listener's loop."""
+
+    def __init__(self, open_ports=(SERVICE_PORT, OTHER_PORT)):
+        self.listeners = {}
+        self.open_ports = set(open_ports)
+
+    def set_port_listener(self, port, listener, loop=None):
+        if port not in self.open_ports:
+            raise NonExistentPortError(port)
+        if listener is None:
+            self.listeners.pop(port, None)
+        else:
+            self.listeners[port] = (listener, loop)
+
+    def deliver(self, port, message, txid, source=CLIENT):
+        listener, loop = self.listeners[port]
+        buf, handles = encode(message, txid)
+        loop.post(lambda: listener(port, source, buf, tuple(handles)))
+
+
+@pytest.fixture
+def listeners(monkeypatch):
+    fake = FakeListeners()
+    monkeypatch.setattr(system, "set_port_listener", fake.set_port_listener)
+    return fake
+
+
+@pytest.fixture
+def fake_loop():
+    return FakeLoop()
+
+
+@pytest.fixture
+def attached(server, listeners, fake_loop):
+    server.attach(fake_loop)
+    return server
+
+
+def test_attached_server_replies_on_the_loop(kv, attached, listeners, fake_loop, fake_ports):
+    assert set(listeners.listeners) == {SERVICE_PORT}
+    listeners.deliver(SERVICE_PORT, kv.PutRequest(key=b"k", value=b"v"), 5)
+    assert fake_ports.sent == []
+
+    fake_loop.run_posted()
+    assert fake_ports.replies(kv) == [(SERVICE_PORT, CLIENT, kv.PutResponse(5))]
+
+
+def test_attached_server_adds_and_removes_ports(kv, attached, listeners, fake_loop, fake_ports, handler):
+    attached.add(OTHER_PORT, handler)
+    assert set(listeners.listeners) == {SERVICE_PORT, OTHER_PORT}
+    listeners.deliver(OTHER_PORT, kv.GetRequest(key=b"k"), 3)
+    fake_loop.run_posted()
+    assert fake_ports.replies(kv) == [(OTHER_PORT, CLIENT, kv.GetResponse(3, found=0))]
+
+    attached.remove(OTHER_PORT)
+    assert set(listeners.listeners) == {SERVICE_PORT}
+
+    # Removing a port that's already closed is fine.
+    attached.add(OTHER_PORT, handler)
+    listeners.open_ports.discard(OTHER_PORT)
+    attached.remove(OTHER_PORT)
+    assert OTHER_PORT not in attached.ports
+
+
+def test_attached_server_handler_failure(kv, attached, listeners, fake_loop, fake_ports):
+    listeners.deliver(SERVICE_PORT, kv.FailRequest(), 4)
+    fake_loop.run_posted()
+    [(_, _, reply)] = fake_ports.replies(kv)
+    assert (reply.txid, reply.code) == (4, dipc.ErrorCode.INTERNAL_ERROR)
+
+
+def test_attached_server_contains_failures(attached, listeners, fake_loop, monkeypatch, caplog):
+    def broken(*args):
+        raise RuntimeError("broken")
+    monkeypatch.setattr(attached, "_handle", broken)
+    attached._on_message(SERVICE_PORT, CLIENT, b"", ())
+    assert "Failed to handle a message on port 20" in caplog.text
+
+
+def test_attached_server_timers(attached, fake_loop):
+    calls = []
+    attached.call_later(0.05, lambda: calls.append("later"))
+    attached.call_later(0, lambda: calls.append("now"))
+    cancelled = attached.call_later(0, lambda: calls.append("cancelled"))
+    cancelled.cancel()
+
+    # Cancelling removes the loop's timer.
+    assert sorted(d for d, _ in fake_loop.timers.values()) == [0, pytest.approx(0.05, abs=0.01)]
+    fake_loop.fire_timers()
+    assert calls == ["now", "later"]
+    assert fake_loop.timers == {}
+
+
+def test_attached_timer_failure_logged(attached, fake_loop, caplog):
+    attached.call_later(0, lambda: 1 / 0)
+    fake_loop.fire_timers()
+    assert "Timer callback failed" in caplog.text
+
+
+def test_attach_moves_pending_timers(server, listeners, fake_loop):
+    calls = []
+    server.call_later(10, lambda: calls.append("pending"))
+    server.call_later(0, lambda: calls.append("cancelled")).cancel()
+    server.attach(fake_loop)
+    [(duration, _)] = fake_loop.timers.values()
+    assert 9 < duration <= 10
+    fake_loop.fire_timers()
+    assert calls == ["pending"]
+
+
+def test_attached_deferred_timeout(kv, attached, listeners, fake_loop, fake_ports, handler):
+    def get(request, source):
+        return handler.defer(timeout=0.02)
+    handler.get = get
+
+    listeners.deliver(SERVICE_PORT, kv.GetRequest(key=b"k"), 5)
+    fake_loop.run_posted()
+    assert fake_ports.sent == []
+
+    fake_loop.fire_timers()
+    [(_, _, reply)] = fake_ports.replies(kv)
+    assert (reply.txid, reply.code) == (5, dipc.ErrorCode.TIMEOUT)
+
+
+def test_attached_server_has_no_run(attached, fake_loop):
+    with pytest.raises(RuntimeError, match="attached"):
+        attached.run_once(timeout=0)
+    with pytest.raises(RuntimeError, match="already attached"):
+        attached.attach(fake_loop)

@@ -420,6 +420,49 @@ def test_delivered_message_runs_on_app_loop(pproc):
     assert run_app(pproc, app) == [(16385, 16385, b"hello", (16385, 77), True)]
 
 
+def test_port_listener_runs_on_app_loop(pproc):
+    # A port with its own listener gets its messages on the loop, even
+    # with the callback model, while the process' listener gets the rest.
+    deliver_sent_messages(pproc)
+
+    def app():
+        loop = darq.SelectEventLoop()
+        delivered = []
+
+        class Listener(darq.EventListener):
+            def on_message(self, source, destination, message, handles=()):
+                delivered.append(("process", destination, message))
+                loop.stop()
+
+        def port_listener(port, source, payload, handles):
+            delivered.append(("port", port, payload, threading.current_thread() is threading.main_thread()))
+
+        darq.init_cb(loop, Listener())
+        listened, other = darq.open_port(), darq.open_port()
+        darq.set_port_listener(listened, port_listener, loop)
+        darq.send_message(listened, listened, b"mine")
+        darq.send_message(listened, other, b"theirs")
+        loop.run()
+        loop.close()
+        return listened, other, delivered
+
+    listened, other, delivered = run_app(pproc, app)
+    assert delivered == [("port", listened, b"mine", True), ("process", other, b"theirs")]
+
+
+def test_port_listener_needs_an_open_port(pproc):
+    def app():
+        loop = darq.SelectEventLoop()
+        try:
+            darq.set_port_listener(4242, lambda *message: None, loop)
+        except darq.NonExistentPortError:
+            return "raised"
+        finally:
+            loop.close()
+
+    assert run_app(pproc, app) == "raised"
+
+
 ################################################################
 # Receiving messages
 ################################################################

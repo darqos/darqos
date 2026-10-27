@@ -8,7 +8,8 @@ import threading
 import time
 import typing
 
-from PyQt5.QtCore import QEventLoop, QSocketNotifier, Qt, QTimer
+from PyQt6.QtCore import QEventLoop, QSocketNotifier, Qt, QTimer
+from PyQt6.sip import voidptr
 
 
 class DuplicateSocketError(Exception):
@@ -390,13 +391,13 @@ class QtSocketState:
         self.socket = sock
         self.listener = listener
 
-        # PyQt5's stubs declare the descriptor as a voidptr, but it takes an int.
-        self.read_notifier = QSocketNotifier(sock.fileno(), QSocketNotifier.Type.Read)  # pyright: ignore[reportArgumentType]
+        # PyQt6 takes the descriptor as a voidptr.
+        self.read_notifier = QSocketNotifier(voidptr(sock.fileno()), QSocketNotifier.Type.Read)
         self.read_notifier.activated.connect(self.on_readable)
         self.read_notifier.setEnabled(True)
 
         # Writability is monitored only on request: see set_write_interest().
-        self.write_notifier = QSocketNotifier(sock.fileno(), QSocketNotifier.Type.Write)  # pyright: ignore[reportArgumentType]
+        self.write_notifier = QSocketNotifier(voidptr(sock.fileno()), QSocketNotifier.Type.Write)
         self.write_notifier.activated.connect(self.on_writeable)
         self.write_notifier.setEnabled(False)
         return

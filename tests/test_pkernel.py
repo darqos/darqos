@@ -1586,6 +1586,110 @@ def test_rpc_service_and_client(live_pkernel, tmp_path):
     assert (client.get_exit_status(), client.get_exit_error()) == (0, None)
 
 
+def test_rpc_service_on_qt_event_loop(live_pkernel, tmp_path):
+    # A service whose thread is owned by Qt's event loop: its port's
+    # messages are posted to the loop (Server.attach), while its own
+    # synchronous calls, to a backing service, still wait on its queued
+    # reply port.  A timer on the loop stops it.
+    kernel = live_pkernel
+    module = kernel.module
+    protocol = """
+        library test_kv;
+        protocol KV {
+            1: Put(opaque key, opaque value) -> ();
+            2: Get(opaque key) -> (opaque value, uint32 found);
+            3: Forget(opaque key);
+        }
+        """
+    backing_path = write_app(tmp_path / "backing", """
+        import darq
+        from test_kv import KV, GetResponse, PutResponse
+
+        class Handler(KV.Handler):
+            def __init__(self):
+                self.store = {}
+
+            def put(self, request, source):
+                self.store[request.key] = request.value
+                return PutResponse()
+
+            def get(self, request, source):
+                if request.key not in self.store:
+                    return GetResponse(found=0)
+                return GetResponse(value=self.store[request.key], found=1)
+
+        def darq_main():
+            darq.serve("darq.test.backing", Handler())
+        """)
+    service_path = write_app(tmp_path / "service", """
+        import threading
+        from PyQt6.QtCore import QCoreApplication
+        import darq
+        from darq.loop import QtEventLoop
+        from test_kv import KV, GetResponse, PutResponse
+
+        class Proxy(KV.Handler):
+            def __init__(self, loop):
+                self.loop = loop
+                self.backing = KV.Client(darq.connect("darq.test.backing"), timeout=10)
+                self.threads = set()
+
+            def put(self, request, source):
+                self.threads.add(threading.get_ident())
+                self.backing.put(key=request.key, value=request.value)
+                return PutResponse()
+
+            def get(self, request, source):
+                self.threads.add(threading.get_ident())
+                response = self.backing.get(key=request.key)
+                return GetResponse(value=response.value + b"!", found=response.found)
+
+            def forget(self, request, source):
+                self.server.call_later(0.05, self.loop.stop)
+
+        def darq_main():
+            app = QCoreApplication([])
+            loop = QtEventLoop()
+            proxy = Proxy(loop)
+            port = darq.open_port()
+            server = darq.Server()
+            server.add(port, proxy)
+            server.attach(loop)
+            darq.register_name("darq.test.kv", port)
+            loop.run()
+            if proxy.threads != {threading.get_ident()}:
+                return f"handled on threads {proxy.threads}"
+            del app
+            return 0
+        """)
+    client_path = write_app(tmp_path / "client", """
+        import darq
+        from test_kv import KV
+
+        def darq_main():
+            kv = KV.Client(darq.connect("darq.test.kv"), timeout=10)
+            for n in range(20):
+                kv.put(key=b"k%d" % n, value=b"v%d" % n)
+            for n in range(20):
+                response = kv.get(key=b"k%d" % n)
+                if (response.value, response.found) != (b"v%d!" % n, 1):
+                    return f"get returned {response!r}"
+            kv.forget(key=b"")
+            return 0
+        """)
+    for path in (backing_path, service_path, client_path):
+        write_didl_module(pathlib.Path(path), protocol)
+
+    kernel.do_spawn_process(None, backing_path)
+    service = kernel._process_table[kernel.do_spawn_process(None, service_path)]
+    client = kernel._process_table[kernel.do_spawn_process(None, client_path)]
+    zombie = module.KernelProcessStatus.ZOMBIE
+    run_kernel_until(kernel, lambda: client.get_status() == zombie and service.get_status() == zombie,
+                     "the client and service to exit")
+    assert (client.get_exit_status(), client.get_exit_error()) == (0, None)
+    assert (service.get_exit_status(), service.get_exit_error()) == (0, None)
+
+
 def test_rpc_service_dies_before_replying(live_pkernel, tmp_path):
     # The client is notified that the service's port has died, rather
     # than waiting for a reply that will never come.

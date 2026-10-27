@@ -1,5 +1,5 @@
 PyInstaller
-PyQt5
+PyQt6
 
 ada-url
 orjson

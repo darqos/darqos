@@ -100,7 +100,7 @@ Bootstrap
 
      * Service is a Darq Python app, spawned as a p-process from the
        p-kernel as part of the bootstrap process.
-     * Running PyQt5 (or 6?)
+     * Running PyQt6
      * Starts the DarqOS compositor, as a Linux child process, before
        creating its `QApplication`
      * The compositor provides the mechanism, and the Terminal sets the
@@ -143,7 +143,7 @@ Bootstrap
      * This could all reasonably be a part of a "Settings" tool?
 
  * Python 3.13 (default on _Trixie_)
- * Qt5 LTS + PyQt5 (or Qt6 + PyQt6 or PySide6?)
+ * Qt 6 + PyQt6
 
 
 2nd Edition

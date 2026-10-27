@@ -313,7 +313,7 @@ def test_post_stops_running_loop(loop):
 
 @pytest.fixture
 def qt_loop():
-    from PyQt5.QtCore import QCoreApplication
+    from PyQt6.QtCore import QCoreApplication
     from darq.loop import QtEventLoop
 
     # Keep the application referenced while the loop is used: Qt can't

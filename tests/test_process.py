@@ -210,3 +210,94 @@ def test_single_and_any_receivers_share_order(ports):
     b.deliver(2, b"y")
     assert a.receive(blocking=False) == (1, b"x", ())
     assert process.receive_any(ports, blocking=False) == (b, (2, b"y", ()))
+
+
+################################################################
+# Port listeners
+################################################################
+
+class PostingLoop:
+    """Stands in for an event loop: posted functions wait until run."""
+
+    def __init__(self):
+        self.posted = []
+        self.closed = False
+
+    def post(self, function):
+        if self.closed:
+            raise RuntimeError("event loop is closed")
+        self.posted.append(function)
+
+    def run_posted(self):
+        posted, self.posted = self.posted, []
+        for function in posted:
+            function()
+
+
+@pytest.fixture
+def loop():
+    return PostingLoop()
+
+
+def test_listener_gets_messages_on_its_loop(port, loop):
+    received = []
+    port.set_listener(lambda *message: received.append(message), loop)
+    assert port.has_listener()
+    port.deliver(1, b"a", (7,))
+    port.deliver(2, b"b")
+
+    # Posted, not queued, and not called until the loop runs.
+    assert received == [] and len(loop.posted) == 2
+    assert port.receive(blocking=False) is None
+    loop.run_posted()
+    assert received == [(16385, 1, b"a", (7,)), (16385, 2, b"b", ())]
+
+
+def test_listener_gets_queued_messages_first(port, loop):
+    port.deliver(1, b"a")
+    port.deliver(2, b"b")
+    received = []
+    port.set_listener(lambda *message: received.append(message[1:3]), loop)
+    port.deliver(3, b"c")
+    loop.run_posted()
+    assert received == [(1, b"a"), (2, b"b"), (3, b"c")]
+    assert port.receive(blocking=False) is None
+
+
+def test_clearing_listener_queues_again(port, loop):
+    received = []
+    port.set_listener(lambda *message: received.append(message), loop)
+    port.deliver(1, b"a")
+    port.set_listener(None)
+    assert not port.has_listener()
+    port.deliver(2, b"b")
+    assert port.receive(blocking=False) == (2, b"b", ())
+
+    # Already posted: still goes to the listener.
+    loop.run_posted()
+    assert [m[2] for m in received] == [b"a"]
+
+
+def test_listener_needs_a_loop(port):
+    with pytest.raises(ValueError):
+        port.set_listener(lambda *message: None)
+
+
+def test_closed_loop_drops_messages(port, loop, caplog):
+    port.set_listener(lambda *message: None, loop)
+    loop.closed = True
+    port.deliver(1, b"a")
+    assert "event loop is closed" in caplog.text
+    assert port.receive(blocking=False) is None
+
+
+def test_listener_messages_from_another_thread(port, loop):
+    received = []
+    port.set_listener(lambda *message: received.append(message[2]), loop)
+    threads = [threading.Thread(target=port.deliver, args=(n, bytes([n]))) for n in range(20)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(TIMEOUT)
+    loop.run_posted()
+    assert sorted(received) == [bytes([n]) for n in range(20)]

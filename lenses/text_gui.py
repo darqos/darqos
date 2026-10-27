@@ -3,9 +3,9 @@
 
 from typing import Optional
 
-from PyQt5.QtWidgets import QApplication, QWidget, QTextEdit, QMenu, QVBoxLayout, QShortcut
-from PyQt5 import QtCore
-from PyQt5.QtGui import QColor, QKeySequence, QMouseEvent
+from PyQt6.QtWidgets import QApplication, QWidget, QTextEdit, QMenu, QVBoxLayout
+from PyQt6 import QtCore
+from PyQt6.QtGui import QColor, QKeySequence, QMouseEvent, QShortcut
 
 from darq.services import storage
 from darq.runtime.lens import Lens

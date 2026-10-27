@@ -333,6 +333,16 @@ several, in the order they were delivered across them.  Port sets are
 the process' own grouping: the p-kernel knows nothing of them, and
 ports can be added and removed at any time.
 
+An application whose thread is owned by an event loop, like Qt's,
+can't block in a receive.  `set_port_listener(port, listener, loop)`
+posts a port's messages to a listener on the loop instead, as
+`listener(port, source, payload, handles)`, so they're handled on the
+loop's thread.  It's per port: the application's other ports, such as
+the reply ports its synchronous calls wait on, are still queued.
+Messages already queued are posted first, in order, and setting the
+listener to None queues them again.  A port listener takes precedence
+over the callback model's listener (see `init_cb`).
+
 Future releases might add better support for multiple threads, and/or
 adopt a coroutine-style asynchronous model.
 
@@ -382,6 +392,14 @@ snake case::
   something by sending a message to one of its ports.  Timers run
   between messages, so a handler that blocks (in `spawn_process`, for
   instance) delays them.
+* `server.attach(loop)` runs a Server on an event loop, rather than
+  with `run()`: each of its ports gets a port listener, so requests are
+  handled on the loop's thread, and its timers become the loop's.
+  Handlers can still make synchronous calls, since their reply ports
+  are queued, but each blocks the loop until it's answered.  Two
+  processes that each serve on their loop mustn't call each other
+  synchronously at once: neither can answer, so both wait until they
+  time out.
 * A handler that can't answer yet *defers* the reply: it calls
   `self.defer()`, keeps the `Deferred`, and returns it, so nothing is
   sent.  Later, typically while handling a message on another port, or

@@ -68,7 +68,7 @@ import uuid
 
 from . import dipc
 from .dipc import ErrorCode, ErrorReply
-from .process import EventListener, SystemCallMode, SystemCallState
+from .process import EventListener, PortListener, SystemCallMode, SystemCallState
 from .pcall import (
     BootResult,
     ClosePortRequest,
@@ -123,7 +123,7 @@ from .errors import (
     TooManyHandlesError,
     ValueTooLargeError,
 )
-from .loop import EventLoopInterface
+from .loop import EventLoopInterface, TimerListener
 
 
 # Default exported symbols.
@@ -141,6 +141,7 @@ __all__ = [
     "send_message",
     "receive_message",
     "receive_any",
+    "set_port_listener",
     "PortSet",
     "notify_on_death",
     "spawn_process",
@@ -205,6 +206,9 @@ class ProcessState(typing.Protocol):
 
     def receive_any(self, ports: tuple[int, ...], blocking: bool,
                     timeout: float | None) -> tuple[int, int, bytes, tuple[int, ...]] | None: ...
+
+    def set_port_listener(self, port: int, listener: PortListener | None,
+                          loop: EventLoopInterface | None) -> None: ...
 
     def exit(self, status: int) -> typing.NoReturn: ...
 
@@ -442,6 +446,26 @@ def receive_any(ports: typing.Iterable[int], blocking: bool = True,
                                   while waiting.
     :raises ValueError: if there are no ports."""
     return _darq_process_state.receive_any(tuple(ports), blocking, timeout)
+
+
+def set_port_listener(port: int, listener: PortListener | None,
+                      loop: EventLoopInterface | None = None):
+    """Post a port's messages to a listener on an event loop, rather than
+    queuing them for receive_message().
+
+    This lets an application whose thread is owned by an event loop
+    (such as Qt's) handle messages on that thread, while its other
+    ports, like the reply ports that synchronous calls wait on, are
+    still queued.  Messages already queued are posted first, in order.
+
+    :param port: Open port number.
+    :param listener: Called on the loop's thread, as listener(port,
+                     source, payload, handles), for each message; or
+                     None to queue them again.
+    :param loop: Event loop to call it on: required with a listener.
+    :raises NonExistentPortError: if the port isn't open."""
+    _darq_process_state.set_port_listener(port, listener, loop)
+    return
 
 
 class PortSet:
@@ -1406,9 +1430,38 @@ class Timer:
         self.callback = callback
         self.cancelled = False
 
+        # Cancels its event loop timer, once it has one (see Server.attach).
+        self._cancel_loop_timer: typing.Callable[[], None] | None = None
+
     def cancel(self):
         """Stop the callback being called, if it hasn't been already."""
         self.cancelled = True
+        if self._cancel_loop_timer is not None:
+            self._cancel_loop_timer()
+            self._cancel_loop_timer = None
+
+    def fire(self):
+        """Call the callback, unless it's cancelled or been called."""
+        if self.cancelled:
+            return
+        self.cancelled = True
+        self._cancel_loop_timer = None
+        try:
+            self.callback()
+        except Exception:
+            logging.exception("Timer callback failed")
+
+
+class _LoopTimer(TimerListener):
+    """Fires a Timer once, from an event loop's repeating timer."""
+
+    def __init__(self, loop: EventLoopInterface, timer: Timer):
+        self.loop = loop
+        self.timer = timer
+
+    def on_timeout(self, timer_id: int, expiry_time: float, actual_time: float):
+        self.loop.cancel_timer(timer_id)
+        self.timer.fire()
 
 
 class Server:
@@ -1423,12 +1476,18 @@ class Server:
     handlers' deferred requests.  Another thread can ask it to act by
     sending a message to one of its ports.  Timers run between
     messages, so a handler that blocks (in spawn_process, say) delays
-    them."""
+    them.
+
+    It's run either by run() or run_once(), or by an application's
+    event loop, once attached to it (see attach())."""
 
     def __init__(self):
         self.ports = PortSet()
         self._handlers: dict[int, Handler] = {}
         self._timers: list[Timer] = []
+
+        # Event loop it's attached to, if any.
+        self._loop: EventLoopInterface | None = None
 
     def add(self, port: int, handler: Handler):
         """Answer requests on a port, with a handler.
@@ -1437,12 +1496,40 @@ class Server:
         :param handler: Handler for the port's protocol."""
         handler.server = self
         self._handlers[port] = handler
+        if self._loop is not None and port not in self.ports:
+            set_port_listener(port, self._on_message, self._loop)
         self.ports.add(port)
 
     def remove(self, port: int):
         """Stop answering requests on a port.  It isn't closed."""
         self._handlers.pop(port, None)
+        if self._loop is not None and port in self.ports:
+            try:
+                set_port_listener(port, None)
+            except NonExistentPortError:
+                pass
         self.ports.discard(port)
+
+    def attach(self, loop: EventLoopInterface):
+        """Answer requests, and run timers, on an event loop, rather than
+        with run() or run_once().
+
+        Each port's messages are posted to the loop (see
+        set_port_listener), and handled on its thread: the application
+        runs the loop.  Other ports, such as the reply ports synchronous
+        calls wait on, are unaffected, so handlers can still make them.
+
+        :param loop: Event loop, run on this thread."""
+        if self._loop is not None:
+            raise RuntimeError("Server is already attached to an event loop")
+        self._loop = loop
+        for port in self.ports:
+            set_port_listener(port, self._on_message, loop)
+        timers, self._timers = self._timers, []
+        for timer in timers:
+            if not timer.cancelled:
+                self._schedule(timer)
+        return
 
     def call_later(self, delay: float, callback: typing.Callable[[], None]) -> Timer:
         """Call a function, on the serving thread, after a delay.
@@ -1451,8 +1538,43 @@ class Server:
         :param callback: Called with no arguments.
         :returns: A Timer, which can be cancelled."""
         timer = Timer(time.monotonic() + delay, callback)
-        self._timers.append(timer)
+        if self._loop is None:
+            self._timers.append(timer)
+        else:
+            self._schedule(timer)
         return timer
+
+    def _schedule(self, timer: Timer):
+        """Have the event loop fire a timer when it's due."""
+        loop = self._loop
+        assert loop is not None
+        timer_id = loop.add_timer(max(0.0, timer.when - time.monotonic()), _LoopTimer(loop, timer))
+
+        def cancel():
+            loop.cancel_timer(timer_id)
+
+        timer._cancel_loop_timer = cancel
+        return
+
+    def _handle(self, port: int, source: int, payload: bytes, handles: tuple[int, ...]):
+        """Dispatch a message to its port's handler, and send the reply."""
+        handler = self._handlers.get(port)
+        if handler is None:
+            logging.warning(f"Dropped message for port {port}: no handler")
+            return
+        reply = handler.dispatch(payload, source, handles, port)
+        if reply is not None:
+            _send_reply(port, source, reply)
+        return
+
+    def _on_message(self, port: int, source: int, payload: bytes, handles: tuple[int, ...]):
+        """Handle a message posted to the event loop."""
+        try:
+            self._handle(port, source, payload, handles)
+        except Exception:
+            # Not raised into the loop, which would drop the other posted calls.
+            logging.exception(f"Failed to handle a message on port {port}")
+        return
 
     def run_once(self, timeout: float | None = None) -> bool:
         """Handle one message, or run the timers that are due.
@@ -1460,6 +1582,8 @@ class Server:
         :param timeout: Longest to wait, in seconds; None waits until a
                         message arrives, or a timer is due.
         :returns: True if a message was handled."""
+        if self._loop is not None:
+            raise RuntimeError("Server is attached to an event loop: run the loop")
         self._timers = [t for t in self._timers if not t.cancelled]
         wait = timeout
         if self._timers:
@@ -1475,23 +1599,12 @@ class Server:
             message = None
             time.sleep(wait)
         if message is not None:
-            port, source, payload, handles = message
-            handler = self._handlers.get(port)
-            if handler is None:
-                logging.warning(f"Dropped message for port {port}: no handler")
-            else:
-                reply = handler.dispatch(payload, source, handles, port)
-                if reply is not None:
-                    _send_reply(port, source, reply)
+            self._handle(*message)
             handled = True
 
         now = time.monotonic()
         for timer in [t for t in self._timers if t.when <= now and not t.cancelled]:
-            timer.cancelled = True
-            try:
-                timer.callback()
-            except Exception:
-                logging.exception("Timer callback failed")
+            timer.fire()
         return handled
 
     def run(self) -> typing.NoReturn:

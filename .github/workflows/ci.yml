@@ -60,7 +60,7 @@ jobs:
             requirements.txt
             requirements-dev.txt
 
-      # Importing darq pulls in PyQt5, which needs the system GL libraries.
+      # Importing darq pulls in PyQt6, which needs the system GL libraries.
       - name: Install system packages
         run: sudo apt-get update && sudo apt-get install -y libgl1 libegl1 libxkbcommon0
 

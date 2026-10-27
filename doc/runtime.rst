@@ -31,7 +31,8 @@ loop to send the request.  The application waits on a threading.Event,
 which is then signaled when the p-kernel's response is received,
 unblocking it.  Callback-style functions instead have their callback
 posted to the application's event loop (see the event loop's post()
-method), as are messages delivered to the application's listener.
+method), as are messages delivered to the application's listener, or
+to a port's own listener (see `set_port_listener`, in :doc:`ipc`).
 Async code can await the asynchronous versions of the system calls,
 which use loop.call_soon_threadsafe() to update the future safely.
 
