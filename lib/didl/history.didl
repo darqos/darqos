@@ -1,0 +1,51 @@
+// darqos
+// Copyright (C) 2026 David Arnold
+//
+// History service protocol: see doc/history.rst.
+//
+// Event and source names are normalized by the service (see
+// darq.canonical_name), so any case or compatibility form may be
+// passed, but the normalized form is what's stored and returned.
+
+library darq.history;
+
+enum Status : uint32 {
+    OK = 0;
+
+    // An item identifier, type identifier, event or source name isn't
+    // valid.
+    INVALID_ARGUMENT = 1;
+}
+
+// A recorded event.
+struct Event {
+    // When it was first recorded, in UTC microseconds since the epoch.
+    // No two events have the same time.
+    int64 time;
+
+    string item_id;
+
+    // What happened, such as "created", "opened", "edited", or
+    // "destroyed", and what recorded it, such as "lens".
+    string event;
+    string source;
+
+    // How many times it was recorded: repeats within a while of the
+    // first are counted, rather than recorded again.
+    uint32 count;
+}
+
+// The History service, registered as "darq.history".
+protocol History {
+    // Record an event about an item.  The service sets its time.  It's
+    // one-way, so a client never waits for it: an invalid event is
+    // logged and dropped.
+    1: AddEvent(string item_id, string event, string source);
+
+    // Return events from start, up to but not including end (0 for
+    // now), newest first.  Each non-empty list must match: type_ids
+    // exactly, for now, not by conformance.  At most max are returned
+    // (0 for the service's limit): to get the next batch, ask again
+    // with end set to the time of the oldest returned.
+    2: GetEvents(int64 start, int64 end, sequence<string> type_ids, sequence<string> item_ids, sequence<string> events, sequence<string> sources, uint32 max) -> (sequence<Event> events, Status status);
+}

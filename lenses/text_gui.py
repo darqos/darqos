@@ -8,7 +8,6 @@ from PyQt5 import QtCore
 from PyQt5.QtGui import QColor, QKeySequence, QMouseEvent
 
 from darq.services import storage
-from darq.services.history import History, Event
 from darq.runtime.lens import Lens
 
 import sys
@@ -57,8 +56,10 @@ class TextQtLens(QWidget, Lens):
     def __init__(self, url: str = None):
         """Constructor."""
 
+        # FIXME: record History events (lib/didl/history.didl), with
+        # source "lens", once the lens is on the new IPC.
+
         self.storage = storage.api()
-        self.history = History.api()
 
         # Load content.
         if url is not None:
@@ -67,16 +68,13 @@ class TextQtLens(QWidget, Lens):
             if self.storage.exists(self.url):
                 buf = self.storage.get(self.url)
                 self.text = Text.from_bytes(buf)
-                self.history.add_event(self.url, Event.READ)
             else:
                 self.storage.set(self.url, b'')
                 self.text = Text.new()
-                self.history.add_event(self.url, Event.CREATED)
         else:
             self.url = str(uuid.uuid4())
             self.storage.set(self.url, b'')
             self.text = Text.new()
-            self.history.add_event(self.url, Event.CREATED)
 
         # Window placement.
         self._drag_start = None
@@ -166,7 +164,6 @@ class TextQtLens(QWidget, Lens):
         if self.edit.document().isModified():
             text = self.edit.toPlainText()
             self.storage.update(self.url, text.encode())
-            self.history.add_event(self.url, Event.MODIFIED)
 
         super().close()
         return

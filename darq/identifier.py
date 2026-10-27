@@ -1,7 +1,8 @@
 # darqos
 # Copyright (C) 2026 David Arnold
 
-# Type and item identifiers (see doc/types.rst and doc/item.rst).
+# Type and item identifiers (see doc/types.rst and doc/item.rst), and
+# short names, such as History's event and source names.
 #
 # A type identifier is stored and compared in its NFKC_Casefold form.
 # An item identifier is a type identifier, a colon, and an item
@@ -27,6 +28,8 @@ __all__ = [
     "split_item_id",
     "make_item_id",
     "serialize_url",
+    "MAX_NAME_LENGTH",
+    "canonical_name",
 ]
 
 
@@ -36,6 +39,10 @@ __all__ = [
 MAX_TYPE_ID_LENGTH = 127
 MAX_ITEM_SPECIFIER_LENGTH = 895
 MAX_ITEM_ID_LENGTH = MAX_TYPE_ID_LENGTH + 1 + MAX_ITEM_SPECIFIER_LENGTH
+
+# Maximum length of a name, likewise: it fits in 32 bytes with its
+# terminator.
+MAX_NAME_LENGTH = 31
 
 # Characters allowed in a type identifier, after the first, as well as
 # XID_Continue.
@@ -193,3 +200,23 @@ def serialize_url(url: str) -> str:
         return ada_url.URL(url).href
     except ValueError:
         raise InvalidURLError(f"Not a valid URL: {url!r}") from None
+
+
+def canonical_name(name: str) -> str:
+    """Return a name, such as a History event or source, in its
+    canonical, NFKC_Casefold form.
+
+    It must have no whitespace or control characters.
+
+    :raises InvalidIdentifierError: If it isn't a valid name."""
+    canonical = _nfkc_casefold(name)
+    if not canonical:
+        raise InvalidIdentifierError("Empty name")
+    if _utf8_length(canonical) > MAX_NAME_LENGTH:
+        raise InvalidIdentifierError(f"Name is longer than {MAX_NAME_LENGTH} bytes")
+    for c in canonical:
+        # isspace() is Unicode's White_Space, plus U+001C to U+001F,
+        # which are control characters anyway.
+        if c.isspace() or unicodedata.category(c) == "Cc":
+            raise InvalidIdentifierError(f"Name can't contain U+{ord(c):04X}")
+    return canonical

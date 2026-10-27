@@ -76,11 +76,11 @@ PYTHON_IMAGE_LOADER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "
 DARQ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Processes started at boot, in order, as paths relative to DARQ_ROOT:
-# the Storage and Type services, then the type sync, which registers
-# the installed types and lenses with the Type service.  A client's
-# connect waits for its service's name to be registered, so they're all
-# started at once.
-BOOT_PROCESSES = ("services/storage", "services/type", "tools/type-sync")
+# the Storage, History and Type services, then the type sync, which
+# registers the installed types and lenses with the Type service.  A
+# client's connect waits for its service's name to be registered, so
+# they're all started at once.
+BOOT_PROCESSES = ("services/storage", "services/history", "services/type", "tools/type-sync")
 
 # Directory containing the darq package this p-kernel is using, so the
 # loader can import the same one.
@@ -1097,7 +1097,7 @@ class PseudoKernel(SocketListener, TimerListener):
 
         logging.info("Starting bootstrap")
 
-        # FIXME: Index, History and the other services, once ported.
+        # FIXME: Index and the other services, once ported.
         for path in BOOT_PROCESSES:
             exec_path = os.path.join(DARQ_ROOT, path)
             if not os.path.isfile(os.path.join(exec_path, "main.py")):

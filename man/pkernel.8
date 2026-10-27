@@ -33,6 +33,8 @@ schedules the boot sequence, and runs its event loop until shut down.
 .PP
 The boot sequence spawns, in order, the Storage service
 .RI ( services/storage ),
+the History service
+.RI ( services/history ),
 the Type service
 .RI ( services/type ),
 and the type sync
@@ -238,7 +240,7 @@ unit that runs the p-kernel as part of
 .SH BUGS
 The listening port is fixed at 11000.
 .PP
-The boot sequence doesn't yet start the Index, History or Terminal
+The boot sequence doesn't yet start the Index or Terminal
 services.
 .PP
 Finished processes the p-kernel spawned itself are never removed from

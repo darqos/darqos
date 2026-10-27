@@ -18,7 +18,6 @@ import sys
 import typing
 
 from urllib.parse import urlparse
-from datetime import datetime
 
 from PyQt5 import QtCore
 from PyQt5.QtGui import QKeySequence, QIcon, QScreen
@@ -28,8 +27,6 @@ import qdarktheme
 
 #from darq.type.text import TextTypeView
 import darq
-
-from darq.services.history import History
 
 
 class Type:
@@ -302,26 +299,13 @@ class ObjectSelector(QWidget):
 
         self.setLayout(self.layout)
         self.hide()
-
-        self.history = History.api()
         return
 
     def show(self):
 
-        # FIXME: needs a lot more work here ...
-        # Populate history list
+        # FIXME: populate the list from the History service's GetEvents
+        # (lib/didl/history.didl), once the Terminal is on the new IPC.
         self.object_table.clearContents()
-
-        now = datetime.utcnow()
-        history = self.history.get_events(now, 100, True)
-
-        r = 0
-        for event in history:
-            for c in range(4):
-                item = QTableWidgetItem()
-                item.setText([event[0], "type", event[2], event[1]][c])
-                self.object_table.setItem(r, c, item)
-            r += 1
 
         super().show()
         return

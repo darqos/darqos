@@ -52,7 +52,7 @@ Bootstrap
 
      * p-kernel systemd unit is automatically started, as the `darq`
        user's login session; it's the only DarqOS systemd unit
-     * p-kernel spawns the system services, in order: Storage, Type,
+     * p-kernel spawns the system services, in order: Storage, History, Type,
        then the type sync (`tools/type-sync`), which registers the
        installed types and lenses and exits.  They're started at
        once: each waits, with a blocking name lookup, for the services
@@ -88,9 +88,14 @@ Bootstrap
 
      * User authentication
 
+   * History
+
+     * Spawned as part of the bootstrap process, after Storage.
+     * Like Storage, it keeps its database in the run directory, and
+       registers `darq.history` (see :doc:`history`).
+
    * Metadata
    * Index
-   * History
    * Terminal
 
      * Service is a Darq Python app, spawned as a p-process from the

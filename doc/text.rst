@@ -86,9 +86,10 @@ Not Yet
     so when a run of text is deleted, it can know that the only
     instance of a token is now removed?
 
-* What granularity of history records should be recorded?  It could be
-  every change, or each save, or just "this text was edited today".
-  What's useful at the History service level?
+* History events are recorded by the lens, not the implementation,
+  which can't tell who caused a change (see :doc:`history`).  The
+  History service counts repeated events, so the lens can record each
+  edit.
 * What Metadata is recorded?
 
   * Things like the current cursor position within the text, the

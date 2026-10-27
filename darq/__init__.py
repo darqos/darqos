@@ -13,8 +13,6 @@ import uuid
 
 from typing import Union
 
-from darq.services.history import History
-
 from darq.runtime.service import Service
 from darq.runtime.service import ServiceAPI
 from darq.runtime.tool import Tool
@@ -40,10 +38,6 @@ _local_context_id: str = ''
 # Storage API.
 #storage: Storage = Storage.api()
 storage = None
-
-# History API.
-#history: History = History.api()
-history = None
 
 
 ################################################################

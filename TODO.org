@@ -33,7 +33,28 @@
   - Use IDL and stub generator to get interfaces without heaps of work,
     replacing JSON blobs as currently used.
 - Implement/update Storage service
+  - Missing features, before services like History can keep an SQLite
+    database in Storage (via an SQLite VFS) rather than the run dir:
+    - Ranged Read and Write (methods 6 and 7 are reserved), so a page
+      write doesn't rewrite the whole blob.
+    - Truncate, or a ranged Write that sets the length.
+    - Blobs found by a name the caller chooses, or a directory blob
+      mapping names to keys: SQLite opens its files (db, -wal,
+      -journal) by name.
+    - A durability guarantee: a Put is on disk once it's answered, so
+      it can serve as SQLite's sync barrier.
+    - Maybe an atomic multi-blob Put, so the VFS can offer
+      SQLITE_IOCAP_BATCH_ATOMIC and SQLite needs no journal.
+    - Python's sqlite3 can't register a VFS: it needs C, or apsw.
 - Implement/update History service
+  - Done: services/history, on the History protocol
+    (lib/didl/history.didl), started at boot (see doc/history.rst).
+  - Remaining:
+    - Coalesce old events by hour, then by day: a daily task.
+    - Filter by type conformance, not just exact type identifiers.
+    - A query for recently used items, each once, for the Terminal's
+      selector.
+    - Tell clients of new events, for the Events HUD.
 - Implement/update Index service
 - Implement/update Metadata service
 - Implement Factory (New/Do) HUD
@@ -48,7 +69,7 @@
     - Save before exit when killed: up to 2 seconds of changes are
       lost now.
     - Exit when no items are open, to be started again on Activate.
-    - Update the Index service, and record History, when it changes.
+    - Update the Index service when it changes.
   - No need for file import/export in 1ed
   - Don't bother yet with CRDT for concurrent editing
   - Think about granularity of history events
@@ -60,6 +81,8 @@
     - Or timed autosave?
     - How much of this is in history vs. in the document storage itself?
 - Implement GUI Text lens
+  - Record History events (created, opened, edited), with source
+    "lens": type implementations don't record them.
   - Do we want to separate viewing and editing modes?  Some sort of
     confirmation before starting to change it?
   - Not sure how to keep backend and widget in sync

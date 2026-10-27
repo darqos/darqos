@@ -1,8 +1,8 @@
 # darqos
 # Copyright (C) 2026 David Arnold
 
-# Tests for type and item identifiers, and URL serialization, in
-# darq/identifier.py.
+# Tests for type and item identifiers, names, and URL serialization,
+# in darq/identifier.py.
 
 import pytest
 
@@ -10,8 +10,10 @@ from darq.errors import InvalidIdentifierError, InvalidURLError
 from darq.identifier import (
     MAX_ITEM_ID_LENGTH,
     MAX_ITEM_SPECIFIER_LENGTH,
+    MAX_NAME_LENGTH,
     MAX_TYPE_ID_LENGTH,
     canonical_item_id,
+    canonical_name,
     canonical_type_id,
     is_valid_item_id,
     is_valid_type_id,
@@ -134,6 +136,60 @@ def test_item_id_lengths():
     assert len(longest.encode()) == MAX_ITEM_ID_LENGTH == 1023
     with pytest.raises(InvalidIdentifierError):
         make_item_id("a", "b" * (MAX_ITEM_SPECIFIER_LENGTH + 1))
+
+
+################################################################
+# Names
+################################################################
+
+@pytest.mark.parametrize("name, canonical", [
+    ("edited", "edited"),
+    ("Edited", "edited"),
+    ("type_lens", "type_lens"),
+    ("STRASSE", "strasse"),
+    ("Straße", "strasse"),
+    ("ﬁle", "file"),
+    ("ｌｅｎｓ", "lens"),
+    ("le\u00ADns", "lens"),
+    ("gelöscht", "gelöscht"),
+    ("😀", "😀"),
+])
+def test_canonical_name(name, canonical):
+    assert canonical_name(name) == canonical
+
+
+@pytest.mark.parametrize("name", [
+    "",
+    "\u00AD",
+    "two words",
+    " lens",
+    "lens\t",
+    "a\u00A0b",
+    "a\u3000b",
+    "a\u2028b",
+    "nul\x00",
+    "bell\x07",
+    "del\x7f",
+    "c1\x85",
+])
+def test_invalid_names(name):
+    with pytest.raises(InvalidIdentifierError):
+        canonical_name(name)
+
+
+def test_name_length():
+    assert canonical_name("a" * MAX_NAME_LENGTH) == "a" * MAX_NAME_LENGTH
+    with pytest.raises(InvalidIdentifierError):
+        canonical_name("a" * (MAX_NAME_LENGTH + 1))
+
+    # Bytes of UTF-8, after normalizing: "½" is 2 bytes, but its NFKC
+    # form, "1⁄2", is 5.
+    assert canonical_name("é" * 15) == "é" * 15
+    with pytest.raises(InvalidIdentifierError):
+        canonical_name("é" * 16)
+    assert canonical_name("a" * 26 + "½") == "a" * 26 + "1⁄2"
+    with pytest.raises(InvalidIdentifierError):
+        canonical_name("a" * 27 + "½")
 
 
 ################################################################
