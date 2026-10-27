@@ -1,13 +1,16 @@
-# darqos
+darqos
+======
 
-DarqOS is an operating system in the broader sense that includes a user 
+DarqOS is an operating system in the broader sense that includes a user
 interface and a collection of application and utility programs.
 
 Its goal is to explore, by means of prototyping and daily use, an operating
 system that moves beyond a 1970's model of a computer with some 1980's
 GUI pasted on top.
 
-## Features
+Features
+--------
+
 * Single user
 * Graphical
 * For user terminal devices (not servers)
@@ -15,12 +18,13 @@ GUI pasted on top.
 * Willing to be incompatible
 * Open source
 
-Some things the might be surprising if you're used to other operating
+Some things that might be surprising if you're used to other operating
 systems:
+
 * It has no files or filesystem
 * It doesn't have applications, in the usual sense
 * It is not POSIX-compatible
-* it is not for everyone; it is not a general-purpose system
+* It is not for everyone; it is not a general-purpose system
 * It is incomplete
 
 The goal of DarqOS is, somewhat grandly, to augment human abilities.  This
@@ -35,7 +39,8 @@ discarded or replaced.  There are many aspects of the design that are
 prototyped using cobbled-together bits of other things.  It's not
 currently a clean and efficient instantiation of its own design.
 
-## Target Platforms
+Target Platforms
+----------------
 
 The best way to try it is to use a secondhand Lenovo MiniPC with an
 HDMI monitor, a USB mouse and USB keyboard.  Both wired and wireless
@@ -53,45 +58,47 @@ of diversity in their I/O devices.  It's pretty likely that support
 will target very specific models and configurations if and when it
 happens.
 
-## Further Reading
+Further Reading
+---------------
 
-* [Roadmap](doc/roadmap.md)
+* `Roadmap <doc/roadmap.rst>`__
 
 Overview
 
-* [Bootstrap](doc/bootstrap.md)
-* [Security](doc/security.md)
-* [IPC](doc/ipc.md)
-* [Runtime](doc/runtime.md)
-* [UX](doc/ux.md)
-* [REPL](doc/repl.md)
-* [Objects, Types, and Lenses](doc/object.md)
+* `Bootstrap <doc/bootstrap.rst>`__
+* `Security <doc/security.rst>`__
+* `IPC <doc/ipc.rst>`__
+* `Runtime <doc/runtime.rst>`__
+* `UX <doc/ux.rst>`__
+* `REPL <doc/repl.rst>`__
+* `Items <doc/item.rst>`__
 
 Services
 
-* [Storage](doc/blob.md)
-* [Metadata](doc/metadata.md)
-* [History](doc/history.md)
-* [Index](doc/index.md) 
-* [Terminal](doc/terminal.md)
+* `Storage <doc/storage.rst>`__
+* `Metadata <doc/metadata.rst>`__
+* `History <doc/history.rst>`__
+* `Index <doc/search-service.rst>`__
+* `Terminal <doc/terminal.rst>`__
 
 Tools and Types
 
-* [Types](doc/types.md)
-* [Tools](doc/tools.md)
-* [Bibliography](doc/bib.md)
-* [Books](doc/book.md)
-* [Music](doc/music-player.md)
-* [People](doc/pim.md)
-* [Calculations](doc/calculation.md)
+* `Types <doc/types.rst>`__
+* `Tools <doc/tools.rst>`__
+* `Bibliography <doc/bib.rst>`__
+* `Books <doc/book.rst>`__
+* `Audio <doc/audio.rst>`__
+* `People <doc/pim.rst>`__
+* `Calculations <doc/calculation.rst>`__
 
 Details
 
-* [UI Events](doc/input-events.md)
+* `UI Events <doc/input-events.rst>`__
 
-## Contact
+Contact
+-------
 
-At some point, I'll set up something.  Until then, email d+darq@0x1.org
-
+At some point, I'll set up something.  Until then, email
+d+darq@0x1.org.
 
 Copyright (C) 2022-2026, David Arnold
