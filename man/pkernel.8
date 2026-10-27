@@ -220,6 +220,19 @@ A relative path, such as
 in a development tree, is taken from the p-kernel's working directory.
 It's created if needed, and spawned processes get its absolute path in
 .BR DARQ_RUN .
+.TP
+.B DARQ_DEV_TERMINAL
+If set, to anything but
+.B 0
+or empty, the boot sequence also starts the throw-away development
+Terminal
+.RI ( tools/devterm ),
+last: a window on the host's desktop for creating items, browsing
+History, and shutting down or rebooting.
+Spawned processes get the p-kernel's environment, so run the p-kernel
+from the desktop session, where
+.B WAYLAND_DISPLAY
+is set.
 .SH FILES
 .TP
 .I /darq/kernel/pkernel

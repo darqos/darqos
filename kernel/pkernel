@@ -82,6 +82,11 @@ DARQ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # they're all started at once.
 BOOT_PROCESSES = ("services/storage", "services/history", "services/type", "tools/type-sync")
 
+# Throw-away development Terminal, started after them if DARQ_DEV_TERMINAL
+# is set (to anything but 0), for trying types and lenses in a window on
+# the host's desktop, until the real Terminal runs.
+DEV_TERMINAL = "tools/devterm"
+
 # Directory containing the darq package this p-kernel is using, so the
 # loader can import the same one.
 DARQ_PYTHON_PATH = os.path.dirname(os.path.dirname(os.path.abspath(darq.__file__)))
@@ -1098,7 +1103,10 @@ class PseudoKernel(SocketListener, TimerListener):
         logging.info("Starting bootstrap")
 
         # FIXME: Index and the other services, once ported.
-        for path in BOOT_PROCESSES:
+        paths = BOOT_PROCESSES
+        if os.environ.get("DARQ_DEV_TERMINAL", "0") not in ("", "0"):
+            paths += (DEV_TERMINAL,)
+        for path in paths:
             exec_path = os.path.join(DARQ_ROOT, path)
             if not os.path.isfile(os.path.join(exec_path, "main.py")):
                 logging.error(f"Boot process {exec_path} has no main.py")

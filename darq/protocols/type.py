@@ -34,6 +34,8 @@ __all__ = [
     "FindLensesResponse",
     "Implementation",
     "Item",
+    "ListTypesRequest",
+    "ListTypesResponse",
     "OpenRequest",
     "OpenResponse",
     "Ready",
@@ -598,6 +600,68 @@ class FindLensesRequest(Message):
         return
 
 
+class ListTypesResponse(Message):
+    """Type.ListTypes response."""
+
+    METHOD = 8
+    BODY_FORMAT = "<II"
+    BODY_START = 8
+    LENGTH = 16
+    DATA_START = 16
+    CODEC_0 = STRING_CODEC
+
+    def __init__(self, txid: int = 0, type_ids: list[str] | None = None):
+        super().__init__(txid)
+        self.type_ids = [] if type_ids is None else type_ids
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.sequence(self.type_ids, self.CODEC_0))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.type_ids = inp.sequence(self.CODEC_0, bits[0], bits[1])
+        return
+
+
+class ListTypesRequest(Message):
+    """Type.ListTypes request."""
+
+    METHOD = 8
+    RESPONSE = ListTypesResponse
+    BODY_FORMAT = "<?"
+    BODY_START = 8
+    LENGTH = 9
+
+    def __init__(self, txid: int = 0, implemented: bool = False):
+        super().__init__(txid)
+        self.implemented = implemented
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        buf += struct.pack(self.BODY_FORMAT,
+                           self.implemented)
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        self.implemented = bits[0]
+        return
+
+
 class Ready(Message):
     """Bootstrap.Ready one-way message."""
 
@@ -865,6 +929,7 @@ class Type:
         5: RegisterLensRequest,
         6: DeregisterLensRequest,
         7: FindLensesRequest,
+        8: ListTypesRequest,
     }
 
     RESPONSES = {
@@ -875,6 +940,7 @@ class Type:
         5: RegisterLensResponse,
         6: DeregisterLensResponse,
         7: FindLensesResponse,
+        8: ListTypesResponse,
     }
 
     class Client(system.Client):
@@ -923,6 +989,10 @@ class Type:
             request = FindLensesRequest(type_id=type_id, context=context)
             return self.call(request, FindLensesResponse)
 
+        def list_types(self, implemented: bool = False) -> ListTypesResponse:
+            """Type.ListTypes."""
+            return self.call(ListTypesRequest(implemented=implemented), ListTypesResponse)
+
     class Handler(system.Handler):
         """protocol Type: base class for a service's handler."""
 
@@ -934,6 +1004,7 @@ class Type:
             5: (RegisterLensRequest, "register_lens"),
             6: (DeregisterLensRequest, "deregister_lens"),
             7: (FindLensesRequest, "find_lenses"),
+            8: (ListTypesRequest, "list_types"),
         }
 
         def register(self,
@@ -976,6 +1047,12 @@ class Type:
                         request: FindLensesRequest,
                         source: int) -> FindLensesResponse | system.Deferred:
             """Handle Type.FindLenses."""
+            raise NotImplementedError
+
+        def list_types(self,
+                       request: ListTypesRequest,
+                       source: int) -> ListTypesResponse | system.Deferred:
+            """Handle Type.ListTypes."""
             raise NotImplementedError
 
 

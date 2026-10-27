@@ -37,6 +37,8 @@ from darq.protocols.type import (
     Description,
     FindLensesRequest,
     FindLensesResponse,
+    ListTypesRequest,
+    ListTypesResponse,
     Ready,
     RegisterLensRequest,
     RegisterLensResponse,
@@ -258,6 +260,10 @@ class TypeService(Type.Handler):
             return DescribeResponse(status=Status.NOT_FOUND)
         return DescribeResponse(description=description, implementation=self.implementations.get(type_id, ""),
                                 status=Status.OK)
+
+    def list_types(self, request: ListTypesRequest, source: int) -> ListTypesResponse:
+        types = self.implementations if request.implemented else self.descriptions
+        return ListTypesResponse(type_ids=sorted(types))
 
     def register_lens(self, request: RegisterLensRequest, source: int) -> RegisterLensResponse:
         type_id = self.canonical(request.type_id)

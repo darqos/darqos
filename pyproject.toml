@@ -35,6 +35,7 @@ include = [
     "services/type/main.py",
     "lenses/text/main.py",
     "types/text/main.py",
+    "tools/devterm/main.py",
     "tools/type-sync/main.py",
 ]
 line-length = 120
@@ -68,6 +69,7 @@ include = [
     "services/type/main.py",
     "lenses/text/main.py",
     "types/text/main.py",
+    "tools/devterm/main.py",
     "tools/type-sync/main.py",
     "tests",
 ]

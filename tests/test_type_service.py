@@ -23,6 +23,7 @@ from darq.protocols.type import (
     DescribeRequest,
     Description,
     FindLensesRequest,
+    ListTypesRequest,
     Ready,
     RegisterLensRequest,
     RegisterLensResponse,
@@ -126,6 +127,15 @@ def test_register_invalid_ids(service, catalogue, type_id, conforms_to):
 def test_describe_unknown(service):
     assert service.describe(DescribeRequest(type_id="test.nothing"), 0).status == Status.NOT_FOUND
     assert service.describe(DescribeRequest(type_id="bad:id"), 0).status == Status.INVALID_ID
+
+
+def test_list_types(service):
+    assert service.list_types(ListTypesRequest(implemented=False), 0).type_ids == []
+    register(service, "test.b", "/b")
+    register(service, "test.a", "")
+    register(service, "test.c", "/c")
+    assert service.list_types(ListTypesRequest(implemented=False), 0).type_ids == ["test.a", "test.b", "test.c"]
+    assert service.list_types(ListTypesRequest(implemented=True), 0).type_ids == ["test.b", "test.c"]
 
 
 def test_deregister(service, catalogue):

@@ -66,6 +66,10 @@ protocol Type {
     // type has none, those of the types it conforms to are returned
     // instead: the nearest that have any.
     7: FindLenses(string type_id, string context) -> (sequence<string> lenses, Status status);
+
+    // Return the identifiers of the types in the catalogue, sorted: all
+    // of them, or only those with an implementation.
+    8: ListTypes(bool implemented) -> (sequence<string> type_ids);
 }
 
 // Spoken by a newly-started implementation on its bootstrap port (see

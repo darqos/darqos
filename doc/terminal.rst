@@ -38,6 +38,37 @@ option as well, because eg. an SSH session has different needs to a
 GUI session.
 
 
+Development Terminal
+--------------------
+
+Until the compositor and the real Terminal exist, `tools/devterm` is a
+throw-away stand-in: an ordinary window on the host's Wayland desktop,
+started at boot, last, when `DARQ_DEV_TERMINAL=1` is set.  Run the
+p-kernel from the desktop session, so its windows (and the lenses')
+appear there.  From the top of the tree, with the virtual
+environment's Python first on the path (the p-kernel and its loaders
+run `python`), and the tree on `PYTHONPATH` (for the p-kernel's own
+`import darq`)::
+
+    . venv313/bin/activate
+    PYTHONPATH=$PWD DARQ_RUN=./run DARQ_DEV_TERMINAL=1 kernel/pkernel
+
+It has:
+
+* New: the implemented types (`ListTypes`), greyed out if they have no
+  Terminal lens.  Create makes an item, records `created` (source
+  `devterm`), and starts its lens (`darq.launch`).
+* History: events between two times, filtered by type, event, and
+  source, newest first, a page at a time.  Double-clicking one starts
+  a lens for its item.
+* System: Shutdown and Reboot (it's a system process, so it may), and
+  Quit, which closes just this window.
+
+Its calls are synchronous, on Qt's thread, so starting a lens freezes
+it for a second or so.  It's to be deleted once the real Terminal runs:
+nothing else depends on it.
+
+
 First Edition Graphical Terminal
 --------------------------------
 

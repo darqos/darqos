@@ -305,6 +305,21 @@ def test_boot_starts_services_in_order(pkernel, fake_popen):
         assert args[3] == "0"
 
 
+@pytest.mark.parametrize("value, started", [(None, False), ("0", False), ("", False), ("1", True), ("yes", True)])
+def test_boot_dev_terminal(pkernel, fake_popen, monkeypatch, value, started):
+    module = pkernel.module
+    if value is None:
+        monkeypatch.delenv("DARQ_DEV_TERMINAL", raising=False)
+    else:
+        monkeypatch.setenv("DARQ_DEV_TERMINAL", value)
+    pkernel.do_boot()
+
+    # It's started last, after the services it uses.
+    paths = [args[-1] for args in fake_popen.calls]
+    expected = module.BOOT_PROCESSES + ((module.DEV_TERMINAL,) if started else ())
+    assert paths == [os.path.join(module.DARQ_ROOT, path) for path in expected]
+
+
 def test_boot_skips_missing_process(pkernel, fake_popen, tmp_path, monkeypatch):
     for name in ("broken", "good"):
         (tmp_path / name).mkdir()

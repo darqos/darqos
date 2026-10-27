@@ -84,6 +84,8 @@ Its protocol, `Type` in `lib/didl/type.didl` (generated as
 * `RegisterLens(lens, type_id, context)`, `DeregisterLens(...)` and
   `FindLenses(type_id, context)` manage and look up lenses (see Lens
   Activation, below).
+* `ListTypes(implemented)` returns the identifiers of the catalogue's
+  types, sorted: all of them, or only those with an implementation.
 
 Each method's result has a `Status`: `OK`, `NOT_FOUND`, `INVALID_ID`, or
 `FAILED` (an implementation couldn't be started).  Type identifiers in

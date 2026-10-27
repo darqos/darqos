@@ -85,16 +85,22 @@
   on calls (or deadlock, when two loop-served apps call each other).
   Ports can already be served on a loop (set_port_listener,
   Server.attach).
+- Development Terminal (tools/devterm): throw-away, until the real
+  Terminal runs.  Started at boot with DARQ_DEV_TERMINAL=1 (see
+  doc/terminal.rst).
+  - Try the Text type and lens on the desktop with it.
+  - Delete it once the real Terminal has a factory and history.
 - Implement GUI Text lens
   - Done: lenses/text, started for an item with the Lens protocol
     (lib/didl/lens.didl) by darq.launch.use_item; a change is sent as
     a Replace as it's made; Emacs keys; read-only toggle; F1 help;
     records opened and edited, source "text-lens" (see doc/text.rst).
   - Remaining:
-    - Try it on a real display: nothing can start it until the Terminal
-      runs (it's only been run offscreen).
+    - Try it on a real display, with the development Terminal (it's
+      only been run offscreen).
     - Kill ring, consecutive kills appending, C-t, paragraph movement.
-    - The Terminal (or factory) records "created", source "terminal".
+    - The real Terminal's factory records "created", source "terminal"
+      (devterm does, with source "devterm").
     - Save cursor and window position in Metadata.
     - Use this to start figuring out strategy for help: a usage
       document, launched from the cheatsheet.

@@ -510,6 +510,8 @@ def test_text_lens(live_pkernel, tmp_path):  # noqa: F811
                 if time.monotonic() > deadline:
                     return "no text lens registered"
                 time.sleep(0.05)
+            if "public.utf8-plain-text" not in types.list_types(implemented=True).type_ids:
+                return "text type isn't listed as implemented"
             path = darq.launch.find_lens("public.utf8-plain-text")
             if not path.endswith("lenses/text"):
                 return f"lens is {path}"
