@@ -65,6 +65,58 @@ The Type Service maintains four mappings:
 * Type identifier to active type implementation instance
 * Type identifier + context to zero or more lenses
 
+The first two, and the lenses, are the *catalogue*: they persist across
+restarts.  The running implementations' ports last only as long as the
+implementations do, so they're kept in a separate table.
+
+Its protocol, `Type` in `lib/didl/type.didl` (generated as
+`darq.protocols.type`), has these methods:
+
+* `Register(type_id, description, implementation)` adds or replaces a
+  type's description, and its implementation (a directory path to
+  spawn, or empty for none).  The service updates its in-memory tables,
+  and saves the catalogue, before it answers.  A registration that
+  changes nothing saves nothing.
+* `Deregister(type_id)` removes both.
+* `Describe(type_id)` returns them.
+* `Activate(type_id)` returns the implementation's port, starting it if
+  needed (see Activation, below).
+* `RegisterLens(lens, type_id, context)`, `DeregisterLens(...)` and
+  `FindLenses(type_id, context)` manage and look up lenses (see Lens
+  Activation, below).
+
+Each method's result has a `Status`: `OK`, `NOT_FOUND`, `INVALID_ID`, or
+`FAILED` (an implementation couldn't be started).  Type identifiers in
+requests, including those in a description's conformance list, are
+canonicalized with `canonical_type_id()`: any case or compatibility
+form can be used, but the canonical form is what's stored and returned.
+
+Catalogue
+~~~~~~~~~
+
+The catalogue is saved as JSON in a Storage blob.  The blob's key is
+kept in the boot vector, as `darq.type.catalogue`, so the Type Service
+must be spawned by the p-kernel, after the Storage service.  On a fresh
+system there's no key: the blob is created on the first change.
+
+The catalogue is filled by the *type sync*, `tools/type-sync`, run at
+boot after the Type Service.  It registers:
+
+* The base catalogue (`tools/type-sync/catalogue.json`): descriptions
+  of the common types, from Apple's Uniform Type Identifiers, with their
+  conformance, and no implementations.
+* The types each installed type implementation describes in a
+  `type.json` manifest in its directory (under `/darq/types`).  Those
+  marked `"implemented": true` are registered with that directory as
+  their implementation.
+* The lenses each installed lens declares in a `lens.json` manifest in
+  its directory (under `/darq/lenses`): the types it's for, and its
+  context.
+
+Registering replaces what was there, so a changed manifest takes
+effect at the next boot.  Nothing is removed: a type or lens that's no
+longer installed stays in the catalogue until it's deregistered.
+
 Type Descriptions
 -----------------
 
@@ -76,14 +128,16 @@ Type descriptions consist of:
 * Zero or more MIME types that are equivalent
 * Zero or more file extensions that indicate equivalence
 * An icon to represent instances of this type
-* A reference to the implementation for this type
+* A short name, and a longer description
 
-  * For 1ed, this will be a path to the type implementation's
-    directory, suitable for spawn()ing by the p-kernel.
-  * In future editions, it should be a storage key for the
-    implementation's executable.
+These are stable, persistent properties of the type.  The type's
+implementation is registered separately, since it can be replaced at
+runtime:
 
-These are stable, persistent properties of the type.
+* For 1ed, it's a path to the type implementation's directory,
+  suitable for spawn()ing by the p-kernel.
+* In future editions, it should be a storage key for the
+  implementation's executable.
 
 Type Implementations
 --------------------
@@ -112,6 +166,40 @@ and distributes the per-Item ports.
 New Type Implementations may be registered at runtime, and existing
 Type Implementations may be removed or replaced.  The registrations
 are persistent across system restarts.
+
+Activation
+~~~~~~~~~~
+
+`Activate` starts a type's implementation if it isn't running:
+
+* The Type Service opens a *bootstrap port*, and spawns the
+  implementation with it (see :doc:`ipc`).  The `Activate` reply is
+  deferred, as is any other `Activate` for the type that arrives
+  meanwhile.
+* The implementation opens the port it will serve the `Implementation`
+  protocol on, and reports it with a one-way `Ready(implementation)`
+  (protocol `Bootstrap`) on the port `darq.get_bootstrap_port()`
+  returns.
+* The Type Service then records the port, asks to be notified when it's
+  destroyed (`darq.notify_on_death`), and answers the waiting
+  `Activate` requests with it.
+* If the implementation can't be spawned, or doesn't report `Ready`
+  within 30 seconds, they're answered with `FAILED`.  A late `Ready`
+  fails, since the bootstrap port is closed by then, and the
+  implementation should exit.
+
+When an implementation's port is destroyed, which happens when it exits
+or crashes, the Type Service forgets it.  It isn't restarted until
+something next asks for it with `Activate`.
+
+Every implementation serves the `Implementation` protocol (also in
+`lib/didl/type.didl`):
+
+* `Create()` returns the new item's identifier, and a port for it.
+* `Open(item_id)` returns a port for an existing item.  An implementation
+  must check that the identifier's type is its own: an item of another
+  type, including a conforming subtype, is `NOT_FOUND`.
+* `Destroy(item_id)` marks it destroyed (see Item Destruction, below).
 
 Type Instances
 --------------
@@ -152,6 +240,17 @@ An existing Item can be opened similarly: get the port for the
 Type Implementation from the Type Service, and then ask it to
 open the Item using its Item Identifier, and get a port that
 addresses the Type Implementation and the specific Item.
+
+Every item port serves the methods of the `Item` protocol, numbered
+from 1, alongside the type's own methods, numbered from 16: each type's
+item protocol starts with them.  For now, that's just `Close()`.  A
+client closes an item when it's done with it, so the implementation
+knows it can save and forget the item, and close its port.
+
+Closing is explicit because the p-kernel can't yet tell a port's owner
+when the last send right to it has gone.  Mach calls this a *no-senders
+notification*.  Once the p-kernel has one, an implementation can use
+it to notice clients that crash, or forget to close.
 
 Item Destruction
 ~~~~~~~~~~~~~~~~
@@ -229,8 +328,22 @@ combine:
 The terminal must process that request and determine (with or without
 help from the user) which of its available Lenses should be used.
 
+In 1ed, there's only one action, "use", so the action plays no part in
+choosing a lens.
+
 The collection of Lenses, and their supported types and contexts,
-is maintained by the Type Service.
+is maintained by the Type Service.  A lens is identified by the path of
+its directory, and registered (with `RegisterLens`) for a type and a
+context: the context's name is "terminal" for the Terminal context.
+
+`FindLenses(type_id, context)` returns the lenses registered for the
+type in the context.  If there are none, it falls back to more general
+lenses: those of the types it conforms to, and then the types they
+conform to, and so on, returning the nearest that have any.  So a
+`public.utf8-plain-text` item with no lens of its own is shown with a
+`public.plain-text` lens if there is one, otherwise a `public.text`
+lens, and so on.  Types that are equally near, such as `public.text`'s
+`public.data` and `public.content`, are searched together.
 
 References
 ==========

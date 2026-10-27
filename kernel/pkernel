@@ -31,6 +31,7 @@ import time
 from enum import IntEnum
 
 import darq
+from darq import dipc
 from darq import pcall as pk
 from darq.loop import SocketListener, TimerListener
 
@@ -130,6 +131,10 @@ class KernelPortState:
         # Name registered for the port, if any.
         self.name: str | None = None
 
+        # Processes to notify when it's destroyed, with the notify ports
+        # each asked for (see handle_notify_on_death_request).
+        self.death_watchers: dict["KernelProcessState", set["KernelPortState"]] = {}
+
     def __repr__(self) -> str:
         return f"port [{self.port_id}]"
 
@@ -218,6 +223,10 @@ class KernelProcessState:
 
         # Spawn request awaiting this process' RunRequest, if any.
         self._spawn_request: tuple["KernelProcessState", int] | None = None
+
+        # Port its parent named as its bootstrap port, if any: it's
+        # given a send right to it when it runs.
+        self._bootstrap_port: KernelPortState | None = None
 
         # Host process running the language stub (see also _hpid).
         self._child: subprocess.Popen | None = None
@@ -333,6 +342,16 @@ class KernelProcessState:
         request = self._spawn_request
         self._spawn_request = None
         return request
+
+    def set_bootstrap_port(self, port: KernelPortState | None):
+        """Record the port this process gets a send right to when it runs."""
+        self._bootstrap_port = port
+
+    def take_bootstrap_port(self) -> KernelPortState | None:
+        """Return and clear this process' bootstrap port."""
+        port = self._bootstrap_port
+        self._bootstrap_port = None
+        return port
 
     # Exit
 
@@ -779,6 +798,7 @@ class PseudoKernel(SocketListener, TimerListener):
         self._wait_requests.pop(process.get_dpid(), None)
 
         for entry in process.take_handles():
+            entry.port.death_watchers.pop(process, None)
             if entry.right == PortRight.RECEIVE:
                 self.destroy_port(entry.port)
                 logging.debug(f"{name} closed {entry.port}")
@@ -837,7 +857,8 @@ class PseudoKernel(SocketListener, TimerListener):
     def destroy_port(self, port: KernelPortState):
         """Destroy a port: handles other processes hold for it become dead.
 
-        Its name, if any, is removed from the registry."""
+        Its name, if any, is removed from the registry, and the
+        processes watching it are notified."""
         port.alive = False
         port.owner = None
         self._ports.pop(port.port_id, None)
@@ -846,6 +867,34 @@ class PseudoKernel(SocketListener, TimerListener):
             logging.info(f"Name '{port.name}' removed with {port}")
             self._names.pop(port.name, None)
             port.name = None
+
+        watchers, port.death_watchers = port.death_watchers, {}
+        for watcher, notify_ports in watchers.items():
+            for notify_port in notify_ports:
+                self.notify_port_destroyed(watcher, port, notify_port)
+        return
+
+    def notify_port_destroyed(self, watcher: KernelProcessState, port: KernelPortState,
+                              notify_port: KernelPortState):
+        """Deliver a PortDestroyed notification for a dead port.
+
+        Nothing is sent if the watcher has since closed its handle for
+        the port, or no longer holds the notify port's receive right.
+
+        :param watcher: Process that asked to be notified.
+        :param port: The destroyed port.
+        :param notify_port: Watcher's port to deliver the notification to."""
+        handle = watcher.handle_for(port)
+        destination = watcher.handle_for(notify_port)
+        if handle is None or destination is None or notify_port.owner is not watcher:
+            return
+
+        payload, _ = dipc.PortDestroyed(handle).encode()
+        deliver = pk.DeliverMessage(0, destination)
+        deliver.set_payload(payload)
+        watcher.send_data(deliver.encode())
+        logging.info(f"Notified {watcher.name()} that {port} (handle {handle}) is dead, "
+                     f"on {notify_port}")
         return
 
     @staticmethod
@@ -1067,15 +1116,31 @@ class PseudoKernel(SocketListener, TimerListener):
             logging.warning(f"{process.name()} spawn_process({exec_path}) "
                             f"refused: shutting down")
             self.send_spawn_process_response(process, request.request_id, 0,
-                                             1,  # FIXME: better errno
+                                             pk.SpawnResult.FAILED,
                                              "shutting down")
             return
+
+        # The caller must hold a right to the bootstrap port it names:
+        # the new process gets a send right to it, as for a handle
+        # transferred in a message.
+        bootstrap: KernelPortState | None = None
+        if request.bootstrap != 0:
+            entry = process.get_handle(request.bootstrap)
+            if entry is None or not entry.port.alive:
+                reason = "isn't open" if entry is None else "is dead"
+                logging.warning(f"{process.name()} spawn_process({exec_path}) "
+                                f"failed: bootstrap handle {request.bootstrap} {reason}")
+                self.send_spawn_process_response(process, request.request_id, 0,
+                                                 pk.SpawnResult.BAD_BOOTSTRAP,
+                                                 f"bootstrap handle {request.bootstrap} {reason}")
+                return
+            bootstrap = entry.port
 
         if not os.path.isfile(os.path.join(exec_path, "main.py")):
             logging.warning(f"{process.name()} spawn_process({exec_path}) "
                             f"failed: no main.py")
             self.send_spawn_process_response(process, request.request_id, 0,
-                                             1,  # FIXME: better errno
+                                             pk.SpawnResult.FAILED,
                                              f"no main.py in {exec_path}")
             return
 
@@ -1085,11 +1150,12 @@ class PseudoKernel(SocketListener, TimerListener):
             logging.warning(f"{process.name()} spawn_process({exec_path}) "
                             f"failed: {e}")
             self.send_spawn_process_response(process, request.request_id, 0,
-                                             1,  # FIXME: better errno
+                                             pk.SpawnResult.FAILED,
                                              str(e))
             return
 
         self._process_table[dpid].set_spawn_request(process, request.request_id)
+        self._process_table[dpid].set_bootstrap_port(bootstrap)
         return
 
     def send_spawn_process_response(self,
@@ -1196,7 +1262,7 @@ class PseudoKernel(SocketListener, TimerListener):
                     requester, request_id = spawn_request
                     self.send_spawn_process_response(
                         requester, request_id, 0,
-                        1,  # FIXME: better errno
+                        pk.SpawnResult.FAILED,
                         f"process exited with status {status} before running")
 
                 for requester, request_id in process.take_kill_requests():
@@ -1403,8 +1469,15 @@ class PseudoKernel(SocketListener, TimerListener):
         process.set_status(KernelProcessStatus.RUNNING)
         process.set_host_pid(message.host_pid)
 
+        # Give it its bootstrap port, unless that's been destroyed since
+        # it was spawned.
+        bootstrap = process.take_bootstrap_port()
+        bootstrap_handle = 0
+        if bootstrap is not None and bootstrap.alive:
+            bootstrap_handle = process.add_right(bootstrap, PortRight.SEND)
+
         # Let the process start its application.
-        process.send_data(pk.RunResponse(0).encode())
+        process.send_data(pk.RunResponse(0, bootstrap_handle).encode())
 
         # Answer the request that spawned this process.
         spawn_request = process.take_spawn_request()
@@ -1456,6 +1529,8 @@ class PseudoKernel(SocketListener, TimerListener):
             self.send_close_port_response(process, request.request_id, 1, handle)  # FIXME: better errno
             return
 
+        # Closing the handle cancels its death notifications.
+        entry.port.death_watchers.pop(process, None)
         if entry.right == PortRight.RECEIVE:
             self.destroy_port(entry.port)
 
@@ -1540,6 +1615,41 @@ class PseudoKernel(SocketListener, TimerListener):
                      f"{f', transferring {handles}' if handles else ''})")
         response = pk.SendMessageResponse(message.request_id, pk.SendResult.OK)
         sender.send_data(response.encode())
+        return
+
+    def handle_notify_on_death_request(self,
+                                       process: KernelProcessState,
+                                       request: pk.NotifyOnDeathRequest):
+        """Handle request to be notified when a port is destroyed.
+
+        The notification (a dipc.PortDestroyed) is delivered to the
+        notify port, once, when the port is destroyed: at once, before
+        the response, if it's already dead.  Asking again for the same
+        notify port changes nothing.  Closing the handle cancels it."""
+        name = process.name()
+
+        def respond(result: pk.NotifyResult, reason: str = ""):
+            if result != pk.NotifyResult.OK:
+                logging.warning(f"{name} notify_on_death({request.handle}, {request.notify_port}) "
+                                f"refused: {reason}")
+            process.send_data(pk.NotifyOnDeathResponse(request.request_id, result).encode())
+
+        entry = process.get_handle(request.handle)
+        if entry is None:
+            respond(pk.NotifyResult.BAD_HANDLE, "bad handle")
+            return
+        notify = process.get_handle(request.notify_port)
+        if notify is None or notify.right != PortRight.RECEIVE:
+            respond(pk.NotifyResult.BAD_NOTIFY_PORT, "notify port isn't a receive right")
+            return
+
+        port = entry.port
+        if port.alive:
+            port.death_watchers.setdefault(process, set()).add(notify.port)
+            logging.info(f"{name} notify_on_death() watching {port}, to {notify.port}")
+        else:
+            self.notify_port_destroyed(process, port, notify.port)
+        respond(pk.NotifyResult.OK)
         return
 
     def handle_register_name_request(self,
@@ -1772,6 +1882,11 @@ class PseudoKernel(SocketListener, TimerListener):
             message = pk.LookupNameRequest()
             message.decode(message_bytes)
             self.handle_lookup_name_request(process, message)
+
+        elif message_type == pk.MessageType.NOTIFY_ON_DEATH_RQST:
+            message = pk.NotifyOnDeathRequest()
+            message.decode(message_bytes)
+            self.handle_notify_on_death_request(process, message)
 
         elif message_type == pk.MessageType.WAIT_RQST:
             message = pk.WaitRequest()

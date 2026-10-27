@@ -85,6 +85,28 @@ Issues
   in a START_RQST?  The process could ACK that, and then start.
 - Having pyloader exit if the p-kernel session drops might be pretty
   painful.  This might need revisiting.
+- darq.Server runs its timers between messages, so a handler that
+  blocks delays them, and every other request.  The worst case is
+  spawn_process(), which waits until the child is running: up to 10
+  seconds if it never sends RUN_REQUEST.  Add a non-blocking spawn for
+  Servers, built on spawn_process_cb(), with its completion delivered
+  back into the Server (as a message on one of its ports, say), so the
+  Type service can start implementations without stalling.
+- Add no-senders notifications to the p-kernel: tell a port's owner
+  when the last send right to it has gone (as Mach does).  Item ports
+  rely on clients calling Item.Close for now (see doc/types.rst), so an
+  implementation never learns of a client that crashed or forgot, and
+  its open items accumulate.
+- Have pkernel.do_boot start the Storage service, then the Type
+  service, then the type sync (tools/type-sync), which registers the
+  base catalogue and every installed type and lens.  On a first boot,
+  the sync's ~70 registrations each save the catalogue, taking about 6
+  seconds: a batch Register would cut that.
+- The DIPC header's ERROR and NOTIFICATION flags (see darq/dipc.py)
+  are a stopgap: error replies and p-kernel notifications are told
+  apart from ordinary messages by header bits, with notifications also
+  relying on source handle 0.  Find a cleaner way to distinguish
+  replies, errors and kernel notifications in future.
 
   
 ** Second Edition

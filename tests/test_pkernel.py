@@ -22,6 +22,7 @@ import typing
 import pytest
 
 import darq
+from darq import dipc
 from darq import pcall as pk
 
 
@@ -1045,6 +1046,137 @@ def test_disconnect_destroys_owned_ports(pkernel):
 
 
 ################################################################
+# Dead port notifications
+################################################################
+
+def notify_on_death(kernel, process, handle: int, notify_port: int) -> int:
+    """Ask the kernel to notify a process when a port dies, returning the
+    NotifyResult.  Anything delivered meanwhile is kept for delivered()."""
+    send_to_kernel(kernel, process, pk.NotifyOnDeathRequest(8, handle, notify_port))
+
+    results = []
+    peer = process_peer(kernel, process)
+    for message_type, buf in received_messages(peer):
+        if message_type == pk.MessageType.NOTIFY_ON_DEATH_RESP:
+            response = pk.NotifyOnDeathResponse()
+            response.decode(buf)
+            assert response.request_id == 8
+            results.append(response.result)
+        else:
+            kernel.unread.setdefault(peer, []).append((message_type, buf))
+    [result] = results
+    return result
+
+
+def notification(handle: int) -> bytes:
+    """The payload of a PortDestroyed notification."""
+    return dipc.PortDestroyed(handle).encode()[0]
+
+
+@pytest.fixture
+def watched(pkernel):
+    """A watches a port of B's, notifying a port of its own."""
+    a, a_peer = add_running_process(pkernel, 1)
+    b, b_peer = add_running_process(pkernel, 2)
+    a_port = open_port(pkernel, a, a_peer)
+    b_port = open_port(pkernel, b, b_peer)
+    a_to_b = grant_send_right(pkernel, a, b, b_port)
+    assert notify_on_death(pkernel, a, a_to_b, a_port) == pk.NotifyResult.OK
+    return a, a_peer, a_port, a_to_b, b, b_peer, b_port
+
+
+def test_notified_when_port_closed(pkernel, watched):
+    a, a_peer, a_port, a_to_b, b, b_peer, b_port = watched
+    assert delivered(pkernel, a_peer) == []
+
+    close_port(pkernel, b, b_peer, b_port)
+    assert delivered(pkernel, a_peer) == [(0, a_port, notification(a_to_b))]
+
+
+def test_notified_when_owner_disconnects(pkernel, watched):
+    a, a_peer, a_port, a_to_b, b, b_peer, b_port = watched
+    pkernel.handle_disconnect(b)
+    assert delivered(pkernel, a_peer) == [(0, a_port, notification(a_to_b))]
+
+
+def test_notified_once(pkernel, watched):
+    a, a_peer, a_port, a_to_b, b, b_peer, b_port = watched
+    assert notify_on_death(pkernel, a, a_to_b, a_port) == pk.NotifyResult.OK   # again: no change
+    close_port(pkernel, b, b_peer, b_port)
+    assert delivered(pkernel, a_peer) == [(0, a_port, notification(a_to_b))]
+
+
+def test_notified_on_each_notify_port(pkernel, watched):
+    a, a_peer, a_port, a_to_b, b, b_peer, b_port = watched
+    other = open_port(pkernel, a, a_peer, 2)
+    assert notify_on_death(pkernel, a, a_to_b, other) == pk.NotifyResult.OK
+    close_port(pkernel, b, b_peer, b_port)
+    assert sorted(delivered(pkernel, a_peer)) == [(0, a_port, notification(a_to_b)),
+                                                  (0, other, notification(a_to_b))]
+
+
+def test_already_dead_notified_at_once(pkernel, watched):
+    a, a_peer, a_port, a_to_b, b, b_peer, b_port = watched
+    close_port(pkernel, b, b_peer, b_port)
+    assert delivered(pkernel, a_peer) == [(0, a_port, notification(a_to_b))]
+
+    # Queued before the response.
+    send_to_kernel(pkernel, a, pk.NotifyOnDeathRequest(8, a_to_b, a_port))
+    assert [t for t, _ in received_messages(a_peer)] == [pk.MessageType.DELIVER_MESSAGE,
+                                                         pk.MessageType.NOTIFY_ON_DEATH_RESP]
+
+
+def test_closing_watched_handle_cancels(pkernel, watched):
+    a, a_peer, a_port, a_to_b, b, b_peer, b_port = watched
+    close_port(pkernel, a, a_peer, a_to_b)
+    close_port(pkernel, b, b_peer, b_port)
+    assert delivered(pkernel, a_peer) == []
+    assert b.get_handle(b_port) is None
+
+
+def test_closed_notify_port_not_notified(pkernel, watched):
+    a, a_peer, a_port, a_to_b, b, b_peer, b_port = watched
+    close_port(pkernel, a, a_peer, a_port)
+    close_port(pkernel, b, b_peer, b_port)
+    assert delivered(pkernel, a_peer) == []
+
+
+def test_watcher_disconnect_cancels(pkernel, watched):
+    a, a_peer, a_port, a_to_b, b, b_peer, b_port = watched
+    port = b.get_handle(b_port).port
+    pkernel.handle_disconnect(a)
+    assert port.death_watchers == {}
+
+
+def test_own_port_watched(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+    watched_port = open_port(pkernel, process, peer, 1)
+    notify_port = open_port(pkernel, process, peer, 2)
+    assert notify_on_death(pkernel, process, watched_port, notify_port) == pk.NotifyResult.OK
+
+    # Closing the watched handle cancels, even though it destroys the port.
+    close_port(pkernel, process, peer, watched_port)
+    assert delivered(pkernel, peer) == []
+
+
+@pytest.mark.parametrize("problem", ["bad handle", "bad notify port", "notify send right"])
+def test_notify_on_death_refused(pkernel, problem):
+    a, a_peer = add_running_process(pkernel, 1)
+    b, b_peer = add_running_process(pkernel, 2)
+    a_port = open_port(pkernel, a, a_peer)
+    b_port = open_port(pkernel, b, b_peer)
+    a_to_b = grant_send_right(pkernel, a, b, b_port)
+
+    handle, notify_port, result = {
+        "bad handle": (99, a_port, pk.NotifyResult.BAD_HANDLE),
+        "bad notify port": (a_to_b, 99, pk.NotifyResult.BAD_NOTIFY_PORT),
+        "notify send right": (a_port, a_to_b, pk.NotifyResult.BAD_NOTIFY_PORT),
+    }[problem]
+    assert notify_on_death(pkernel, a, handle, notify_port) == result
+    assert b.get_handle(b_port).port.death_watchers == {}
+
+
+################################################################
 # Name registry
 ################################################################
 
@@ -1410,6 +1542,51 @@ def test_rpc_service_and_client(live_pkernel, tmp_path):
             if not isinstance(response, GetResponse):
                 return f"call returned {response!r}"
             return 0
+        """)
+    for path in (service_path, client_path):
+        write_didl_module(pathlib.Path(path), protocol)
+
+    kernel.do_spawn_process(None, service_path)
+    dpid = kernel.do_spawn_process(None, client_path)
+    client = kernel._process_table[dpid]
+    run_kernel_until(kernel, lambda: client.get_status() == module.KernelProcessStatus.ZOMBIE,
+                     "the client to exit")
+    assert (client.get_exit_status(), client.get_exit_error()) == (0, None)
+
+
+def test_rpc_service_dies_before_replying(live_pkernel, tmp_path):
+    # The client is notified that the service's port has died, rather
+    # than waiting for a reply that will never come.
+    kernel = live_pkernel
+    module = kernel.module
+    protocol = """
+        library test_crash;
+        protocol Crash {
+            1: Crash() -> ();
+        }
+        """
+    service_path = write_app(tmp_path / "service", """
+        import darq
+        from test_crash import Crash
+
+        class Handler(Crash.Handler):
+            def crash(self, request, source):
+                darq.exit(1)
+
+        def darq_main():
+            darq.serve("darq.test.crash", Handler())
+        """)
+    client_path = write_app(tmp_path / "client", """
+        import darq
+        from test_crash import Crash
+
+        def darq_main():
+            crash = Crash.Client(darq.connect("darq.test.crash"), timeout=10)
+            try:
+                crash.crash()
+                return "crash returned"
+            except darq.DeadPortError:
+                return 0
         """)
     for path in (service_path, client_path):
         write_didl_module(pathlib.Path(path), protocol)
@@ -2129,3 +2306,201 @@ def test_pyloader_with_unknown_dpid_exits(live_pkernel, tmp_path, body):
 
     assert loader.returncode == 1
     assert "refused to run this process" in stderr
+
+
+################################################################
+# Bootstrap ports
+################################################################
+
+def spawn_with_bootstrap(kernel, parent, executable, bootstrap: int, dpid: int = 2):
+    """Spawn a child of parent naming a bootstrap handle, returning it."""
+    kernel._next_dpid = dpid
+    send_to_kernel(kernel, parent, pk.SpawnProcessRequest(5, executable, bootstrap))
+    return kernel._process_table[dpid]
+
+
+def spawn_refused(kernel, parent, parent_peer, executable, bootstrap: int) -> pk.SpawnProcessResponse:
+    """Spawn a child of parent naming a bad bootstrap handle, returning the refusal."""
+    kernel._next_dpid = 2
+    send_to_kernel(kernel, parent, pk.SpawnProcessRequest(5, executable, bootstrap))
+    assert 2 not in kernel._process_table
+    response = pk.SpawnProcessResponse(0, 0, 0, None)
+    response.decode(receive(parent_peer))
+    return response
+
+
+def run_child(kernel, dpid: int) -> pk.RunResponse:
+    """Connect a spawned child, and return the RunResponse it's sent."""
+    module = kernel.module
+    kernel_sock, peer = socket.socketpair()
+    kernel.peers += [kernel_sock, peer]
+    reader = module.TemporaryReader(kernel=kernel, sock=kernel_sock)
+    kernel.incoming_connections[kernel_sock] = reader
+    kernel.handle_run_request(reader, pk.RunRequest(dpid=dpid))
+    response = pk.RunResponse()
+    response.decode(peer.recv(response.get_length()))
+    return response
+
+
+def test_bootstrap_port_given_when_running(pkernel, fake_popen, executable):
+    parent, parent_peer = add_running_process(pkernel, 1)
+    port = open_port(pkernel, parent, parent_peer)
+    child = spawn_with_bootstrap(pkernel, parent, executable, port)
+
+    # No right until it runs.
+    assert child.handle_for(parent.get_handle(port).port) is None
+
+    response = run_child(pkernel, 2)
+    assert response.result == 0
+    entry = child.get_handle(response.bootstrap)
+    assert entry.port is parent.get_handle(port).port
+    assert entry.right == pkernel.module.PortRight.SEND
+
+
+def test_bootstrap_port_from_send_right(pkernel, fake_popen, executable):
+    # Any right will do: the child gets a send right to another's port.
+    parent, parent_peer = add_running_process(pkernel, 1)
+    other, other_peer = add_running_process(pkernel, 3)
+    other_port = open_port(pkernel, other, other_peer)
+    handle = grant_send_right(pkernel, parent, other, other_port)
+    child = spawn_with_bootstrap(pkernel, parent, executable, handle)
+
+    response = run_child(pkernel, 2)
+    assert child.get_handle(response.bootstrap).port is other.get_handle(other_port).port
+
+
+def test_no_bootstrap_port(pkernel, fake_popen, executable):
+    parent, parent_peer = add_running_process(pkernel, 1)
+    child = spawn_with_bootstrap(pkernel, parent, executable, 0)
+    assert run_child(pkernel, 2).bootstrap == 0
+    assert child.take_handles() == []
+
+
+def test_bad_bootstrap_handle(pkernel, fake_popen, executable):
+    parent, parent_peer = add_running_process(pkernel, 1)
+    response = spawn_refused(pkernel, parent, parent_peer, executable, 42)
+    assert (response.request_id, response.result) == (5, pk.SpawnResult.BAD_BOOTSTRAP)
+    assert "bootstrap handle 42 isn't open" in response.get_error()
+    assert fake_popen.calls == []
+
+
+def test_dead_bootstrap_port(pkernel, fake_popen, executable):
+    parent, parent_peer = add_running_process(pkernel, 1)
+    other, other_peer = add_running_process(pkernel, 3)
+    other_port = open_port(pkernel, other, other_peer)
+    handle = grant_send_right(pkernel, parent, other, other_port)
+    close_port(pkernel, other, other_peer, other_port)
+
+    response = spawn_refused(pkernel, parent, parent_peer, executable, handle)
+    assert response.result == pk.SpawnResult.BAD_BOOTSTRAP
+    assert "is dead" in response.get_error()
+
+
+def test_bootstrap_port_destroyed_before_running(pkernel, fake_popen, executable):
+    parent, parent_peer = add_running_process(pkernel, 1)
+    port = open_port(pkernel, parent, parent_peer)
+    child = spawn_with_bootstrap(pkernel, parent, executable, port)
+    close_port(pkernel, parent, parent_peer, port)
+
+    assert run_child(pkernel, 2).bootstrap == 0
+    assert child.take_handles() == []
+
+
+RENDEZVOUS_DIDL = """
+    library rendezvous;
+    protocol Registry { 1: Activate(string name) -> (port service); }
+    protocol Bootstrap { 1: Ready(port service); }
+    protocol Worker { 1: Hello(string who) -> (string greeting); }
+    """
+
+
+def test_activation_through_bootstrap_port(live_pkernel, tmp_path):
+    # A registry starts a worker on demand, deferring the client's
+    # Activate until the worker reports, over its bootstrap port, that
+    # it's ready: as the Type service will start type implementations.
+    from test_rpc import load_script
+    didlc, didlpygen = load_script("didlc"), load_script("didlpygen")
+    ir = didlc.compile_ir(didlc.Parser(didlc.lex(textwrap.dedent(RENDEZVOUS_DIDL))).parse())
+    protocols = tmp_path / "protocols"
+    protocols.mkdir()
+    (protocols / "rendezvous.py").write_text(didlpygen.Generator(ir, "rendezvous.dir").generate())
+    preamble = f"import sys\nsys.path.insert(0, {str(protocols)!r})\n"
+
+    kernel = live_pkernel
+    module = kernel.module
+    worker_path = write_app(tmp_path / "worker", preamble + textwrap.dedent("""
+        import darq
+        from rendezvous import Bootstrap, HelloResponse, Worker
+
+        class Greeter(Worker.Handler):
+            def hello(self, request, source):
+                return HelloResponse(greeting=f"hello, {request.who}")
+
+        def darq_main():
+            port = darq.open_port()
+            server = darq.Server()
+            server.add(port, Greeter())
+            Bootstrap.Client(darq.get_bootstrap_port()).ready(service=port)
+            server.run()
+        """))
+    registry_path = write_app(tmp_path / "registry", preamble + textwrap.dedent(f"""
+        import darq
+        from rendezvous import ActivateResponse, Bootstrap, Registry
+
+        class Ready(Bootstrap.Handler):
+            def __init__(self, registry, port):
+                self.registry = registry
+                self.port = port
+
+            def ready(self, request, source):
+                self.registry.running = request.service
+                for pending in self.registry.waiting:
+                    pending.reply(ActivateResponse(service=request.service))
+                self.registry.waiting = []
+                self.server.remove(self.port)
+                darq.close_port(self.port)
+
+        class Activator(Registry.Handler):
+            running = None
+            waiting = []
+
+            def activate(self, request, source):
+                if self.running is not None:
+                    return ActivateResponse(service=self.running)
+                pending = self.defer()
+                if not self.waiting:
+                    bootstrap = darq.open_port()
+                    self.server.add(bootstrap, Ready(self, bootstrap))
+                    darq.spawn_process({worker_path!r}, bootstrap=bootstrap)
+                self.waiting.append(pending)
+                return pending
+
+        def darq_main():
+            darq.serve("test.registry", Activator())
+        """))
+    client_path = write_app(tmp_path / "client", preamble + textwrap.dedent("""
+        import darq
+        from rendezvous import Registry, Worker
+
+        def darq_main():
+            registry = Registry.Client(darq.connect("test.registry"), timeout=10)
+            service = registry.activate(name="worker").service
+            if service is None:
+                return "no service port"
+            greeting = Worker.Client(service, timeout=10).hello(who="client").greeting
+            if greeting != "hello, client":
+                return f"greeting {greeting!r}"
+            # Already running: answered at once, with the same port.
+            if registry.activate(name="worker").service != service:
+                return "a second worker"
+            if darq.get_bootstrap_port() is not None:
+                return "the client has a bootstrap port"
+            return 0
+        """))
+
+    kernel.do_spawn_process(None, registry_path)
+    dpid = kernel.do_spawn_process(None, client_path)
+    client = kernel._process_table[dpid]
+    run_kernel_until(kernel, lambda: client.get_status() == module.KernelProcessStatus.ZOMBIE,
+                     "the client to exit")
+    assert (client.get_exit_status(), client.get_exit_error()) == (0, None)

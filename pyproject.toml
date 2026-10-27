@@ -31,6 +31,8 @@ include = [
     "bin/didlc",
     "bin/didlpygen",
     "services/storage/main.py",
+    "services/type/main.py",
+    "tools/type-sync/main.py",
 ]
 line-length = 120
 target-version = "py313"
@@ -59,6 +61,8 @@ include = [
     "bin/didlc",
     "bin/didlpygen",
     "services/storage/main.py",
+    "services/type/main.py",
+    "tools/type-sync/main.py",
     "tests",
 ]
 pythonVersion = "3.13"

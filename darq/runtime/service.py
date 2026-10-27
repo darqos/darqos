@@ -95,7 +95,8 @@ class Service(EventListener):
                  f"Closed listening port #{port}.")
         return
 
-    def on_message(self, source: int, destination: int, buffer: bytes):
+    def on_message(self, source: int, destination: int, buffer: bytes,
+                   handles: tuple[int, ...] = ()):
         """Handle a delivered message."""
 
         if destination == self.port:
@@ -142,7 +143,8 @@ class ServiceAPI(EventListener):
         response = orjson.loads(buf)
         return response
 
-    def on_message(self, source: int, destination: int, buffer: bytes):
+    def on_message(self, source: int, destination: int, buffer: bytes,
+                   handles: tuple[int, ...] = ()):
         """Handle a delivered message."""
 
         if destination == self._port:

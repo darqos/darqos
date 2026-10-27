@@ -9,8 +9,9 @@
 # Wire format:
 # - Fields are little-endian, at the offsets given in the IR.
 # - Every message starts with the header: uint32 txid, uint16 flags,
-#   and uint16 method number.  The only flag is ERROR, set on an error
-#   reply (see ErrorReply); the others are reserved, and must be 0.
+#   and uint16 method number.  ERROR is set on an error reply (see
+#   ErrorReply), and NOTIFICATION on a notification from the p-kernel
+#   (see PortDestroyed); the other flags are reserved, and must be 0.
 # - The message body follows the header, aligned to the body's
 #   alignment.
 # - An 'opaque' field is a sequence of bytes, encoded as a descriptor:
@@ -56,10 +57,13 @@ __all__ = [
     "HEADER_FORMAT",
     "HEADER_LENGTH",
     "Message",
+    "NOTIFICATION",
     "NO_PORT",
     "OPAQUE_CODEC",
     "OpaqueCodec",
     "PORT_CODEC",
+    "PORT_DESTROYED",
+    "PortDestroyed",
     "PortCodec",
     "Record",
     "STRING_CODEC",
@@ -82,6 +86,13 @@ HEADER_LENGTH = 8
 
 # Header flag: the message is an error reply.
 ERROR = 0x0001
+
+# Header flag: the message is a notification from the p-kernel.  It's
+# delivered from source handle 0, which no process can send from.
+NOTIFICATION = 0x0002
+
+# Notification method numbers.
+PORT_DESTROYED = 1
 
 # Port index meaning "no port".
 NO_PORT = 0xFFFF
@@ -435,6 +446,9 @@ class ErrorCode(IntEnum):
     # The service failed while handling the request.
     INTERNAL_ERROR = 4
 
+    # The service didn't answer a deferred request in time.
+    TIMEOUT = 5
+
 
 class ErrorReply(Message):
     """Reply to a request that failed, in place of its response.
@@ -475,4 +489,34 @@ class ErrorReply(Message):
         self.code = bits[0]
         description = self.decode_opaque(buffer, self.DATA_START, bits[1], bits[2])
         self.description = description.decode("utf-8", errors="replace")
+        return
+
+
+class PortDestroyed(Message):
+    """Notification that a watched port has been destroyed.
+
+    The p-kernel sends it to the notify port given to notify_on_death,
+    with txid 0 and the NOTIFICATION flag set.  Its body is the
+    receiver's (now dead) handle for the port, as a uint64."""
+
+    FLAGS = NOTIFICATION
+    METHOD = PORT_DESTROYED
+    BODY_FORMAT = BYTE_ORDER + "Q"
+    BODY_START = HEADER_LENGTH
+    LENGTH = 16
+
+    def __init__(self, handle: int = 0):
+        super().__init__(0)
+        self.handle = handle
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        buf += struct.pack(self.BODY_FORMAT, self.handle)
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+        self.handle = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)[0]
         return

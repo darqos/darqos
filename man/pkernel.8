@@ -58,6 +58,17 @@ accepts it only for a dpid it has spawned and that has not yet
 started: it answers with a RUN_RESPONSE, and only then is the
 .B spawn_process
 call answered.
+.PP
+A
+.B spawn_process
+call can name a
+.I bootstrap
+handle, for which the caller must hold a right: if it doesn't, or the
+port is dead, the call fails at once with BAD_BOOTSTRAP, and nothing is
+started.
+When the new process runs, it's given a send right to that port, and
+its handle in the RUN_RESPONSE; the handle is 0 if none was named, or
+the port has been destroyed since.
 For an unknown dpid, or one that is not newly spawned, the
 RUN_RESPONSE refuses the request and the connection is closed.
 Any other first message also causes the connection to be closed.
@@ -85,6 +96,19 @@ including those of processes already removed from the table.
 If a child exits before it sends RUN_REQUEST, its
 .B spawn_process
 call is answered with an error, and it's removed.
+.SS Dead port notifications
+A
+.B notify_on_death
+p-call names a handle to watch, and a notify port, which must be one of
+the caller's receive rights.
+When the watched port is destroyed (its receive right is closed, or its
+owner finishes),
+.B pkernel
+delivers a PortDestroyed notification to the notify port, from source
+handle 0, carrying the caller's handle for the dead port.
+A port that is already dead is notified at once, before the response.
+Closing the watched handle, or the notify port, cancels the
+notification.
 .SS Timeouts
 A spawned process that hasn't sent RUN_REQUEST within 10 seconds has
 its host process killed (and an error logged), so its

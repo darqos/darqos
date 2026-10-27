@@ -69,6 +69,18 @@ class RemoteError(DarqError):
         self.description = description
 
 
+class SpawnError(DarqError):
+    """A process couldn't be spawned.
+
+    :ivar result: The p-kernel's result code (see darq.pcall.SpawnResult).
+    :ivar description: Why, from the p-kernel."""
+
+    def __init__(self, result: int, description: str):
+        super().__init__(f"spawn failed ({result}): {description}")
+        self.result = result
+        self.description = description
+
+
 class NoSuchChildError(DarqError):
     """The process isn't a child of the caller, or the caller has no children."""
     pass

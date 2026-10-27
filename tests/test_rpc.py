@@ -6,16 +6,18 @@
 # test_pkernel.py runs a service and client through a real p-kernel.
 
 import collections
+import gc
 import importlib.machinery
 import importlib.util
 import logging
 import pathlib
 import textwrap
+import time
 
 import pytest
 
 from darq import dipc, system
-from darq.errors import NonExistentPortError, RemoteError
+from darq.errors import DeadPortError, NonExistentPortError, RemoteError
 
 
 BIN = pathlib.Path(__file__).parent.parent / "bin"
@@ -183,11 +185,15 @@ class FakeSyscalls:
         self.handler = handler
         self.opened = 0
         self.sent = []
+        self.watched = []
         self.queue = collections.deque()
 
     def open_port(self):
         self.opened += 1
         return REPLY_PORT
+
+    def notify_on_death(self, handle, notify_port):
+        self.watched.append((handle, notify_port))
 
     def send_message(self, source, destination, buf, ports=()):
         self.sent.append((source, destination, buf, tuple(ports)))
@@ -210,7 +216,7 @@ class FakeSyscalls:
 def syscalls(handler, monkeypatch):
     fake = FakeSyscalls(handler)
     # Looked up as module globals, so the fakes are called at call time.
-    for name in ("open_port", "send_message", "receive_message"):
+    for name in ("open_port", "notify_on_death", "send_message", "receive_message"):
         monkeypatch.setattr(system, name, getattr(fake, name))
     monkeypatch.setattr(system, "_local", system.threading.local())
     return fake
@@ -281,6 +287,396 @@ def test_send_errors_propagate(kv, syscalls):
         kv.KV.Client(SERVICE + 1).put()
 
 
+def notification(handle):
+    """A PortDestroyed notification from the p-kernel, as delivered."""
+    return (0, dipc.PortDestroyed(handle).encode()[0], ())
+
+
+def test_client_watches_each_service_once(kv, syscalls):
+    client = kv.KV.Client(SERVICE)
+    client.put(key=b"k", value=b"v")
+    client.get(key=b"k")
+    assert syscalls.watched == [(SERVICE, REPLY_PORT)]
+
+
+def test_service_death_raises(kv, syscalls, monkeypatch):
+    # The request is delivered, but the service dies before replying.
+    monkeypatch.setattr(system, "send_message",
+                        lambda *args, **kwargs: syscalls.queue.append(notification(SERVICE)))
+    with pytest.raises(DeadPortError):
+        kv.KV.Client(SERVICE).put()
+
+
+def test_reply_before_death_returned(kv, syscalls, monkeypatch):
+    client = kv.KV.Client(SERVICE)
+    client.put(key=b"k", value=b"v")
+
+    # It replies, and then dies: the reply comes first.
+    def reply_then_die(source, destination, buf, ports=()):
+        syscalls.send_message(source, destination, buf, ports)
+        syscalls.queue.append(notification(SERVICE))
+    monkeypatch.setattr(system, "send_message", reply_then_die)
+    assert client.get(key=b"k").value == b"v"
+
+
+def test_other_notifications_dropped(kv, syscalls, caplog):
+    syscalls.queue.append(notification(SERVICE + 1))
+    assert kv.KV.Client(SERVICE).put(key=b"k", value=b"v") == kv.PutResponse(system._last_txid)
+    assert "Dropped stray message" not in caplog.text
+
+
+def test_forged_notification_ignored(kv, syscalls, caplog):
+    # Only the p-kernel sends from source 0: from elsewhere, it's a stray.
+    _, buf, _ = notification(SERVICE)
+    syscalls.queue.append((SERVICE, buf, ()))
+    assert kv.KV.Client(SERVICE).put(key=b"k", value=b"v") == kv.PutResponse(system._last_txid)
+    assert "Dropped stray message" in caplog.text
+
+
 def test_txids_skip_zero(monkeypatch):
     monkeypatch.setattr(system, "_last_txid", 0xFFFFFFFE)
     assert [system._allocate_txid() for _ in range(3)] == [0xFFFFFFFF, 1, 2]
+
+
+################################################################
+# Server, deferred replies and timers, with faked p-calls
+################################################################
+
+SERVICE_PORT = 20
+OTHER_PORT = 21
+CLIENT = 99
+
+
+class FakePorts:
+    """Stands in for darq.system's port p-calls: messages are queued by
+    port, and sent messages recorded."""
+
+    def __init__(self):
+        self.queues: dict[int, collections.deque] = collections.defaultdict(collections.deque)
+        self.order = []
+        self.sent = []
+
+    def deliver(self, port, source, payload, handles=()):
+        self.queues[port].append((source, payload, tuple(handles)))
+        self.order.append(port)
+
+    def receive_any(self, ports, blocking=True, timeout=None):
+        ports = tuple(ports)
+        for n, port in enumerate(self.order):
+            if port in ports:
+                del self.order[n]
+                return (port, *self.queues[port].popleft())
+        # Nothing will arrive: wait out the timeout.
+        assert timeout is not None, "would block forever"
+        time.sleep(timeout)
+        return None
+
+    def send_message(self, source, destination, buf, ports=()):
+        self.sent.append((source, destination, buf, tuple(ports)))
+
+    def replies(self, kv):
+        """The sent replies, decoded: (from port, to, message)."""
+        result = []
+        for source, destination, buf, handles in self.sent:
+            if dipc.decode_flags(buf) & dipc.ERROR:
+                message = dipc.ErrorReply()
+            else:
+                message = kv.KV.RESPONSES[dipc.decode_method(buf)]()
+            message.decode(buf, handles)
+            result.append((source, destination, message))
+        return result
+
+
+@pytest.fixture
+def fake_ports(monkeypatch):
+    fake = FakePorts()
+    monkeypatch.setattr(system, "receive_any", fake.receive_any)
+    monkeypatch.setattr(system, "send_message", fake.send_message)
+    return fake
+
+
+@pytest.fixture
+def server(fake_ports, handler):
+    server = system.Server()
+    server.add(SERVICE_PORT, handler)
+    return server
+
+
+def request(fake_ports, message, txid, port=SERVICE_PORT, source=CLIENT):
+    buf, handles = encode(message, txid)
+    fake_ports.deliver(port, source, buf, handles)
+
+
+def test_server_replies_from_the_requests_port(kv, server, fake_ports, handler):
+    request(fake_ports, kv.PutRequest(key=b"k", value=b"v"), 5)
+    assert server.run_once(timeout=0) is True
+    assert fake_ports.replies(kv) == [(SERVICE_PORT, CLIENT, kv.PutResponse(5))]
+    assert handler.server is server
+    assert server.run_once(timeout=0) is False
+
+
+def test_server_dispatches_by_port(kv, server, fake_ports):
+    class Other(kv.KV.Handler):
+        def get(self, request, source):
+            return kv.GetResponse(value=b"from other", found=1)
+
+    server.add(OTHER_PORT, Other())
+    request(fake_ports, kv.GetRequest(key=b"k"), 1, port=OTHER_PORT)
+    request(fake_ports, kv.GetRequest(key=b"k"), 2)
+    server.run_once(timeout=0)
+    server.run_once(timeout=0)
+    assert [(port, message.txid, message.value) for port, _, message in fake_ports.replies(kv)] == [
+        (OTHER_PORT, 1, b"from other"), (SERVICE_PORT, 2, b"")]
+
+    server.remove(OTHER_PORT)
+    assert OTHER_PORT not in server.ports
+
+
+@pytest.fixture
+def deferring(kv, server, handler):
+    """The handler defers every Get, until a Put arrives."""
+    handler.waiting = []
+
+    def get(request, source):
+        pending = handler.defer()
+        handler.waiting.append((request.key, pending))
+        return pending
+
+    def put(request, source):
+        handler.store[request.key] = request.value
+        for key, pending in handler.waiting:
+            if key == request.key:
+                pending.reply(kv.GetResponse(value=request.value, found=1))
+        handler.waiting = [(k, p) for k, p in handler.waiting if not p.done]
+        return kv.PutResponse()
+
+    handler.get, handler.put = get, put
+    return handler
+
+
+def test_deferred_reply(kv, server, fake_ports, deferring):
+    request(fake_ports, kv.GetRequest(key=b"k"), 7, source=CLIENT)
+    request(fake_ports, kv.GetRequest(key=b"other"), 8, source=CLIENT + 1)
+    server.run_once(timeout=0)
+    server.run_once(timeout=0)
+    assert fake_ports.sent == []
+
+    # The Put's reply, and then the deferred Get's, both from the service port.
+    request(fake_ports, kv.PutRequest(key=b"k", value=b"v"), 9, source=CLIENT + 2)
+    server.run_once(timeout=0)
+    assert fake_ports.replies(kv) == [
+        (SERVICE_PORT, CLIENT, kv.GetResponse(7, value=b"v", found=1)),
+        (SERVICE_PORT, CLIENT + 2, kv.PutResponse(9)),
+    ]
+    [(key, pending)] = deferring.waiting
+    assert key == b"other" and not pending.done
+    pending.error(dipc.ErrorCode.INTERNAL_ERROR, "gave up")
+
+
+def test_deferred_completed_from_another_port(kv, server, fake_ports, deferring):
+    # A request on one port is answered when a message arrives on another,
+    # as the Type service answers Activate when an implementation is ready.
+    class Ready(kv.KV.Handler):
+        def forget(self, request, source):
+            for _, pending in deferring.waiting:
+                pending.reply(kv.GetResponse(value=b"ready", found=1))
+            server.remove(OTHER_PORT)
+
+    request(fake_ports, kv.GetRequest(key=b"k"), 3)
+    server.run_once(timeout=0)
+    server.add(OTHER_PORT, Ready())
+    request(fake_ports, kv.Forget(), 0, port=OTHER_PORT, source=123)
+    server.run_once(timeout=0)
+    assert fake_ports.replies(kv) == [(SERVICE_PORT, CLIENT, kv.GetResponse(3, value=b"ready", found=1))]
+    assert OTHER_PORT not in server.ports
+
+
+def test_deferred_error(kv, server, fake_ports, deferring):
+    request(fake_ports, kv.GetRequest(key=b"k"), 4)
+    server.run_once(timeout=0)
+    _, pending = deferring.waiting[0]
+    pending.error(dipc.ErrorCode.INTERNAL_ERROR, "implementation didn't start")
+    [(_, _, reply)] = fake_ports.replies(kv)
+    assert isinstance(reply, dipc.ErrorReply)
+    assert (reply.txid, reply.METHOD, reply.description) == (4, 2, "implementation didn't start")
+
+
+def test_deferred_answered_once(kv, server, fake_ports, deferring):
+    request(fake_ports, kv.GetRequest(key=b"k"), 4)
+    server.run_once(timeout=0)
+    _, pending = deferring.waiting[0]
+    with pytest.raises(TypeError, match="not GetResponse"):
+        pending.reply(kv.PutResponse())
+    pending.reply(kv.GetResponse())
+    with pytest.raises(RuntimeError, match="already been answered"):
+        pending.reply(kv.GetResponse())
+    with pytest.raises(RuntimeError, match="already been answered"):
+        pending.error(dipc.ErrorCode.INTERNAL_ERROR, "again")
+    assert len(fake_ports.sent) == 1
+
+
+def test_handler_fails_after_deferring(kv, server, fake_ports, handler):
+    deferred = []
+
+    def get(request, source):
+        deferred.append(handler.defer())
+        raise ValueError("oops")
+
+    handler.get = get
+    request(fake_ports, kv.GetRequest(), 6)
+    server.run_once(timeout=0)
+    [(_, _, reply)] = fake_ports.replies(kv)
+    assert error_of(reply) == (6, 2, dipc.ErrorCode.INTERNAL_ERROR)
+    # The error reply answered it.
+    with pytest.raises(RuntimeError, match="already been answered"):
+        deferred[0].reply(kv.GetResponse())
+
+
+def test_handler_answers_after_deferring(kv, server, fake_ports, handler):
+    deferred = []
+
+    def get(request, source):
+        deferred.append(handler.defer())
+        return kv.GetResponse(found=1)
+
+    handler.get = get
+    request(fake_ports, kv.GetRequest(), 6)
+    server.run_once(timeout=0)
+    assert fake_ports.replies(kv) == [(SERVICE_PORT, CLIENT, kv.GetResponse(6, found=1))]
+    assert deferred[0].done
+
+
+def test_defer_outside_handler(handler):
+    with pytest.raises(RuntimeError, match="outside a handler"):
+        handler.defer()
+
+
+def test_defer_one_way(kv, server, fake_ports, handler, caplog):
+    handler.forget = lambda request, source: handler.defer()
+    request(fake_ports, kv.Forget(), 0)
+    with caplog.at_level(logging.WARNING):
+        server.run_once(timeout=0)
+    assert "One-way Forget has no reply to defer" in caplog.text
+    assert fake_ports.sent == []
+
+
+def test_deferred_for_another_request(kv, server, fake_ports, deferring, handler):
+    request(fake_ports, kv.GetRequest(key=b"k"), 4)
+    server.run_once(timeout=0)
+    _, earlier = deferring.waiting[0]
+    handler.put = lambda request, source: earlier
+    request(fake_ports, kv.PutRequest(), 5)
+    server.run_once(timeout=0)
+    [(_, _, reply)] = fake_ports.replies(kv)
+    assert error_of(reply) == (5, 1, dipc.ErrorCode.INTERNAL_ERROR)
+    assert not earlier.done
+    earlier.reply(kv.GetResponse())
+
+
+def test_unanswered_deferred_warns(kv, server, fake_ports, deferring, caplog):
+    request(fake_ports, kv.GetRequest(key=b"k"), 4)
+    server.run_once(timeout=0)
+    with caplog.at_level(logging.WARNING):
+        deferring.waiting.clear()
+        gc.collect()
+    assert "Request 4 (method 2) from 99 was never answered" in caplog.text
+
+
+def test_timers(server, fake_ports):
+    calls = []
+    server.call_later(0.05, lambda: calls.append("later"))
+    server.call_later(0, lambda: calls.append("now"))
+    cancelled = server.call_later(0, lambda: calls.append("cancelled"))
+    cancelled.cancel()
+
+    assert server.run_once(timeout=0) is False
+    assert calls == ["now"]
+
+    # With no messages, run_once waits until the next timer is due.
+    start = time.monotonic()
+    server.run_once()
+    assert calls == ["now", "later"]
+    assert 0.03 <= time.monotonic() - start < 1
+
+
+def test_timer_failure_logged(server, fake_ports, caplog):
+    server.call_later(0, lambda: 1 / 0)
+    server.call_later(0, lambda: None)
+    server.run_once(timeout=0)
+    assert "Timer callback failed" in caplog.text
+
+
+def test_server_with_nothing_to_wait_for():
+    with pytest.raises(RuntimeError, match="nothing|no ports"):
+        system.Server().run_once()
+
+
+def test_deferred_timeout(kv, server, fake_ports, handler):
+    def get(request, source):
+        return handler.defer(timeout=0.02)
+    handler.get = get
+
+    request(fake_ports, kv.GetRequest(key=b"k"), txid=5)
+    server.run_once(timeout=0)
+    assert fake_ports.sent == []
+
+    server.run_once()
+    [(_, _, reply)] = fake_ports.replies(kv)
+    assert isinstance(reply, dipc.ErrorReply)
+    assert (reply.txid, reply.code) == (5, dipc.ErrorCode.TIMEOUT)
+
+
+def test_deferred_answered_before_timeout(kv, server, fake_ports, handler):
+    pending = []
+
+    def get(request, source):
+        pending.append(handler.defer(timeout=0.02))
+        return pending[-1]
+    handler.get = get
+
+    request(fake_ports, kv.GetRequest(key=b"k"), txid=5)
+    server.run_once(timeout=0)
+    pending[0].reply(kv.GetResponse(value=b"v", found=1))
+    time.sleep(0.03)
+    server.run_once(timeout=0)
+
+    [(_, _, reply)] = fake_ports.replies(kv)
+    assert reply == kv.GetResponse(5, value=b"v", found=1)
+
+
+def test_defer_timeout_needs_server(kv, handler):
+    def get(request, source):
+        return handler.defer(timeout=1)
+    handler.get = get
+
+    reply = handler.dispatch(encode(kv.GetRequest(key=b"k"), 5)[0], CLIENT, port=SERVICE_PORT)
+    assert isinstance(reply, dipc.ErrorReply)
+    assert reply.code == dipc.ErrorCode.INTERNAL_ERROR
+    assert "needs a Server" in reply.description
+
+
+def test_port_destroyed_dispatched(kv, server, fake_ports, handler):
+    dead = []
+    handler.port_destroyed = dead.append
+
+    fake_ports.deliver(SERVICE_PORT, *notification(77))
+    assert server.run_once(timeout=0) is True
+    assert dead == [77]
+    assert fake_ports.sent == []
+
+
+def test_port_destroyed_default_logs(handler, caplog):
+    with caplog.at_level(logging.INFO):
+        assert handler.dispatch(notification(77)[1], 0) is None
+    assert "Port 77 destroyed" in caplog.text
+
+
+def test_forged_port_destroyed_refused(kv, handler):
+    dead = []
+    handler.port_destroyed = dead.append
+    buf = dipc.PortDestroyed(77).encode()[0]
+    reply = handler.dispatch(buf, CLIENT)
+
+    # It has txid 0, so it's taken as a one-way message: no reply.
+    assert reply is None
+    assert dead == []

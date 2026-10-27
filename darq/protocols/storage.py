@@ -474,22 +474,22 @@ class Storage:
             5: (StatRequest, "stat"),
         }
 
-        def create(self, request: CreateRequest, source: int) -> CreateResponse:
+        def create(self, request: CreateRequest, source: int) -> CreateResponse | system.Deferred:
             """Handle Storage.Create."""
             raise NotImplementedError
 
-        def get(self, request: GetRequest, source: int) -> GetResponse:
+        def get(self, request: GetRequest, source: int) -> GetResponse | system.Deferred:
             """Handle Storage.Get."""
             raise NotImplementedError
 
-        def put(self, request: PutRequest, source: int) -> PutResponse:
+        def put(self, request: PutRequest, source: int) -> PutResponse | system.Deferred:
             """Handle Storage.Put."""
             raise NotImplementedError
 
-        def delete(self, request: DeleteRequest, source: int) -> DeleteResponse:
+        def delete(self, request: DeleteRequest, source: int) -> DeleteResponse | system.Deferred:
             """Handle Storage.Delete."""
             raise NotImplementedError
 
-        def stat(self, request: StatRequest, source: int) -> StatResponse:
+        def stat(self, request: StatRequest, source: int) -> StatResponse | system.Deferred:
             """Handle Storage.Stat."""
             raise NotImplementedError

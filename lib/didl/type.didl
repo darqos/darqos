@@ -1,0 +1,96 @@
+// darqos
+// Copyright (C) 2026 David Arnold
+//
+// Type service protocols: see doc/types.rst.
+//
+// Type identifiers are canonicalized by the service (see
+// darq.canonical_type_id), so any case or compatibility form may be
+// passed, but the canonical form is what's stored and returned.
+
+library darq.type;
+
+enum Status : uint32 {
+    OK = 0;
+
+    // No such type, implementation, or item.
+    NOT_FOUND = 1;
+
+    // A type or item identifier isn't valid.
+    INVALID_ID = 2;
+
+    // The implementation couldn't be started, or didn't report Ready
+    // in time.
+    FAILED = 3;
+}
+
+// A type's catalogue entry: its stable, descriptive properties.  Its
+// implementation is registered separately.
+struct Description {
+    string name;
+    string description;
+
+    // Type identifiers of the more general types it conforms to.
+    sequence<string> conforms_to;
+
+    // Equivalent MIME types, and file extensions (without the dot).
+    sequence<string> mime_types;
+    sequence<string> extensions;
+
+    // Icon, as a path to an image file; empty for none.
+    string icon;
+}
+
+// The Type service, registered as "darq.type".
+protocol Type {
+    // Add or replace a type's description, and its implementation: the
+    // path of a directory to spawn, or empty for none.  The change is
+    // saved in the catalogue before it's answered.  A running
+    // implementation keeps running until it exits.
+    1: Register(string type_id, Description description, string implementation) -> (Status status);
+
+    // Remove a type's description and implementation.
+    2: Deregister(string type_id) -> (Status status);
+
+    3: Describe(string type_id) -> (Description description, string implementation, Status status);
+
+    // Return the port of the type's implementation, starting it if it
+    // isn't running.
+    4: Activate(string type_id) -> (port implementation, Status status);
+
+    // Add a lens, the path of a directory to spawn, for using items of
+    // a type in a context (such as "terminal").
+    5: RegisterLens(string lens, string type_id, string context) -> (Status status);
+    6: DeregisterLens(string lens, string type_id, string context) -> (Status status);
+
+    // Return the lenses for using items of a type in a context.  If the
+    // type has none, those of the types it conforms to are returned
+    // instead: the nearest that have any.
+    7: FindLenses(string type_id, string context) -> (sequence<string> lenses, Status status);
+}
+
+// Spoken by a newly-started implementation on its bootstrap port (see
+// darq.get_bootstrap_port), to give the Type service its port.
+protocol Bootstrap {
+    1: Ready(port implementation);
+}
+
+// Served by every type implementation, on the port Activate returns.
+protocol Implementation {
+    // Create an item, returning its identifier and a port for it.
+    1: Create() -> (string item_id, port item, Status status);
+
+    // Open an existing item, returning a port for it.  An item of
+    // another type is NOT_FOUND.
+    2: Open(string item_id) -> (port item, Status status);
+
+    // Mark an item destroyed (see doc/types.rst).
+    3: Destroy(string item_id) -> (Status status);
+}
+
+// The methods every item port serves.  Each type's own item protocol
+// starts with these, at the same numbers, and numbers its own methods
+// from 16.  A client closes the item when it's finished with it: the
+// implementation can then save and forget it, and close the port.
+protocol Item {
+    1: Close() -> ();
+}

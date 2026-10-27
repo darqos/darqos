@@ -163,6 +163,25 @@ def test_error_reply_truncated():
         dipc.ErrorReply().decode(buf[:-8])
 
 
+def test_port_destroyed_round_trip():
+    buf, handles = dipc.PortDestroyed(2 ** 64 - 1).encode()
+    assert handles == []
+    assert dipc.decode_flags(buf) == dipc.NOTIFICATION
+    assert (dipc.decode_txid(buf), dipc.decode_method(buf), len(buf)) == (0, dipc.PORT_DESTROYED, 16)
+
+    decoded = dipc.PortDestroyed()
+    decoded.decode(buf)
+    assert decoded == dipc.PortDestroyed(2 ** 64 - 1)
+
+
+def test_port_destroyed_is_not_a_message():
+    buf, _ = dipc.PortDestroyed(5).encode()
+    with pytest.raises(MessageDecodingError, match="flags 0x2, expected 0x0"):
+        Ping().decode(buf)
+    with pytest.raises(MessageDecodingError):
+        dipc.PortDestroyed().decode(buf[:-1])
+
+
 ################################################################
 # Out-of-line values
 ################################################################

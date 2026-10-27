@@ -69,7 +69,7 @@ RESERVED_NAMES = {"IntEnum", "Message", "Record", "struct", "typing", "system", 
                   "OPAQUE_CODEC", "PORT_CODEC", "STRING_CODEC"}
 
 # Names used by the darq.system Client and Handler base classes
-RESERVED_METHOD_NAMES = {"call", "send", "service", "timeout", "dispatch", "error"}
+RESERVED_METHOD_NAMES = {"call", "send", "service", "timeout", "dispatch", "error", "defer", "server", "port_destroyed"}
 
 
 class GenError(Exception):
@@ -538,16 +538,20 @@ class Generator:
             fields = m["request"]["fields"]
             params = ["self"] + [f"{f['name']}: {self.hint(f)} = {self.default(f)}" for f in fields]
             returns = "None" if one_way else m["name"] + "Response"
-            arguments = ", ".join(f"{f['name']}={f['name']}" for f in fields)
-            request = f"{request_class}({arguments})"
+            arguments = [f"{f['name']}={f['name']}" for f in fields]
+            request = f"{request_class}({', '.join(arguments)})"
+            call = f"            self.send({request})" if one_way else \
+                f"            return self.call({request}, {returns})"
 
             self.emit()
             self.emit_def(f"        def {snake_case(m['name'])}(", params, f") -> {returns}:")
             self.emit(f'            """{p["name"]}.{m["name"]}{", one-way" if one_way else ""}."""')
-            if one_way:
-                self.emit(f"            self.send({request})")
-            else:
-                self.emit(f"            return self.call({request}, {returns})")
+            if len(call) > 100:
+                # Too long: build the request first, wrapped if need be.
+                self.emit_def(f"            request = {request_class}(", arguments, ")")
+                call = "            self.send(request)" if one_way else \
+                    f"            return self.call(request, {returns})"
+            self.emit(call)
 
     def emit_handler(self, p: Dict[str, Any]):
         self.emit("    class Handler(system.Handler):")
@@ -567,10 +571,11 @@ class Generator:
         for m in p["methods"]:
             one_way = m["response"] is None
             request_class = m["name"] if one_way else m["name"] + "Request"
-            returns = "None" if one_way else m["name"] + "Response"
+            # A request's reply can be deferred (see darq.system.Handler.defer).
+            returns = "None" if one_way else m["name"] + "Response | system.Deferred"
             self.emit()
-            self.emit(f"        def {snake_case(m['name'])}(self, request: {request_class}, "
-                      f"source: int) -> {returns}:")
+            self.emit_def(f"        def {snake_case(m['name'])}(",
+                          ["self", f"request: {request_class}", "source: int"], f") -> {returns}:")
             self.emit(f'            """Handle {p["name"]}.{m["name"]}{", one-way" if one_way else ""}."""')
             self.emit("            raise NotImplementedError")
 

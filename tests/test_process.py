@@ -9,6 +9,7 @@ import time
 import pytest
 
 import darq
+from darq import process
 
 
 TIMEOUT = 5.0
@@ -120,3 +121,92 @@ def test_many_deliveries_from_another_thread(port):
     threading.Thread(target=deliver).start()
     received = [int.from_bytes(port.receive()[1], "little") for _ in range(count)]
     assert received == list(range(count))
+
+
+################################################################
+# Receiving from several ports
+################################################################
+
+@pytest.fixture
+def ports():
+    states = [darq.PortState(16385 + n) for n in range(3)]
+    for state in states:
+        state.is_open = True
+    return states
+
+
+def test_receive_any_in_delivery_order(ports):
+    a, b, c = ports
+    b.deliver(1, b"first")
+    a.deliver(2, b"second")
+    b.deliver(3, b"third")
+    received = [process.receive_any(ports, blocking=False) for _ in range(3)]
+    assert received == [(b, (1, b"first", ())), (a, (2, b"second", ())), (b, (3, b"third", ()))]
+    assert process.receive_any(ports, blocking=False) is None
+
+
+def test_receive_any_waits_for_any_port(ports):
+    result = {}
+
+    def target():
+        result["value"] = process.receive_any(ports)
+
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    time.sleep(0.05)
+    assert thread.is_alive()
+
+    ports[2].deliver(9, b"late", (4,))
+    thread.join(TIMEOUT)
+    assert result == {"value": (ports[2], (9, b"late", (4,)))}
+    # The receiver's waiter is removed when it returns.
+    assert all(not p._waiters for p in ports)
+
+
+def test_receive_any_timeout(ports):
+    start = time.monotonic()
+    assert process.receive_any(ports, timeout=0.1) is None
+    assert 0.09 <= time.monotonic() - start < 1
+
+
+def test_receive_any_ignores_wake(ports):
+    threading.Timer(0.02, ports[0].wake).start()
+    assert process.receive_any(ports, timeout=0.1) is None
+
+
+def test_receive_any_closed_port(ports):
+    ports[1].deliver(1, b"before close")
+    ports[1].close()
+    assert process.receive_any(ports) == (ports[1], (1, b"before close", ()))
+    with pytest.raises(darq.NonExistentPortError):
+        process.receive_any(ports, blocking=False)
+
+
+def test_receive_any_released_by_close(ports):
+    result = {}
+
+    def target():
+        try:
+            process.receive_any(ports)
+        except BaseException as e:
+            result["error"] = e
+
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    time.sleep(0.05)
+    ports[0].close()
+    thread.join(TIMEOUT)
+    assert isinstance(result.get("error"), darq.NonExistentPortError)
+
+
+def test_receive_any_needs_ports():
+    with pytest.raises(ValueError):
+        process.receive_any([])
+
+
+def test_single_and_any_receivers_share_order(ports):
+    a, b, _ = ports
+    a.deliver(1, b"x")
+    b.deliver(2, b"y")
+    assert a.receive(blocking=False) == (1, b"x", ())
+    assert process.receive_any(ports, blocking=False) == (b, (2, b"y", ()))

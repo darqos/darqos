@@ -8,6 +8,7 @@
 # and the callback model's listener interface.
 
 import collections
+import itertools
 import threading
 import time
 import typing
@@ -144,14 +145,17 @@ class PortState:
         self.is_open: bool = False
 
         # Queue of messages delivered to this port, but not yet received
-        # by the application, as (source port, payload).  Messages are
-        # delivered on the I/O thread, and received on the application's,
-        # so the queue is guarded by the lock.  A blocked receiver waits
-        # for the event, which is set when a message is delivered, or the
-        # port is closed.
-        self.messages: collections.deque[tuple[int, bytes, tuple[int, ...]]] = collections.deque()
+        # by the application, as (delivery order, source port, payload,
+        # handles).  Messages are delivered on the I/O thread, and
+        # received on the application's, so the queue is guarded by the
+        # lock.  A blocked receiver waits for the event, which is set
+        # when a message is delivered, or the port is closed; receivers
+        # waiting on several ports (see receive_any) add their own
+        # events to the waiters.
+        self.messages: collections.deque[tuple[int, int, bytes, tuple[int, ...]]] = collections.deque()
         self._lock = threading.Lock()
         self._event = threading.Event()
+        self._waiters: set[threading.Event] = set()
 
         # Reassembly buffer for received bytes.
         self.buffer = Buffer()
@@ -168,9 +172,15 @@ class PortState:
         :param payload: Message contents.
         :param handles: Handles transferred with the message."""
         with self._lock:
-            self.messages.append((source, payload, handles))
-            self._event.set()
+            self.messages.append((next(_delivery_order), source, payload, handles))
+            self._notify()
         return
+
+    def _notify(self):
+        """Release blocked receivers.  Called with the lock held."""
+        self._event.set()
+        for waiter in self._waiters:
+            waiter.set()
 
     def receive(self, blocking: bool = True,
                 timeout: float | None = None) -> tuple[int, bytes, tuple[int, ...]] | None:
@@ -188,7 +198,7 @@ class PortState:
         while True:
             with self._lock:
                 if self.messages:
-                    return self.messages.popleft()
+                    return self.messages.popleft()[1:]
                 if not self.is_open:
                     raise NonExistentPortError(self.port_id)
                 if not blocking:
@@ -212,7 +222,7 @@ class PortState:
         Messages already delivered can still be received."""
         with self._lock:
             self.is_open = False
-            self._event.set()
+            self._notify()
         return
 
     def wake(self):
@@ -220,8 +230,77 @@ class PortState:
 
         It checks again, and waits again if there's still nothing for
         it: this lets a pending exception (such as a kill) be raised."""
-        self._event.set()
+        with self._lock:
+            self._notify()
         return
+
+
+# Order of delivery, across all ports, so a receiver waiting on several
+# gets their messages in the order they were delivered.  Messages are
+# only delivered on the I/O thread.
+_delivery_order = itertools.count()
+
+
+def receive_any(ports: typing.Sequence[PortState], blocking: bool = True,
+                timeout: float | None = None) -> tuple[PortState, tuple[int, bytes, tuple[int, ...]]] | None:
+    """Take the next message delivered to any of several ports.
+
+    Messages are taken in the order they were delivered, across the
+    ports.
+
+    :param ports: Ports to receive from.
+    :param blocking: If True, wait for a message to be delivered;
+                     otherwise, return None if there isn't one.
+    :param timeout: If blocking, the longest to wait, in seconds;
+                    None waits indefinitely.
+    :returns: (port, (source port, payload, handles)), or None if no
+              message was delivered, when not blocking or by the timeout.
+    :raises NonExistentPortError: if one of the ports is closed, and
+                                  has no messages left, before or while
+                                  waiting.
+    :raises ValueError: if there are no ports."""
+    if not ports:
+        raise ValueError("No ports to receive from")
+
+    event = threading.Event()
+    for port in ports:
+        with port._lock:
+            port._waiters.add(event)
+    try:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            # Cleared before looking, so a message delivered from here on
+            # sets it again.
+            event.clear()
+            earliest: PortState | None = None
+            earliest_order = 0
+            for port in ports:
+                with port._lock:
+                    if port.messages:
+                        if earliest is None or port.messages[0][0] < earliest_order:
+                            earliest, earliest_order = port, port.messages[0][0]
+                    elif not port.is_open:
+                        raise NonExistentPortError(port.port_id)
+            if earliest is not None:
+                with earliest._lock:
+                    if earliest.messages:
+                        return earliest, earliest.messages.popleft()[1:]
+                # Taken by another receiver: look again.
+                continue
+            if not blocking:
+                return None
+
+            if deadline is None:
+                event.wait()
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not event.wait(remaining):
+                # Timed out: take a message delivered at the last moment.
+                blocking = False
+    finally:
+        for port in ports:
+            with port._lock:
+                port._waiters.discard(event)
 
 
 class EventListener:
@@ -236,8 +315,15 @@ class EventListener:
     def on_send_message(self, port: int, request_id: int):
         pass
 
-    def on_message(self, source: int, destination: int, message: bytes):
-        """Handle a delivered message."""
+    def on_message(self, source: int, destination: int, message: bytes,
+                   handles: tuple[int, ...] = ()):
+        """Handle a delivered message.
+
+        :param source: Handle for the sending port.
+        :param destination: Port it was delivered to.
+        :param message: Payload.
+        :param handles: Handles transferred with it: this process' send
+                        rights (see doc/ipc.rst)."""
         pass
 
     def on_chunk(self, source: int, destination: int, stream: int, offset: int, chunk: bytes):

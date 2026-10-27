@@ -50,8 +50,13 @@
 # - A service answers a request it can't handle with an error reply
 #   (see darq.dipc.ErrorReply), raised in the client as RemoteError.
 #   One-way messages are never answered, even with an error.
+# - Each thread asks to be notified on its reply port when a service it
+#   calls is destroyed (see notify_on_death), so a call whose service
+#   dies before replying raises DeadPortError, rather than waiting.
 # - Services handle requests one at a time, in order of delivery, and
-#   run until they're killed.
+#   run until they're killed.  A Server answers on several ports, each
+#   with its own handler; a handler that can't answer yet defers the
+#   reply, and answers it later (see Handler.defer).
 
 
 import logging
@@ -78,6 +83,9 @@ from .pcall import (
     LookupNameRequest,
     LookupNameResponse,
     NameResult,
+    NotifyOnDeathRequest,
+    NotifyOnDeathResponse,
+    NotifyResult,
     OpenPortRequest,
     OpenPortResponse,
     RegisterNameRequest,
@@ -91,6 +99,7 @@ from .pcall import (
     Shutdown,
     SpawnProcessRequest,
     SpawnProcessResponse,
+    SpawnResult,
     UInt64,
     WaitRequest,
     WaitResponse,
@@ -110,6 +119,7 @@ from .errors import (
     PortRightError,
     RemoteError,
     ReservedNameError,
+    SpawnError,
     TooManyHandlesError,
     ValueTooLargeError,
 )
@@ -130,8 +140,13 @@ __all__ = [
     "close_port_cb",
     "send_message",
     "receive_message",
+    "receive_any",
+    "PortSet",
+    "notify_on_death",
     "spawn_process",
     "spawn_process_cb",
+    "get_bootstrap_port",
+    "SpawnResult",
     "kill_process",
     "kill_process_cb",
     "exit",
@@ -151,7 +166,10 @@ __all__ = [
     "MAX_BOOT_VALUES",
     "MAX_BOOT_VALUE_LENGTH",
     "Client",
+    "Deferred",
     "Handler",
+    "Server",
+    "Timer",
     "call",
     "connect",
     "send",
@@ -177,10 +195,16 @@ class ProcessState(typing.Protocol):
     loop: EventLoopInterface
     listener: EventListener | None
 
+    # Handle for the bootstrap port, if the parent gave one.
+    bootstrap_port: int | None
+
     def queue_new_syscall(self, syscall_state: SystemCallState) -> None: ...
 
     def receive_message(self, port: int, blocking: bool,
                         timeout: float | None) -> tuple[int, bytes, tuple[int, ...]] | None: ...
+
+    def receive_any(self, ports: tuple[int, ...], blocking: bool,
+                    timeout: float | None) -> tuple[int, int, bytes, tuple[int, ...]] | None: ...
 
     def exit(self, status: int) -> typing.NoReturn: ...
 
@@ -398,6 +422,127 @@ def receive_message(port: int, blocking: bool = True,
     return _darq_process_state.receive_message(port, blocking, timeout)
 
 
+def receive_any(ports: typing.Iterable[int], blocking: bool = True,
+                timeout: float | None = None) -> tuple[int, int, bytes, tuple[int, ...]] | None:
+    """Receive a message delivered to any of several ports.
+
+    Messages are received in the order they were delivered, across all
+    the ports.  Like receive_message(), this needs no request to the
+    p-kernel, and can't be used with the callback model.
+
+    :param ports: Open port numbers.
+    :param blocking: If True, wait until a message is delivered;
+                     otherwise, return None at once if none has been.
+    :param timeout: If blocking, the longest to wait, in seconds, before
+                    returning None; None waits indefinitely.
+    :returns: (port, source handle, payload, transferred handles), or
+              None if no message was delivered, when not blocking or by
+              the timeout.
+    :raises NonExistentPortError: if a port isn't open, or is closed
+                                  while waiting.
+    :raises ValueError: if there are no ports."""
+    return _darq_process_state.receive_any(tuple(ports), blocking, timeout)
+
+
+class PortSet:
+    """A set of ports, received from together (see receive_any).
+
+    This is the process' own grouping: the p-kernel knows nothing of
+    it, and ports can be added and removed at any time."""
+
+    def __init__(self, ports: typing.Iterable[int] = ()):
+        """Constructor.
+
+        :param ports: Open port numbers."""
+        self._ports: dict[int, None] = dict.fromkeys(ports)
+
+    def add(self, port: int):
+        """Add a port, if it isn't already in the set."""
+        self._ports[port] = None
+
+    def discard(self, port: int):
+        """Remove a port, if it's in the set."""
+        self._ports.pop(port, None)
+
+    def __contains__(self, port: object) -> bool:
+        return port in self._ports
+
+    def __iter__(self) -> typing.Iterator[int]:
+        return iter(list(self._ports))
+
+    def __len__(self) -> int:
+        return len(self._ports)
+
+    def receive(self, blocking: bool = True,
+                timeout: float | None = None) -> tuple[int, int, bytes, tuple[int, ...]] | None:
+        """Receive a message delivered to any of the ports: see receive_any()."""
+        return receive_any(self._ports, blocking, timeout)
+
+
+# Exceptions for notify_on_death's result codes.
+_NOTIFY_ERRORS: dict[int, type[DarqError]] = {
+    NotifyResult.BAD_HANDLE: NonExistentPortError,
+    NotifyResult.BAD_NOTIFY_PORT: PortRightError,
+}
+
+
+def notify_on_death(handle: int, notify_port: int):
+    """Ask to be notified when a port is destroyed.
+
+    When the port is destroyed (its receive right closed, or its owner
+    finished), the p-kernel delivers a dipc.PortDestroyed notification
+    to the notify port, from source handle 0, carrying the handle.  If
+    it's already dead, the notification is queued before this returns.
+
+    Each notification is delivered once.  Asking again for the same
+    notify port changes nothing; closing the handle cancels it.
+
+    :param handle: Handle for the port to watch: any right.
+    :param notify_port: Handle for the port to notify: a receive right.
+    :raises NonExistentPortError: if the handle isn't open.
+    :raises PortRightError: if the notify port isn't a receive right."""
+
+    # Get a SystemCallState
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.SYNC)
+
+    # Populate the request message
+    request = NotifyOnDeathRequest(0, handle, notify_port)
+    syscall.set_request(request)
+
+    # Enqueue.
+    _darq_process_state.queue_new_syscall(syscall)
+
+    # Wait for response.
+    syscall.sync_wait()
+
+    result = typing.cast(NotifyOnDeathResponse, syscall.get_response()).result
+    if result != NotifyResult.OK:
+        try:
+            reason = NotifyResult(result).name
+        except ValueError:
+            reason = f"result {result}"
+        raise _NOTIFY_ERRORS.get(result, DarqError)(f"notify_on_death({handle}, {notify_port}): {reason}")
+    return
+
+
+def decode_port_destroyed(source: int, payload: bytes) -> int | None:
+    """Return the dead handle, if a message is a PortDestroyed notification.
+
+    Only the p-kernel sends from source handle 0, so a notification
+    from anywhere else isn't one."""
+    if source != 0 or len(payload) < dipc.HEADER_LENGTH:
+        return None
+    if dipc.decode_flags(payload) != dipc.NOTIFICATION or dipc.decode_method(payload) != dipc.PORT_DESTROYED:
+        return None
+    notification = dipc.PortDestroyed()
+    try:
+        notification.decode(payload)
+    except MessageDecodingError:
+        return None
+    return notification.handle
+
+
 # def send_chunk(self, source: int, destination: int, stream: int, offset: int, chunk: bytes):
 #     """Send a stream chunk to another port.
 #
@@ -411,18 +556,25 @@ def receive_message(port: int, blocking: bool = True,
 #     pass
 
 
-def spawn_process(exec_path: str) -> int:
-    """Spawn a darq process.
+def spawn_process(exec_path: str, bootstrap: int | None = None) -> int:
+    """Spawn a darq process, and wait until it's running.
 
     :param exec_path: Path to executable.
-    :returns: DPID of new process."""
+    :param bootstrap: Handle for a port to give the new process: it gets
+                      a send right to it, as its bootstrap port (see
+                      get_bootstrap_port).  The caller must hold a right
+                      to it.
+    :returns: DPID of new process.
+    :raises SpawnError: if it couldn't be spawned, or exited before
+                        running; its result is SpawnResult.BAD_BOOTSTRAP
+                        if the bootstrap handle isn't open, or is dead."""
 
     # Get a SystemCallState
     syscall = SystemCallState()
     syscall.set_mode(SystemCallMode.SYNC)
 
     # Populate the request message
-    request = SpawnProcessRequest(0, exec_path)
+    request = SpawnProcessRequest(0, exec_path, bootstrap or 0)
     syscall.set_request(request)
 
     # Enqueue.
@@ -432,29 +584,49 @@ def spawn_process(exec_path: str) -> int:
     syscall.sync_wait()
 
     # Extract result.
-    dpid = typing.cast(SpawnProcessResponse, syscall.get_response()).dpid
-    return dpid
+    response = typing.cast(SpawnProcessResponse, syscall.get_response())
+    if response.result != SpawnResult.OK:
+        raise SpawnError(response.result, response.get_error())
+    return response.dpid
 
 
-def spawn_process_cb(exec_path: str, loop: EventLoopInterface, cb: typing.Callable[[int, int], None]) -> None:
+def spawn_process_cb(exec_path: str, loop: EventLoopInterface, cb: typing.Callable[[int, int], None],
+                     bootstrap: int | None = None) -> None:
     """Asynchronously spawn a darq process.
 
     :param exec_path: Path to executable.
     :param loop: Event loop in which the callable should be invoked.
-    :param cb: Completion callback: cb(dpid, error_code)."""
+    :param cb: Completion callback: cb(dpid, error_code), where the
+               error code is a SpawnResult.
+    :param bootstrap: Handle for the new process' bootstrap port: see
+                      spawn_process."""
 
     # Get a SystemCallState
     syscall = SystemCallState()
     syscall.set_mode(SystemCallMode.CALLBACK)
 
     # Populate the request message
-    request = SpawnProcessRequest(0, exec_path)
+    request = SpawnProcessRequest(0, exec_path, bootstrap or 0)
     syscall.set_request(request)
     syscall.set_callback(loop, cb)
 
     # Enqueue.
     _darq_process_state.queue_new_syscall(syscall)
     return
+
+
+def get_bootstrap_port() -> int | None:
+    """Return the handle for this process' bootstrap port.
+
+    It's a send right to the port the parent named when spawning this
+    process, given to it by the p-kernel as it started running: a way
+    for the two to talk, before either knows anything else of the
+    other.  What they say over it is up to them.
+
+    :returns: The handle, or None if the parent named no port, or the
+              port was destroyed before this process ran.  Processes the
+              p-kernel spawns at boot have none."""
+    return _darq_process_state.bootstrap_port
 
 
 def kill_process(dpid: int):
@@ -839,87 +1011,6 @@ def get_local_context() -> str:
     return _local_context_id
 
 
-class Object:
-    pass
-
-class ObjectIdentifier:
-    pass
-
-class ObjectProxy:
-    pass
-
-class Type:
-    pass
-
-def create_type(type_id: str, name: str):
-    """Create a new Type.
-
-    :param type_id:
-    :param name:
-
-    The created Type is transient and inaccessible until registered with
-    register_type(), which persists the information, and adds it to the
-    runtime type registry."""
-
-    #return Type(type_id, name)
-    pass
-
-
-def register_type(typedef: Type):
-    # FIXME: see darq.rt.type.TypeRegistry.register()
-    #return _type_api.register(typedef)
-    pass
-
-def deregister_type(type_id: str):
-    #return _type_api.deregister(type_id)
-    pass
-
-def get_type(type_id: str):
-    """Look up a Type definition by its UTI.
-
-    :param type_id: Uniform Type Identifier for the requested type."""
-
-    #return _type_api.get(type_id)
-    pass
-
-def create_object(type_id: str, is_transient: bool = False) -> ObjectProxy:
-    """Create a new object.
-
-    :param type_id: Identifier for the new object's Type, as registered with
-    the Type Service.
-    :param is_transient: if True, do not persist the Object's state.
-    :returns: Proxy for newly-created Object."""
-
-    # Check type_id is legit or error.
-    # Have type implementation create new instance.
-    # If not transient, persist newly-created instance.
-    # Create proxy for instance and return to caller.
-    raise NotImplementedError("create_object")
-
-
-def lookup_object(object_id: typing.Union[str, ObjectIdentifier]) -> ObjectProxy:
-    """Obtain a proxy for an existing object.
-
-    If the specified Object identifier is unknown, return an error.
-
-    :object_id: Object's unique identifier."""
-
-    # If object_id is a string, convert it to structured form.
-
-    # Check context
-    # If context is unknown, look it up
-    # If context is known, but remote, lookup object_id remotely
-
-    # Lookup type_id.  If unknown, raise an error: we can't deal with
-    # this type of object.
-
-    # Get endpoint for type implementation from type service.
-
-    # Ask type implementation to activate the object, and return a
-    # proxy.
-    raise NotImplementedError("lookup_object")
-
-
 ########################################################################
 # Requests and responses over ports
 ########################################################################
@@ -947,6 +1038,20 @@ def _allocate_txid() -> int:
     with _txid_lock:
         _last_txid = _last_txid % 0xFFFFFFFF + 1
         return _last_txid
+
+
+def _watch(service: int, port: int):
+    """Ask to be notified on a reply port when a service is destroyed.
+
+    Asked once for each service handle on each thread: handles are
+    never reused, so the notification stays in place until it's sent."""
+    watched = getattr(_local, "watched", None)
+    if watched is None:
+        watched = _local.watched = set()
+    if service not in watched:
+        notify_on_death(service, port)
+        watched.add(service)
+    return
 
 
 def connect(name: str) -> int:
@@ -981,9 +1086,12 @@ def transact[R: dipc.Message](service: int, request: dipc.Message, response_clas
     :returns: The decoded response.
     :raises RemoteError: if the service sent an error reply.
     :raises TimeoutError: if there's no reply within the timeout.
+    :raises DeadPortError: if the service's port is destroyed before it
+                           replies.
     :raises MessageDecodingError: if the response can't be decoded.
     :raises DarqError: if the request can't be sent (see send_message)."""
     port = _reply_port()
+    _watch(service, port)
     request.txid = _allocate_txid()
     buf, handles = request.encode()
     send_message(port, service, buf, handles)
@@ -996,6 +1104,13 @@ def transact[R: dipc.Message](service: int, request: dipc.Message, response_clas
             raise TimeoutError(f"no reply to {type(request).__name__} from {service} within {timeout}s")
 
         source, payload, reply_handles = message
+        dead = decode_port_destroyed(source, payload)
+        if dead == service:
+            raise DeadPortError(f"{service} was destroyed before replying to {type(request).__name__}")
+        if dead is not None:
+            logging.debug(f"Dropped notification on reply port {port}: {dead} is dead")
+            continue
+
         try:
             txid = dipc.decode_txid(payload)
         except MessageDecodingError:
@@ -1050,25 +1165,168 @@ class Client:
         return
 
 
+class Deferred:
+    """A request whose reply is sent later (see Handler.defer).
+
+    It's answered exactly once, with reply() or error().  The client is
+    still waiting meanwhile: a service should make sure each one is
+    answered, even when what it's waiting for fails."""
+
+    def __init__(self, port: int | None, source: int, txid: int, method: int,
+                 response_class: type[dipc.Message]):
+        """Constructor.
+
+        :param port: Port the request arrived on, which replies are sent from.
+        :param source: Handle for the client's port.
+        :param txid: The request's transaction identifier.
+        :param method: The request's method number.
+        :param response_class: Class of the response."""
+        self.port = port
+        self.source = source
+        self.txid = txid
+        self.method = method
+        self.response_class = response_class
+        self.done = False
+
+        # Timer to fail it, if it was deferred with a timeout.
+        self.timer: "Timer | None" = None
+
+    def reply(self, response: dipc.Message):
+        """Send the response.
+
+        :raises RuntimeError: if it's already been answered.
+        :raises TypeError: if the response isn't of the request's response class."""
+        if not isinstance(response, self.response_class):
+            raise TypeError(f"reply is {type(response).__name__}, not {self.response_class.__name__}")
+        self._finish()
+        response.txid = self.txid
+        _send_reply(self.port, self.source, response)
+        return
+
+    def error(self, code: ErrorCode, description: str):
+        """Send an error reply, in place of the response.
+
+        :raises RuntimeError: if it's already been answered."""
+        self._finish()
+        logging.warning(f"Error reply to method {self.method}: {code.name}: {description}")
+        _send_reply(self.port, self.source, ErrorReply(self.txid, self.method, code, description))
+        return
+
+    def _finish(self):
+        if self.done:
+            raise RuntimeError(f"Request {self.txid} (method {self.method}) has already been answered")
+        if self.port is None:
+            raise RuntimeError("Can't reply: the request's port isn't known")
+        self._discard()
+
+    def _discard(self):
+        """Mark it answered, without sending anything."""
+        self.done = True
+        if self.timer is not None:
+            self.timer.cancel()
+            self.timer = None
+
+    def _expire(self, timeout: float):
+        """Fail it with a TIMEOUT error reply, if it's still unanswered."""
+        if not self.done:
+            self.error(ErrorCode.TIMEOUT, f"no reply within {timeout}s")
+
+    def __del__(self):
+        if not self.done:
+            logging.warning(f"Request {self.txid} (method {self.method}) from {self.source} "
+                            f"was never answered")
+
+
+def _send_reply(port: int | None, source: int, reply: dipc.Message):
+    """Send a reply from a port, logging a failure."""
+    assert port is not None, "reply without a port"
+    buf, handles = reply.encode()
+    try:
+        send_message(port, source, buf, handles)
+    except DarqError as e:
+        # Most likely, the client has gone.
+        logging.warning(f"Reply to {source} failed: {e!r}")
+    return
+
+
 class Handler:
     """Base class for the generated handler of each protocol.
 
     A service subclasses it, overriding a method for each protocol
     method it implements: each takes the decoded request, and the
     handle for the client's port, and returns the response (or None,
-    for a one-way message)."""
+    for a one-way message).  A method that can't answer yet can defer
+    the reply, and return the Deferred (see defer()).
+
+    Notifications from the p-kernel on the handler's port aren't
+    requests: they're passed to port_destroyed()."""
 
     # Request class, and handler method name, by method number.
     METHODS: dict[int, tuple[type[dipc.Message], str]] = {}
 
-    def dispatch(self, payload: bytes, source: int, handles: tuple[int, ...] = ()) -> dipc.Message | None:
+    # The Server this handler was added to, if any (see Server.add).
+    server: "Server | None" = None
+
+    # The request being handled, while dispatch() calls its method:
+    # (port, source, txid, method, request class).
+    _current: tuple[int | None, int, int, int, type[dipc.Message]] | None = None
+
+    # Requests deferred while handling the current request.
+    _deferred: list[Deferred] | None = None
+
+    def defer(self, timeout: float | None = None) -> Deferred:
+        """Defer the reply to the request being handled.
+
+        The handler method returns the Deferred, and dispatch() sends
+        nothing: the reply is sent later, with its reply() or error().
+
+        :param timeout: Seconds to wait for the reply: if it hasn't been
+                        sent by then, the server sends a TIMEOUT error
+                        reply instead.  None waits indefinitely.
+        :raises RuntimeError: if no request is being handled, or it's
+                              a one-way message, which has no reply; or
+                              there's a timeout, but no server to run
+                              its timer."""
+        if self._current is None or self._deferred is None:
+            raise RuntimeError("defer() called outside a handler method")
+        port, source, txid, method, request_class = self._current
+        if request_class.RESPONSE is None:
+            raise RuntimeError(f"One-way {request_class.__name__} has no reply to defer")
+        if timeout is not None and self.server is None:
+            raise RuntimeError("defer() with a timeout needs a Server")
+        deferred = Deferred(port, source, txid, method, request_class.RESPONSE)
+        if timeout is not None:
+            assert self.server is not None
+            deferred.timer = self.server.call_later(timeout, lambda: deferred._expire(timeout))
+        self._deferred.append(deferred)
+        return deferred
+
+    def port_destroyed(self, handle: int):
+        """Called when a port, watched with notify_on_death on the
+        handler's port, is destroyed.
+
+        Override it to stop using the handle (and close it), and to
+        answer any deferred requests waiting on it.
+
+        :param handle: The dead handle."""
+        logging.info(f"Port {handle} destroyed: no port_destroyed handler")
+
+    def dispatch(self, payload: bytes, source: int, handles: tuple[int, ...] = (),
+                 port: int | None = None) -> dipc.Message | None:
         """Handle a request.
 
         :param payload: Received message.
         :param source: Handle for the client's port.
         :param handles: Handles transferred with the message.
+        :param port: Port it arrived on, which a deferred reply is sent from.
         :returns: The reply to send: the response, or an error reply;
-                  None for a one-way message."""
+                  None for a one-way message, a deferred reply, or a
+                  notification."""
+        dead = decode_port_destroyed(source, payload)
+        if dead is not None:
+            self.port_destroyed(dead)
+            return None
+
         try:
             txid = dipc.decode_txid(payload)
             method = dipc.decode_method(payload)
@@ -1087,13 +1345,37 @@ class Handler:
         except MessageDecodingError as e:
             return self.error(txid, method, ErrorCode.BAD_MESSAGE, f"{request_class.__name__}: {e}")
 
+        # Requests deferred by this call, but then not returned, are
+        # answered by whatever dispatch() returns instead.
+        deferred: list[Deferred] = []
+        response = None
+        self._current, self._deferred = (port, source, txid, method, request_class), deferred
         try:
-            response = getattr(self, name)(request, source)
+            try:
+                response = getattr(self, name)(request, source)
+            finally:
+                self._current, self._deferred = None, None
         except NotImplementedError:
-            return self.error(txid, method, ErrorCode.NOT_IMPLEMENTED, f"{name} isn't implemented")
+            reply = self.error(txid, method, ErrorCode.NOT_IMPLEMENTED, f"{name} isn't implemented")
         except Exception as e:
             logging.exception(f"Handler for {request_class.__name__} failed")
-            return self.error(txid, method, ErrorCode.INTERNAL_ERROR, f"{type(e).__name__}: {e}")
+            reply = self.error(txid, method, ErrorCode.INTERNAL_ERROR, f"{type(e).__name__}: {e}")
+        else:
+            reply = self._check_response(request_class, name, txid, method, response, deferred)
+
+        for d in deferred:
+            if d is not response:
+                d._discard()
+        return reply
+
+    def _check_response(self, request_class: type[dipc.Message], name: str, txid: int, method: int,
+                        response: typing.Any, deferred: list[Deferred]) -> dipc.Message | None:
+        """Return the reply for what a handler method returned."""
+        if isinstance(response, Deferred):
+            if not any(d is response for d in deferred):
+                return self.error(txid, method, ErrorCode.INTERNAL_ERROR,
+                                  f"{name} returned a Deferred for another request")
+            return None
 
         response_class = request_class.RESPONSE
         if response_class is None:
@@ -1116,8 +1398,113 @@ class Handler:
         return ErrorReply(txid, method, code, description)
 
 
+class Timer:
+    """A callback scheduled by Server.call_later()."""
+
+    def __init__(self, when: float, callback: typing.Callable[[], None]):
+        self.when = when
+        self.callback = callback
+        self.cancelled = False
+
+    def cancel(self):
+        """Stop the callback being called, if it hasn't been already."""
+        self.cancelled = True
+
+
+class Server:
+    """Answers requests on a set of ports, each with its own handler.
+
+    Requests are handled one at a time, in order of delivery across the
+    ports, on the calling thread.  Handlers can add and remove ports
+    while handling a request, and defer replies until a message arrives
+    on another port, or a timer runs.
+
+    It's single-threaded: only the serving thread may use it, or its
+    handlers' deferred requests.  Another thread can ask it to act by
+    sending a message to one of its ports.  Timers run between
+    messages, so a handler that blocks (in spawn_process, say) delays
+    them."""
+
+    def __init__(self):
+        self.ports = PortSet()
+        self._handlers: dict[int, Handler] = {}
+        self._timers: list[Timer] = []
+
+    def add(self, port: int, handler: Handler):
+        """Answer requests on a port, with a handler.
+
+        :param port: Open port: the handler's replies are sent from it.
+        :param handler: Handler for the port's protocol."""
+        handler.server = self
+        self._handlers[port] = handler
+        self.ports.add(port)
+
+    def remove(self, port: int):
+        """Stop answering requests on a port.  It isn't closed."""
+        self._handlers.pop(port, None)
+        self.ports.discard(port)
+
+    def call_later(self, delay: float, callback: typing.Callable[[], None]) -> Timer:
+        """Call a function, on the serving thread, after a delay.
+
+        :param delay: Seconds to wait.
+        :param callback: Called with no arguments.
+        :returns: A Timer, which can be cancelled."""
+        timer = Timer(time.monotonic() + delay, callback)
+        self._timers.append(timer)
+        return timer
+
+    def run_once(self, timeout: float | None = None) -> bool:
+        """Handle one message, or run the timers that are due.
+
+        :param timeout: Longest to wait, in seconds; None waits until a
+                        message arrives, or a timer is due.
+        :returns: True if a message was handled."""
+        self._timers = [t for t in self._timers if not t.cancelled]
+        wait = timeout
+        if self._timers:
+            due = max(0.0, min(t.when for t in self._timers) - time.monotonic())
+            wait = due if wait is None else min(wait, due)
+
+        handled = False
+        if self.ports:
+            message = self.ports.receive(timeout=wait)
+        elif wait is None:
+            raise RuntimeError("Server has no ports, and no timers, to wait for")
+        else:
+            message = None
+            time.sleep(wait)
+        if message is not None:
+            port, source, payload, handles = message
+            handler = self._handlers.get(port)
+            if handler is None:
+                logging.warning(f"Dropped message for port {port}: no handler")
+            else:
+                reply = handler.dispatch(payload, source, handles, port)
+                if reply is not None:
+                    _send_reply(port, source, reply)
+            handled = True
+
+        now = time.monotonic()
+        for timer in [t for t in self._timers if t.when <= now and not t.cancelled]:
+            timer.cancelled = True
+            try:
+                timer.callback()
+            except Exception:
+                logging.exception("Timer callback failed")
+        return handled
+
+    def run(self) -> typing.NoReturn:
+        """Handle messages, and run timers, until killed."""
+        while True:
+            self.run_once()
+
+
 def serve(name: str | None, handler: Handler) -> typing.NoReturn:
     """Answer requests on a new port, one at a time, until killed.
+
+    The handler can add other ports, and timers, through its server
+    (see Server).
 
     :param name: Name to register for the port, or None to leave it
                  unnamed.
@@ -1127,17 +1514,6 @@ def serve(name: str | None, handler: Handler) -> typing.NoReturn:
         register_name(name, port)
     logging.info(f"Serving {name or 'unnamed port'} on port {port}")
 
-    while True:
-        message = receive_message(port)
-        assert message is not None, "blocking receive returned nothing"
-        source, payload, handles = message
-
-        reply = handler.dispatch(payload, source, handles)
-        if reply is None:
-            continue
-        buf, reply_handles = reply.encode()
-        try:
-            send_message(port, source, buf, reply_handles)
-        except DarqError as e:
-            # Most likely, the client has gone.
-            logging.warning(f"Reply to {source} failed: {e!r}")
+    server = Server()
+    server.add(port, handler)
+    server.run()

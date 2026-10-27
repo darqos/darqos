@@ -67,6 +67,7 @@ class FakePKernel:
 
         # Result for the RUN_RESPONSE to a RUN_REQUEST, or None to not answer.
         self.run_result: int | None = 0
+        self.bootstrap: int = 0
 
         # Actions to take, by message type, instead of answering.  Each is
         # called with the received message.
@@ -137,7 +138,7 @@ class FakePKernel:
 
         elif message_type == pk.MessageType.RUN_REQUEST:
             if self.run_result is not None:
-                self.send(pk.RunResponse(self.run_result))
+                self.send(pk.RunResponse(self.run_result, self.bootstrap))
 
         elif message_type == pk.MessageType.REGISTER_NAME_RQST:
             if self.register_result == pk.NameResult.OK:
@@ -396,31 +397,27 @@ def test_callback_runs_on_app_loop(pproc, pcall, args):
 
 def test_delivered_message_runs_on_app_loop(pproc):
     # The p-kernel delivers each sent message back to its destination.
-    def deliver(request):
-        message = pk.DeliverMessage(request.source, request.destination)
-        message.set_payload(request.payload)
-        pproc.kernel.send(message)
-
-    pproc.kernel.actions[pk.MessageType.SEND_MESSAGE_RQST] = deliver
+    deliver_sent_messages(pproc)
 
     def app():
         loop = darq.SelectEventLoop()
         delivered = []
 
         class Listener(darq.EventListener):
-            def on_message(self, source, destination, message):
-                delivered.append((source, destination, message,
+            def on_message(self, source, destination, message, handles=()):
+                delivered.append((source, destination, message, handles,
                                   threading.current_thread() is threading.main_thread()))
                 loop.stop()
 
         darq.init_cb(loop, Listener())
         port = darq.open_port()
-        darq.send_message(port, port, b"hello")
+        darq.send_message(port, port, b"hello", ports=[port, 77])
         loop.run()
         loop.close()
         return delivered
 
-    assert run_app(pproc, app) == [(16385, 16385, b"hello", True)]
+    # Transferred handles are passed to the listener too.
+    assert run_app(pproc, app) == [(16385, 16385, b"hello", (16385, 77), True)]
 
 
 ################################################################
@@ -449,6 +446,66 @@ def test_receive_message(pproc):
         return darq.receive_message(port)
 
     assert run_app(pproc, app) == (16385, b"hello", ())
+
+
+def test_bootstrap_port(pproc):
+    pproc.kernel.bootstrap = 9
+    assert run_app(pproc, darq.get_bootstrap_port) == 9
+
+
+def test_no_bootstrap_port(pproc):
+    assert run_app(pproc, darq.get_bootstrap_port) is None
+
+
+def test_receive_any(pproc):
+    deliver_sent_messages(pproc)
+
+    def app():
+        a, b = darq.open_port(), darq.open_port()
+        darq.send_message(a, b, b"to b")
+        darq.send_message(b, a, b"to a")
+        ports = darq.PortSet([a, b])
+        return [ports.receive(), ports.receive(), ports.receive(blocking=False)]
+
+    assert run_app(pproc, app) == [(16386, 16385, b"to b", ()), (16385, 16386, b"to a", ()), None]
+
+
+def test_receive_any_unknown_port(pproc):
+    def app():
+        port = darq.open_port()
+        try:
+            darq.receive_any([port, 12345], blocking=False)
+        except darq.NonExistentPortError as e:
+            return str(e)
+
+    assert run_app(pproc, app) == "12345"
+
+
+def test_spawn_failure_raises(pproc):
+    def refuse(message):
+        pproc.kernel.send(pk.SpawnProcessResponse(message.request_id, pk.SpawnResult.BAD_BOOTSTRAP, 0,
+                                                  "bootstrap handle 3 isn't open"))
+    pproc.kernel.actions[pk.MessageType.SPAWN_PROCESS_RQST] = refuse
+
+    def app():
+        try:
+            darq.spawn_process("/x", bootstrap=3)
+        except darq.SpawnError as e:
+            return e.result, e.description
+
+    assert run_app(pproc, app) == (pk.SpawnResult.BAD_BOOTSTRAP, "bootstrap handle 3 isn't open")
+
+
+def test_spawn_sends_bootstrap(pproc):
+    sent = []
+
+    def record(message):
+        sent.append(message.bootstrap)
+        pproc.kernel.send(pk.SpawnProcessResponse(message.request_id, 0, 7, None))
+    pproc.kernel.actions[pk.MessageType.SPAWN_PROCESS_RQST] = record
+
+    assert run_app(pproc, lambda: [darq.spawn_process("/x", bootstrap=4), darq.spawn_process("/x")]) == [7, 7]
+    assert sent == [4, 0]
 
 
 def test_transferred_handles_sent_and_received(pproc):

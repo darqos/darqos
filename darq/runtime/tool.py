@@ -20,7 +20,8 @@ class Tool(EventListener):
     def on_send_message(self, port: int, request_id: int):
         pass
 
-    def on_message(self, source: int, destination: int, message: bytes):
+    def on_message(self, source: int, destination: int, message: bytes,
+                   handles: tuple[int, ...] = ()):
         """Handle a delivered message."""
         pass
 

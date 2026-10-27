@@ -25,6 +25,8 @@ from darq.pcall import (
     LookupNameResponse,
     Message,
     MessageType,
+    NotifyOnDeathRequest,
+    NotifyOnDeathResponse,
     OpenPortRequest,
     OpenPortResponse,
     Reboot,
@@ -148,15 +150,15 @@ class TestRunRequest:
 
 
 class TestRunResponse:
-    @pytest.mark.parametrize("result", [0, 1, 2 ** 32 - 1])
-    def test_roundtrip(self, result):
-        buf = RunResponse(result).encode()
+    @pytest.mark.parametrize("result, bootstrap", [(0, 0), (1, 7), (2 ** 32 - 1, 2 ** 64 - 1)])
+    def test_roundtrip(self, result, bootstrap):
+        buf = RunResponse(result, bootstrap).encode()
         check_header(buf, MessageType.RUN_RESPONSE)
-        assert len(buf) == HEADER_LENGTH + 8
+        assert len(buf) == HEADER_LENGTH + 16
 
         d = RunResponse()
         d.decode(buf)
-        assert d.result == result
+        assert (d.result, d.bootstrap) == (result, bootstrap)
 
     def test_truncated_raises(self):
         with pytest.raises(MessageDecodingError):
@@ -213,6 +215,28 @@ class TestClosePortRequest:
         buf = ClosePortRequest(1, 2).encode()
         with pytest.raises(MessageDecodingError):
             ClosePortRequest().decode(buf[:-1])
+
+
+class TestNotifyOnDeath:
+    def test_request_roundtrip(self):
+        buf = NotifyOnDeathRequest(7, UInt64.max(), 3).encode()
+        check_header(buf, MessageType.NOTIFY_ON_DEATH_RQST)
+        assert len(buf) % 8 == 0
+        d = NotifyOnDeathRequest()
+        d.decode(buf)
+        assert (d.request_id, d.handle, d.notify_port) == (7, UInt64.max(), 3)
+
+    def test_response_roundtrip(self):
+        buf = NotifyOnDeathResponse(7, 2).encode()
+        check_header(buf, MessageType.NOTIFY_ON_DEATH_RESP)
+        d = NotifyOnDeathResponse()
+        d.decode(buf)
+        assert (d.request_id, d.result) == (7, 2)
+
+    @pytest.mark.parametrize("message", [NotifyOnDeathRequest(1, 2, 3), NotifyOnDeathResponse(1, 0)])
+    def test_truncated_raises(self, message):
+        with pytest.raises(MessageDecodingError):
+            type(message)().decode(message.encode()[:-1])
 
 
 class TestBootValueMessages:
@@ -530,14 +554,20 @@ class TestSpawnProcessRequest:
         d.decode(buf)
         assert d.request_id == 5
         assert d.get_exec_path() == path
+        assert d.bootstrap == 0
+
+    def test_bootstrap_roundtrip(self):
+        d = SpawnProcessRequest(0, "")
+        d.decode(SpawnProcessRequest(5, "/a", bootstrap=2 ** 64 - 1).encode())
+        assert (d.request_id, d.get_exec_path(), d.bootstrap) == (5, "/a", 2 ** 64 - 1)
 
     def test_length_set_on_construction(self):
         m = SpawnProcessRequest(request_id=5, exec_path="/darq/bin/init")
-        assert m.length == HEADER_LENGTH + 8 + 16
+        assert m.length == HEADER_LENGTH + 16 + 16
 
     def test_get_length(self):
         m = SpawnProcessRequest(request_id=5, exec_path="/darq/bin/init")
-        assert m.get_length() == HEADER_LENGTH + 8 + 16
+        assert m.get_length() == HEADER_LENGTH + 16 + 16
 
 
 class TestSpawnProcessResponse:

@@ -38,6 +38,9 @@ __all__ = [
     "Message",
     "MessageType",
     "NameResult",
+    "NotifyOnDeathRequest",
+    "NotifyOnDeathResponse",
+    "NotifyResult",
     "OpenPortRequest",
     "OpenPortResponse",
     "Reboot",
@@ -54,6 +57,7 @@ __all__ = [
     "SetBootValueResponse",
     "Shutdown",
     "SpawnProcessRequest",
+    "SpawnResult",
     "SpawnProcessResponse",
     "UInt8",
     "UInt16",
@@ -104,6 +108,8 @@ class MessageType(IntEnum):
     GET_BOOT_VALUE_RESP = 28
     SET_BOOT_VALUE_RQST = 29
     SET_BOOT_VALUE_RESP = 30
+    NOTIFY_ON_DEATH_RQST = 31
+    NOTIFY_ON_DEATH_RESP = 32
 
 
 class SendResult(IntEnum):
@@ -155,6 +161,28 @@ class WaitResult(IntEnum):
 
     # No matching child has finished (non-blocking wait only).
     NOT_FINISHED = 2
+
+
+class SpawnResult(IntEnum):
+    """Result codes for spawn_process."""
+    OK = 0
+
+    # The process couldn't be started, or exited before running.
+    FAILED = 1
+
+    # The bootstrap handle isn't open, or its port is dead.
+    BAD_BOOTSTRAP = 2
+
+
+class NotifyResult(IntEnum):
+    """Result codes for notify_on_death."""
+    OK = 0
+
+    # The handle to watch isn't open.
+    BAD_HANDLE = 1
+
+    # The notify port isn't a receive right held by the caller.
+    BAD_NOTIFY_PORT = 2
 
 
 class BootResult(IntEnum):
@@ -443,16 +471,20 @@ class RunRequest(Message):
 
 
 class RunResponse(Message):
-    """The p-kernel's answer to a RunRequest: 0 means the process may run."""
+    """The p-kernel's answer to a RunRequest: 0 means the process may run.
 
-    def __init__(self, result: int = 0):
+    It carries the process' handle for its bootstrap port: a send right
+    to the port its parent named when spawning it, or 0 for none."""
+
+    def __init__(self, result: int = 0, bootstrap: int = 0):
         super().__init__(MessageType.RUN_RESPONSE)
-        self.set_length(self.header_length + 8)
+        self.set_length(self.header_length + 16)
         self.result: int = result
+        self.bootstrap: int = bootstrap
 
     def encode(self) -> bytes:
         buf = super().encode()
-        buf += struct.pack(">Lxxxx", self.result)
+        buf += struct.pack(">LxxxxQ", self.result, self.bootstrap)
         return buf
 
     def decode(self, buffer: bytes):
@@ -460,25 +492,30 @@ class RunResponse(Message):
         if len(buffer) < self.length:
             raise MessageDecodingError("buffer too short for packet")
 
-        bits = struct.unpack(">Lxxxx", buffer[self.header_length:self.length])
+        bits = struct.unpack(">LxxxxQ", buffer[self.header_length:self.length])
         self.result = bits[0]
+        self.bootstrap = bits[1]
         return
 
 
 class SpawnProcessRequest(Message):
-    def __init__(self, request_id: int, exec_path: str):
-        """Constructor."""
+    def __init__(self, request_id: int, exec_path: str, bootstrap: int = 0):
+        """Constructor.
+
+        :param bootstrap: Handle for the new process' bootstrap port, of
+                          which it gets a send right; 0 for none."""
         super().__init__(MessageType.SPAWN_PROCESS_RQST)
         self.request_id = request_id
         self.exec_path = exec_path.encode("utf-8")
-        self.set_length(self.header_length + 8 + self.padded_length(self.exec_path))
+        self.bootstrap = bootstrap
+        self.set_length(self.header_length + 16 + self.padded_length(self.exec_path))
 
     def get_exec_path(self) -> str:
         return self.exec_path.decode("utf-8")
 
     def encode(self) -> bytes:
         buf = super().encode()
-        buf += struct.pack(">LL", self.request_id, len(self.exec_path))
+        buf += struct.pack(">LLQ", self.request_id, len(self.exec_path), self.bootstrap)
         buf += self.pad_bytes(self.exec_path)
         return buf
 
@@ -487,10 +524,11 @@ class SpawnProcessRequest(Message):
         if len(buffer) < self.length:
             raise MessageDecodingError("buffer too short for packet")
 
-        exec_path_start = self.header_length + 8
-        bits = struct.unpack(">LL", buffer[self.header_length:exec_path_start])
+        exec_path_start = self.header_length + 16
+        bits = struct.unpack(">LLQ", buffer[self.header_length:exec_path_start])
         self.request_id = bits[0]
         exec_path_length = bits[1]
+        self.bootstrap = bits[2]
         self.exec_path = buffer[exec_path_start:exec_path_start + exec_path_length]
         return
 
@@ -1055,6 +1093,62 @@ class SetBootValueResponse(Message):
     """Result of setting a boot vector value: a BootResult code."""
     def __init__(self, request_id: int = 0, result: int = 0):
         super().__init__(MessageType.SET_BOOT_VALUE_RESP)
+        self.set_length(self.header_length + 8)
+        self.request_id: int = UInt32(request_id)
+        self.result: int = UInt32(result)
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LL", self.request_id, self.result)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        bits = struct.unpack(">LL", buffer[self.header_length:self.length])
+        self.request_id = bits[0]
+        self.result = bits[1]
+        return
+
+
+class NotifyOnDeathRequest(Message):
+    """Request to be notified when a port is destroyed."""
+    def __init__(self, request_id: int = 0, handle: int = 0, notify_port: int = 0):
+        """Constructor.
+
+        :param request_id: Request identifier.
+        :param handle: Requester's handle for the port to watch.
+        :param notify_port: Requester's handle for the port the
+                            notification is delivered to: a receive right."""
+        super().__init__(MessageType.NOTIFY_ON_DEATH_RQST)
+        self.set_length(self.header_length + 24)
+        self.request_id: int = UInt32(request_id)
+        self.handle: int = UInt64(handle)
+        self.notify_port: int = UInt64(notify_port)
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LxxxxQQ", self.request_id, self.handle, self.notify_port)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        bits = struct.unpack(">LxxxxQQ", buffer[self.header_length:self.length])
+        self.request_id = bits[0]
+        self.handle = bits[1]
+        self.notify_port = bits[2]
+        return
+
+
+class NotifyOnDeathResponse(Message):
+    """Result of a notify_on_death request: a NotifyResult code."""
+    def __init__(self, request_id: int = 0, result: int = 0):
+        super().__init__(MessageType.NOTIFY_ON_DEATH_RESP)
         self.set_length(self.header_length + 8)
         self.request_id: int = UInt32(request_id)
         self.result: int = UInt32(result)

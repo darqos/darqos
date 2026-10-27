@@ -1,0 +1,787 @@
+{
+  "types": [
+    {
+      "id": "public.item",
+      "name": "Item",
+      "conforms_to": [],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "public.content",
+      "name": "Content",
+      "conforms_to": [],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "public.composite-content",
+      "name": "Composite Content",
+      "conforms_to": [
+        "public.content"
+      ],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "public.data",
+      "name": "Data",
+      "conforms_to": [
+        "public.item"
+      ],
+      "mime_types": [
+        "application/octet-stream"
+      ],
+      "extensions": []
+    },
+    {
+      "id": "public.database",
+      "name": "Database",
+      "conforms_to": [],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "public.calendar-event",
+      "name": "Calendar Event",
+      "conforms_to": [],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "public.message",
+      "name": "Message",
+      "conforms_to": [],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "public.presentation",
+      "name": "Presentation",
+      "conforms_to": [
+        "public.composite-content"
+      ],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "public.contact",
+      "name": "Contact",
+      "conforms_to": [],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "public.archive",
+      "name": "Archive",
+      "conforms_to": [],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "public.disk-image",
+      "name": "Disk Image",
+      "conforms_to": [
+        "public.archive"
+      ],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "public.text",
+      "name": "Text",
+      "conforms_to": [
+        "public.data",
+        "public.content"
+      ],
+      "mime_types": [
+        "text/*"
+      ],
+      "extensions": []
+    },
+    {
+      "id": "public.plain-text",
+      "name": "Plain Text",
+      "conforms_to": [
+        "public.text"
+      ],
+      "mime_types": [
+        "text/plain"
+      ],
+      "extensions": [
+        "txt",
+        "text"
+      ]
+    },
+    {
+      "id": "public.utf8-plain-text",
+      "name": "UTF-8 Text",
+      "conforms_to": [
+        "public.plain-text"
+      ],
+      "mime_types": [
+        "text/plain;charset=utf-8"
+      ],
+      "extensions": []
+    },
+    {
+      "id": "public.utf16-external-plain-text",
+      "name": "UTF-16 Text with BOM",
+      "conforms_to": [
+        "public.plain-text"
+      ],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "public.utf16-plain-text",
+      "name": "UTF-16 Text LE",
+      "conforms_to": [
+        "public.plain-text"
+      ],
+      "mime_types": [
+        "text/plain;charset=utf-16"
+      ],
+      "extensions": []
+    },
+    {
+      "id": "public.rtf",
+      "name": "Rich Text (RTF)",
+      "conforms_to": [
+        "public.text"
+      ],
+      "mime_types": [
+        "text/rtf"
+      ],
+      "extensions": [
+        "rtf"
+      ]
+    },
+    {
+      "id": "public.html",
+      "name": "HTML",
+      "conforms_to": [
+        "public.text"
+      ],
+      "mime_types": [
+        "text/html"
+      ],
+      "extensions": [
+        "html",
+        "htm"
+      ]
+    },
+    {
+      "id": "public.xml",
+      "name": "XML",
+      "conforms_to": [
+        "public.text"
+      ],
+      "mime_types": [
+        "application/xml",
+        "text/xml"
+      ],
+      "extensions": [
+        "xml"
+      ]
+    },
+    {
+      "id": "public.source-code",
+      "name": "Source Code",
+      "conforms_to": [
+        "public.plain-text"
+      ],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "public.c-source",
+      "name": "C Source Code",
+      "conforms_to": [
+        "public.source-code"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "c"
+      ]
+    },
+    {
+      "id": "public.objective-c-source",
+      "name": "Objective-C Source Code",
+      "conforms_to": [
+        "public.source-code"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "m"
+      ]
+    },
+    {
+      "id": "public.c-plus-plus-source",
+      "name": "C++ Source Code",
+      "conforms_to": [
+        "public.source-code"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "cp",
+        "cpp",
+        "c++",
+        "cc",
+        "cxx"
+      ]
+    },
+    {
+      "id": "public.objective-c-plus-plus-source",
+      "name": "Objective-C++ Source Code",
+      "conforms_to": [
+        "public.source-code"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "mm"
+      ]
+    },
+    {
+      "id": "public.c-header",
+      "name": "C Header",
+      "conforms_to": [
+        "public.source-code"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "h"
+      ]
+    },
+    {
+      "id": "public.c-plus-plus-header",
+      "name": "C++ Header",
+      "conforms_to": [
+        "public.source-code"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "hpp",
+        "h++",
+        "hxx"
+      ]
+    },
+    {
+      "id": "com.sun.java-source",
+      "name": "Java Source Code",
+      "conforms_to": [
+        "public.source-code"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "java"
+      ]
+    },
+    {
+      "id": "public.script",
+      "name": "Script",
+      "conforms_to": [
+        "public.source-code"
+      ],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "public.assembly-source",
+      "name": "Assembly Source Code",
+      "conforms_to": [
+        "public.source-code"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "s"
+      ]
+    },
+    {
+      "id": "com.netscape.javascript-source",
+      "name": "JavaScript Source Code",
+      "conforms_to": [
+        "public.source-code",
+        "public.executable"
+      ],
+      "mime_types": [
+        "text/javascript"
+      ],
+      "extensions": [
+        "js"
+      ]
+    },
+    {
+      "id": "public.shell-script",
+      "name": "Shell Script",
+      "conforms_to": [
+        "public.script"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "sh",
+        "command"
+      ]
+    },
+    {
+      "id": "public.csh-script",
+      "name": "C Shell Script",
+      "conforms_to": [
+        "public.shell-script"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "csh"
+      ]
+    },
+    {
+      "id": "public.perl-script",
+      "name": "Perl Script",
+      "conforms_to": [
+        "public.shell-script"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "pl",
+        "pm"
+      ]
+    },
+    {
+      "id": "public.python-script",
+      "name": "Python Script",
+      "conforms_to": [
+        "public.shell-script"
+      ],
+      "mime_types": [
+        "text/x-python"
+      ],
+      "extensions": [
+        "py"
+      ]
+    },
+    {
+      "id": "public.ruby-script",
+      "name": "Ruby Script",
+      "conforms_to": [
+        "public.shell-script"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "rb",
+        "rbw"
+      ]
+    },
+    {
+      "id": "public.php-script",
+      "name": "PHP Script",
+      "conforms_to": [
+        "public.shell-script"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "php",
+        "php3",
+        "php4",
+        "ph3",
+        "ph4",
+        "phtml"
+      ]
+    },
+    {
+      "id": "com.sun.java-web-start",
+      "name": "Java Web Start",
+      "conforms_to": [
+        "public.xml"
+      ],
+      "mime_types": [
+        "application/x-java-jnlp-file"
+      ],
+      "extensions": [
+        "jnlp"
+      ]
+    },
+    {
+      "id": "com.apple.applescript.text",
+      "name": "AppleScript Text",
+      "conforms_to": [
+        "public.plain-text"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "applescript"
+      ]
+    },
+    {
+      "id": "com.apple.applescript.script",
+      "name": "AppleScript",
+      "conforms_to": [
+        "public.data"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "scpt"
+      ]
+    },
+    {
+      "id": "public.executable",
+      "name": "Executable",
+      "conforms_to": [
+        "public.item"
+      ],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "public.object-code",
+      "name": "Object Code",
+      "conforms_to": [
+        "public.data"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "o"
+      ]
+    },
+    {
+      "id": "com.apple.mach-o-binary",
+      "name": "Mach-O Binary",
+      "conforms_to": [
+        "public.data"
+      ],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "com.apple.pef-binary",
+      "name": "PEF (CFM-based) Binary",
+      "conforms_to": [
+        "public.data"
+      ],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "com.microsoft.windows-executable",
+      "name": "Microsoft Windows Application",
+      "conforms_to": [
+        "public.data"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "exe"
+      ]
+    },
+    {
+      "id": "com.microsoft.windows-dynamic-link-library",
+      "name": "Microsoft Dynamic Link Library",
+      "conforms_to": [
+        "public.data"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "dll"
+      ]
+    },
+    {
+      "id": "com.sun.java-class",
+      "name": "Java Class",
+      "conforms_to": [
+        "public.data"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "class"
+      ]
+    },
+    {
+      "id": "com.sun.java-archive",
+      "name": "Java Archive",
+      "conforms_to": [
+        "public.data",
+        "public.archive"
+      ],
+      "mime_types": [
+        "application/java-archive"
+      ],
+      "extensions": [
+        "jar"
+      ]
+    },
+    {
+      "id": "com.apple.quartz-composer-composition",
+      "name": "Quartz Composer Composition",
+      "conforms_to": [
+        "public.data"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "qtz"
+      ]
+    },
+    {
+      "id": "public.tar-archive",
+      "name": "tar Archive",
+      "conforms_to": [
+        "public.data",
+        "public.archive"
+      ],
+      "mime_types": [
+        "application/x-tar"
+      ],
+      "extensions": [
+        "tar"
+      ]
+    },
+    {
+      "id": "org.gnu.gnu-tar-archive",
+      "name": "GNU tar Archive",
+      "conforms_to": [
+        "public.tar-archive"
+      ],
+      "mime_types": [
+        "application/x-gtar"
+      ],
+      "extensions": [
+        "gtar"
+      ]
+    },
+    {
+      "id": "org.gnu.gnu-zip-archive",
+      "name": "gzip Archive",
+      "conforms_to": [
+        "public.data",
+        "public.archive"
+      ],
+      "mime_types": [
+        "application/x-gzip"
+      ],
+      "extensions": [
+        "gz",
+        "gzip"
+      ]
+    },
+    {
+      "id": "org.gnu.gnu-zip-tar-archive",
+      "name": "gzip tar Archive",
+      "conforms_to": [
+        "org.gnu.gnu-zip-archive"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "tgz"
+      ]
+    },
+    {
+      "id": "com.apple.binhex-archive",
+      "name": "BinHex Archive",
+      "conforms_to": [
+        "public.data",
+        "public.archive"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "hqx"
+      ]
+    },
+    {
+      "id": "com.apple.macbinary-archive",
+      "name": "MacBinary Archive",
+      "conforms_to": [
+        "public.data",
+        "public.archive"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "bin"
+      ]
+    },
+    {
+      "id": "public.url",
+      "name": "Uniform Resource Locator",
+      "conforms_to": [
+        "public.data"
+      ],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "public.file-url",
+      "name": "File URL",
+      "conforms_to": [
+        "public.url"
+      ],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "public.url-name",
+      "name": "URL Name",
+      "conforms_to": [
+        "public.utf8-plain-text"
+      ],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "public.vcard",
+      "name": "vCard",
+      "conforms_to": [
+        "public.data",
+        "public.contact"
+      ],
+      "mime_types": [
+        "text/vcard",
+        "text/directory"
+      ],
+      "extensions": [
+        "vcf",
+        "vcard"
+      ]
+    },
+    {
+      "id": "public.image",
+      "name": "Image",
+      "conforms_to": [
+        "public.data",
+        "public.content"
+      ],
+      "mime_types": [
+        "image/*"
+      ],
+      "extensions": []
+    },
+    {
+      "id": "public.fax",
+      "name": "Fax",
+      "conforms_to": [
+        "public.image"
+      ],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "public.jpeg",
+      "name": "JPEG Image",
+      "conforms_to": [
+        "public.image"
+      ],
+      "mime_types": [
+        "image/jpeg"
+      ],
+      "extensions": [
+        "jpeg",
+        "jpg"
+      ]
+    },
+    {
+      "id": "public.jpeg-2000",
+      "name": "JPEG 2000 Image",
+      "conforms_to": [
+        "public.image"
+      ],
+      "mime_types": [
+        "image/jp2"
+      ],
+      "extensions": [
+        "jp2"
+      ]
+    },
+    {
+      "id": "public.tiff",
+      "name": "TIFF Image",
+      "conforms_to": [
+        "public.image"
+      ],
+      "mime_types": [
+        "image/tiff"
+      ],
+      "extensions": [
+        "tiff",
+        "tif"
+      ]
+    },
+    {
+      "id": "public.camera-raw-image",
+      "name": "Camera RAW Image",
+      "conforms_to": [
+        "public.image"
+      ],
+      "mime_types": [],
+      "extensions": []
+    },
+    {
+      "id": "com.apple.pict",
+      "name": "PICT Image",
+      "conforms_to": [
+        "public.image"
+      ],
+      "mime_types": [
+        "image/pict"
+      ],
+      "extensions": [
+        "pict",
+        "pct"
+      ]
+    },
+    {
+      "id": "com.apple.macpaint-image",
+      "name": "MacPaint Image",
+      "conforms_to": [
+        "public.image"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "pntg"
+      ]
+    },
+    {
+      "id": "public.png",
+      "name": "PNG Image",
+      "conforms_to": [
+        "public.image"
+      ],
+      "mime_types": [
+        "image/png"
+      ],
+      "extensions": [
+        "png"
+      ]
+    },
+    {
+      "id": "public.xbitmap-image",
+      "name": "XBM Image",
+      "conforms_to": [
+        "public.image"
+      ],
+      "mime_types": [
+        "image/x-xbitmap"
+      ],
+      "extensions": [
+        "xbm"
+      ]
+    },
+    {
+      "id": "com.apple.quicktime-image",
+      "name": "QuickTime Image",
+      "conforms_to": [
+        "public.image"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "qtif",
+        "qif"
+      ]
+    },
+    {
+      "id": "com.apple.icns",
+      "name": "macOS Icon Image",
+      "conforms_to": [
+        "public.image"
+      ],
+      "mime_types": [],
+      "extensions": [
+        "icns"
+      ]
+    }
+  ]
+}

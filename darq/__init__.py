@@ -13,7 +13,6 @@ import uuid
 
 from typing import Union
 
-from darq.services.type import TypeServiceAPI
 from darq.services.history import History
 
 from darq.runtime.object import ObjectIdentifier, ObjectProxy
@@ -38,9 +37,6 @@ from .system import *
 # FIXME: make service APIs dynamic, such that they self-construct on use
 
 _local_context_id: str = ''
-
-#_type_api: TypeServiceAPI = TypeServiceAPI.api()
-_type_api = None
 
 # Storage API.
 #storage: Storage = Storage.api()

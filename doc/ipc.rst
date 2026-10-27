@@ -60,6 +60,8 @@ messages are:
 * RegisterNameResponse
 * LookupNameRequest
 * LookupNameResponse
+* NotifyOnDeathRequest
+* NotifyOnDeathResponse
 
 A process can hold zero or more _ports_, which act as the source and
 destination of messages (see Ports, below).  `OpenPortRequest` requests
@@ -124,7 +126,8 @@ The p-kernel keeps:
 * A table of live ports, each a `KernelPortState`: an internal
   identifier (used only for logging, never sent to processes), the
   process holding its receive right, whether it's alive, and its
-  registered name, if any.
+  registered name, if any, and the processes to notify when it's
+  destroyed, with their notify ports.
 * For each process (its `KernelProcessState`), a handle table mapping
   each handle to its port and right (RECEIVE or SEND), the reverse
   mapping from port to handle, and the next handle number.
@@ -209,8 +212,36 @@ Port Lifetimes
 * Other processes' handles to a destroyed port remain until they're
   closed, as *dead* handles: sending to one fails.
 
-Notification of a port's death to the holders of send rights (so a
-client can notice its service has gone) is a future addition.
+Dead Port Notifications
+~~~~~~~~~~~~~~~~~~~~~~~
+
+A process can ask to be told when a port it holds a handle for is
+destroyed, with `darq.notify_on_death(handle, notify_port)`:
+
+* The notify port must be one of the caller's receive rights.  When
+  the port is destroyed, the p-kernel delivers a notification to it:
+  a `darq.dipc.PortDestroyed` message, from source handle 0, with txid
+  0, the header's NOTIFICATION flag set, method 1 (PORT_DESTROYED),
+  and a body of the caller's (now dead) handle, as a uint64.
+* No process can send from handle 0, so a message from it is always
+  from the p-kernel.
+* If the port is already dead, the notification is queued before the
+  call returns.
+* Each notification is sent once.  Asking again for the same notify
+  port changes nothing; asking for another one adds a notification
+  there too.
+* Closing the watched handle cancels its notifications, as does
+  closing the notify port, or the caller finishing.
+* A process' ports are destroyed when it finishes, so watching a port
+  also notices its owner crashing.
+
+The p-call fails with `NonExistentPortError` if the handle isn't open,
+and `PortRightError` if the notify port isn't a receive right.
+
+Clients use this to notice a service dying mid-call (see Requests and
+Responses), and services to notice the processes they depend on
+dying: a `Handler`'s `port_destroyed(handle)` method is called for a
+notification on its port.
 
 Name Registry
 ~~~~~~~~~~~~~
@@ -248,13 +279,38 @@ API.
 
 For 1ed, the registry is a table inside the p-kernel, reached by
 p-calls.  The alternative is a separate name service process, as in
-Mach (and macOS' launchd), reached through a *bootstrap port* given
-to every process when it's spawned.  That needs spawning with initial
-handles, and the registry process' own authority to check
-registrations.  The `register_name` and `lookup_name` API would be the
-same either way, so the registry can move into a process later.
+Mach (and macOS' launchd), reached through every process' bootstrap
+port (see below).  That also needs the registry process' own
+authority to check registrations.  The `register_name` and
+`lookup_name` API would be the same either way, so the registry can
+move into a process later.
 
 This replaces the earlier scheme of well-known port numbers.
+
+Bootstrap Ports
+~~~~~~~~~~~~~~~
+
+A parent can give a new process a port, as it's spawned: its
+*bootstrap port*.  The two can talk over it before either knows
+anything else of the other.  The Type service, for instance, gives
+each type implementation it starts a port of its own, and the
+implementation sends its service port back over it, once it's ready.
+
+* `spawn_process(path, bootstrap=handle)` names the port: the caller
+  must hold a right to it, as for a transferred handle.  If it
+  doesn't, or the port is dead, the spawn fails at once, with
+  `SpawnResult.BAD_BOOTSTRAP` (raised as `SpawnError`), and nothing is
+  started.
+* When the new process runs, the p-kernel gives it a SEND right to the
+  port, and the handle in its `RunResponse`.  It's found with
+  `darq.get_bootstrap_port()`, which returns None if the parent named
+  none, or the port was destroyed before the process ran.
+* What the two say over the port is up to them: it's an ordinary
+  port.  A parent that opens a fresh port for each child knows that
+  messages on it come from that child (or from a process the child
+  gave it to).
+* Processes the p-kernel spawns at boot have no bootstrap port: they
+  use the name registry.
 
 
 Application Architecture
@@ -268,6 +324,14 @@ Receiving messages is more complicated.  The initial prototype releases
 will adopt a single-threaded event-loop structure, with the ability to
 poll for arriving messages, or to block control flow until one a
 message is delivered (or the request times out).
+
+The p-kernel delivers every process' messages, for all its ports, over
+its one p-call connection, and the runtime queues them by port.
+`receive_message(port)` takes the next message for one port;
+`receive_any(ports)`, or a `PortSet`, takes the next for any of
+several, in the order they were delivered across them.  Port sets are
+the process' own grouping: the p-kernel knows nothing of them, and
+ports can be added and removed at any time.
 
 Future releases might add better support for multiple threads, and/or
 adopt a coroutine-style asynchronous model.
@@ -298,20 +362,63 @@ snake case::
   coalesce), with the request's txid.  Anything else is a late reply
   to an abandoned call, and is dropped.
 * The client waits for the reply indefinitely, or for the Client's
-  `timeout`, raising `TimeoutError`.  Until there are dead-port
-  notifications, a timeout is the only way to notice a service that
-  died after receiving the request.
+  `timeout`, raising `TimeoutError`.
+* Before a thread first calls a service handle, it asks for a dead
+  port notification for it, on its reply port.  If the service's port
+  is destroyed before it replies (the service crashed, say), the call
+  raises `DeadPortError`, rather than waiting.  A reply sent before
+  the port died still arrives first, and is returned.  Notifications
+  for other services are dropped.
 * `darq.serve()` opens a port, registers its name, and then handles
   requests one at a time, in order of delivery, until the process is
   killed.  Each reply is sent to the request's source.
+* It does so with a `darq.Server`, which can answer requests on
+  several ports, each with its own Handler: a handler can add ports
+  (`self.server.add(port, handler)`) and remove them while it runs, and
+  schedule callbacks (`self.server.call_later(delay, callback)`).
+  Requests are handled in order of delivery across all its ports.
+* A Server is single-threaded: only the serving thread may use it, or
+  the Deferreds of its handlers.  Another thread can ask it to do
+  something by sending a message to one of its ports.  Timers run
+  between messages, so a handler that blocks (in `spawn_process`, for
+  instance) delays them.
+* A handler that can't answer yet *defers* the reply: it calls
+  `self.defer()`, keeps the `Deferred`, and returns it, so nothing is
+  sent.  Later, typically while handling a message on another port, or
+  in a timer, it answers with `deferred.reply(response)` or
+  `deferred.error(code, description)`, sent from the port the request
+  arrived on.  Each is answered exactly once; one that's never
+  answered is logged when it's discarded, and its client waits until
+  it times out.  If the handler raises an exception, or returns a
+  response, after deferring, that answers the request instead.
+  One-way messages can't be deferred.
+
+  `self.defer(timeout=seconds)` sets a deadline: if the request still
+  hasn't been answered then, the Server sends an error reply with code
+  `TIMEOUT` instead.  This needs the handler to have been added to a
+  Server.
+
+  This lets a service wait for something without blocking: for
+  example, the Type service defers an `Activate` until the
+  implementation it started reports, over its bootstrap port, that
+  it's ready::
+
+      def activate(self, request, source):
+          pending = self.defer(timeout=30)
+          bootstrap = darq.open_port()
+          self.server.add(bootstrap, Ready(self, request.type_id, bootstrap))
+          darq.spawn_process(path, bootstrap=bootstrap)
+          self.waiting[request.type_id].append(pending)
+          return pending
 * A request the service can't handle gets an *error reply*, in place
   of its response: the request's txid and method, with the header's
   ERROR flag set, and a body of a uint32 code and an opaque UTF-8
   description (`darq.dipc.ErrorReply`).  The codes are
   `UNKNOWN_METHOD`, `BAD_MESSAGE` (it can't be decoded),
-  `NOT_IMPLEMENTED` (the Handler doesn't override the method), and
+  `NOT_IMPLEMENTED` (the Handler doesn't override the method),
   `INTERNAL_ERROR` (the handler raised an exception, or returned the
-  wrong response).  The client raises it as `RemoteError`.  Failures a
+  wrong response), and `TIMEOUT` (a deferred request wasn't answered
+  by its deadline).  The client raises it as `RemoteError`.  Failures a
   protocol expects, such as "not found", belong in its response fields
   instead.
 * One-way messages are never answered, even with an error reply.

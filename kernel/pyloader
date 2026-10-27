@@ -34,6 +34,7 @@ import traceback
 
 import darq
 from darq import pcall as pk
+from darq import process
 
 
 class AppState(enum.Enum):
@@ -94,6 +95,10 @@ class PythonPProcess(darq.SocketListener):
         # Set once the RUN_RESPONSE has been handled.  Only accessed
         # from the I/O thread.
         self._run_decided: bool = False
+
+        # Handle for the bootstrap port, from the RUN_RESPONSE: a send
+        # right to the port the parent named, if it named one.
+        self.bootstrap_port: int | None = None
 
         # The application's result: (status, error), set when it finishes.
         self._app_result: tuple[int, str | None] | None = None
@@ -534,6 +539,11 @@ class PythonPProcess(darq.SocketListener):
             message.decode(message_buf)
             self.complete_syscall(message)
 
+        elif message_type == pk.MessageType.NOTIFY_ON_DEATH_RESP:
+            message = pk.NotifyOnDeathResponse()
+            message.decode(message_buf)
+            self.complete_syscall(message)
+
         elif message_type == pk.MessageType.REGISTER_NAME_RESP:
             message = pk.RegisterNameResponse()
             message.decode(message_buf)
@@ -604,6 +614,9 @@ class PythonPProcess(darq.SocketListener):
             self._end_app()
             return
 
+        # Before the application starts, so it can find it at once.
+        self.bootstrap_port = message.bootstrap or None
+
         # Release the main thread to run the application.
         self._app_start.set()
         return
@@ -623,7 +636,7 @@ class PythonPProcess(darq.SocketListener):
             if port is None:
                 self.post_to_app(lambda: listener.on_error(0, 0, "Bad port"))
             else:
-                self.post_to_app(lambda: listener.on_message(source, destination, payload))
+                self.post_to_app(lambda: listener.on_message(source, destination, payload, handles))
             return
 
         if port is None:
@@ -642,6 +655,24 @@ class PythonPProcess(darq.SocketListener):
         if port_state is None:
             raise darq.NonExistentPortError(port)
         return port_state.receive(blocking, timeout)
+
+    def receive_any(self, ports: tuple[int, ...], blocking: bool,
+                    timeout: float | None) -> tuple[int, int, bytes, tuple[int, ...]] | None:
+        """Receive a message delivered to any of several ports: see
+        darq.receive_any().
+
+        Called on the application's thread."""
+        port_states = []
+        for port in ports:
+            port_state = self.ports.get(port)
+            if port_state is None:
+                raise darq.NonExistentPortError(port)
+            port_states.append(port_state)
+        received = process.receive_any(port_states, blocking, timeout)
+        if received is None:
+            return None
+        port_state, (source, payload, handles) = received
+        return port_state.port_id, source, payload, handles
 
 
     def handle_open_port_response(self, message: pk.OpenPortResponse):
