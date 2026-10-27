@@ -4,7 +4,7 @@
 
 - Test out installation of Wayland, and Python Qt support for Wayland,
   on either a Debian 13 VM or a hardware MiniPC
-  - Test out Wayfire compositor
+  - Test out miniwl compositor
     - Does it do window decoration or controls that we don't want?
     - Will need to (temporarily) install a few apps to test this
     - How can we programmatically control it?
@@ -16,8 +16,6 @@
   - Can we extend the Terminal service to do a useful login (password only)
     screen that blocks access to the machine until it's happy?
   - Does a simple `cefpython3` application work?
-- Redo Wayland tests on Pinephone
-  - Just as a quick sanity check that this is a viable prototyping platform
 - Implement and test the three different interaction modes for the API:
   sync, async, and callback
   - Synchronous
@@ -29,32 +27,6 @@
     - Test with Qt event loop
   - Asynchronous
     - Using asyncio
-- Refactor IPC mechanism
-  - Use IDL and stub generator to get interfaces without heaps of work,
-    replacing JSON blobs as currently used.
-- Implement/update Storage service
-  - Missing features, before services like History can keep an SQLite
-    database in Storage (via an SQLite VFS) rather than the run dir:
-    - Ranged Read and Write (methods 6 and 7 are reserved), so a page
-      write doesn't rewrite the whole blob.
-    - Truncate, or a ranged Write that sets the length.
-    - Blobs found by a name the caller chooses, or a directory blob
-      mapping names to keys: SQLite opens its files (db, -wal,
-      -journal) by name.
-    - A durability guarantee: a Put is on disk once it's answered, so
-      it can serve as SQLite's sync barrier.
-    - Maybe an atomic multi-blob Put, so the VFS can offer
-      SQLITE_IOCAP_BATCH_ATOMIC and SQLite needs no journal.
-    - Python's sqlite3 can't register a VFS: it needs C, or apsw.
-- Implement/update History service
-  - Done: services/history, on the History protocol
-    (lib/didl/history.didl), started at boot (see doc/history.rst).
-  - Remaining:
-    - Coalesce old events by hour, then by day: a daily task.
-    - Filter by type conformance, not just exact type identifiers.
-    - A query for recently used items, each once, for the Terminal's
-      selector.
-    - Tell clients of new events, for the Events HUD.
 - Implement/update Index service
 - Implement/update Metadata service
 - Implement Factory (New/Do) HUD

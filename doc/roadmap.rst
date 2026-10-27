@@ -85,17 +85,19 @@ System
 
 * Host OS
 
-  * Debian?
-  * NetBSD?
+  * Debian (13, as of late 2026)
+  * There's not really any point going for a more minimalist OS
+    for early editions: all it does it create hardware compatibility
+    issues.
 
 * IPC
 
   * API in Python runtime module
   * Use a single central message broker process to provide the shared
     "kernel" state.
-  * API: maybe call() / serve()?
+  * API: call() / serve()
 
-    * Perhaps with send, recv, listen, etc, underneath?
+    * With send, recv, listen, etc, underneath?
 
   * Implementation should focus entirely on dev simplicity for now
 
@@ -109,7 +111,13 @@ System
 
   * Do we need object/service activation?
 
-    * And if so, what's a good option?
+    * I don't think so, at least for early editions.
+    * There might be some point later in having names or ports active
+      in the kernel, but the serving process deactivated.
+
+      * The port (with queued message that caused the activation) can
+        be passed to the application after startup.
+      * Seems like a very long-term problem, if at all.
 
 * A collection of cooperating processes
 
@@ -123,13 +131,13 @@ System
     * Modify / write a Wayland compositor to remove cruft, but provide
       basic window management.
 
-      * Can we use Wayfire?
+      * Based on the tinywl example code.
+      * Has to support the layer-shell extension.
 
-    * The Terminal service might need to interact with the compositor
+    * The Terminal service will start and interact with the compositor
       to manage the UI
 
-  * Use PyQt5 (and/or PyQt6) as base toolkit, to avoid rewriting all
-    that
+  * Use PyQt6 as base toolkit, to avoid rewriting all that
 
     * Avoids getting bogged down widget libraries, etc.
 
@@ -149,8 +157,7 @@ System
 
   * Storage backed by sqlite and Unix FS
   * Network shared with host OS
-  * Disable any host GUI, other than Wayland itself, and some
-    compositor (perhaps built with Qt, if necessary)
+  * Disable any host GUI: the Terminal will run its own
 
 Services
 
@@ -160,9 +167,9 @@ Services
 
 * Metadata
 
-  * Two level key
+  * Two-level key?
 
-    * ObjectID / item_key
+    * item_id / item_key
 
   * Typed data
 
@@ -195,23 +202,26 @@ Services
 
 * Type
 
-  * Registry
+  * Catalogue of type identifiers and descriptions
+  * In-memory registry of type implementations
+  * In-memory registry of type lenses
 
 * Terminal
 
   * Puts windows onto screen
-  * Delivers keystrokes and mouse movements to views
+  * Delivers keystrokes and mouse movements to window applications
   * Handles login/logout, locking, and reboot/shutdown
   * Like X11, does window decorations (if any?)
     
   * Compositor
 
     * Basically, a window manager
-    * Maybe Wayfire-based?
+    * Based on miniwl / wlroots
 
   * Keyboard
 
-    * via Qt
+    * via Qt?
+    * What about global shortcuts?  miniwl?
 
   * Mouse, trackpad, etc.
 
@@ -237,13 +247,19 @@ Services
     * Universal inbox
     * History timeline
 
-  * Clock
+  * Clock / calendar
+
+    * Some way of showing the time & date
+    * Almost certainly not a status bar
+
   * REPL
 
 Runtime
 
-* Object loader
-* Some sort of abstraction for access to the GUI?
+* Python application loader
+* Library for access to
+  * System calls
+  * Application framework
 
 Types
 
@@ -251,22 +267,16 @@ Types
 
   * Installation operation
 
+    * Implementation stored on disc
     * Register with type service
-    * Implementation stored in storage service
-    * Installed as part of "root filesystem" during build?
-
-      * ie. pre-installed into storage service database?
-
-    * How about subsequent updates and new types?
-
-      * Check or register all type implementations during bootstrap?
+    * Check registration during boot
 
 * Text
 
   * CRUD
   * UTF8
   * Decent fixed-width font
-  * Basically just using PyQt5's text widget
+  * Basically just using PyQt6's text widget
   * No BiDi or vertical support
   * The tricky stuff here will be the distinction between the type and
     the view(er).
