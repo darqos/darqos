@@ -42,9 +42,10 @@ specifier constraints are:
       specifier, so it fits in 1024 bytes with a terminating U+0000
 
 The ``darq`` module provides functions to check and canonicalize
-identifiers, and to serialize URLs: ``canonical_type_id()``,
+item identifiers, and to serialize URLs: ``is_valid_item_id()``,
 ``canonical_item_id()``, ``split_item_id()``, ``make_item_id()``, and
-``serialize_url()``.
+``serialize_url()``.  The functions for type identifiers are described
+in :doc:`types`.
 
 The type of the object determines its functionality.  Type
 implementations are installed in the system, and enable the use of

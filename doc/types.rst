@@ -41,6 +41,12 @@ A type identifier is
     any terminating U+0000)
   * Typically have a dotted string format, eg. "public.item"
 
+The ``darq`` module provides functions to check type identifiers, and
+to convert them to their canonical, NFKC_Casefold form:
+``is_valid_type_id()`` and ``canonical_type_id()``.  Programs should
+canonicalize a type identifier before storing or comparing it.  The
+functions for item identifiers are described in :doc:`item`.
+
 The set of basic types described by Apple's Uniform Type Identifier system
 is used as the basis for DarqOS types.  That set is described in Apple's
 `System-Declared Uniform Type Identifiers <https://developer.apple.com/library/archive/documentation/Miscellaneous/Reference/UTIRef/Articles/System-DeclaredUniformTypeIdentifiers.html#//apple_ref/doc/uid/TP40009259-SW1>`_ document.
