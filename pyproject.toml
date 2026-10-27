@@ -32,6 +32,7 @@ include = [
     "bin/didlpygen",
     "services/storage/main.py",
     "services/type/main.py",
+    "types/text/main.py",
     "tools/type-sync/main.py",
 ]
 line-length = 120
@@ -62,6 +63,7 @@ include = [
     "bin/didlpygen",
     "services/storage/main.py",
     "services/type/main.py",
+    "types/text/main.py",
     "tools/type-sync/main.py",
     "tests",
 ]

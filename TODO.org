@@ -40,10 +40,16 @@
 - Implement Search HUD
 - Implement History/Events HUD
 - Implement Text type
-  - Use storage service underneath
+  - Done: types/text, on the Text protocol (lib/didl/text.didl), kept
+    in Storage, with autosave (see doc/text.rst).
+  - Remaining:
+    - Tell clients of others' changes, rather than leaving them to
+      find out from a CONFLICT.
+    - Save before exit when killed: up to 2 seconds of changes are
+      lost now.
+    - Exit when no items are open, to be started again on Activate.
+    - Update the Index service, and record History, when it changes.
   - No need for file import/export in 1ed
-  - Basic viewing and editing API
-    - This isn't emacs, but it should like & feel like it
   - Don't bother yet with CRDT for concurrent editing
   - Think about granularity of history events
     - We could save every API call

@@ -129,16 +129,6 @@ def get_exception(error_code:int) -> DarqError:
 
 
 
-class ObjectIdentifierIllegalCodepointError(Exception):
-    """Identifier string contains an illegal codepoint."""
-    pass
-
-
-class ObjectNotFoundError(Exception):
-    """Identified object not found."""
-    pass
-
-
 class LocalPortNumberDoesNotExistError(Exception):
     """Specified port number doesn't exist."""
     pass

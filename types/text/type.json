@@ -1,0 +1,13 @@
+{
+  "types": [
+    {
+      "id": "public.utf8-plain-text",
+      "name": "UTF-8 Text",
+      "description": "Plain text, in UTF-8.",
+      "conforms_to": ["public.plain-text"],
+      "mime_types": ["text/plain;charset=utf-8"],
+      "extensions": [],
+      "implemented": true
+    }
+  ]
+}

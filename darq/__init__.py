@@ -15,7 +15,6 @@ from typing import Union
 
 from darq.services.history import History
 
-from darq.runtime.object import ObjectIdentifier, ObjectProxy
 from darq.runtime.service import Service
 from darq.runtime.service import ServiceAPI
 from darq.runtime.tool import Tool

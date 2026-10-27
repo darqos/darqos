@@ -1,0 +1,43 @@
+// darqos
+// Copyright (C) 2026 David Arnold
+//
+// Text item protocol: see doc/text.rst.
+//
+// Positions and lengths count Unicode code points, not bytes or
+// user-perceived characters (grapheme clusters): where a cursor may
+// stop is up to the lens.
+
+library darq.text;
+
+enum Status : uint32 {
+    OK = 0;
+
+    // A position is past the end of the text, or a range ends before
+    // it starts.
+    OUT_OF_RANGE = 1;
+
+    // The text's version isn't the one expected.
+    CONFLICT = 2;
+}
+
+// The item port of a public.utf8-plain-text item, returned by its
+// implementation's Create and Open (see lib/didl/type.didl).
+//
+// Each change gives the text a new version, which a client can use to
+// notice changes made by others.  Versions count from 1 while the item
+// is open, so they mean nothing once it's closed.
+protocol Text {
+    // As Item.Close: the port is closed once it's answered.  The text
+    // is saved when its last client closes it.
+    1: Close() -> ();
+
+    16: Get() -> (string text, uint64 version);
+
+    // Replace the text from start to end (start <= end) with another
+    // string: empty to delete, or start equal to end to insert.  The
+    // change is made only if the text's version is the expected one,
+    // or expected is 0.
+    17: Replace(uint64 start, uint64 end, string text, uint64 expected) -> (uint64 version, Status status);
+
+    18: Stat() -> (uint64 length, uint64 version);
+}
