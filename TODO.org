@@ -86,13 +86,18 @@
   Ports can already be served on a loop (set_port_listener,
   Server.attach).
 - Implement GUI Text lens
-  - Record History events (created, opened, edited), with source
-    "lens": type implementations don't record them.
-  - Do we want to separate viewing and editing modes?  Some sort of
-    confirmation before starting to change it?
-  - Not sure how to keep backend and widget in sync
-  - Emacs keybinds: C-f, C-b, M-f, M-b, C-d, C-a, C-e, C-k, C-t, M-d, etc
-  - Use this to start figuring out strategy for help: document it well
+  - Done: lenses/text, started for an item with the Lens protocol
+    (lib/didl/lens.didl) by darq.launch.use_item; a change is sent as
+    a Replace as it's made; Emacs keys; read-only toggle; F1 help;
+    records opened and edited, source "text-lens" (see doc/text.rst).
+  - Remaining:
+    - Try it on a real display: nothing can start it until the Terminal
+      runs (it's only been run offscreen).
+    - Kill ring, consecutive kills appending, C-t, paragraph movement.
+    - The Terminal (or factory) records "created", source "terminal".
+    - Save cursor and window position in Metadata.
+    - Use this to start figuring out strategy for help: a usage
+      document, launched from the cheatsheet.
   - Don't implement printing support yet
 - Package
   - tarball

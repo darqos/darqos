@@ -345,6 +345,22 @@ conform to, and so on, returning the nearest that have any.  So a
 lens, and so on.  Types that are equally near, such as `public.text`'s
 `public.data` and `public.content`, are searched together.
 
+A lens is started for one item, with the protocols in
+`lib/didl/lens.didl`:
+
+* The Terminal spawns the lens's directory, with a bootstrap port, and
+  the lens reports `Ready(lens)` there, with its own port.
+* The Terminal sends `Use(item_id, item)`, with a port for the item
+  from its implementation's `Create` or `Open`.  The lens takes over
+  the item port, and closes the item when it's finished with it.  A
+  lens uses one item: another `Use` is refused, `BUSY`.
+* The lens exits once its window is closed, or it's sent `Close`.
+
+`darq.launch.use_item()` does all of this, from finding the lens to
+sending `Use`.  A process per item is simple, and isolates items, but
+each starts its own Qt: a lens could later serve several items from
+one process instead, without changing the protocol.
+
 References
 ==========
 

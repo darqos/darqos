@@ -148,3 +148,55 @@ Text Lens
   * The downside of this is that the emacs-style editing operations
     are not available for scripting.
 
+
+Implementation
+~~~~~~~~~~~~~~
+
+The lens, `lenses/text`, is registered for `public.utf8-plain-text` in
+the `terminal` context by its `lens.json`.  It's started for one item
+(see Lenses, in :doc:`types`): it reports `Ready` on its bootstrap
+port, is asked to `Use` the item, with the item's port, and exits when
+its window is closed, or it's asked to `Close`.
+
+* The window is frameless, with a 50 pixel margin: dragging the margin
+  moves it (the compositor does the move), and its context menu has
+  Full screen, Read only, Help, and Close.  A status line under the
+  text says why it's read only, and the like.
+* Its widget is a `QPlainTextEdit`.  Each change is sent to the item
+  as it's made, as one `Replace` of the part that differs from the
+  item's text, which the lens keeps a copy of, so positions are in
+  code points, as the Text protocol counts.  The lens holds nothing
+  unsaved: the implementation saves the text.
+* If another client has changed the text, the `Replace` is refused
+  with `CONFLICT`: the lens reloads the text, keeping the cursor near
+  where it was, and says so.  If the item stops answering, the lens
+  becomes read only.
+* Text that Qt can't hold exactly, such as a U+2029 paragraph
+  separator, is shown read only, so editing can't change what isn't
+  shown.
+* It records `opened` when it starts using the item, and `edited` for
+  each change, with source `text-lens` (see :doc:`history`): the
+  service counts repeats.
+* Keys follow Emacs, with Alt as Meta: C-f, C-b, C-n, C-p, C-a, C-e,
+  M-f, M-b, M-<, M->, C-v, M-v to move; C-d, M-d and C-k to delete and
+  kill; C-SPC to set the mark, C-g to cancel it, C-w and M-w to kill
+  and copy the region, C-y to yank; C-/ to undo; C-x C-q to toggle read
+  only, C-x C-c to close; F1 for help, F11 for full screen.  The kill
+  buffer is the clipboard.
+
+`darq.launch` has what the Terminal needs to use items:
+`create_item(type_id)`, `open_item(item_id)`, `find_lens(type_id)`,
+`start_lens(path)`, and `use_item(item_id, item)`, which does the rest.
+
+Not yet:
+
+* A kill ring, and consecutive kills appending to the last.
+* Paragraph movement, and a subtle scrollbar.
+* A rectangular, graphical selection, and copying the item identifier.
+* A usage document, from the help.
+* Saving the cursor and window position, in the Metadata service.
+* Telling the lens of others' changes as they're made, rather than at
+  its next change.
+* Each keystroke is a synchronous `Replace`, so a slow item stalls
+  typing.  Async clients would let the lens send changes without
+  waiting.

@@ -312,18 +312,12 @@ def test_post_stops_running_loop(loop):
 ################################################################
 
 @pytest.fixture
-def qt_loop():
-    from PyQt6.QtCore import QCoreApplication
+def qt_loop(qt_app):
     from darq.loop import QtEventLoop
 
-    # Keep the application referenced while the loop is used: Qt can't
-    # deliver events once it's gone.
-    app = QCoreApplication.instance() or QCoreApplication([])
-    assert app is not None
     loop = QtEventLoop()
     yield loop
     loop.close()
-    del app
 
 
 def run_qt(loop, seconds: float = 2.0):

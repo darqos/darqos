@@ -1,0 +1,39 @@
+// darqos
+// Copyright (C) 2026 David Arnold
+//
+// Lens protocols: see doc/types.rst.
+//
+// A lens is started for one item: whoever wants the item used (the
+// Terminal, say) spawns the lens, with a bootstrap port it reports
+// Ready on, and then asks it to Use the item, giving it a port for the
+// item from its type implementation's Create or Open.  The lens closes
+// the item, and exits, when it's finished with it.
+
+library darq.lens;
+
+enum Status : uint32 {
+    OK = 0;
+
+    // The lens is already using an item.
+    BUSY = 1;
+
+    // The item can't be used: its port doesn't answer, say.
+    FAILED = 2;
+}
+
+// Spoken by a newly-started lens on its bootstrap port (see
+// darq.get_bootstrap_port), to give its starter its port.
+protocol Bootstrap {
+    1: Ready(port lens);
+}
+
+// Served by every lens, on the port it reports Ready with.
+protocol Lens {
+    // Use an item.  The lens takes over the item port: it closes the
+    // item (see Item.Close, in lib/didl/type.didl) when it's finished
+    // with it.
+    1: Use(string item_id, port item) -> (Status status);
+
+    // Stop using the item, closing it, and exit.  One-way.
+    2: Close();
+}

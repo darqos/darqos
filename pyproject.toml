@@ -33,6 +33,7 @@ include = [
     "services/history/main.py",
     "services/storage/main.py",
     "services/type/main.py",
+    "lenses/text/main.py",
     "types/text/main.py",
     "tools/type-sync/main.py",
 ]
@@ -65,6 +66,7 @@ include = [
     "services/history/main.py",
     "services/storage/main.py",
     "services/type/main.py",
+    "lenses/text/main.py",
     "types/text/main.py",
     "tools/type-sync/main.py",
     "tests",

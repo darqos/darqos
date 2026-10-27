@@ -121,6 +121,11 @@ class PortAlreadyNamedError(DarqError):
     pass
 
 
+class LaunchError(DarqError):
+    """An item couldn't be created or opened, or a lens started for it."""
+    pass
+
+
 # FIXME
 EXCEPTION_MAP: dict[int, DarqError] = {}
 
