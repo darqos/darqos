@@ -16,18 +16,27 @@ Type Identifiers
 ----------------
 
 A *type identifier* is a globally-unique, string identifier for a *type*
-concept.  Type identifiers are derived from IETF MIME types, and Apple's
+concept.  Type identifiers are derived from IETF MIME types and Apple's
 Uniform Type Identifiers, but do not conform to either of those
 specifications directly.
 
 A type identifier is
 
   * A UTF-8 string
-  * May contain ASCII characters A-Za-z0-9, hyphen, dot, and any
-    Unicode codepoint over U+007f.
-    * Of note, that means it cannot contain a colon or a forward-slash.
-  * Must be less than 128 characters in length
+  * Normalized using Unicode NFKC normalization
+  * The first character must be from the set:
+
+    * Unicode UAX#31 core property XID_Start
+  * Subsequent characters must from from the set:
+
+    * Unicode UAX#31 core property XID_Continue
+    * U+002D (hyphen)
+    * U+002E (period)
+    * U+002F (forward slash)
+    * U+003A (colon)
+  * Less than 128 bytes in length (NOT including any terminating U+0000)
   * Typically have a dotted string format, eg. "public.item"
+  * Is case-insensitive, but canonically, all lower-case
 
 The set of basic types described by Apple's Uniform Type Identifier system
 is used as the basis for DarqOS types.  That set is described in Apple's
@@ -102,8 +111,8 @@ An instance of a Type is called an *Item*.  Type Implementations
 manage a collection of Items, and expose them to programs, and (via
 Lenses) to operators.
 
-An Item Identifier consists of a Type Identifier, a colon, and a
-type-specific identifier for the specific Item, like
+An Item Identifier  (aka *iid*) consists of a Type Identifier, a
+colon, and a type-specific identifier for the specific Item, like
 
   `net.daringfireball.markdown:c5f1ad2a-ea33-4248-b116-9c363cbade66`
 

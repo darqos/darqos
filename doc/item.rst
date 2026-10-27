@@ -9,7 +9,31 @@ are also used to represent real-world items, like people or places.
 
 Items are identified using an *Item Identifier* (aka *iid*).
 An item identifier is a string, with two parts: a type name and an
-identifier, separated by a colon character.
+identifier specifier, separated by a colon character.
+
+The type identifier is defined in `Types <types.rst>`_.  The item
+specifier constraints are:
+
+  * A UTF-8 string
+  * Normalized using Unicode NFKC normalization
+  * The first character must be from the set:
+
+    * Unicode UAX#31 core property XID_Start
+    * U+002E (period)
+    * U+002F (forward slash)
+    * U+005F (underscore)
+  * Subsequent characters must from from the set:
+
+    * Unicode UAX#31 core property XID_Continue
+    * U+002E (period)
+    * U+002F (forward slash)
+    * U+003A (colon)
+    * Underscore is already permitted in XID_Continue
+  * Less than 128 bytes in length (NOT including any terminating U+0000)
+
+    * Thus making the entire *iid* a maximum of 255 bytes
+  * Typically have a dotted string format, eg. "public.item"
+  * Is case-insensitive, but canonically, all lower-case
 
 The type of the object determines its functionality.  Type
 implementations are installed in the system, and enable the use of
@@ -34,7 +58,7 @@ Content type.
 For more information on UTIs, see `Types <types.rst>`_.
 
 Item Metadata
----------------
+-------------
 
 The `Metadata Service <metadata.md`_ can be used to store additional
 information about items.  This includes things like a canonical,
