@@ -2,28 +2,133 @@ Document Type
 =============
 
 There are really multiple types of document I'd like to deal with, and I
-think they're actually different types:
+think they're likely different types:
 
 * Plain text
-* Rich media notes
-* Word processor / desktop publishing documents
+* Markdown / CommonMark / GFMD
+* ReStructured Text
+* AsciiDoc
+* org-mode
+* roff
+* TeX / LaTeX
+* RTF
+* Microsoft Word 97 / XML
+* ODF
+* Postscript
+* PDF
 
-The exact boundaries between these types are a little fuzzy.  It's
-possible that there ends up being only two actual file formats, but
-that the Lens of choice might vary.
+There's probably some more that I've forgotten.
 
-Plain Text
-----------
+This ignores eBook formats, which tend to be books rather than
+documents.  And it ignores HTML, because while it's sometimes just a
+document, it's often a lot more.
 
-* UTF-8 format seems like the best thing for this, but ...
+There's one key difference in these formats: some of them are WYSIWYG,
+and some are not.  In other words, some have a building process, and
+sources that are transformed into the final rendered item.  Others are
+just rendered as is.  In some cases, like roff, they can be both.
+Where the source format is visually different to the output, an
+edit/render split is required.  Often, for built documents, more than
+one component is required to generate the output.
 
-  * That might imply bidirectional text support, and possibly
-    top-down support too, which is a bit of an extension over the
-    traditional ASCII-only text doc.
-  * I think the key factor here is that the content must be able to
-    be rendered using a single, standard font face.  So no bold,
-    italic, underlines, strike-through, larger or smaller sizes,
-    etc.
+Rendering
+---------
+
+In a demonstration of pointless perfectionism, I'd *like* the document
+lens to correctly render and edit LTR, RTL, bidi, and vertical layout
+documents.  Chinese, Japanese, and Korean can be written vertically,
+then RTL.  Mongolian must be written vertically, and then LTR.  When
+looking at a plain text UTF-8 document, it's possible to guess with
+some accuracy which should be used (although an override for
+horizontal layout is probably necessary).
+
+In investigating paths to implementation, the following summary was
+developed:
+
+* Pango/Cairo is capable of doing LTR, RTL, and vertical layout, but
+  does not lend itself to editing: it just does layout to a pixmap.
+* GtkTextView and QtTextView both support LTR, RTL, and bidi Unicode
+  text.  Neither of them support vertical text.
+* Abiword's layout does not support vertical text
+* LibreOffice Writer's layout *does* support all directions, but it's
+  a monster to integrate
+* CEF and WebKit (and I assume FireFox) support all directions.
+
+In short, the only reasonable way to display and edit any directional
+text is to embed a web browser.  This is a big dependency, with
+significant security and storage & memory use issues.
+
+WYSIWYG
+-------
+
+WYSIWYG formats can be edited in place, and have no need to treat the
+source document separately.  The Lens can be a single paned window,
+but there's substantial complexity in such a Lens, and it probably
+makes no sense to use anything but LibreOffice for Word/ODF, for
+example.  The only other WYSIWYG format is, ironically, plain text.
+
+* Word97, OOXML, and ODF should all use LibreOffice Writer, possibly
+  reskinned.  There's no point trying to do a web-based editor for
+  such a large amount of functionality when Writer exists.
+* Plain text should use WebKit or CEF, in order to get text direction
+  support.
+
+  * This will need some thinking about.  In early editions, the
+    QtTextArea is almost certainly sufficient.
+    
+Single-source Rendered
+----------------------
+
+These documents have a singe source but the rendered output is quite
+visually distinct.  I *think* the best thing here is a two-pane
+window, source on left, and rendered view on the right.  The rendered
+window is scroll-locked with the source, but cannot be altered.
+Clicking on the rendered view warps the cursor to the matching
+location in the source.  A view toggle (source-only, source &
+rendered, rendered-only) might be nice.
+
+Example of this class of document include Markdown, most ReST, and RTF.
+
+Multi-source Rendered
+---------------------
+
+These documents have multiple source components that are transformed
+into the output format.  This might include things like images,
+biblographies, styles, or multi-part sources.
+
+Often there are one or more tools required to create the output
+format: ``make``, ``sphinx``, ``latex``, etc.  This build process is
+likely to be quite complex, and to rely on a toolchain and a
+traditional filesystem structure to manage the elements that comprise
+the ultimate document.
+
+I don't know how best to manage the toolchains here, but the document
+sources should probably use a Project Type.  It might make sense to
+extend the two-pane window to a third, left-size, tree-view panel of
+the project, and to load the various components into the now-middle
+pane for editing.  The right-most pane should be the rendered view.
+
+This will likely be quite complex, and should be deferred to a future
+edition.
+
+
+Read-only Documents
+-------------------
+
+I'm not sure this is a good category, but Postscript and PDF are
+largely "read only" documents.  And, at least in the short term,
+that's certainly sufficient.
+
+This class needs only a single pane window rendering the document.
+
+
+Native Document Formats
+=======================
+
+During some later editions, I'd like to add some native document
+formats that provide needed capabilities without the overhead and
+disfunction of existing solutions.
+
 
 Rich-media Notes
 ----------------
@@ -166,7 +271,3 @@ Word Processor / DTP
 
   * Style collections for multiple documents
 
-* Books
-
-  * Collections of individual documents
-  * Override of page numbers, style definitions, etc
