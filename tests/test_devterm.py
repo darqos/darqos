@@ -12,6 +12,7 @@ import time
 import pytest
 
 from darq.errors import LaunchError
+from darq.ui import history as ui_history
 from darq.protocols.history import Event, GetEventsResponse
 from darq.protocols.history import Status as HistoryStatus
 from darq.protocols.type import (
@@ -138,14 +139,14 @@ def terminal(qt_app):
     (" a,b  c ,, ", ["a", "b", "c"]),
 ])
 def test_parse_names(text, names):
-    assert devterm.parse_names(text) == names
+    assert ui_history.parse_names(text) == names
 
 
 def test_times(qt_app):
     from PyQt6.QtCore import QDateTime
     when = QDateTime.fromMSecsSinceEpoch(1_800_000_000_123)
-    assert devterm.to_micros(when) == 1_800_000_000_123_000
-    assert devterm.format_time(1_800_000_000_123_000) == when.toString("yyyy-MM-dd HH:mm:ss")
+    assert ui_history.to_micros(when) == 1_800_000_000_123_000
+    assert ui_history.format_time(1_800_000_000_123_000) == when.toString("yyyy-MM-dd HH:mm:ss")
 
 
 ################################################################
@@ -226,7 +227,7 @@ def test_search(terminal):
     tab = window.history
     tab.set_period(0)
     query = services.history.queries[-1]
-    assert (query["start"], query["end"], query["max"]) == (0, 0, devterm.PAGE)
+    assert (query["start"], query["end"], query["max"]) == (0, 0, ui_history.PAGE)
     assert tab.table.rowCount() == 3
     assert [tab.table.item(0, c).text() for c in range(1, 6)] == [
         TEXT, "0123456789abcdef0123456789abcdef", "edited", "text-lens", "1"]
@@ -246,8 +247,8 @@ def test_filters(terminal):
     assert query["type_ids"] == [TEXT]
     assert query["events"] == ["created", "opened"]
     assert query["sources"] == ["text-lens"]
-    assert query["end"] == devterm.to_micros(tab.end.dateTime()) != 0
-    assert query["start"] == devterm.to_micros(tab.start.dateTime())
+    assert query["end"] == ui_history.to_micros(tab.end.dateTime()) != 0
+    assert query["start"] == ui_history.to_micros(tab.start.dateTime())
 
 
 def test_invalid_filter(terminal):
@@ -258,7 +259,7 @@ def test_invalid_filter(terminal):
 
 
 def test_paging(terminal, monkeypatch):
-    monkeypatch.setattr(devterm, "PAGE", 2)
+    monkeypatch.setattr(ui_history, "PAGE", 2)
     window, services = terminal()
     services.history.events = events(5)
     tab = window.history
@@ -316,3 +317,20 @@ def test_devterm_at_boot(live_pkernel, monkeypatch):  # noqa: F811
     kernel.begin_shutdown(reboot=False)
     zombie = kernel.module.KernelProcessStatus.ZOMBIE
     run_kernel_until(kernel, lambda: process.get_status() == zombie, "the devterm to exit")
+
+
+################################################################
+# Waiting for the Terminal's display
+################################################################
+
+def test_wait_for_display(tmp_path, monkeypatch):
+    from darq.ui import wait_for_display
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+
+    # Only the compositor's display is waited for.
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+    assert wait_for_display(0)
+    monkeypatch.setenv("WAYLAND_DISPLAY", "darq-0")
+    assert not wait_for_display(0.2)
+    (tmp_path / "darq-0").touch()
+    assert wait_for_display(0)

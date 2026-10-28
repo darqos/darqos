@@ -469,6 +469,32 @@ def test_hotkeys(compositor):
     assert compositor.process.poll() is None
 
 
+def test_nested_keyboard(compositor):
+    # Nested in another compositor, as on the desktop, wlroots' Wayland
+    # backend doesn't update the keyboard's state from its keys: the host
+    # sends its modifiers, in its own keymap, where Left Control is
+    # Control.  The compositor's keymap still applies.
+    unlocked(compositor)
+    compositor.channel.send(BindHotkey(keysym=XK_n, modifiers=0))
+    settle()
+    move(compositor, OUTPUT[0] // 2, OUTPUT[1] // 2)
+    app = client(compositor, "app")
+    assert isinstance(receive(compositor), WindowAdded)
+    assert isinstance(receive(compositor), WindowFocused)
+    app.expect("active 1")
+
+    test_input(compositor, f"hostkey {KEY_LEFTCTRL} 1", "hostmods 4 0 0",
+               f"hostkey {KEY_N} 1", f"hostkey {KEY_N} 0",
+               f"hostkey {KEY_LEFTCTRL} 0", "hostmods 0 0 0")
+    assert receive(compositor) == HotkeyPressed(keysym=XK_n, modifiers=0)
+    assert receive(compositor) == SystemReleased()
+
+    # And the host's modifiers aren't the client's: Control, here.
+    test_input(compositor, "hostmods 4 0 0", f"hostkey {KEY_A} 1", f"hostkey {KEY_A} 0")
+    app.expect("key a")
+    assert not [line for line in app.printed() if line.startswith("key")]
+
+
 def test_windows(compositor):
     unlocked(compositor)
 

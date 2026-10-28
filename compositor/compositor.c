@@ -26,7 +26,10 @@
 // - A public socket, darq-0.
 // - A test keyboard and pointer (-k), driven by lines on stdin, for
 //   running headless: "key <evdev keycode> <1|0>", "move <x> <y>" (in
-//   layout coordinates) and "button <evdev button> <1|0>".
+//   layout coordinates) and "button <evdev button> <1|0>".  As nested in
+//   another compositor, "hostkey <evdev keycode> <1|0>" doesn't update
+//   the keyboard's state, and "hostmods <depressed> <latched> <locked>"
+//   sets it, in the host's keymap.
 // - A clean exit on SIGTERM and SIGINT, removing its socket.
 
 #include <assert.h>
@@ -246,6 +249,12 @@ struct tinywl_keyboard {
 	struct tinywl_server *server;
 	struct wlr_keyboard *wlr_keyboard;
 
+	/* Its state, in our keymap, from its keys alone.  The wlr_keyboard's
+	 * own isn't always: nested in another compositor, wlroots' Wayland
+	 * backend takes the modifiers from the host, in its keymap, where
+	 * Left Control is Control, not System. */
+	struct xkb_state *state;
+
 	struct wl_listener modifiers;
 	struct wl_listener key;
 	struct wl_listener destroy;
@@ -443,12 +452,35 @@ static void set_locked(struct tinywl_server *server, bool locked) {
 	process_cursor_motion(server, 0);
 }
 
+static bool sync_modifiers(struct tinywl_keyboard *keyboard) {
+	/* Make the wlr_keyboard's modifiers ours, if they aren't.  Returns
+	 * whether they've changed: then, its modifiers event has been
+	 * raised again, with ours. */
+	struct xkb_state *state = keyboard->state;
+	xkb_mod_mask_t depressed = xkb_state_serialize_mods(state, XKB_STATE_MODS_DEPRESSED);
+	xkb_mod_mask_t latched = xkb_state_serialize_mods(state, XKB_STATE_MODS_LATCHED);
+	xkb_mod_mask_t locked = xkb_state_serialize_mods(state, XKB_STATE_MODS_LOCKED);
+	xkb_layout_index_t group = xkb_state_serialize_layout(state, XKB_STATE_LAYOUT_EFFECTIVE);
+	struct wlr_keyboard_modifiers *current = &keyboard->wlr_keyboard->modifiers;
+	if (current->depressed == depressed && current->latched == latched &&
+			current->locked == locked && current->group == group) {
+		return false;
+	}
+	wlr_keyboard_notify_modifiers(keyboard->wlr_keyboard, depressed, latched, locked, group);
+	return true;
+}
+
 static void keyboard_handle_modifiers(
 		struct wl_listener *listener, void *data) {
 	/* This event is raised when a modifier key, such as shift or alt, is
 	 * pressed. We simply communicate this to the client. */
 	struct tinywl_keyboard *keyboard =
 		wl_container_of(listener, keyboard, modifiers);
+	/* Unless they're the host's, nested: they're replaced with ours,
+	 * which raises this event again. */
+	if (sync_modifiers(keyboard)) {
+		return;
+	}
 	/*
 	 * A seat can only have one keyboard, but this is a limitation of the
 	 * Wayland protocol - not wlroots. We assign all connected keyboards to the
@@ -626,7 +658,7 @@ static void keyboard_handle_key(
 	struct tinywl_server *server = keyboard->server;
 	struct wlr_keyboard_key_event *event = data;
 	struct wlr_seat *seat = server->seat;
-	struct xkb_state *state = keyboard->wlr_keyboard->xkb_state;
+	struct xkb_state *state = keyboard->state;
 
 	/* Translate libinput keycode -> xkbcommon */
 	uint32_t keycode = event->keycode + 8;
@@ -681,6 +713,9 @@ static void keyboard_handle_key(
 		wlr_seat_keyboard_notify_key(seat, event->time_msec,
 			event->keycode, event->state);
 	}
+
+	xkb_state_update_key(state, keycode, pressed ? XKB_KEY_DOWN : XKB_KEY_UP);
+	sync_modifiers(keyboard);
 }
 
 static void keyboard_handle_destroy(struct wl_listener *listener, void *data) {
@@ -694,6 +729,7 @@ static void keyboard_handle_destroy(struct wl_listener *listener, void *data) {
 	wl_list_remove(&keyboard->key.link);
 	wl_list_remove(&keyboard->destroy.link);
 	wl_list_remove(&keyboard->link);
+	xkb_state_unref(keyboard->state);
 	free(keyboard);
 }
 
@@ -727,6 +763,7 @@ static void server_new_keyboard(struct tinywl_server *server,
 	server->system_mask = 1u << mod3;
 
 	wlr_keyboard_set_keymap(wlr_keyboard, keymap);
+	keyboard->state = xkb_state_new(keymap);
 	xkb_keymap_unref(keymap);
 	xkb_context_unref(context);
 	wlr_keyboard_set_repeat_info(wlr_keyboard, 25, 600);
@@ -1543,16 +1580,19 @@ static uint32_t now_msec(void) {
 
 static void test_input(struct tinywl_server *server, const char *line) {
 	/* A line of test input: see the top of this file. */
-	unsigned int code, pressed;
+	unsigned int code, pressed, latched, locked;
 	double x, y;
-	if (sscanf(line, "key %u %u", &code, &pressed) == 2) {
+	bool host = strncmp(line, "host", 4) == 0;
+	if (sscanf(line, host ? "hostkey %u %u" : "key %u %u", &code, &pressed) == 2) {
 		struct wlr_keyboard_key_event event = {
 			.time_msec = now_msec(),
 			.keycode = code,
-			.update_state = true,
+			.update_state = !host,
 			.state = pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED,
 		};
 		wlr_keyboard_notify_key(&server->test_keyboard, &event);
+	} else if (sscanf(line, "hostmods %u %u %u", &code, &latched, &locked) == 3) {
+		wlr_keyboard_notify_modifiers(&server->test_keyboard, code, latched, locked, 0);
 	} else if (sscanf(line, "move %lf %lf", &x, &y) == 2) {
 		/* Absolute motion is from 0 to 1, across the layout. */
 		struct wlr_box box;

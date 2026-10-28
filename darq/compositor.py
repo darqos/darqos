@@ -120,9 +120,9 @@ class Compositor:
         self.process = process
         self.channel = channel
 
-        # The Terminal's end of its Wayland connection: its descriptor
-        # goes in WAYLAND_SOCKET, for Qt, which takes it over.
-        self.wayland = wayland
+        # The Terminal's end of its Wayland connection, until it's taken
+        # (see take_wayland).
+        self.wayland: socket.socket | None = wayland
 
     @classmethod
     def start(cls, path: os.PathLike | str = COMPOSITOR, args: typing.Sequence[str] = (),
@@ -149,11 +149,21 @@ class Compositor:
             policy_child.close()
         return cls(process, PolicyChannel(policy), wayland)
 
+    def take_wayland(self) -> int:
+        """Return the descriptor of the Terminal's Wayland connection,
+        for WAYLAND_SOCKET.  libwayland takes it over, and closes it, so
+        it's no longer this object's."""
+        assert self.wayland is not None, "already taken"
+        fd = self.wayland.detach()
+        self.wayland = None
+        return fd
+
     def stop(self, timeout: float = 5) -> int:
         """Close the policy channel, and wait for the compositor to
         exit; kill it if it doesn't.  Returns its exit status."""
         self.channel.close()
-        self.wayland.close()
+        if self.wayland is not None:
+            self.wayland.close()
         try:
             return self.process.wait(timeout)
         except subprocess.TimeoutExpired:

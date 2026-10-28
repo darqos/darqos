@@ -46,6 +46,9 @@ def pkernel(tmp_path, monkeypatch):
     # Keep the run directory (and boot vector) out of /darq/run.
     monkeypatch.setenv("DARQ_RUN", str(tmp_path / "run"))
 
+    # No Terminal, unless a test wants one: it'd start a compositor.
+    monkeypatch.setenv("DARQ_TERMINAL", "0")
+
     # Listen on an ephemeral port, so as not to clash with a real p-kernel.
     module.TCP_PORT = 0
     kernel = module.PseudoKernel()
@@ -334,6 +337,12 @@ def test_boot_terminal(pkernel, fake_popen, monkeypatch, terminal, dev_terminal)
                 + ((module.DEV_TERMINAL,) if dev_terminal else ()))
     assert paths == [os.path.join(module.DARQ_ROOT, path) for path in expected]
     assert (pkernel._terminal is not None) == terminal
+
+
+def test_terminal_on_by_default(pkernel, monkeypatch):
+    monkeypatch.delenv("DARQ_TERMINAL")
+    assert pkernel.module.terminal_enabled()
+    assert pkernel.get_loader_environment()["WAYLAND_DISPLAY"] == "darq-0"
 
 
 @pytest.mark.parametrize("host", [None, "wayland-1"])

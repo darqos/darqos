@@ -82,9 +82,9 @@ DARQ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # they're all started at once.
 BOOT_PROCESSES = ("services/storage", "services/history", "services/type", "tools/type-sync")
 
-# The Terminal (see doc/terminal.rst), started after them if DARQ_TERMINAL
-# is set (to anything but 0).  It's the session: if it exits or dies, the
-# p-kernel reboots.  It's off by default until it's written.
+# The Terminal (see doc/terminal.rst), started after them unless
+# DARQ_TERMINAL is 0 (or empty).  It's the session: if it exits or dies,
+# the p-kernel reboots.
 TERMINAL = "services/terminal"
 
 # A Terminal that fails within TERMINAL_MIN_UPTIME seconds of starting,
@@ -111,9 +111,14 @@ DEV_TERMINAL = "tools/devterm"
 DARQ_PYTHON_PATH = os.path.dirname(os.path.dirname(os.path.abspath(darq.__file__)))
 
 
-def enabled(variable: str) -> bool:
-    """Return True if an environment variable is set to anything but 0."""
-    return os.environ.get(variable, "0") not in ("", "0")
+def enabled(variable: str, default: bool = False) -> bool:
+    """Return True if an environment variable is set to anything but 0,
+    or, if it isn't set, the default."""
+    return os.environ.get(variable, "1" if default else "0") not in ("", "0")
+
+
+def terminal_enabled() -> bool:
+    return enabled("DARQ_TERMINAL", default=True)
 
 
 class KernelProcessStatus(IntEnum):
@@ -1148,7 +1153,7 @@ class PseudoKernel(SocketListener, TimerListener):
 
         # FIXME: Index and the other services, once ported.
         paths = BOOT_PROCESSES
-        if enabled("DARQ_TERMINAL"):
+        if terminal_enabled():
             paths += (TERMINAL,)
         if enabled("DARQ_DEV_TERMINAL"):
             paths += (DEV_TERMINAL,)
@@ -1511,7 +1516,7 @@ class PseudoKernel(SocketListener, TimerListener):
         env = dict(os.environ)
         env["DARQ_RUN"] = self.run_dir
         env.pop(TERMINAL_FAILURES, None)
-        if enabled("DARQ_TERMINAL"):
+        if terminal_enabled():
             env.pop(HOST_DISPLAY, None)
             if env.get("WAYLAND_DISPLAY"):
                 env[HOST_DISPLAY] = env["WAYLAND_DISPLAY"]

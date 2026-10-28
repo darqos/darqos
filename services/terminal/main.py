@@ -1,476 +1,355 @@
-#! /usr/bin/env python3
 # darqos
-# Copyright (C) 2020-2023 David Arnold
+# Copyright (C) 2026 David Arnold
 
-# Terminal Service
+# The Terminal (see doc/terminal.rst): the session.  The p-kernel starts
+# it at boot, and reboots if it exits.  It starts the compositor, with
+# its own Wayland connection and the policy channel (darq.compositor),
+# and decides what the compositor does: the hotkeys (see doc/ux.rst),
+# its panels, and locking.
 #
-# Unlike the other services, the Terminal Service isn't directly used
-# by applications (tools, lenses, etc).  Instead, it mostly does things
-# directly on behalf of the user.
+# - A background and a lock window on every screen (screens.py).  It
+#   starts locked, as the compositor does.
+# - Sys-n New, Sys-h History, Sys-Tab the switcher, Sys-b shut down or
+#   reboot, Sys-x close the focused window, Sys-l lock; Sys-space,
+#   Sys-e and Sys-i show a TBD panel (panels.py).  While it's locked,
+#   only Sys-b works, on the lock screen.
 #
-# Since it uses Qt, it uses the Qt event loop.  Thus, when using the
-# regular service APIs, it must supply them with the Qt event loop
-# adaptor.
-
+# Its calls to services are synchronous, on Qt's thread, as devterm's
+# are: starting a lens freezes it for a second or so.
 
 import logging
-import sys
+import os
+import select
+import time
 import typing
 
-from urllib.parse import urlparse
-
 from PyQt6 import QtCore
-from PyQt6.QtGui import QAction, QKeySequence, QIcon, QScreen, QShortcut
-from PyQt6.QtWidgets import QApplication, QWidget, QPushButton, QMenu, QHBoxLayout, QVBoxLayout, QLineEdit, QLabel, QToolButton, QToolBar, QTableWidget, QTableWidgetItem, QGroupBox, QMainWindow
+from PyQt6.QtWidgets import QApplication
+from PyQt6.sip import voidptr
 
-import qdarktheme
-
-#from darq.type.text import TextTypeView
 import darq
-
-
-class Type:
-    def __init__(self):
-        self.name: str = ""
-        self.description: str = ""
-        self.impl: str = ""
-        self.icon: str = ""
-        return
-
-
-class TypeCacheModel:
-    def __init__(self):
-
-        # Table of named types.
-        self.types = {}
-
-        # Sorted type name index.
-        self.type_names = []
-
-        # Most recently used types.
-        self.used_types = []
-
-        # Pinned types, in order.
-        self.pinned_types: typing.List[str] = []
-        return
-
-    def add_type(self, type_: Type) -> None:
-        """Add a type to the system."""
-
-        if type_.name in self.types:
-            raise KeyError(f"Type '{type_.name}' already exists.")
-
-        # FIXME: Cache icon.
-
-        self.types[type_.name] = type_
-        self.type_names.append(type_.name)
-        self.type_names.sort()
-        return
-
-    def remove_type(self, name: str) -> None:
-        """Remove a type from the system."""
-
-        if name not in self.types:
-            raise KeyError(f"No such type '{name}'")
-
-        if name in self.pinned_types:
-            self.pinned_types.remove(name)
-
-        if name in self.used_types:
-            self.used_types.remove(name)
-
-        del self.types[name]
-        return
-
-    def append_pinned_type(self, name: str) -> None:
-        """Append a type to the pinned list."""
-
-        t = self.types.get(name)
-        if t is None:
-            raise KeyError(f"No such type '{name}'")
-
-        self.pinned_types.append(name)
-        return
-
-    def insert_pinned_type(self, index: int, name: str) -> None:
-        """Insert a type into the pinned list."""
-
-        t = self.types.get(name)
-        if t is None:
-            raise KeyError(f"No such type '{name}'")
-
-        self.pinned_types.insert(index, name)
-        return
-
-    def unpin_type(self, name: str) -> None:
-        """Remove a type from the pinned list."""
-
-        if name not in self.pinned_types:
-            raise KeyError(f"No such type '{name}'")
-
-        if name in self.pinned_types:
-            self.pinned_types.remove(name)
-
-        return
-
-    def pinned_count(self) -> int:
-        """Return number of pinned types."""
-
-        return len(self.pinned_types)
-
-    def pinned_type(self, index: int) -> Type:
-        """Return type at index in pinned type list."""
-
-        if index < 0 or index >= len(self.pinned_types):
-            raise IndexError(f"Pinned types index out of range: {index}")
-
-        name = self.pinned_types[index]
-        return self.types[name]
-
-    def use_type(self, name: str) -> None:
-        """Record usage of a type."""
-
-        if name in self.used_types:
-            self.used_types.remove(name)
-
-        self.used_types.insert(0, name)
-        return
-
-    def get_types(self):
-        # FIXME: do proper iterator stuff here
-        res = []
-        for name in self.type_names:
-            res.append(self.types[name])
-        return res
-
-
-class ObjectFactory(QWidget):
-    """Enables creation of new type instances."""
-
-    def __init__(self, *args):
-        """Constructor."""
-        super().__init__(*args)
-
-        # Cache.
-        self.types = TypeCacheModel()
-        self.init_types()
-
-        # Set size and position.
-        screen = QScreen.availableGeometry(QApplication.primaryScreen())
-        self.resize(int(screen.width() * 0.7), int(screen.height() * 0.7))
-        self.move(int(screen.width() * 0.15), int(screen.height() * 0.15))
-
-        # Set window type.
-        flags = QtCore.Qt.WindowType(QtCore.Qt.WindowType.WindowStaysOnTopHint |
-                                     QtCore.Qt.WindowType.FramelessWindowHint)
-        self.setWindowFlags(flags)
-
-        self.layout = QVBoxLayout()
-        self.layout.setContentsMargins(50, 50, 50, 50)
-
-        # Pinned types.
-        self.hotbar = QToolBar()
-        self.hotbar.setStyleSheet("QToolBar { }")
-        for index in range(self.types.pinned_count()):
-            t = self.types.pinned_type(index)
-            url = urlparse(t.icon)
-            icon = QIcon(url.path)
-            action = QAction(icon, t.name, QtCore.QCoreApplication.instance())
-            action.triggered.connect(self.on_create)
-
-            self.hotbar.addAction(action)
-        self.layout.addWidget(self.hotbar)
-
-        # Search bar.
-        self.omnibox = QHBoxLayout()
-        self.omnibox.setContentsMargins(20, 20, 20, 20)
-        self.omnitext = QLineEdit()
-        self.omnitext.setStyleSheet("QLineEdit { font-size: 20px; padding: 12px; border: none; border-radius: 10px; }")
-        self.omnitext.setFrame(False)  # Doesn't seem to do anything'
-        #self.omnitext.setAttribute(QtCore.Qt.WA_MacShowFocusRect, False)
-        self.omnitext.setPlaceholderText("Search ...")
-        self.omnitext.setClearButtonEnabled(True)
-        self.omnitext.setTextMargins(20, 20, 20, 20)
-        self.omnibox.addWidget(self.omnitext)
-        self.layout.addLayout(self.omnibox)
-
-        # Unfiltered types, MRU order (?)
-        self.object_table = QVBoxLayout()
-        self.object_table.setContentsMargins(20, 20, 20, 20)
-        for t in self.types.get_types():
-            row = QLabel(t.name)
-            self.object_table.addWidget(row)
-        self.layout.addLayout(self.object_table)
-        self.layout.setStretch(2, 100)
-
-        self.setLayout(self.layout)
-        self.hide()
-        return
-
-    def init_types(self):
-        """Initialize types collection."""
-
-        # List of known types, with index by name, by last use, and by
-        # keyword from their description.  Each type has a name, icon, and
-        # a description.
-        #
-        # There's also an ordered list of "pinned" types.
-
-        text = Type()
-        text.name = "Text"
-        text.description = "Unformatted Unicode document"
-        text.impl = "file:///Users/d/work/personal/darqos/darq/types/text.py"
-        text.icon = "file:///Users/d/work/personal/darqos/darq/icons/txt.png"
-        self.types.add_type(text)
-        self.types.append_pinned_type("Text")
-
-        book = Type()
-        book.name = "Book Details"
-        book.description = "Catalog data for a book"
-        book.impl = ""
-        book.icon = "file:///Users/d/work/personal/darqos/darq/icons/book.png"
-        self.types.add_type(book)
-        self.types.append_pinned_type("Book Details")
-
-        person = Type()
-        person.name = "Person"
-        person.description = "A human being"
-        person.impl = ""
-        person.icon = "file:///Users/d/work/personal/darqos/darq/icons/person.png"
-        self.types.add_type(person)
-        return
-
-    def on_create(self):
-        o = TextTypeView()
-        self.hide()
-        return
-
-
-class ObjectSelector(QWidget):
-    def __init__(self, *args):
-        super().__init__(*args)
-
-        # Set size & position.
-        screen = QScreen.availableGeometry(QApplication.primaryScreen())
-        self.resize(int(screen.width() * 0.7), int(screen.height() * 0.7))
-        self.move(int(screen.width() * 0.15), int(screen.height() * 0.15))
-
-        # Set window type.
-        flags = QtCore.Qt.WindowType(QtCore.Qt.WindowType.WindowStaysOnTopHint |
-                                     QtCore.Qt.WindowType.FramelessWindowHint)
-        self.setWindowFlags(flags)
-
-        self.layout = QVBoxLayout()
-        self.layout.setContentsMargins(50, 50, 50, 50)
-
-        self.omnibox = QHBoxLayout()
-        self.omnibox.setContentsMargins(20, 20, 20, 20)
-        self.omnitext = QLineEdit()
-        self.omnitext.setStyleSheet("QLineEdit { font-size: 20px; padding: 12px; border: none; border-radius: 10px; }")
-        self.omnitext.setFrame(False)  # Doesn't seem to do anything'
-        self.omnitext.setAttribute(QtCore.Qt.WidgetAttribute.WA_MacShowFocusRect, False)
-        self.omnitext.setPlaceholderText("Search ...")
-        self.omnitext.setClearButtonEnabled(True)
-        self.omnitext.setTextMargins(20, 20, 20, 20)
-        self.omnibox.addWidget(self.omnitext)
-        self.layout.addLayout(self.omnibox)
-
-        # Here I'm going to start with the list of objects from
-        # the history service.  This will need to be completely
-        # rejigged in future.
-
-        # So, a table ... date/time, event, type, details of object.
-        #
-        # The object details will be the tricky bit: objects don't
-        # have to have a name or anything.  Perhaps it'd be good for
-        # the type implementation to have a method to get a description
-        # of the object in a type-specific way?
-
-        self.object_table = QTableWidget(10, 4, self)
-        self.object_table.setHorizontalHeaderLabels(("Date / Time", "Type", "Event", "Object"))
-        self.object_table.verticalHeader().setVisible(False)
-        self.object_table.setContentsMargins(20, 20, 20, 20)
-        for r in range(10):
-            for c in (0, 1, 2, 3):
-                item = QTableWidgetItem()
-                item.setText(["datetime", "type", "event", "description of object"][c])
-                self.object_table.setItem(r, c, item)
-        self.layout.addWidget(self.object_table)
-
-        self.setLayout(self.layout)
-        self.hide()
-        return
-
-    def show(self):
-
-        # FIXME: populate the list from the History service's GetEvents
-        # (lib/didl/history.didl), once the Terminal is on the new IPC.
-        self.object_table.clearContents()
-
-        super().show()
-        return
-
-    def hide(self):
-        super().hide()
-        return
-
-    def toggle_visibility(self):
-        """Show if hidden; hide if shown"""
-        if self.isVisible():
-            self.hide()
+from darq.compositor import COMPOSITOR, Compositor, PolicyChannel
+from darq.dipc import Message
+from darq.errors import ChannelClosedError, MessageDecodingError
+from darq.protocols.compositor import (
+    BindHotkey,
+    CloseWindow,
+    FocusWindow,
+    HotkeyPressed,
+    Lock,
+    Modifier,
+    RaiseWindow,
+    Ready,
+    SystemReleased,
+    Unlock,
+    WindowAdded,
+    WindowFocused,
+    WindowRemoved,
+    WindowRetitled,
+)
+from darq.ui import Services
+
+from panels import HistoryPanel, NewPanel, Panel, PowerPanel, SwitcherPanel, TbdPanel
+from screens import Screens
+
+
+# History source for the events it records.
+SOURCE = "terminal"
+
+# Seconds to wait for the compositor to be ready.
+READY_TIMEOUT = 10.0
+
+# xkb keysyms of its hotkeys, as on their keys' first level.
+XK_space = 0x20
+XK_b = 0x62
+XK_e = 0x65
+XK_h = 0x68
+XK_i = 0x69
+XK_l = 0x6c
+XK_n = 0x6e
+XK_x = 0x78
+XK_Tab = 0xff09
+
+# Hotkeys, with System and these modifiers, and the method each calls.
+HOTKEYS: dict[tuple[int, int], str] = {
+    (XK_n, 0): "show_new",
+    (XK_h, 0): "show_history",
+    (XK_Tab, 0): "switch_forward",
+    (XK_Tab, Modifier.SHIFT): "switch_back",
+    (XK_x, 0): "close_window",
+    (XK_b, 0): "show_power",
+    (XK_l, 0): "lock",
+    (XK_space, 0): "show_search",
+    (XK_e, 0): "show_events",
+    (XK_i, 0): "show_item_info",
+}
+
+
+class Terminal:
+    """The Terminal's state, and its handling of the compositor's
+    messages and hotkeys.  It's also the Host for the panels' shared
+    parts (see darq.ui)."""
+
+    def __init__(self, app: QApplication, channel: PolicyChannel, services: Services):
+        self.app = app
+        self.channel = channel
+        self.services = services
+
+        # The compositor's windows, by number, with their titles; their
+        # numbers, most recently focused first; and the focused one's (0
+        # if it's none of them).
+        self.windows: dict[int, str] = {}
+        self.recent: list[int] = []
+        self.focused = 0
+
+        # While the switcher's showing: the windows it offers, and the
+        # one that'll be chosen.
+        self.switching: list[int] | None = None
+        self.switch_index = 0
+
+        self.locked = True
+        self.screens = Screens(app, self.unlock, self.power)
+        self.new = NewPanel(self)
+        self.history = HistoryPanel(self, self.type_ids)
+        self.switcher = SwitcherPanel()
+        self.power_panel = PowerPanel(self.power)
+        self.tbd = TbdPanel()
+        self.panels: list[Panel] = [self.new, self.history, self.switcher, self.power_panel, self.tbd]
+
+        self.notifier = QtCore.QSocketNotifier(voidptr(channel.fileno()), QtCore.QSocketNotifier.Type.Read)
+        self.notifier.activated.connect(self.read_channel)
+
+    def start(self):
+        """Bind the hotkeys, and show the screens, locked."""
+        for keysym, modifiers in HOTKEYS:
+            self.channel.send(BindHotkey(keysym=keysym, modifiers=modifiers))
+        self.screens.start()
+
+    # Host
+
+    def show_status(self, message: str):
+        logging.info(message)
+        for panel in self.panels:
+            if panel.isVisible():
+                panel.set_status(message)
+
+    def record(self, item_id: str, event: str):
+        try:
+            self.services.history.add_event(item_id=item_id, event=event, source=SOURCE)
+        except darq.DarqError as e:
+            logging.warning(f"Can't record {event} for {item_id}: {e!r}")
+
+    def use(self, item_id: str, item: int | None = None):
+        """Start a lens for an item, and close the panel, unless it fails."""
+        self.show_status(f"Starting a lens for {item_id} ...")
+        QApplication.processEvents()
+        try:
+            self.services.launch.use_item(item_id, item)
+        except (darq.DarqError, TimeoutError) as e:
+            self.show_status(str(e))
+            return
+        self.hide_panels()
+
+    def type_ids(self) -> list[str]:
+        return [entry.type_id for entry in self.new.types.entries]
+
+    # The compositor
+
+    def read_channel(self):
+        while True:
+            try:
+                message = self.channel.receive()
+            except ChannelClosedError:
+                logging.error("The compositor closed the policy channel: exiting")
+                self.notifier.setEnabled(False)
+                self.app.exit(1)
+                return
+            except MessageDecodingError as e:
+                logging.warning(f"Bad message from the compositor: {e}")
+                continue
+            if message is None:
+                return
+            self.handle(message)
+
+    def handle(self, message: Message):
+        if isinstance(message, HotkeyPressed):
+            self.hotkey(message.keysym, message.modifiers)
+        elif isinstance(message, SystemReleased):
+            self.choose()
+        elif isinstance(message, WindowAdded):
+            self.windows[message.window] = message.title
+            if message.window not in self.recent:
+                self.recent.append(message.window)
+        elif isinstance(message, WindowRemoved):
+            self.window_removed(message.window)
+        elif isinstance(message, WindowRetitled):
+            if message.window in self.windows:
+                self.windows[message.window] = message.title
+                self.show_switcher()
+        elif isinstance(message, WindowFocused):
+            self.focused = message.window
+            if message.window in self.recent:
+                self.recent.remove(message.window)
+                self.recent.insert(0, message.window)
+        elif not isinstance(message, Ready):
+            logging.warning(f"Unexpected message from the compositor: {message!r}")
+
+    def hotkey(self, keysym: int, modifiers: int):
+        name = HOTKEYS.get((keysym, modifiers))
+        if name is None:
+            logging.warning(f"Unbound hotkey {keysym:#x}, modifiers {modifiers:#x}")
+        elif not self.locked:
+            getattr(self, name)()
+        elif name == "show_power":
+            # While it's locked, only Sys-b works, on the lock screen.
+            self.screens.power_prompt()
+
+    # Panels
+
+    def show_panel(self, panel: Panel):
+        """Show one panel, and no other."""
+        self.hide_panels(but=panel)
+        panel.open()
+
+    def hide_panels(self, but: Panel | None = None):
+        for panel in self.panels:
+            if panel is not but:
+                panel.hide()
+        if but is not self.switcher:
+            self.switching = None
+
+    def show_new(self):
+        self.show_panel(self.new)
+
+    def show_history(self):
+        self.show_panel(self.history)
+
+    def show_power(self):
+        self.show_panel(self.power_panel)
+
+    def show_search(self):
+        self.hide_panels(but=self.tbd)
+        self.tbd.show_for("Search")
+
+    def show_events(self):
+        self.hide_panels(but=self.tbd)
+        self.tbd.show_for("Events")
+
+    def show_item_info(self):
+        self.hide_panels(but=self.tbd)
+        self.tbd.show_for("Item info")
+
+    # The switcher
+
+    def switch_forward(self):
+        self.switch(1)
+
+    def switch_back(self):
+        self.switch(-1)
+
+    def switch(self, step: int):
+        """Start switching, at the previous window, or move along."""
+        if self.switching is None:
+            if not self.recent:
+                return
+            self.switching = list(self.recent)
+            self.switch_index = 1 % len(self.switching) if step > 0 else len(self.switching) - 1
+            self.show_panel(self.switcher)
         else:
-            self.show()
-        return
+            self.switch_index = (self.switch_index + step) % len(self.switching)
+        self.show_switcher()
+
+    def show_switcher(self):
+        if self.switching is not None:
+            self.switcher.set_windows([self.windows.get(w, "") for w in self.switching], self.switch_index)
+
+    def choose(self):
+        """System's released: raise and focus the chosen window."""
+        if self.switching is None:
+            return
+        window = self.switching[self.switch_index]
+        self.switching = None
+        self.switcher.hide()
+        self.channel.send(RaiseWindow(window=window))
+        self.channel.send(FocusWindow(window=window))
+
+    def window_removed(self, window: int):
+        self.windows.pop(window, None)
+        if window in self.recent:
+            self.recent.remove(window)
+        if self.switching is not None and window in self.switching:
+            index = self.switching.index(window)
+            self.switching.remove(window)
+            if not self.switching:
+                self.switching = None
+                self.switcher.hide()
+                return
+            if index < self.switch_index or self.switch_index == len(self.switching):
+                self.switch_index -= 1
+            self.show_switcher()
+
+    # Windows, locking, and power
+
+    def close_window(self):
+        if self.focused:
+            self.channel.send(CloseWindow(window=self.focused))
+
+    def lock(self):
+        self.hide_panels()
+        self.locked = True
+        self.channel.send(Lock())
+        self.screens.lock()
+
+    def unlock(self):
+        if not self.locked:
+            return
+        self.locked = False
+        self.screens.unlock_screens()
+        self.channel.send(Unlock())
+
+    def power(self, choice: str):
+        logging.info(f"{choice} requested")
+        if choice == "shutdown":
+            self.services.shutdown()
+        elif choice == "reboot":
+            self.services.reboot()
 
 
-class Overlay(QMainWindow):
-    def __init__(self, *args):
-        super().__init__(*args)
-
-        box = QWidget()
-        self.setCentralWidget(box)
-
-        hbox = QHBoxLayout()
-        box.setLayout(hbox)
-        hbox.addStretch(1)
-        group_login = QWidget()
-        hbox.addWidget(group_login)
-        hbox.addStretch(1)
-
-        vbox = QVBoxLayout()
-        group_login.setLayout(vbox)
-        vbox.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-
-        username = QLineEdit()
-        username.setPlaceholderText("username")
-        vbox.addWidget(username)
-
-        password = QLineEdit()
-        password.setPlaceholderText("password")
-        password.setEchoMode(QLineEdit.EchoMode.Password)
-        vbox.addWidget(password)
-
-        login = QPushButton("login", self)
-        login.clicked.connect(self.on_login)
-        login.setDefault(True)
-        vbox.addWidget(login)
-
-        # Tab order for mouse-less login.
-        #self.setTabOrder(username, password)
-        #self.setTabOrder(password, login)
-
-        flags = QtCore.Qt.WindowType(QtCore.Qt.WindowType.WindowStaysOnTopHint |
-                                     QtCore.Qt.WindowType.FramelessWindowHint)
-        self.setWindowFlags(flags)
-        self.showFullScreen()
-        return
-
-    def on_login(self):
-        print("Login")
+def wait_ready(channel: PolicyChannel, timeout: float = READY_TIMEOUT) -> bool:
+    """Wait for the compositor's Ready."""
+    deadline = time.monotonic() + timeout
+    while (left := deadline - time.monotonic()) > 0:
+        select.select([channel], [], [], left)
+        try:
+            message = channel.receive()
+        except (ChannelClosedError, MessageDecodingError) as e:
+            logging.error(f"The compositor didn't start: {e}")
+            return False
+        if isinstance(message, Ready):
+            return True
+    logging.error(f"The compositor wasn't ready within {timeout:.0f}s")
+    return False
 
 
-class UI(QWidget):
+def darq_main(compositor_path: typing.Any = COMPOSITOR):
+    if not os.path.exists(compositor_path):
+        logging.error(f"No compositor at {compositor_path}: see doc/terminal.rst")
+        return 1
 
-    # This needs some work to create a top-level window *on each screen* rather
-    # than just one.  To do that, it's going to have to iterate the screen list
-    # that it gets from QApplication, and place a widget on each.
-    #
-    # This will also probably complicate the placement of the various overlay
-    # panels: it might make sense to use the screen currently containing the
-    # mouse cursor?
+    compositor = Compositor.start(compositor_path)
+    try:
+        if not wait_ready(compositor.channel):
+            return 1
 
-    def __init__(self, *args):
-        super().__init__(*args)
-
-        # Create new objects with Sys-n
-        self.factory = ObjectFactory()
-        self.factory_shortcut = QShortcut(QKeySequence("Ctrl+n"), self)
-        self.factory_shortcut.setContext(
-            QtCore.Qt.ShortcutContext.ApplicationShortcut)
-        self.factory_shortcut.activated.connect(self.on_factory)
-
-        # Select an existing object with Sys-s
-        self.selector = ObjectSelector()
-        self.selector_shortcut = QShortcut(QKeySequence("Ctrl+s"), self)
-        self.selector_shortcut.setContext(
-            QtCore.Qt.ShortcutContext.ApplicationShortcut)
-        self.selector_shortcut.activated.connect(self.on_selector)
-
-        # Events with Sys-E
-        self.events = None  # FXIME
-        self.events_shortcut = QShortcut(QKeySequence("Ctrl+e"), self)
-        self.events_shortcut.setContext(
-            QtCore.Qt.ShortcutContext.ApplicationShortcut)
-        self.events_shortcut.activated.connect(self.on_events)
-
-        # FIXME
-
-        # Background window.
-        flags = QtCore.Qt.WindowType(QtCore.Qt.WindowType.WindowStaysOnTopHint |
-                                     QtCore.Qt.WindowType.FramelessWindowHint)
-        self.setWindowFlags(flags)
-        self.showFullScreen()
-        return
-
-    def contextMenuEvent(self, event):
-        m = QMenu()
-        new_action = m.addAction("New ...")
-        find_action = m.addAction("Find ...")
-        m.addSeparator()
-        logout_action = m.addAction("Logout")
-        quit_action = m.addAction("Shutdown")
-
-        action = m.exec(self.mapToGlobal(event.pos()))
-        if action == new_action:
-            self.on_factory()
-        elif action == find_action:
-            self.on_selector()
-        elif action == quit_action:
-            QApplication.quit()
-
-    def on_factory(self, *args):
-        """Display a panel enabling creation of new type instances."""
-        print("Factory: " + str(args))
-        if self.factory.isVisible():
-            self.factory.hide()
-        else:
-            self.factory.show()
-        return
-
-    def on_selector(self, *args):
-        """Display a panel enabling a search of existing objects."""
-        print("Selector: " + str(args))
-        self.selector.toggle_visibility()
-        return
-
-    def on_events(self, *args):
-        print("events")
-
-    def on_login(self):
-        print("Login")
-
-
-def main():
-    # FIXME: currently, just log to stderr.
-    logging.basicConfig(stream=sys.stderr,
-                        format='%(asctime)s terminal %(levelname)8s %(message)s',
-                        level=logging.DEBUG)
-
-    logging.info(f"Starting Terminal service.")
-
-    app = QApplication(sys.argv)
-    qdarktheme.setup_theme()
-
-    darq.init(darq.QtEventLoop())
-
-    ui = UI()
-    #login = Overlay()
-
-    result = app.exec()
-
-    logging.info(f"Exiting Terminal ({result}).")
-    sys.exit(result)
-
-
-if __name__ == "__main__":
-    main()
+        # Qt connects over the Terminal's own connection: see
+        # doc/terminal.rst for why its GTK platform theme can't be used.
+        os.environ["WAYLAND_SOCKET"] = str(compositor.take_wayland())
+        os.environ["QT_QPA_PLATFORM"] = "wayland"
+        os.environ["QT_QPA_PLATFORMTHEME"] = "generic"
+        app = QApplication([])
+        app.setQuitOnLastWindowClosed(False)
+        terminal = Terminal(app, compositor.channel, Services())
+        terminal.start()
+        return app.exec()
+    finally:
+        compositor.stop()

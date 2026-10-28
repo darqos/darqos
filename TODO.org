@@ -61,14 +61,13 @@
   on calls (or deadlock, when two loop-served apps call each other).
   Ports can already be served on a loop (set_port_listener,
   Server.attach).
-- Development Terminal (tools/devterm): throw-away, until the real
-  Terminal runs.  Started at boot with DARQ_DEV_TERMINAL=1 (see
-  doc/terminal.rst).
+- Development Terminal (tools/devterm): a development tool, alongside
+  the real Terminal, sharing its New and History (darq.ui).  Started
+  at boot with DARQ_DEV_TERMINAL=1 (see doc/terminal.rst).
   - Try the Text type and lens on the desktop with it.
-  - Keep it as a development tool, alongside the real Terminal.
-  - With DARQ_TERMINAL=1, it's started with WAYLAND_DISPLAY=darq-0,
-    maybe before the compositor is listening there, and Qt exits: have
-    the Terminal start it once the compositor's Ready, or retry.
+- Terminal (services/terminal): runs at boot, with the compositor.
+  - Try it on the desktop, nested: it's only been run headless.
+  - The lock screen's password, with the Security service.
 - Implement GUI Text lens
   - Done: lenses/text, started for an item with the Lens protocol
     (lib/didl/lens.didl) by darq.launch.use_item; a change is sent as

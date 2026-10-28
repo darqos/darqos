@@ -44,23 +44,26 @@ Development Terminal
 `tools/devterm` is a development tool: an ordinary window for
 creating items, browsing History, and shutting down or rebooting.  It
 was written to try types and lenses before the compositor existed,
-and is kept alongside the real Terminal.  It's started at boot, last,
-when `DARQ_DEV_TERMINAL=1` is set.
+and is kept alongside the real Terminal, sharing its New and History
+parts (``darq.ui``).  It's started at boot, last, when
+`DARQ_DEV_TERMINAL=1` is set.
 
-The real Terminal is started at boot when `DARQ_TERMINAL=1` is set
-(it's off by default, until it's written: then, it'll be on, and
-`DARQ_TERMINAL=0` will stop it starting).  Without it, the devterm's
-window appears on the host's Wayland desktop.  Run the p-kernel from
-the desktop session, so its windows (and the lenses') appear there.  From the top of the tree, with the virtual
-environment's Python first on the path (the p-kernel and its loaders
-run `python`), and the tree on `PYTHONPATH` (for the p-kernel's own
-`import darq`)::
+The real Terminal is started at boot, unless `DARQ_TERMINAL=0` is set.
+Run the p-kernel from the desktop session: with the Terminal, the
+compositor is then a window on the host's desktop, and devterm and
+the lenses are windows in it; without it, they're windows on the
+host's desktop.  Build the compositor first (see Building and Trying
+It, below).  From the top of the tree, with the virtual environment's
+Python first on the path (the p-kernel and its loaders run `python`),
+and the tree on `PYTHONPATH` (for the p-kernel's own `import
+darq`)::
 
     . venv313/bin/activate
-    PYTHONPATH=$PWD DARQ_RUN=./run DARQ_TERMINAL=0 DARQ_DEV_TERMINAL=1 kernel/pkernel
+    PYTHONPATH=$PWD DARQ_RUN=./run DARQ_DEV_TERMINAL=1 kernel/pkernel
 
-With the real Terminal, it's just another window on the Terminal's
-display.
+Add `DARQ_TERMINAL=0` for devterm alone, on the host's desktop.  With
+the Terminal, devterm waits (up to 10 seconds) for the compositor's
+socket before it starts: it may not be listening yet.
 
 It has:
 
@@ -259,7 +262,9 @@ tests, it runs with ``WLR_BACKENDS=headless`` and
 ``WLR_RENDERER=pixman``, and ``-k`` adds a test keyboard and pointer,
 driven by lines on its standard input: ``key <evdev keycode> <1|0>``,
 ``move <x> <y>`` (in layout coordinates), and ``button <evdev button>
-<1|0>``.  The runtime directory must have a short path: a Unix socket's
+<1|0>``; and, as when nested (see Keyboard), ``hostkey <evdev keycode>
+<1|0>``, which doesn't update the keyboard's state, and ``hostmods
+<depressed> <latched> <locked>``, the host's modifiers.  The runtime directory must have a short path: a Unix socket's
 path is limited to 108 bytes.
 
 The Terminal starts it with ``darq.compositor.Compositor.start``,
@@ -373,6 +378,14 @@ keymap, from xkb options:
 - Right Control is Compose (``compose:rctrl``), and Right Alt is
   AltGr (``lv3:ralt_switch``).
 
+Nested in another compositor, as on the desktop, the host's keymap
+doesn't apply: wlroots passes on its key codes, but takes the
+modifiers from the host, in its keymap, where Left Control is Control.
+So the compositor keeps each keyboard's state itself, from its keys
+alone, in its own keymap, and replaces the host's modifiers with it.
+(Tools on the host, like ``xev``, show the host's keymap, not the
+compositor's.)
+
 For starters, only a US layout will be supported.
 
 Functions
@@ -396,15 +409,18 @@ types are implemented by installed code, more-or-less like
 applications in a traditional operating system.  Examples of object
 types might be "image", "document", "movie", etc.
 
-It lists the implemented types with a Terminal lens, creates an item,
-records `created` (source `terminal`), and starts its lens.
+It lists the implemented types, greying out those without a Terminal
+lens: typing filters them, by name or type, the arrow keys move
+through them, and Enter creates an item of the selected one, records
+`created` (source `terminal`), and starts its lens.
 
 History
 ~~~~~~~
 
 The history panel, invoked with *Sys-h*, lists History events between
-two times, filtered by type, event, and source, newest first.  Choosing
-one starts a lens for its item.
+two times (the last hour, when it's opened), filtered by type, event,
+and source, newest first.  Choosing one (Enter, or double-click)
+starts a lens for its item.
 
 Search
 ~~~~~~
@@ -459,7 +475,12 @@ Lock
 
 *Sys-l* locks the screen: the Terminal shows its lock window, and has
 the compositor lock.  While it's locked, *Sys-l* does nothing:
-unlocking always needs the password.
+unlocking always needs the password.  Of the other hotkeys, only
+*Sys-b* works, on the lock screen itself: the overlay layer isn't
+shown while it's locked.
+
+Until the Security service is ported, there's no password: the lock
+screen says "Press Enter to unlock", and Enter does.
 
 Shutdown and Reboot
 ~~~~~~~~~~~~~~~~~~~
@@ -481,6 +502,11 @@ windows: the equivalent of Alt-Tab, invoked with *Sys-Tab*.  The
 compositor passes the hotkey to the Terminal, which shows the
 switcher, and asks the compositor to raise and focus the chosen
 window.
+
+It lists the windows most recently focused first, starting at the
+previous one.  While System is held, *Tab* moves on, and *Shift-Tab*
+back (*Sys-Shift-Tab* starts at the least recent); releasing System
+chooses.  So a single *Sys-Tab* goes back to the previous window.
 
 Item Properties
 ~~~~~~~~~~~~~~~
@@ -512,7 +538,18 @@ Architecture
 
 The Terminal service is implemented as a Darq Python process, using
 PyQt6 to provide the GUI, on a Qt event loop (as lenses are), with the
-policy channel watched by a ``QSocketNotifier``.
+policy channel watched by a ``QSocketNotifier``.  It's in
+``services/terminal``: ``main.py`` starts the compositor, and handles
+its messages and the hotkeys; ``screens.py`` has the background and
+lock windows, one of each on every screen; and ``panels.py`` the
+panels.  The panels are overlay windows, one shown at a time: Escape
+closes one, and so does losing the focus, but for the switcher's.
+New and History are shared with devterm, in ``darq.ui``.
+
+If the compositor isn't built, or isn't ready within 10 seconds, or
+closes the policy channel, the Terminal exits with status 1: the
+p-kernel then reboots.  Its calls to services are synchronous, on
+Qt's thread, so starting a lens freezes it for a second or so.
 
 It communicates using the system IPC with the p-kernel and the other
 services, to populate the New and History panels, and to check the

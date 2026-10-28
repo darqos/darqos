@@ -233,10 +233,9 @@ It's created if needed, and spawned processes get its absolute path in
 .BR DARQ_RUN .
 .TP
 .B DARQ_TERMINAL
-If set, to anything but
+Unless set to
 .B 0
 or empty, the boot sequence starts the Terminal, after the services.
-It's off by default, until the Terminal is written.
 Spawned processes then get
 .B WAYLAND_DISPLAY=darq-0
 (the Terminal's compositor) and
@@ -283,8 +282,7 @@ unit that runs the p-kernel as part of
 .SH BUGS
 The listening port is fixed at 11000.
 .PP
-The boot sequence doesn't yet start the Index service, and the
-Terminal is off by default.
+The boot sequence doesn't yet start the Index service.
 .PP
 Finished processes the p-kernel spawned itself are never removed from
 the process table.
