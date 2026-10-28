@@ -27,6 +27,7 @@ __all__ = [
     "COMPOSITOR",
     "Compositor",
     "PolicyChannel",
+    "compositor_environment",
 ]
 
 
@@ -35,6 +36,28 @@ COMPOSITOR = pathlib.Path(__file__).parent.parent / "compositor" / "build" / "da
 
 # Larger than any message the compositor sends (see compositor/policy.h).
 MAX_MESSAGE = 4096
+
+# Where the p-kernel saves the host's Wayland display, if it has one,
+# having set WAYLAND_DISPLAY to the compositor's own.
+HOST_DISPLAY = "DARQ_HOST_WAYLAND_DISPLAY"
+
+
+def compositor_environment(env: typing.Mapping[str, str] | None = None) -> dict[str, str]:
+    """Return the environment for the compositor, from the Terminal's.
+
+    The compositor's display is the host's, if there's one, which makes
+    wlroots use its Wayland backend: a window on the host's desktop.
+    Otherwise, it has none, and wlroots uses the display hardware.
+
+    :param env: The Terminal's environment, if not this one."""
+    result = dict(os.environ if env is None else env)
+    host = result.pop(HOST_DISPLAY, None)
+    result.pop("WAYLAND_SOCKET", None)
+    if host:
+        result["WAYLAND_DISPLAY"] = host
+    else:
+        result.pop("WAYLAND_DISPLAY", None)
+    return result
 
 
 class PolicyChannel:
@@ -108,7 +131,7 @@ class Compositor:
         and the policy channel.
 
         :param args: More arguments for it.
-        :param env: Its environment, if not this one.
+        :param env: Its environment, if not compositor_environment().
         :param kwargs: For subprocess.Popen."""
         wayland, wayland_child = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
         policy, policy_child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
@@ -116,7 +139,7 @@ class Compositor:
         try:
             process = subprocess.Popen(
                 [str(path), "-t", str(fds[0]), "-p", str(fds[1]), *args],
-                env=env, pass_fds=fds, **kwargs)
+                env=compositor_environment() if env is None else env, pass_fds=fds, **kwargs)
         except BaseException:
             for sock in (wayland, policy):
                 sock.close()

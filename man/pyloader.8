@@ -100,8 +100,16 @@ running.
 A killed application is stopped by raising
 .B SystemExit
 in the main thread; any p-call it is blocked in is abandoned.
+Python raises it when the main thread next runs Python code, so if the
+application has created a Qt application object, its event loops are
+also told to exit
+.RB ( QCoreApplication.exit ,
+from the I/O thread): an idle loop then returns, and the exception is
+raised in the application's own code, where its
+.B finally
+blocks run.
 If the application does not stop within a second (for example, because
-it is blocked in native code, such as an idle Qt event loop),
+it is blocked in other native code),
 .B pyloader
 exits immediately with status 1.
 .PP
@@ -168,5 +176,15 @@ If no p-kernel is listening on
 exits with a Python traceback rather than an error message.
 .PP
 Asking for usage help exits with status 1.
+.PP
+A kill (or
+.B darq.exit
+from another thread) that arrives while a Qt application is running
+Python code in a slot raises
+.B SystemExit
+there, and PyQt then ends the process at once, without running the
+application's
+.B finally
+blocks.
 .SH SEE ALSO
 .BR pkernel (8)

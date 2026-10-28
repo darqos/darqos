@@ -47,10 +47,11 @@ was written to try types and lenses before the compositor existed,
 and is kept alongside the real Terminal.  It's started at boot, last,
 when `DARQ_DEV_TERMINAL=1` is set.
 
-Once the real Terminal is started at boot, setting `DARQ_TERMINAL=0`
-as well stops it starting, and the devterm's window appears on the host's Wayland desktop.  Run
-the p-kernel from the desktop session, so its windows (and the
-lenses') appear there.  From the top of the tree, with the virtual
+The real Terminal is started at boot when `DARQ_TERMINAL=1` is set
+(it's off by default, until it's written: then, it'll be on, and
+`DARQ_TERMINAL=0` will stop it starting).  Without it, the devterm's
+window appears on the host's Wayland desktop.  Run the p-kernel from
+the desktop session, so its windows (and the lenses') appear there.  From the top of the tree, with the virtual
 environment's Python first on the path (the p-kernel and its loaders
 run `python`), and the tree on `PYTHONPATH` (for the p-kernel's own
 `import darq`)::
@@ -58,8 +59,8 @@ run `python`), and the tree on `PYTHONPATH` (for the p-kernel's own
     . venv313/bin/activate
     PYTHONPATH=$PWD DARQ_RUN=./run DARQ_TERMINAL=0 DARQ_DEV_TERMINAL=1 kernel/pkernel
 
-Without `DARQ_TERMINAL=0`, it's just another window on the real
-Terminal's display.
+With the real Terminal, it's just another window on the Terminal's
+display.
 
 It has:
 
@@ -105,7 +106,11 @@ used by the one "terminal".
 The Terminal Service runs as a DarqOS process, spawned by the p-kernel
 at boot.  It starts the compositor, and decides what it does: the
 compositor provides the mechanism, and the Terminal the policy.  The
-Terminal is the session: if it exits or crashes, the p-kernel reboots.
+Terminal is the session: if it exits or crashes, or can't be started,
+the p-kernel reboots.  If it fails within 30 seconds of starting, three
+boots in a row, it's taken to be broken, and the p-kernel shuts down
+instead, with status 1 (the count is kept across the reboot, which is
+an ``exec``, in ``DARQ_TERMINAL_FAILURES``).
 
 Once initialised, the terminal displays the lock screen: a password
 field, and nothing else (sleep, and the volume control, come later).
@@ -233,10 +238,11 @@ doesn't draw its own decorations if the compositor's request isn't
 honoured (Qt 6 does honour it: without it, Qt draws a frame of its
 own).  It saves the host's ``WAYLAND_DISPLAY``, if any, as
 ``DARQ_HOST_WAYLAND_DISPLAY``, and the Terminal passes that on to the
-compositor.  With it set, wlroots uses its Wayland backend, and the
+compositor, as its ``WAYLAND_DISPLAY`` (``Compositor.start`` does, by
+default).  With it set, wlroots uses its Wayland backend, and the
 whole display is a window on the host's desktop: that's how it's
 developed.  Without it, wlroots uses the display hardware (DRM and
-libinput).  With ``DARQ_TERMINAL=0``, the p-kernel leaves
+libinput).  Without the Terminal, the p-kernel leaves
 ``WAYLAND_DISPLAY`` alone.
 
 Building and Trying It

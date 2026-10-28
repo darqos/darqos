@@ -269,7 +269,10 @@ class PythonPProcess(darq.SocketListener):
             status, error = self.status_from_result(result, "darq_main returned")
         except SystemExit as e:
             if self._app_killed:
+                # The kill may have arrived as the application finished,
+                # interrupting app_finished().
                 logging.debug("Application killed.")
+                self.app_finished()
                 return
             if self._exit_requested is not None:
                 status, error = self._exit_requested, None
@@ -306,11 +309,38 @@ class PythonPProcess(darq.SocketListener):
         with self._app_lock:
             self._exit_requested = int(status)
             if self._app_state == AppState.RUNNING and threading.get_ident() != self._app_ident:
-                assert self._app_ident is not None  # set while running
-                ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(self._app_ident),
-                                                           ctypes.py_object(SystemExit))
+                self.interrupt_app()
                 self.io_loop.post(self.wake_app)
         raise SystemExit(status)
+
+    def interrupt_app(self):
+        """Raise SystemExit in the main thread, which is running the
+        application.
+
+        Called on another thread, holding the lock, so the application
+        can't finish first.  Python delivers the exception when the main
+        thread next executes bytecode, so it won't interrupt native code,
+        such as a Qt event loop with nothing to do.  So a Qt application's
+        event loops are told to exit too: then the exception is raised in
+        its own code, once exec() returns, rather than in a slot, where
+        PyQt would end the process at once, without its finally blocks or
+        pyloader's cleanup."""
+        assert self._app_ident is not None  # set while running
+        ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(self._app_ident),
+                                                   ctypes.py_object(SystemExit))
+        self.quit_qt()
+
+    @staticmethod
+    def quit_qt():
+        """Make the application's Qt event loops exit, if it has any.
+
+        QCoreApplication.exit() is thread-safe: it interrupts every event
+        loop running in the application's thread, including QtEventLoop's
+        own.  It also emits aboutToQuit, on this thread.  Qt isn't
+        imported, if the application hasn't."""
+        qtcore = sys.modules.get("PyQt6.QtCore")
+        if qtcore is not None and qtcore.QCoreApplication.instance() is not None:
+            qtcore.QCoreApplication.exit(0)
 
     def wake_app(self):
         """Wake any p-call the application is blocked in.
@@ -746,15 +776,10 @@ class PythonPProcess(darq.SocketListener):
             if self._app_state == AppState.FINISHED:
                 return True
 
-            # Raise SystemExit in the main thread.  Python delivers it
-            # when the thread next executes bytecode, so it won't
-            # interrupt a thread blocked in native code (such as a Qt
-            # event loop with no events to deliver).  This is done holding
-            # the lock, so the application can't finish first.
+            # Raise SystemExit in the main thread (and end its Qt event
+            # loops): see interrupt_app().
             self._app_killed = True
-            assert self._app_ident is not None  # set while running
-            ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(self._app_ident),
-                                                       ctypes.py_object(SystemExit))
+            self.interrupt_app()
 
         # Wake any p-calls the application is blocked on, so it sees the
         # exception.

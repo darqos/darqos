@@ -320,6 +320,131 @@ def test_boot_dev_terminal(pkernel, fake_popen, monkeypatch, value, started):
     assert paths == [os.path.join(module.DARQ_ROOT, path) for path in expected]
 
 
+@pytest.mark.parametrize("terminal", [False, True])
+@pytest.mark.parametrize("dev_terminal", [False, True])
+def test_boot_terminal(pkernel, fake_popen, monkeypatch, terminal, dev_terminal):
+    module = pkernel.module
+    monkeypatch.setenv("DARQ_TERMINAL", "1" if terminal else "0")
+    monkeypatch.setenv("DARQ_DEV_TERMINAL", "1" if dev_terminal else "0")
+    pkernel.do_boot()
+
+    # After the services, and before the development Terminal.
+    paths = [args[-1] for args in fake_popen.calls]
+    expected = (module.BOOT_PROCESSES + ((module.TERMINAL,) if terminal else ())
+                + ((module.DEV_TERMINAL,) if dev_terminal else ()))
+    assert paths == [os.path.join(module.DARQ_ROOT, path) for path in expected]
+    assert (pkernel._terminal is not None) == terminal
+
+
+@pytest.mark.parametrize("host", [None, "wayland-1"])
+def test_loader_environment_with_terminal(pkernel, monkeypatch, host):
+    monkeypatch.setenv("DARQ_TERMINAL", "1")
+    monkeypatch.setenv("DARQ_HOST_WAYLAND_DISPLAY", "stale")
+    monkeypatch.setenv("DARQ_TERMINAL_FAILURES", "2")
+    if host is None:
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    else:
+        monkeypatch.setenv("WAYLAND_DISPLAY", host)
+    env = pkernel.get_loader_environment()
+
+    # GUI processes use the compositor, and the host's display is kept
+    # for it, if there is one.
+    assert env["WAYLAND_DISPLAY"] == "darq-0"
+    assert env["QT_WAYLAND_DISABLE_WINDOWDECORATION"] == "1"
+    assert env.get("DARQ_HOST_WAYLAND_DISPLAY") == host
+    assert "DARQ_TERMINAL_FAILURES" not in env
+
+
+def test_loader_environment_without_terminal(pkernel, monkeypatch):
+    monkeypatch.setenv("DARQ_TERMINAL", "0")
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
+    monkeypatch.delenv("DARQ_HOST_WAYLAND_DISPLAY", raising=False)
+    monkeypatch.delenv("QT_WAYLAND_DISABLE_WINDOWDECORATION", raising=False)
+    env = pkernel.get_loader_environment()
+    assert env["WAYLAND_DISPLAY"] == "wayland-1"
+    assert "DARQ_HOST_WAYLAND_DISPLAY" not in env
+    assert "QT_WAYLAND_DISABLE_WINDOWDECORATION" not in env
+
+
+@pytest.fixture
+def terminal(pkernel, monkeypatch):
+    """A running Terminal, just started."""
+    monkeypatch.delenv("DARQ_TERMINAL_FAILURES", raising=False)
+    process, _ = add_running_process(pkernel, 1)
+    pkernel._terminal = process
+    pkernel._terminal_started = time.monotonic()
+    return process
+
+
+def test_terminal_death_reboots(pkernel, terminal):
+    pkernel.handle_disconnect(terminal)
+    assert pkernel._stopping and pkernel.reboot_requested()
+    assert not pkernel.failed()
+    assert os.environ["DARQ_TERMINAL_FAILURES"] == "1"
+
+
+def test_terminal_exit_at_shutdown_is_expected(pkernel, terminal):
+    pkernel.begin_shutdown(reboot=False)
+    pkernel.handle_disconnect(terminal)
+    assert not pkernel.reboot_requested()
+    assert "DARQ_TERMINAL_FAILURES" not in os.environ
+
+
+def test_other_deaths_dont_reboot(pkernel, terminal):
+    other, _ = add_running_process(pkernel, 2)
+    pkernel.handle_disconnect(other)
+    assert not pkernel._stopping
+
+
+def test_terminal_failing_quickly_shuts_down(pkernel, terminal, monkeypatch):
+    # After failures on the boots before, this one's the last.
+    monkeypatch.setenv("DARQ_TERMINAL_FAILURES", str(pkernel.module.MAX_TERMINAL_FAILURES - 1))
+    pkernel.handle_disconnect(terminal)
+    assert pkernel._stopping and not pkernel.reboot_requested()
+    assert pkernel.failed()
+
+
+def test_terminal_failing_slowly_resets_count(pkernel, terminal, monkeypatch):
+    monkeypatch.setenv("DARQ_TERMINAL_FAILURES", "2")
+    pkernel._terminal_started -= pkernel.module.TERMINAL_MIN_UPTIME
+    pkernel.handle_disconnect(terminal)
+    assert pkernel.reboot_requested()
+    assert os.environ["DARQ_TERMINAL_FAILURES"] == "0"
+
+
+def test_terminal_surviving_resets_count(pkernel, terminal, monkeypatch):
+    monkeypatch.setenv("DARQ_TERMINAL_FAILURES", "2")
+    pkernel.terminal_survived()
+    assert "DARQ_TERMINAL_FAILURES" not in os.environ
+
+
+def test_terminal_missing_reboots(pkernel, fake_popen, tmp_path, monkeypatch):
+    module = pkernel.module
+    monkeypatch.delenv("DARQ_TERMINAL_FAILURES", raising=False)
+    monkeypatch.setenv("DARQ_TERMINAL", "1")
+    monkeypatch.setenv("DARQ_DEV_TERMINAL", "0")
+    monkeypatch.setattr(module, "DARQ_ROOT", str(tmp_path))
+    monkeypatch.setattr(module, "BOOT_PROCESSES", ())
+    pkernel.do_boot()
+    assert pkernel.reboot_requested()
+    assert os.environ["DARQ_TERMINAL_FAILURES"] == "1"
+
+
+def test_terminal_exiting_before_running_reboots(live_pkernel, executable, monkeypatch):
+    kernel = live_pkernel
+    module = kernel.module
+    monkeypatch.delenv("DARQ_TERMINAL_FAILURES", raising=False)
+    monkeypatch.setenv("DARQ_TERMINAL", "1")
+    monkeypatch.setenv("DARQ_DEV_TERMINAL", "0")
+    monkeypatch.setattr(module, "DARQ_ROOT", os.path.dirname(executable))
+    monkeypatch.setattr(module, "TERMINAL", os.path.basename(executable))
+    monkeypatch.setattr(module, "BOOT_PROCESSES", ())
+    module.PYTHON_IMAGE_LOADER = shutil.which("false")
+    kernel.do_boot()
+    run_kernel_until(kernel, lambda: kernel._stopping, "the kernel to reboot")
+    assert kernel.reboot_requested()
+
+
 def test_boot_skips_missing_process(pkernel, fake_popen, tmp_path, monkeypatch):
     for name in ("broken", "good"):
         (tmp_path / name).mkdir()
@@ -476,6 +601,47 @@ def test_spawn_process_exits_before_running(live_pkernel, executable):
     assert response.request_id == 5
     assert response.result != 0
     assert "before running" in response.get_error()
+
+
+@pytest.mark.parametrize("run", ["app.exec()", "loop.run()"])
+def test_shutdown_ends_idle_qt_app_promptly(live_pkernel, tmp_path, run):
+    # A Qt application waiting for events, in QApplication.exec() (as the
+    # development Terminal does) or a QtEventLoop (as a lens does), is
+    # killed at once at shutdown, running its finally blocks, rather
+    # than being forced out by pyloader a second later.
+    kernel = live_pkernel
+    marker = tmp_path / "marker"
+    path = write_app(tmp_path / "app", f"""
+        import pathlib
+        from PyQt6.QtCore import QTimer
+        from PyQt6.QtWidgets import QApplication
+        from darq.loop import QtEventLoop
+
+        MARKER = pathlib.Path({str(marker)!r})
+
+        def darq_main():
+            app = QApplication([])
+            loop = QtEventLoop()
+            QTimer.singleShot(0, lambda: MARKER.write_text("running"))
+            try:
+                {run}
+            finally:
+                MARKER.write_text("finished")
+        """)
+    dpid = kernel.do_spawn_process(None, path)
+    process = kernel._process_table[dpid]
+    run_kernel_until(kernel, lambda: marker.exists(), "the application to run")
+    deadline = time.monotonic() + 0.3
+    run_kernel_until(kernel, lambda: time.monotonic() > deadline, "it to be idle")
+
+    started = time.monotonic()
+    kernel.begin_shutdown(reboot=False)
+    run_kernel_until(kernel, lambda: kernel._stopped, "the shutdown")
+    child = process.get_child()
+    assert child.wait(E2E_TIMEOUT) == 0
+    assert time.monotonic() - started < 0.8
+    assert marker.read_text() == "finished"
+    assert process.get_exit_reason() == pk.ExitReason.KILLED
 
 
 def test_getppid_of_spawned_process(live_pkernel, tmp_path):

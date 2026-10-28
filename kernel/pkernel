@@ -82,14 +82,38 @@ DARQ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # they're all started at once.
 BOOT_PROCESSES = ("services/storage", "services/history", "services/type", "tools/type-sync")
 
-# Throw-away development Terminal, started after them if DARQ_DEV_TERMINAL
-# is set (to anything but 0), for trying types and lenses in a window on
-# the host's desktop, until the real Terminal runs.
+# The Terminal (see doc/terminal.rst), started after them if DARQ_TERMINAL
+# is set (to anything but 0).  It's the session: if it exits or dies, the
+# p-kernel reboots.  It's off by default until it's written.
+TERMINAL = "services/terminal"
+
+# A Terminal that fails within TERMINAL_MIN_UPTIME seconds of starting,
+# MAX_TERMINAL_FAILURES boots in a row, is taken to be broken: the
+# p-kernel shuts down, rather than rebooting again.  The count is kept
+# across a reboot, which is an exec, in the environment.
+TERMINAL_MIN_UPTIME = 30.0
+MAX_TERMINAL_FAILURES = 3
+TERMINAL_FAILURES = "DARQ_TERMINAL_FAILURES"
+
+# With the Terminal, its compositor's public Wayland socket, which
+# spawned processes use; the host's display, if any, is saved for the
+# compositor in this variable.
+COMPOSITOR_DISPLAY = "darq-0"
+HOST_DISPLAY = "DARQ_HOST_WAYLAND_DISPLAY"
+
+# Development Terminal, started after them if DARQ_DEV_TERMINAL is set
+# (to anything but 0), for trying types and lenses in a window on the
+# host's desktop.
 DEV_TERMINAL = "tools/devterm"
 
 # Directory containing the darq package this p-kernel is using, so the
 # loader can import the same one.
 DARQ_PYTHON_PATH = os.path.dirname(os.path.dirname(os.path.abspath(darq.__file__)))
+
+
+def enabled(variable: str) -> bool:
+    """Return True if an environment variable is set to anything but 0."""
+    return os.environ.get(variable, "0") not in ("", "0")
 
 
 class KernelProcessStatus(IntEnum):
@@ -647,6 +671,12 @@ class PseudoKernel(SocketListener, TimerListener):
         self._stopping: bool = False
         self._reboot: bool = False
 
+        # The Terminal, while it's running, and when it was started; and
+        # whether the p-kernel is shutting down because it's broken.
+        self._terminal: KernelProcessState | None = None
+        self._terminal_started = 0.0
+        self._failed = False
+
         # Set once shutdown is complete: no process is left running.
         self._stopped: bool = False
 
@@ -1118,21 +1148,73 @@ class PseudoKernel(SocketListener, TimerListener):
 
         # FIXME: Index and the other services, once ported.
         paths = BOOT_PROCESSES
-        if os.environ.get("DARQ_DEV_TERMINAL", "0") not in ("", "0"):
+        if enabled("DARQ_TERMINAL"):
+            paths += (TERMINAL,)
+        if enabled("DARQ_DEV_TERMINAL"):
             paths += (DEV_TERMINAL,)
         for path in paths:
             exec_path = os.path.join(DARQ_ROOT, path)
             if not os.path.isfile(os.path.join(exec_path, "main.py")):
                 logging.error(f"Boot process {exec_path} has no main.py")
-                continue
+                dpid = None
+            else:
+                try:
+                    dpid = self.do_spawn_process(None, exec_path)
+                except OSError as e:
+                    logging.error(f"Boot process {exec_path} failed to start: {e}")
+                    dpid = None
 
-            try:
-                self.do_spawn_process(None, exec_path)
-            except OSError as e:
-                logging.error(f"Boot process {exec_path} failed to start: {e}")
+            if path == TERMINAL:
+                if dpid is None:
+                    self.terminal_failed(quickly=True)
+                else:
+                    self._terminal = self._process_table[dpid]
+                    self._terminal_started = time.monotonic()
+                    self.after(TERMINAL_MIN_UPTIME, self.terminal_survived)
 
         logging.info("Completed bootstrap")
         return
+
+    def terminal_survived(self):
+        """The Terminal's been running for a while: it isn't broken."""
+        if self._terminal is not None:
+            os.environ.pop(TERMINAL_FAILURES, None)
+
+    def terminal_finished(self, process: KernelProcessState):
+        """Reboot, if the Terminal has exited or died, unless the system
+        is shutting down anyway."""
+        if process is not self._terminal:
+            return
+        self._terminal = None
+        if self._stopping:
+            return
+        uptime = time.monotonic() - self._terminal_started
+        reason = process.get_exit_reason()
+        logging.error(f"The Terminal finished ({reason.name if reason else 'unknown'}, "
+                      f"status {process.get_exit_status()}) after {uptime:.1f}s")
+        self.terminal_failed(quickly=uptime < TERMINAL_MIN_UPTIME)
+
+    def terminal_failed(self, quickly: bool):
+        """Reboot, without a Terminal; or, if it keeps failing quickly,
+        shut down."""
+        try:
+            failures = int(os.environ.get(TERMINAL_FAILURES, "0"))
+        except ValueError:
+            failures = 0
+        failures = failures + 1 if quickly else 0
+        os.environ[TERMINAL_FAILURES] = str(failures)
+        if failures >= MAX_TERMINAL_FAILURES:
+            logging.critical(f"The Terminal failed within {TERMINAL_MIN_UPTIME:.0f}s "
+                             f"{failures} times in a row: shutting down")
+            self._failed = True
+            self.begin_shutdown(reboot=False)
+        else:
+            logging.error("Rebooting, without the Terminal")
+            self.begin_shutdown(reboot=True)
+
+    def failed(self) -> bool:
+        """Return True if the p-kernel shut down because the Terminal is broken."""
+        return self._failed
 
     def schedule_boot(self):
         """Schedule the boot process via the event loop."""
@@ -1304,6 +1386,7 @@ class PseudoKernel(SocketListener, TimerListener):
                 for requester, request_id in process.take_kill_requests():
                     if requester is not None:
                         self.send_kill_process_response(requester, request_id, 0)
+                self.terminal_finished(process)
 
         self.check_shutdown()
         return
@@ -1334,6 +1417,7 @@ class PseudoKernel(SocketListener, TimerListener):
             else:
                 self.answer_wait_requests(parent)
 
+        self.terminal_finished(process)
         self.check_shutdown()
         return
 
@@ -1421,9 +1505,18 @@ class PseudoKernel(SocketListener, TimerListener):
 
         It's this process' environment, with the darq package's location
         prepended to PYTHONPATH, and the absolute run directory in
-        DARQ_RUN."""
+        DARQ_RUN.  With the Terminal, GUI processes use its compositor,
+        and Qt doesn't draw decorations, while the host's display is
+        kept for the compositor."""
         env = dict(os.environ)
         env["DARQ_RUN"] = self.run_dir
+        env.pop(TERMINAL_FAILURES, None)
+        if enabled("DARQ_TERMINAL"):
+            env.pop(HOST_DISPLAY, None)
+            if env.get("WAYLAND_DISPLAY"):
+                env[HOST_DISPLAY] = env["WAYLAND_DISPLAY"]
+            env["WAYLAND_DISPLAY"] = COMPOSITOR_DISPLAY
+            env["QT_WAYLAND_DISABLE_WINDOWDECORATION"] = "1"
         paths = [DARQ_PYTHON_PATH]
         if env.get("PYTHONPATH"):
             paths.append(env["PYTHONPATH"])
@@ -2078,4 +2171,4 @@ if __name__ == "__main__":
         service.restart()
 
     logging.info("Exiting p-Kernel.")
-    sys.exit(0)
+    sys.exit(1 if service.failed() else 0)

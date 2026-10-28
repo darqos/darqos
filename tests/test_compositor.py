@@ -21,7 +21,7 @@ import time
 
 import pytest
 
-from darq.compositor import COMPOSITOR, Compositor, PolicyChannel
+from darq.compositor import COMPOSITOR, Compositor, PolicyChannel, compositor_environment
 from darq.errors import ChannelClosedError, MessageDecodingError
 from darq.protocols import compositor as protocol
 from darq.protocols.compositor import (
@@ -171,6 +171,20 @@ def test_constants_match_didl():
 ################################################################
 # The compositor
 ################################################################
+
+@pytest.mark.parametrize("env, display", [
+    # Nested in the host's desktop, or on the hardware.
+    ({"WAYLAND_DISPLAY": "darq-0", "DARQ_HOST_WAYLAND_DISPLAY": "wayland-1"}, "wayland-1"),
+    ({"WAYLAND_DISPLAY": "darq-0"}, None),
+    ({"WAYLAND_DISPLAY": "darq-0", "DARQ_HOST_WAYLAND_DISPLAY": ""}, None),
+    ({}, None),
+])
+def test_compositor_environment(env, display):
+    result = compositor_environment(env | {"WAYLAND_SOCKET": "5", "HOME": "/home/x"})
+    assert result.get("WAYLAND_DISPLAY") == display
+    assert "DARQ_HOST_WAYLAND_DISPLAY" not in result and "WAYLAND_SOCKET" not in result
+    assert result["HOME"] == "/home/x"
+
 
 # A Wayland client, with windows, which takes commands on stdin: "open
 # <name>", "title <name> <title>", "hide <name>", "show <name>", and

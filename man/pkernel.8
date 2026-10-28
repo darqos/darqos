@@ -40,12 +40,23 @@ the Type service
 and the type sync
 .RI ( tools/type-sync ),
 which registers the installed types and lenses with the Type service
-and then exits.
+and then exits; then, if enabled, the Terminal
+.RI ( services/terminal )
+and the development Terminal
+.RI ( tools/devterm ).
 They're found under the directory above the p-kernel's own,
 .IR /darq .
 They're spawned at once, without waiting for each other: each
 process' blocking name lookup waits for the service it needs.
 One that can't be started is logged, and the rest are started anyway.
+.PP
+The Terminal is the session: when it exits, dies, or can't be started,
+other than at shutdown,
+.B pkernel
+reboots.
+If it fails within 30 seconds of starting, three boots in a row,
+.B pkernel
+shuts down instead, with exit status 1.
 .SS Processes
 A process is created by a
 .B spawn_process
@@ -221,18 +232,37 @@ in a development tree, is taken from the p-kernel's working directory.
 It's created if needed, and spawned processes get its absolute path in
 .BR DARQ_RUN .
 .TP
+.B DARQ_TERMINAL
+If set, to anything but
+.B 0
+or empty, the boot sequence starts the Terminal, after the services.
+It's off by default, until the Terminal is written.
+Spawned processes then get
+.B WAYLAND_DISPLAY=darq-0
+(the Terminal's compositor) and
+.BR QT_WAYLAND_DISABLE_WINDOWDECORATION=1 ,
+and the p-kernel's
+.BR WAYLAND_DISPLAY ,
+if any, as
+.BR DARQ_HOST_WAYLAND_DISPLAY ,
+for the compositor: with it, the compositor is a window on the host's
+desktop.
+.TP
 .B DARQ_DEV_TERMINAL
 If set, to anything but
 .B 0
-or empty, the boot sequence also starts the throw-away development
-Terminal
+or empty, the boot sequence also starts the development Terminal
 .RI ( tools/devterm ),
-last: a window on the host's desktop for creating items, browsing
-History, and shutting down or rebooting.
+last: a window for creating items, browsing History, and shutting down
+or rebooting.
 Spawned processes get the p-kernel's environment, so run the p-kernel
 from the desktop session, where
 .B WAYLAND_DISPLAY
 is set.
+.TP
+.B DARQ_TERMINAL_FAILURES
+How many boots in a row the Terminal has failed quickly; kept across
+a reboot, and not passed to spawned processes.
 .SH FILES
 .TP
 .I /darq/kernel/pkernel
@@ -249,12 +279,12 @@ The boot vector, as JSON, with values in hex.
 unit that runs the p-kernel as part of
 .IR darqos.target .
 .SH EXIT STATUS
-0 after a shutdown.
+0 after a shutdown, or 1 if the Terminal kept failing.
 .SH BUGS
 The listening port is fixed at 11000.
 .PP
-The boot sequence doesn't yet start the Index or Terminal
-services.
+The boot sequence doesn't yet start the Index service, and the
+Terminal is off by default.
 .PP
 Finished processes the p-kernel spawned itself are never removed from
 the process table.
