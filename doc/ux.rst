@@ -1,3 +1,44 @@
+User Experience
+===============
+
+The fundamental principle underlying the DarqOS UX is that the system
+operator is an *expert* (or will soon become one).
+
+Some UX-relevant secondary principles include:
+
+* Darq is a *single-user* system
+* All software on the system is either part of the system or written
+  by the operator.
+  
+These principles lead to general UX guidelines:
+
+* The appearance of the system should maximise the content and
+  minimise the infrastructure.
+
+  * Backgrounds, transparency, most animations, skeuomorphism,
+    excessive styling -- none of this foregrounds the content.  Make
+    UI elements distinct, standardised, and simple.
+  * Discoverability in the form of menus and visible preference
+    settings should be largely eliminated.
+  * Most actions should be triggered by keyboard commands.  In
+    general, the mouse should be used only where its visual nature
+    makes it superior.
+
+* Always expect the operator to know what they are doing.  They don't
+  need hand-holding or descriptions of their options.
+* Make available the full possible power of the system.  Don't try to
+  constrain the operator for their safety.
+* Since the installed software is trusted, in general, it isn't
+  necessary to defend against other parts of the system.
+
+  * This is not universal.  In particular, the web lens executes
+    untrusted software within an otherwise trusting environment.
+    Consequently, it must be strongly isolated and controlled.
+
+* Software should behave consistently.  There are no proprietary
+  interests or barriers to implementing standard appearance, controls,
+  and behaviour.
+
 Scenarios
 =========
 
@@ -10,38 +51,93 @@ process will kick off the terminal service along with the other system
 services, and it is the component that you initially interact with.
 
 On first boot, it will run through an account creation process: it
-collects a username and password, and creates a new account for this
-user.  For subsequent logins, it displays a standard login dialog, and
-authenticates the user.
+collects your Person details and a password, and creates an "account"
+in the Security Service.  For subsequent logins, it displays a
+simple password dialog, and if it is valid, it unlocks the terminal.
 
-After creating and/or logging into your account, you'll arrive at the
+After creating your account and/or logging in, you'll arrive at the
 home screen.  On first boot, this will be empty, so there will be
 basically nothing visible.  The screen has no menubar, no start
 button, no dock.
 
-From here:
 
-- Pushing System-Space will bring up the object selector panel
-- System-n will open the "New Object" panel
-- B3 on the terminal window background will pop up a menu with these
-  options available also.
+Standards
+=========
 
-Creating a new object will open an editing view for that type.  Let's
-assume it's a text object: it will be a basic text editor.  There is
-no need to save any work -- it is all saved immediately as you edit.
+Keyboard
+--------
 
-The window can be closed by: System-w, or B3 menu, Close.
+The system standardises shortcut keys well beyond what existing
+operating systems do.  Two new modifier keys/roles are defined:
 
-The window can be resized by: B1 drag on the border?
+* System
 
-The window can be moved by: B1 drag in the margin.
+  The system modifier introduces shortcuts that are implemented
+  system-wide, beyond the scope of any individual application.
 
-When you close the window, there's no graphical "record" of the object
-any more: no icon, or anything.  It also has no name: there's no need
-for objects to be named, unless you want to.  In the selector, it will
-show in the history list, and it'll be searchable via the index service.
+* Application
 
-When you select an object, you can view/edit its metadata using
-System-i (from Mac Finder, but ... maybe something else?)  If you want
-to name an object, this is the place to do so.  You can also add any
-other tags, etc, here.
+  The application modifier introduces shortcuts that are specific to
+  the application with the UI focus.  The operating system will never
+  use an application modifier.  Similarly, no application will ever
+  use the System modifier.
+
+At some point, the plan is to produce a Darq keyboard that adds these
+modifier keys in hardware.
+
+For First Edition, modifiers are mapped as follows:
+
+* Shift, standard behaviour.
+* CapsLock, maps to Control.
+* LAlt, maps to Meta.
+* LControl maps to System.
+* Super/Windows maps to Application.
+* RControl maps to Compose.
+* RAlt maps to AltGr
+
+
+Hotkeys
+-------
+
++------------+----------------------+
+| Sys-space  | Search               |
++------------+----------------------+
+| Sys-b      | (Re)boot             |
++------------+----------------------+
+| Sys-e      | Events               |
++------------+----------------------+
+| Sys-h      | History              |
++------------+----------------------+
+| Sys-i      | Item info            |
++------------+----------------------+
+| Sys-l      | Lock screen toggle   |
++------------+----------------------+
+| Sys-n      | New item             |
++------------+----------------------+
+| Sys-w      | Move/resize window   |
++------------+----------------------+
+| Sys-x      | Close focused window |
++------------+----------------------+
+
+
+Windows
+-------
+
+For First Edition:
+
+* Focus follows mouse.
+* Click to raise.
+* To move focused window: hold down Sys-w, and mouse drag to move.
+* To move focused window: hold down Sys-w, and use the arrow keys to
+  move in reasonable small increments.
+* To resize focused window: hold down Sys-w, and then use: t = taller,
+  s = shorter, b = broader, n = narrower to resize in reasonable small
+  increments.
+
+In future editions:
+* It's possible that the resize and movement keys should be a
+  two-stage combination, like Emacs, instead of a hold.  But hold
+  proabably works better for repeated changes.
+* Also possible: Sys-w will show a set of control decorations around
+  the window.  Resize handles and a grab target for movement.
+

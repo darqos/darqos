@@ -1,14 +1,14 @@
 Input Events
 ============
 
-The system will use a focus-follows-mouse model, with an option to raise
-windows.  The window with focus will have a nicely composited fade to a
-translucent matte which de-emphasises the other windows.
+The system will use a focus-follows-mouse model.  The window with
+focus will have a nicely composited fade to a translucent matte which
+de-emphasises the other windows.
 
-Keyboard and pointer (mouse) events will be delivered to the object with
+Keyboard and pointer (mouse) events will be delivered to the item with
 focus.  Events will be delivered as IPC messages.
 
-Objects will have their standard API exposed (via IPC messages), and
+Items will have their standard API exposed (via IPC messages), and
 keyboard and pointer actions should be bound to their API.  I think that
 means that we need a shim of some sort?
 
@@ -21,7 +21,7 @@ It should provide a bunch of built-in mappings to the wrapped object's
 API: some more-or-less 1:1 mappings, others with some built-in behaviour,
 eg. a script triggered by a menu.
 
-The question is: why have this in a wrapper, rather then the basic object
+The question is: why have this in a wrapper, rather then the basic item
 implementation?
 
 I think, perhaps in the first step, I'll just make it all one program.
