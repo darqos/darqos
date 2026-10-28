@@ -76,11 +76,12 @@ PYTHON_IMAGE_LOADER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "
 DARQ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Processes started at boot, in order, as paths relative to DARQ_ROOT:
-# the Storage, History and Type services, then the type sync, which
-# registers the installed types and lenses with the Type service.  A
-# client's connect waits for its service's name to be registered, so
+# the Storage, History, Type and Security services, then the type sync,
+# which registers the installed types and lenses with the Type service.
+# A client's connect waits for its service's name to be registered, so
 # they're all started at once.
-BOOT_PROCESSES = ("services/storage", "services/history", "services/type", "tools/type-sync")
+BOOT_PROCESSES = ("services/storage", "services/history", "services/type", "services/security",
+                  "tools/type-sync")
 
 # The Terminal (see doc/terminal.rst), started after them unless
 # DARQ_TERMINAL is 0 (or empty).  It's the session: if it exits or dies,

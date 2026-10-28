@@ -12,11 +12,19 @@ import pathlib
 import socket
 import sys
 import time
+import typing
 
 import pytest
 
 from darq.compositor import COMPOSITOR, PolicyChannel
+from darq.errors import DeadPortError
 from darq.protocols import compositor as protocol
+from darq.protocols.security import (
+    CheckPasswordResponse,
+    IsPasswordSetResponse,
+    SetPasswordResponse,
+    Status as SecurityStatus,
+)
 from darq.protocols.compositor import (
     BindHotkey,
     CloseWindow,
@@ -78,6 +86,36 @@ class Compositor:
             messages.append(message)
 
 
+class FakeSecurity:
+    """The Security service: the password, if it's set."""
+
+    def __init__(self, password: str | None = "swordfish"):
+        self.password = password
+        self.down = False
+
+    def check_up(self):
+        if self.down:
+            raise DeadPortError("darq.security is down")
+
+    def is_password_set(self):
+        self.check_up()
+        return IsPasswordSetResponse(set=self.password is not None)
+
+    def set_password(self, old_password: str, new_password: str):
+        self.check_up()
+        if self.password is not None:
+            return SetPasswordResponse(status=SecurityStatus.ALREADY_SET)
+        self.password = new_password
+        return SetPasswordResponse(status=SecurityStatus.OK)
+
+    def check_password(self, password: str):
+        self.check_up()
+        if self.password is None:
+            return CheckPasswordResponse(status=SecurityStatus.NOT_SET)
+        return CheckPasswordResponse(status=SecurityStatus.OK if password == self.password
+                                     else SecurityStatus.WRONG_PASSWORD)
+
+
 class FakeApp:
     """Stands in for the QApplication, where the Terminal would exit it."""
 
@@ -93,11 +131,17 @@ class FakeApp:
 
 
 @pytest.fixture
-def terminal(qt_app):
+def security():
+    return FakeSecurity()
+
+
+@pytest.fixture
+def terminal(qt_app, security):
     """A started Terminal, locked, and the compositor's end of its
     channel, with the hotkey bindings read."""
     ours, theirs = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
-    services = FakeServices()
+    services: typing.Any = FakeServices()
+    services.security = security
     started = main.Terminal(qt_app, PolicyChannel(ours), services)
     started.launcher.run = started.launcher.post = inline
     started.start()
@@ -127,10 +171,18 @@ def hotkey(terminal, keysym: int, modifiers: int = 0):
     terminal.handle(HotkeyPressed(keysym=keysym, modifiers=modifiers))
 
 
-def unlock(terminal):
-    from PyQt6.QtCore import Qt
+def enter(terminal, password: str, confirm: str | None = None):
+    """Type on the lock screen, as Enter is pressed after each field."""
     lock = terminal.screens.locks()[0]
-    lock.keyPressEvent(key(Qt.Key.Key_Return))
+    lock.password.setText(password)
+    lock.password.returnPressed.emit()
+    if confirm is not None:
+        lock.confirm.setText(confirm)
+        lock.confirm.returnPressed.emit()
+
+
+def unlock(terminal):
+    enter(terminal, "swordfish")
     assert terminal.compositor.received() == [Unlock()]
 
 
@@ -153,16 +205,90 @@ def test_starts_locked(terminal):
     assert background.windowTitle() == "darq:background" and background.isVisible()
     assert lock.windowTitle() == "darq:lock" and lock.isVisible()
 
-    # Hotkeys do nothing while it's locked (bar Sys-b), and only Enter unlocks.
+    # It asks for the password.
+    assert lock.heading.text() == "Locked"
+    assert lock.password.isVisibleTo(lock) and not lock.confirm.isVisibleTo(lock)
+
+    # Hotkeys do nothing while it's locked (bar Sys-b), and only the
+    # password unlocks.
     hotkey(terminal, main.XK_n)
     hotkey(terminal, main.XK_l)
     assert visible(terminal) == []
-    lock.keyPressEvent(key(Qt.Key.Key_A, "a"))
+    lock.keyPressEvent(key(Qt.Key.Key_Return))
+    enter(terminal, "guess")
+    assert lock.message.text() == "Wrong password" and lock.password.text() == ""
     assert terminal.locked and terminal.compositor.received() == []
 
     unlock(terminal)
     assert not terminal.locked and not lock.isVisible()
     assert background.isVisible()
+
+
+@pytest.mark.parametrize("security", [FakeSecurity(None)])
+def test_first_password(terminal, security):
+    lock = terminal.screens.locks()[0]
+    assert lock.heading.text() == "Choose a password"
+    assert lock.confirm.isVisibleTo(lock)
+
+    # It's typed twice: they must match, and not be empty.
+    enter(terminal, "", "")
+    assert lock.message.text() == "The password can't be empty"
+    enter(terminal, "swordfish", "swordfsh")
+    assert lock.message.text() == "Those don't match: try again"
+    assert (lock.password.text(), lock.confirm.text()) == ("", "")
+    assert security.password is None and terminal.locked
+
+    enter(terminal, "swordfish", "swordfish")
+    assert security.password == "swordfish"
+    assert terminal.compositor.received() == [Unlock()]
+
+    # Next time, it's asked for.
+    hotkey(terminal, main.XK_l)
+    terminal.compositor.received()
+    assert lock.heading.text() == "Locked" and not lock.confirm.isVisibleTo(lock)
+    unlock(terminal)
+
+
+@pytest.mark.parametrize("security", [FakeSecurity(None)])
+def test_password_set_meanwhile(terminal, security):
+    lock = terminal.screens.locks()[0]
+    security.password = "swordfish"
+    enter(terminal, "new", "new")
+    assert lock.message.text() == "There's a password already: enter it"
+    assert terminal.screens.mode == "enter"
+    unlock(terminal)
+
+
+def test_security_unavailable(terminal, security):
+    from PyQt6.QtCore import Qt
+    lock = terminal.screens.locks()[0]
+
+    # A check that can't be made doesn't unlock.
+    security.down = True
+    enter(terminal, "swordfish")
+    assert lock.message.text().startswith("Can't check the password")
+    assert terminal.locked
+
+    # Nor does the screen, if it can't ask whether there's a password:
+    # Enter asks again.
+    terminal.ask_password_set()
+    assert terminal.screens.mode == "unavailable"
+    assert not lock.password.isVisibleTo(lock)
+    security.down = False
+    lock.keyPressEvent(key(Qt.Key.Key_Return))
+    assert terminal.screens.mode == "enter"
+    unlock(terminal)
+
+
+def test_busy_while_checking(terminal):
+    terminal.launcher.run = deferred = Deferred()
+    lock = terminal.screens.locks()[0]
+    enter(terminal, "swordfish")
+    assert lock.message.text() == "Checking ..." and not lock.password.isEnabled()
+    enter(terminal, "again")
+    assert len(deferred.jobs) == 1
+    deferred.finish()
+    assert terminal.compositor.received() == [Unlock()]
 
 
 def test_power_from_lock_screen(terminal):
@@ -171,13 +297,17 @@ def test_power_from_lock_screen(terminal):
     hotkey(terminal, main.XK_b)
     assert lock.prompting and visible(terminal) == []
 
+    # The keys come to the prompt, not the password field.
+    assert not lock.password.isEnabled()
+    assert lock.message.text() == "s: Shut down    b: Reboot    any other key: Cancel"
+
     # A modifier isn't an answer; another key cancels; s shuts down.
     lock.keyPressEvent(key(Qt.Key.Key_Shift))
     assert lock.prompting
     lock.keyPressEvent(key(Qt.Key.Key_Q, "q"))
     assert not lock.prompting and terminal.fake_services.calls == []
-    lock.keyPressEvent(key(Qt.Key.Key_Return))
-    assert terminal.compositor.received() == [Unlock()]
+    assert lock.password.isEnabled() and lock.message.text() == ""
+    unlock(terminal)
 
     terminal.lock()
     terminal.compositor.received()

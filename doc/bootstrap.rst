@@ -86,7 +86,11 @@ Bootstrap
 
    * Security
 
-     * User authentication
+     * Spawned as part of the bootstrap process.
+     * 1st Edition has only a password, set on the first boot, and
+       checked by the Terminal's lock screen (see :doc:`security`).
+     * It keeps its hash in the run directory, and registers
+       `darq.security`.
 
    * History
 

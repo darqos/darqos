@@ -1,6 +1,44 @@
 Security Service
 ================
 
+First Edition
+-------------
+
+1st Edition has only a password, with no user names: it's set on the
+first boot, and checked by the Terminal's lock screen (see
+:doc:`terminal`).  The Security service (``services/security``) is
+started at boot, and registers ``darq.security``.  Its protocol is in
+``lib/didl/security.didl``:
+
+- ``IsPasswordSet``: whether there's a password yet.
+- ``SetPassword(old_password, new_password)``: the first time,
+  ``old_password`` is empty; afterwards, it must be the password.  A
+  new password must be non-empty, and at most 1024 bytes, as UTF-8.
+- ``CheckPassword(password)``.
+
+The password is kept as an scrypt hash (N=2\ :sup:`15`, r=8, p=1, with
+a random 16-byte salt), in ``security.json`` in the run directory,
+readable only by its owner, and replaced atomically.  The parameters
+are stored with the hash, so they can be raised later.  A file that
+can't be read fails closed: a password is taken to be set, but none
+matches.
+
+DIPC doesn't tell a service who its client is, so any process could
+check passwords, or set the first one, before the Terminal does.  So
+guessing is slowed: checks (and changes, which check the old password)
+are made one at a time, and after three wrong ones in a row, each
+waits longer before it's made: 1, 2, 4, ... seconds, up to 30, until
+one's right.  The first password can only be set at the first boot,
+when only system processes are running.  That's enough for a
+single-user 1st Edition.
+
+There's no way to change the password from the user interface yet.
+A forgotten one is reset by deleting ``security.json``, from the host:
+the next boot asks for a new one.
+
+Later
+-----
+
 The security system really only needs to authenticate users.  Once
 authenticated, a user will have some sort of token that can then be
 supplied to services that will grant access.

@@ -19,6 +19,9 @@
     - can overlay the other windows, with an animated shade, for the HUDs?
   - Can we extend the Terminal service to do a useful login (password only)
     screen that blocks access to the machine until it's happy?
+    - Done: the compositor starts locked, and the Terminal's lock screen
+      unlocks it with the password, checked by the Security service
+      (see doc/security.rst).
   - Does a simple `cefpython3` application work?
 - Implement and test the three different interaction modes for the API:
   sync, async, and callback
@@ -67,7 +70,7 @@
   - Try the Text type and lens on the desktop with it.
 - Terminal (services/terminal): runs at boot, with the compositor.
   - Try it on the desktop, nested: it's only been run headless.
-  - The lock screen's password, with the Security service.
+  - Changing the password: a Settings tool, say (SetPassword can).
 - Implement GUI Text lens
   - Done: lenses/text, started for an item with the Lens protocol
     (lib/didl/lens.didl) by darq.launch.use_item; a change is sent as

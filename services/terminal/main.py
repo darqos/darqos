@@ -8,7 +8,9 @@
 # its panels, and locking.
 #
 # - A background and a lock window on every screen (screens.py).  It
-#   starts locked, as the compositor does.
+#   starts locked, as the compositor does, and the lock screen unlocks
+#   with the password, which the Security service checks; on the first
+#   boot, it asks for one, to set.
 # - Sys-n New, Sys-h History, Sys-Tab the switcher, Sys-b shut down or
 #   reboot, Sys-x close the focused window, Sys-l lock; Sys-space,
 #   Sys-e and Sys-i show a TBD panel (panels.py).  While it's locked,
@@ -28,10 +30,12 @@ from PyQt6 import QtCore
 from PyQt6.QtWidgets import QApplication
 from PyQt6.sip import voidptr
 
+import darq
 from darq.compositor import COMPOSITOR, Compositor, PolicyChannel
 from darq.dipc import Message
 from darq.errors import ChannelClosedError, MessageDecodingError
 from darq.loop import QtEventLoop
+from darq.protocols.security import Status as SecurityStatus
 from darq.protocols.compositor import (
     BindHotkey,
     CloseWindow,
@@ -52,7 +56,7 @@ from darq.ui import Services
 from darq.ui.launcher import Launcher
 
 from panels import HistoryPanel, NewPanel, NoticePanel, Panel, PowerPanel, SwitcherPanel, TbdPanel
-from screens import Screens
+from screens import CHOOSE, ENTER, UNAVAILABLE, WAITING, Screens
 
 
 # History source for the events it records.
@@ -112,7 +116,7 @@ class Terminal:
         self.switch_index = 0
 
         self.locked = True
-        self.screens = Screens(app, self.unlock, self.power)
+        self.screens = Screens(app, self.submit_password, self.power)
         self.new = NewPanel(self)
         self.history = HistoryPanel(self, self.type_ids)
         self.switcher = SwitcherPanel()
@@ -130,6 +134,65 @@ class Terminal:
         for keysym, modifiers in HOTKEYS:
             self.channel.send(BindHotkey(keysym=keysym, modifiers=modifiers))
         self.screens.start()
+        self.ask_password_set()
+
+    # The password
+
+    def ask_password_set(self):
+        """Ask for the password, or, if there isn't one, for a new one."""
+        try:
+            is_set = self.services.security.is_password_set().set
+        except (darq.DarqError, TimeoutError) as e:
+            logging.error(f"Can't reach the Security service: {e!r}")
+            self.screens.show(UNAVAILABLE, f"Can't reach the Security service: {e}. Enter tries again.")
+            return
+        self.screens.show(ENTER if is_set else CHOOSE, clear=True)
+
+    def submit_password(self, password: str, confirm: str | None):
+        """What's typed on the lock screen: the password, or a new one,
+        and it again."""
+        screens = self.screens
+        if screens.busy:
+            return
+        if screens.mode in (UNAVAILABLE, WAITING):
+            self.ask_password_set()
+        elif screens.mode == CHOOSE:
+            if not password:
+                screens.show(message="The password can't be empty")
+            elif password != confirm:
+                screens.show(message="Those don't match: try again", clear=True)
+            else:
+                screens.show(message="Setting the password ...", busy=True)
+                self.launcher.background(
+                    lambda: self.services.security.set_password(old_password="", new_password=password).status,
+                    self.password_set)
+        else:
+            screens.show(message="Checking ...", busy=True)
+            self.launcher.background(lambda: self.services.security.check_password(password=password).status,
+                                     self.password_checked)
+
+    def password_set(self, status: SecurityStatus | None, error: Exception | None):
+        if error is not None:
+            self.screens.show(message=f"Can't set the password: {error}")
+        elif status == SecurityStatus.OK:
+            self.screens.show(ENTER, clear=True)
+            self.unlock()
+        elif status == SecurityStatus.ALREADY_SET:
+            self.screens.show(ENTER, "There's a password already: enter it", clear=True)
+        elif status == SecurityStatus.INVALID:
+            self.screens.show(message="That's too long: try another", clear=True)
+        else:
+            self.screens.show(message=f"Can't set the password: {status!r}")
+
+    def password_checked(self, status: SecurityStatus | None, error: Exception | None):
+        if error is not None:
+            self.screens.show(message=f"Can't check the password: {error}", clear=True)
+        elif status == SecurityStatus.OK:
+            self.unlock()
+        elif status == SecurityStatus.NOT_SET:
+            self.screens.show(CHOOSE, "There's no password yet: choose one", clear=True)
+        else:
+            self.screens.show(message="Wrong password", clear=True)
 
     # Host
 

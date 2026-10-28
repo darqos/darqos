@@ -1,0 +1,39 @@
+// darqos
+// Copyright (C) 2026 David Arnold
+//
+// Security service protocol: see doc/security.rst.
+//
+// 1st Edition has only a password, with no user names: it's set on the
+// first boot, and checked by the Terminal's lock screen.
+
+library darq.security;
+
+enum Status : uint32 {
+    OK = 0;
+
+    // The password, or the old one, isn't right.
+    WRONG_PASSWORD = 1;
+
+    // There's no password yet: set it first.
+    NOT_SET = 2;
+
+    // There is a password already: give it, as the old one, to change it.
+    ALREADY_SET = 3;
+
+    // The new password is empty, or longer than 1024 bytes, as UTF-8.
+    INVALID = 4;
+}
+
+// The Security service, registered as "darq.security".
+protocol Security {
+    // Whether there's a password yet.
+    1: IsPasswordSet() -> (bool set);
+
+    // Set the password.  The first time, old_password is empty;
+    // afterwards, it must be the password.
+    2: SetPassword(string old_password, string new_password) -> (Status status);
+
+    // Check a password.  After a few wrong ones in a row, the replies
+    // are delayed, longer each time, until one's right.
+    3: CheckPassword(string password) -> (Status status);
+}

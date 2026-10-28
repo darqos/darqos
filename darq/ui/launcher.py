@@ -108,6 +108,31 @@ class Launcher:
 
         self.run(launch)
 
+    def background(self, job: typing.Callable[[], typing.Any],
+                   finished: typing.Callable[[typing.Any, Exception | None], None]):
+        """Run any other job that would block, as launches are: finished
+        is called on the UI's thread with its result, or what it raised."""
+        def run():
+            result, error = None, None
+            try:
+                result = job()
+            except Exception as e:
+                error = e
+            if self.run is start_thread:
+                darq.release_reply_port()
+
+            def report():
+                try:
+                    finished(result, error)
+                except Exception:
+                    logging.exception("Failed to report a job")
+            try:
+                self.post(report)
+            except RuntimeError:
+                logging.info("Job finished after the UI")
+
+        self.run(run)
+
     def finish(self, context: object, item_id: str | None, error: str | None,
                done: typing.Callable[[], None] | None):
         """Tell the host, on its thread.  Nothing's raised into its event

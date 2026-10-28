@@ -477,10 +477,16 @@ Lock
 the compositor lock.  While it's locked, *Sys-l* does nothing:
 unlocking always needs the password.  Of the other hotkeys, only
 *Sys-b* works, on the lock screen itself: the overlay layer isn't
-shown while it's locked.
+shown while it's locked.  While its prompt is showing, the password
+field is disabled, so the keys go to it.
 
-Until the Security service is ported, there's no password: the lock
-screen says "Press Enter to unlock", and Enter does.
+The lock screen asks for the password, which the Security service
+checks (see :doc:`security`): if it's wrong, it says so, and asks
+again.  On the first boot, there's none: it asks for a new one, twice,
+and sets it.  The checks are made on another thread, as launches are,
+since the service delays them after wrong ones.  If the Security
+service can't be reached, it stays locked, and says so: Enter tries
+again.
 
 Shutdown and Reboot
 ~~~~~~~~~~~~~~~~~~~

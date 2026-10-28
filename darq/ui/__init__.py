@@ -17,6 +17,7 @@ import typing
 import darq
 import darq.launch
 from darq.protocols.history import History
+from darq.protocols.security import Security
 from darq.protocols.type import Type
 
 if typing.TYPE_CHECKING:
@@ -31,17 +32,20 @@ __all__ = [
 ]
 
 
-# Seconds to wait for services' replies.
+# Seconds to wait for services' replies, and for a password check, which
+# the Security service delays after wrong ones (up to 30 seconds).
 TIMEOUT = 10.0
+SECURITY_TIMEOUT = 60.0
 
 
 class Services:
-    """What the Terminals use: the Type and History services,
+    """What the Terminals use: the Type, History and Security services,
     darq.launch, and shutting down and rebooting.  Tests replace them."""
 
     def __init__(self):
         self.types = Type.Client(darq.connect("darq.type"), timeout=TIMEOUT)
         self.history = History.Client(darq.connect("darq.history"), timeout=TIMEOUT)
+        self.security = Security.Client(darq.connect("darq.security"), timeout=SECURITY_TIMEOUT)
         self.launch = darq.launch
 
     def shutdown(self):

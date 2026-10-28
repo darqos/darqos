@@ -5,14 +5,15 @@
 # the lock screen.  The compositor places them by their titles, in its
 # background and lock layers, filling the screen each is shown on.
 #
-# Until the Security service is ported, Enter unlocks: there's no
-# password yet.
+# The lock screen asks for the password, or, on the first boot, for a new
+# one, twice.  What's typed is passed to the Terminal, which asks the
+# Security service: the screens just show what it says.
 
 import typing
 
 from PyQt6 import QtCore
 from PyQt6.QtGui import QColor, QGuiApplication, QKeyEvent, QPaintEvent, QPainter, QScreen
-from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QLabel, QLineEdit, QVBoxLayout, QWidget
 
 
 Key = QtCore.Qt.Key
@@ -22,8 +23,22 @@ Key = QtCore.Qt.Key
 MODIFIER_KEYS = {Key.Key_Shift, Key.Key_Control, Key.Key_Alt, Key.Key_Meta, Key.Key_Super_L,
                  Key.Key_Super_R, Key.Key_Hyper_L, Key.Key_Hyper_R, Key.Key_AltGr, Key.Key_CapsLock}
 
-LOCKED_TEXT = "Locked\n\nPress Enter to unlock"
 POWER_TEXT = "s: Shut down    b: Reboot    any other key: Cancel"
+
+# What the lock screen asks for: nothing yet, the password, a new one (on
+# the first boot), or nothing it can (the Security service can't be
+# reached: Enter tries again).
+WAITING = "waiting"
+ENTER = "enter"
+CHOOSE = "choose"
+UNAVAILABLE = "unavailable"
+
+HEADINGS = {
+    WAITING: "Locked",
+    ENTER: "Locked",
+    CHOOSE: "Choose a password",
+    UNAVAILABLE: "Locked",
+}
 
 
 # The power prompt's answers, by key.
@@ -58,58 +73,115 @@ class Background(QWidget):
 
 
 class LockWindow(QWidget):
-    """A screen's lock screen.  Enter asks to unlock; while it's showing
-    the power prompt (see Screens.power_prompt), s and b ask to shut down
-    or reboot, and any other key cancels it."""
+    """A screen's lock screen: a heading, the password field (and a
+    second, to confirm a new one), and a message line.
+
+    While it's showing the power prompt (see Screens.power_prompt), the
+    fields are disabled, so the keys come to it: s and b ask to shut
+    down or reboot, and any other key cancels it."""
 
     TITLE = "darq:lock"
     COLOUR = QColor("#101214")
+    STYLE = "color: #c0c4c8; font-size: 20px"
 
-    def __init__(self, screen: QScreen, unlock: typing.Callable[[], None],
-                 power: typing.Callable[[str], None]):
+    def __init__(self, screen: QScreen, screens: "Screens"):
         super().__init__()
         self.setWindowTitle(self.TITLE)
         self.setScreen(screen)
-        self.unlock = unlock
-        self.power = power
+        self.screens = screens
         self.prompting = False
 
-        self.label = QLabel(LOCKED_TEXT)
-        self.label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self.label.setStyleSheet("color: #c0c4c8; font-size: 24px")
-        layout = QVBoxLayout()
-        layout.addWidget(self.label)
-        self.setLayout(layout)
+        self.heading = QLabel()
+        self.heading.setStyleSheet("color: #c0c4c8; font-size: 28px")
+        self.password = QLineEdit()
+        self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password.setPlaceholderText("Password")
+        self.password.returnPressed.connect(self.password_entered)
+        self.confirm = QLineEdit()
+        self.confirm.setEchoMode(QLineEdit.EchoMode.Password)
+        self.confirm.setPlaceholderText("Again")
+        self.confirm.returnPressed.connect(self.submit)
+        self.message = QLabel()
+        self.message.setStyleSheet(self.STYLE)
+        self.message.setWordWrap(True)
+
+        column = QVBoxLayout()
+        column.addStretch()
+        for widget in (self.heading, self.password, self.confirm, self.message):
+            widget.setFixedWidth(400)
+            column.addWidget(widget, alignment=QtCore.Qt.AlignmentFlag.AlignHCenter)
+        column.addStretch()
+        self.setLayout(column)
 
     def paintEvent(self, a0: QPaintEvent | None):
         QPainter(self).fillRect(self.rect(), self.COLOUR)
 
+    def update_state(self):
+        """Show the screens' state: the mode, its message, and whether
+        the fields can be used."""
+        screens = self.screens
+        self.heading.setText(HEADINGS[screens.mode])
+        self.confirm.setVisible(screens.mode == CHOOSE)
+        self.password.setVisible(screens.mode in (ENTER, CHOOSE))
+        usable = not screens.busy and not self.prompting
+        self.password.setEnabled(usable)
+        self.confirm.setEnabled(usable)
+        self.message.setText(POWER_TEXT if self.prompting else screens.message)
+        if self.prompting:
+            self.setFocus()
+        elif usable and not self.confirm.hasFocus():
+            self.password.setFocus()
+
+    def clear(self):
+        self.password.clear()
+        self.confirm.clear()
+
+    def password_entered(self):
+        if self.screens.mode == CHOOSE:
+            self.confirm.setFocus()
+        else:
+            self.submit()
+
+    def submit(self):
+        mode = self.screens.mode
+        self.screens.submit(self.password.text(), self.confirm.text() if mode == CHOOSE else None)
+
     def set_prompting(self, prompting: bool):
         self.prompting = prompting
-        self.label.setText(POWER_TEXT if prompting else LOCKED_TEXT)
+        self.update_state()
 
     def keyPressEvent(self, a0: QKeyEvent | None):
         if a0 is None:
             return
         if self.prompting:
             choice = power_choice(a0)
-            if choice is None:
-                return
-            self.power(choice)
-        elif a0.key() in (Key.Key_Return, Key.Key_Enter):
-            self.unlock()
+            if choice is not None:
+                self.screens.on_power(choice)
+        elif self.screens.mode in (UNAVAILABLE, WAITING) and a0.key() in (Key.Key_Return, Key.Key_Enter):
+            self.screens.submit("", None)
 
 
 class Screens:
     """A background and a lock window for each screen, as they come and
-    go, with the lock windows shown while it's locked."""
+    go, with the lock windows shown while it's locked, and what they're
+    asking for."""
 
-    def __init__(self, app: QGuiApplication, unlock: typing.Callable[[], None],
+    def __init__(self, app: QGuiApplication, submit: typing.Callable[[str, str | None], None],
                  power: typing.Callable[[str], None]):
+        """Constructor.
+
+        :param submit: Called with what's typed: the password, and, for a
+                       new one, what was typed to confirm it (else None).
+        :param power: Called with "shutdown" or "reboot"."""
         self.app = app
-        self.unlock = unlock
+        self.submit = submit
         self.power = power
         self.locked = True
+        self.mode = WAITING
+        self.message = ""
+
+        # While what's typed is being checked.
+        self.busy = False
         self.windows: dict[QScreen, tuple[Background, LockWindow]] = {}
 
     def start(self):
@@ -120,8 +192,9 @@ class Screens:
 
     def add(self, screen: QScreen):
         background = Background(screen)
-        lock = LockWindow(screen, self.unlock, self.on_power)
+        lock = LockWindow(screen, self)
         self.windows[screen] = (background, lock)
+        lock.update_state()
         background.showFullScreen()
         if self.locked:
             lock.showFullScreen()
@@ -136,16 +209,30 @@ class Screens:
     def locks(self) -> list[LockWindow]:
         return [lock for _, lock in self.windows.values()]
 
+    def show(self, mode: str | None = None, message: str = "", busy: bool = False, clear: bool = False):
+        """Ask for something else, or say something, on every screen."""
+        if mode is not None:
+            self.mode = mode
+        self.message = message
+        self.busy = busy
+        for lock in self.locks():
+            if clear:
+                lock.clear()
+            lock.update_state()
+
     def lock(self):
         self.locked = True
+        self.show(ENTER if self.mode == ENTER else self.mode, clear=True)
         for lock in self.locks():
-            lock.set_prompting(False)
+            lock.prompting = False
+            lock.update_state()
             lock.showFullScreen()
 
     def unlock_screens(self):
         self.locked = False
+        self.show(message="", clear=True)
         for lock in self.locks():
-            lock.set_prompting(False)
+            lock.prompting = False
             lock.hide()
 
     def power_prompt(self):
