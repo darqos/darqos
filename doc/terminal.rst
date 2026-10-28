@@ -41,17 +41,25 @@ GUI session.
 Development Terminal
 --------------------
 
-Until the compositor and the real Terminal exist, `tools/devterm` is a
-throw-away stand-in: an ordinary window on the host's Wayland desktop,
-started at boot, last, when `DARQ_DEV_TERMINAL=1` is set.  Run the
-p-kernel from the desktop session, so its windows (and the lenses')
-appear there.  From the top of the tree, with the virtual
+`tools/devterm` is a development tool: an ordinary window for
+creating items, browsing History, and shutting down or rebooting.  It
+was written to try types and lenses before the compositor existed,
+and is kept alongside the real Terminal.  It's started at boot, last,
+when `DARQ_DEV_TERMINAL=1` is set.
+
+Once the real Terminal is started at boot, setting `DARQ_TERMINAL=0`
+as well stops it starting, and the devterm's window appears on the host's Wayland desktop.  Run
+the p-kernel from the desktop session, so its windows (and the
+lenses') appear there.  From the top of the tree, with the virtual
 environment's Python first on the path (the p-kernel and its loaders
 run `python`), and the tree on `PYTHONPATH` (for the p-kernel's own
 `import darq`)::
 
     . venv313/bin/activate
-    PYTHONPATH=$PWD DARQ_RUN=./run DARQ_DEV_TERMINAL=1 kernel/pkernel
+    PYTHONPATH=$PWD DARQ_RUN=./run DARQ_TERMINAL=0 DARQ_DEV_TERMINAL=1 kernel/pkernel
+
+Without `DARQ_TERMINAL=0`, it's just another window on the real
+Terminal's display.
 
 It has:
 
@@ -65,8 +73,7 @@ It has:
   Quit, which closes just this window.
 
 Its calls are synchronous, on Qt's thread, so starting a lens freezes
-it for a second or so.  It's to be deleted once the real Terminal runs:
-nothing else depends on it.
+it for a second or so.
 
 
 First Edition Graphical Terminal
@@ -90,27 +97,26 @@ keyboard, a USB mouse, stereo audio out, mono audio in, and a USB
 camera.  The camera is the lowest priority.
 
 On startup, the Terminal Service will use PyQt6 to identify all
-available screen, and display a full-screen, most-distant Z-order root
-window on each of them.  There will be no support for multi-seat
-configuration: multiple screens will all be used by the one
-"terminal".
+available screens, and display a full-screen background window on
+each of them, in the compositor's background layer.  There will be no
+support for multi-seat configuration: multiple screens will all be
+used by the one "terminal".
 
-For starters, only the default keymap provided by the Linux layer will
-be supported.
+The Terminal Service runs as a DarqOS process, spawned by the p-kernel
+at boot.  It starts the compositor, and decides what it does: the
+compositor provides the mechanism, and the Terminal the policy.  The
+Terminal is the session: if it exits or crashes, the p-kernel reboots.
 
-The Terminal Service runs as a DarqOS process, spawned by the p-kernel.
-It starts the compositor, and decides what it does: the compositor
-provides the mechanism, and the Terminal the policy.
+Once initialised, the terminal displays the lock screen: a password
+field, and nothing else (sleep, and the volume control, come later).
+On the first boot, it asks for a new password instead, and sets it
+with the Security service.  1st Edition has only a password: there are
+no user names.
 
-Once initialised, the terminal will display a lock screen with an
-authentication field, controls to sleep/reboot/shutdown the machine,
-and an output volume control with muting.
-
-Once authenticated, the Terminal will hide the lock screen.  At this
-point the main "desktop" functionality will be available.  If
-*firstrun* mode is active, the manpage reader application should be
-started to show the *intro* page, giving the user an overview of the
-system controls.
+Once the password is accepted, the Terminal hides the lock screen, and
+the hotkeys (see :doc:`ux`) are available.  If *firstrun* mode is
+active, the manpage reader application should be started to show the
+*intro* page, giving the user an overview of the system controls.
 
 Compositor
 ~~~~~~~~~~
@@ -119,7 +125,7 @@ Several of the Terminal's requirements can only be met inside the
 compositor:
 
 - Global hotkeys: a Wayland client only sees keys sent to its own
-  windows, so only the compositor can catch *System-N* and friends.
+  windows, so only the compositor can catch *Sys-n* and friends.
 - The lock screen: a client can't stop input reaching other clients,
   so only the compositor can block access to the machine.
 - Window layering: Wayland has no "keep this window at the bottom (or
@@ -127,8 +133,8 @@ compositor:
   but ``layer-shell-qt`` has no Python bindings.  Our compositor
   doesn't need it: it identifies the Terminal's connection, and places
   its surfaces by policy.
-- No decorations, with windows moved by dragging their margin, and
-  resized by dragging their border.
+- No decorations, with windows moved and resized from the keyboard
+  and mouse (see :doc:`ux`).
 
 Existing compositors are opinionated about window management and
 decorations, and those that could be extended far enough (eg. Wayfire,
@@ -137,18 +143,34 @@ around their defaults.  So, the 1st Edition compositor is forked from
 ``tinywl``, the small reference compositor in the wlroots source tree,
 built against wlroots 0.18 (as packaged in Debian 13).  ``tinywl``
 already handles windows (xdg-shell), keyboard focus, the cursor, and
-interactive move and resize.
+interactive move and resize.  It runs on libwayland-server's event
+loop (``wl_display_run``), which the wlroots backends use too: the
+policy channel is one more file descriptor on it, so the compositor
+stays single-threaded.
 
 The compositor adds:
 
 - Four layers: background, applications, overlay, and lock.  The
   Terminal's windows are placed in the background, overlay, or lock
   layers; all other clients' windows go in the applications layer.
+  The Terminal names a window's layer in its title (``darq:background``,
+  ``darq:overlay``, or ``darq:lock``), which is honoured only on the
+  Terminal's own connection.
 - No decorations: it tells clients that it draws decorations
   (xdg-decoration, server-side mode), and then draws nothing.
-- System-key combinations are not delivered to clients, but passed to
-  the Terminal, which decides what they do.
-- While locked, input goes only to the lock layer.
+- Focus follows the mouse, and a click raises the window.
+- While *Sys-w* is held, the focused window moves with the mouse, or
+  in small steps with the arrow keys, and is resized in small steps
+  with t, s, b, and n (taller, shorter, broader, narrower).  This is
+  all done in the compositor: the Terminal isn't involved.
+- Keys pressed with the System modifier are never delivered to
+  clients: those the Terminal has bound are passed to it, and the
+  rest are dropped.
+- A list of windows, reported to the Terminal, with commands to focus,
+  raise, and close them, for the switcher and *Sys-x*.
+- It starts locked.  While locked, the applications and overlay layers
+  aren't shown, and input goes only to the lock layer, so nothing is
+  reachable until the Terminal unlocks it.
 
 It's written in C, and kept to mechanism: what a hotkey does, which
 panel to show, and when to lock, are all decided by the Terminal.
@@ -156,30 +178,57 @@ panel to show, and when to lock, are all decided by the Terminal.
 Starting the Compositor
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-The Terminal is the session: if it dies, the display is useless.  So
-the Terminal starts the compositor, as an ordinary Linux child process
+The Terminal starts the compositor, as an ordinary Linux child process
 (not a DarqOS process), and the compositor dies with it.  In
 ``darq_main``, before creating the ``QApplication``, the Terminal:
 
-1. Creates a socket pair, and starts the compositor with one end,
-   setting ``PR_SET_PDEATHSIG`` in the child so it exits if the
-   Terminal does.
-2. Sets ``WAYLAND_SOCKET`` to the other end.  ``wl_display_connect()``
-   uses ``WAYLAND_SOCKET`` in preference to ``WAYLAND_DISPLAY``, so Qt
-   connects over the socket pair without further code.
-3. Waits for the compositor to report that it's ready.
+1. Creates two socket pairs, and starts the compositor with one end of
+   each: one for the Terminal's Wayland connection, and one for the
+   policy channel.
+2. Sets ``WAYLAND_SOCKET`` to its end of the Wayland pair.
+   ``wl_display_connect()`` uses ``WAYLAND_SOCKET`` in preference to
+   ``WAYLAND_DISPLAY`` (and then unsets it), so Qt connects over the
+   socket pair without further code.
+3. Waits for the compositor's Ready message on the policy channel.
 
 The Wayland connection over the socket pair identifies the Terminal to
 the compositor: no other client can connect over it, so no other proof
-is needed.  The policy channel between them (hotkeys, locking, and
-layer placement) uses the same pair, or a second one.
+is needed.
+
+The compositor exits when the policy channel is closed: that's how it
+dies with the Terminal.  It also sets ``PR_SET_PDEATHSIG`` itself, and
+checks that its parent hasn't already gone, in case it's stuck.
 
 The compositor also listens on a public socket, ``darq-0``.  The
 p-kernel sets ``WAYLAND_DISPLAY=darq-0`` and
 ``QT_WAYLAND_DISABLE_WINDOWDECORATION=1`` in the environment of the
 processes it spawns, so other GUI applications connect there, and Qt
 doesn't draw its own decorations if the compositor's request isn't
-honoured.
+honoured.  It saves the host's ``WAYLAND_DISPLAY``, if any, as
+``DARQ_HOST_WAYLAND_DISPLAY``, and the Terminal passes that on to the
+compositor.  With it set, wlroots uses its Wayland backend, and the
+whole display is a window on the host's desktop: that's how it's
+developed.  Without it, wlroots uses the display hardware (DRM and
+libinput).  With ``DARQ_TERMINAL=0``, the p-kernel leaves
+``WAYLAND_DISPLAY`` alone.
+
+Policy Channel
+~~~~~~~~~~~~~~
+
+The policy channel is a ``SOCK_SEQPACKET`` socket pair, so each packet
+is one message.  Its messages are defined in DIDL
+(``lib/didl/compositor.didl``), in the usual DIPC format: the Terminal
+uses the classes generated by ``didlpygen``, and the compositor's C
+encodes and decodes the same layouts by hand, checked against
+``didlc``'s IR by a test.  They don't use ports.
+
+From the compositor to the Terminal: Ready, a hotkey pressed, a window
+added, removed, or retitled, and focus changes.  From the Terminal to
+the compositor: bind a hotkey, lock and unlock, and focus, raise, or
+close a window.
+
+Nothing else talks to the compositor: anything wanting a window raised
+or the screen locked asks the Terminal.
 
 Session and Login
 ~~~~~~~~~~~~~~~~~
@@ -218,38 +267,53 @@ the compositor, using libseat's built-in backend.
 Keyboard
 ~~~~~~~~
 
-The default keymap will more-or-less replicate the PC105/Win95
-standard keyboard.  A standard PC keyboard will map:
+The modifiers are mapped as in :doc:`ux`.  The compositor sets the
+keymap, from xkb options:
 
-- System : the Windows key
-- Application : Alt_L
-- Control_L : Caps Lock
-- AltGr : Alt_R
+- System, on Left Control, is a modifier of its own, not Control (an
+  option of ours, shipped with the compositor), so the compositor can
+  tell it apart, and clients never see it.
+- Caps Lock is Control (``ctrl:nocaps``): there's no Caps Lock.
+- Left Alt stays Alt.  It's Meta to Emacs, and to our lenses, which
+  bind Qt's ``AltModifier``: an xkb ``Meta_L`` would reach Qt as
+  ``MetaModifier``, which is Super.
+- Super/Windows stays Super: it's Application, which Qt reports as
+  ``MetaModifier``.
+- Right Control is Compose (``compose:rctrl``), and Right Alt is
+  AltGr (``lv3:ralt_switch``).
 
-A standard Mac keyboard will map:
-
-- System : Option
-- Application : Command
-- Control_L : Caps Lock
-- AltGr : Option_R
+For starters, only a US layout will be supported.
 
 Functions
 ---------
 
 The Terminal Service is responsible for providing several crucial
-functions of the user interface.  In 1st Edition, these will be:
+functions of the user interface, each invoked by a hotkey (see
+:doc:`ux`).  In 1st Edition, *Sys-space* (Search), *Sys-e* (Events),
+and *Sys-i* (Item info) show a "TBD" panel: they need the Index and
+Metadata services, and an events source.
 
 New
 ~~~
 
 The new panel is the interface used to create new objects.
 
-The new panel is invoked with a *System-N* shortcut.
+The new panel is invoked with *Sys-n*.
 
 Objects are created by selecting a *type* of object to create.  Object
 types are implemented by installed code, more-or-less like
 applications in a traditional operating system.  Examples of object
 types might be "image", "document", "movie", etc.
+
+It lists the implemented types with a Terminal lens, creates an item,
+records `created` (source `terminal`), and starts its lens.
+
+History
+~~~~~~~
+
+The history panel, invoked with *Sys-h*, lists History events between
+two times, filtered by type, event, and source, newest first.  Choosing
+one starts a lens for its item.
 
 Search
 ~~~~~~
@@ -258,7 +322,7 @@ The search panel is the central interface for locating existing
 objects of interest to the user.  It integrates access to all the
 searching abilities of DarqOS, plus access to Internet search.
 
-The search panel is invoked with a *System-S* shortcut.
+The search panel is invoked with *Sys-space*.
 
 Searching is driven via a seach-box style input field with slash
 commands.
@@ -299,21 +363,33 @@ string, plus slash command filtering parameters, like:
 The set of slash-commands will be augmented over time.  1st Edition
 will provide a few basic operations.
 
-Menu
+Lock
 ~~~~
 
-A system menu will be available at any time, accessed perhaps using
-the combination of the System key and a context-click (?) providing an
-alternative method of invoking the New, Search, or Event overlays,
-plus the ability to Lock, Logout, Reboot, or Shutdown the system.
+*Sys-l* locks the screen: the Terminal shows its lock window, and has
+the compositor lock.  While it's locked, *Sys-l* does nothing:
+unlocking always needs the password.
+
+Shutdown and Reboot
+~~~~~~~~~~~~~~~~~~~
+
+*Sys-b* shows a confirmation panel: *s* shuts down, *b* reboots, and
+any other key cancels.
+
+Close
+~~~~~
+
+*Sys-x* closes the focused window: the compositor asks its client to
+close it (``xdg_toplevel.close``).
 
 Switcher
 ~~~~~~~~
 
-The Terminal service should provide a means of switching between open
-windows: the equivalent of Alt-Tab.  The compositor passes the
-switching hotkey to the Terminal, which shows the switcher, and asks
-the compositor to raise and focus the chosen window.
+The Terminal service provides a means of switching between open
+windows: the equivalent of Alt-Tab, invoked with *Sys-Tab*.  The
+compositor passes the hotkey to the Terminal, which shows the
+switcher, and asks the compositor to raise and focus the chosen
+window.
 
 Item Properties
 ~~~~~~~~~~~~~~~
@@ -323,7 +399,7 @@ item.  This would include metadata, indexing, and history.  You should
 be able to edit the metadata -- eg. add a tag, view the history,
 and .. not sure about indexing?
 
-This might be another system-wide hotkey?
+It's invoked with *Sys-i*.
 
 
 Future Editions
@@ -338,13 +414,15 @@ use a widget server model, perhaps similar to O/mero from PlanB.  Or
 it might be a more traditional library-based approach.
 
 
+
+
 Architecture
 ------------
 
-The Terminal service will be implemented as a Darq Python process,
-using PyQt6 to provide the GUI, on a Qt event loop (as lenses are).
+The Terminal service is implemented as a Darq Python process, using
+PyQt6 to provide the GUI, on a Qt event loop (as lenses are), with the
+policy channel watched by a ``QSocketNotifier``.
 
-It will communicate using the system IPC with the p-kernel.  It will
-interact with the compositor, likely using a custom Wayland protocol,
-if required. It will interact with other services to populate the New,
-Search, and Event overlays.
+It communicates using the system IPC with the p-kernel and the other
+services, to populate the New and History panels, and to check the
+password.  It talks to the compositor over the policy channel.

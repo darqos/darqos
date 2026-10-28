@@ -100,9 +100,11 @@ Hotkeys
 -------
 
 +------------+----------------------+
+| Sys-tab    | Switch windows       |
++------------+----------------------+
 | Sys-space  | Search               |
 +------------+----------------------+
-| Sys-b      | (Re)boot             |
+| Sys-b      | Shutdown/reboot      |
 +------------+----------------------+
 | Sys-e      | Events               |
 +------------+----------------------+
@@ -110,7 +112,7 @@ Hotkeys
 +------------+----------------------+
 | Sys-i      | Item info            |
 +------------+----------------------+
-| Sys-l      | Lock screen toggle   |
+| Sys-l      | Lock screen          |
 +------------+----------------------+
 | Sys-n      | New item             |
 +------------+----------------------+
@@ -135,6 +137,7 @@ For First Edition:
   increments.
 
 In future editions:
+
 * It's possible that the resize and movement keys should be a
   two-stage combination, like Emacs, instead of a hold.  But hold
   proabably works better for repeated changes.
