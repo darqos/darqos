@@ -1,0 +1,10 @@
+// darqos
+// Options for the DarqOS keymap (see doc/terminal.rst).
+
+// System, on Left Control: a modifier of its own, on Mod3, which no
+// other key uses.
+partial modifier_keys
+xkb_symbols "system" {
+    replace key <LCTL> { type[Group1] = "ONE_LEVEL", symbols[Group1] = [ Hyper_L ] };
+    modifier_map Mod3 { <LCTL> };
+};

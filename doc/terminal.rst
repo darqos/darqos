@@ -191,12 +191,17 @@ The Terminal starts the compositor, as an ordinary Linux child process
    socket pair without further code.
 3. Waits for the compositor's Ready message on the policy channel.
 
+The Terminal must not use Qt's GTK platform theme, which is Qt's
+default on a GNOME host: it calls ``gtk_init``, which finds no display
+(libwayland has unset ``WAYLAND_SOCKET`` by then), and exits the
+process.  ``QT_QPA_PLATFORMTHEME=generic`` avoids it.
+
 The Wayland connection over the socket pair identifies the Terminal to
 the compositor: no other client can connect over it, so no other proof
 is needed.
 
 The compositor exits when the policy channel is closed: that's how it
-dies with the Terminal.  It also sets ``PR_SET_PDEATHSIG`` itself, and
+dies with the Terminal, and on ``SIGTERM``, removing its socket.  It also sets ``PR_SET_PDEATHSIG`` itself, and
 checks that its parent hasn't already gone, in case it's stuck.
 
 The compositor also listens on a public socket, ``darq-0``.  The
@@ -204,13 +209,30 @@ p-kernel sets ``WAYLAND_DISPLAY=darq-0`` and
 ``QT_WAYLAND_DISABLE_WINDOWDECORATION=1`` in the environment of the
 processes it spawns, so other GUI applications connect there, and Qt
 doesn't draw its own decorations if the compositor's request isn't
-honoured.  It saves the host's ``WAYLAND_DISPLAY``, if any, as
+honoured (Qt 6 does honour it: without it, Qt draws a frame of its
+own).  It saves the host's ``WAYLAND_DISPLAY``, if any, as
 ``DARQ_HOST_WAYLAND_DISPLAY``, and the Terminal passes that on to the
 compositor.  With it set, wlroots uses its Wayland backend, and the
 whole display is a window on the host's desktop: that's how it's
 developed.  Without it, wlroots uses the display hardware (DRM and
 libinput).  With ``DARQ_TERMINAL=0``, the p-kernel leaves
 ``WAYLAND_DISPLAY`` alone.
+
+Building and Trying It
+~~~~~~~~~~~~~~~~~~~~~~
+
+The compositor is in ``compositor/``, built with meson::
+
+    meson setup compositor/build compositor
+    meson compile -C compositor/build
+
+Run from the host's desktop, it's a window there, listening on
+``darq-0``: ``-s`` starts a command once it's running.  Headless, for
+tests, it runs with ``WLR_BACKENDS=headless`` and
+``WLR_RENDERER=pixman``, and ``-k`` adds a test keyboard, pressing and
+releasing keys from lines of ``<evdev keycode> <1|0>`` on its standard
+input.  The runtime directory must have a short path: a Unix socket's
+path is limited to 108 bytes.
 
 Policy Channel
 ~~~~~~~~~~~~~~
@@ -270,9 +292,12 @@ Keyboard
 The modifiers are mapped as in :doc:`ux`.  The compositor sets the
 keymap, from xkb options:
 
-- System, on Left Control, is a modifier of its own, not Control (an
-  option of ours, shipped with the compositor), so the compositor can
-  tell it apart, and clients never see it.
+- System, on Left Control, is a modifier of its own, not Control, so
+  the compositor can tell it apart, and clients never see it.  Our
+  option ``darq:system`` (in ``compositor/xkb``, whose rules include
+  the system's) makes Left Control ``Hyper_L``, on ``Mod3``, which no
+  other key uses.  The compositor masks ``Mod3`` out of the modifiers
+  it sends to clients.
 - Caps Lock is Control (``ctrl:nocaps``): there's no Caps Lock.
 - Left Alt stays Alt.  It's Meta to Emacs, and to our lenses, which
   bind Qt's ``AltModifier``: an xkb ``Meta_L`` would reach Qt as

@@ -1,0 +1,7 @@
+// darqos
+// The system's rules, with our option added (see doc/terminal.rst).
+
+! include %S/evdev
+
+! option = symbols
+  darq:system = +darq(system)
