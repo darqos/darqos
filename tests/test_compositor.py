@@ -11,10 +11,12 @@ import pathlib
 import re
 import select
 import shutil
+import signal
 import socket
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 
 import pytest
@@ -170,46 +172,151 @@ def test_constants_match_didl():
 # The compositor
 ################################################################
 
-# A Wayland client: a window with a title, and an app_id, which takes
-# commands on stdin, and prints "exposed" once it's shown.
+# A Wayland client, with windows, which takes commands on stdin: "open
+# <name>", "title <name> <title>", "hide <name>", "show <name>", and
+# "quit".  A window is first titled with its name, and the app_id is
+# darq-test.  It prints what happens to its windows, after their names:
+# "exposed", "active <0|1>", "size <width> <height>", and "key <text>".
 CLIENT = textwrap.dedent("""
     import sys
     from PyQt6.QtCore import QSocketNotifier
     from PyQt6.QtGui import QColor, QGuiApplication, QPainter, QRasterWindow
 
     class Window(QRasterWindow):
+        def __init__(self, name):
+            super().__init__()
+            self.name = name
+            self.setTitle(name)
+            self.resize(200, 100)
+            self.activeChanged.connect(lambda: self.say("active", int(self.isActive())))
+
+        def say(self, *words):
+            print(self.name, *words, flush=True)
+
         def paintEvent(self, event):
             QPainter(self).fillRect(0, 0, self.width(), self.height(), QColor("teal"))
 
         def exposeEvent(self, event):
             super().exposeEvent(event)
             if self.isExposed():
-                print("exposed", flush=True)
+                self.say("exposed")
+
+        def resizeEvent(self, event):
+            self.say("size", event.size().width(), event.size().height())
+
+        def keyPressEvent(self, event):
+            self.say("key", event.text())
+
+        def closeEvent(self, event):
+            app.quit()
 
     def command():
         line = sys.stdin.readline().split()
         if not line or line[0] == "quit":
             app.quit()
+        elif line[0] == "open":
+            windows[line[1]] = Window(line[1])
+            windows[line[1]].show()
         elif line[0] == "title":
-            window.setTitle(line[1])
+            windows[line[1]].setTitle(line[2])
+        elif line[0] == "hide":
+            windows[line[1]].hide()
+        elif line[0] == "show":
+            windows[line[1]].show()
 
     app = QGuiApplication(sys.argv)
     app.setDesktopFileName("darq-test")
-    window = Window()
-    window.setTitle(sys.argv[1])
-    window.resize(200, 100)
-    window.show()
+    app.setQuitOnLastWindowClosed(False)
+    windows = {}
     notifier = QSocketNotifier(0, QSocketNotifier.Type.Read)
     notifier.activated.connect(command)
     sys.exit(app.exec())
 """)
 
-# evdev keycodes.
+# evdev keycodes, and a button.
 KEY_TAB = 15
+KEY_W = 17
+KEY_T = 20
 KEY_LEFTCTRL = 29
+KEY_A = 30
 KEY_LEFTSHIFT = 42
 KEY_X = 45
+KEY_B = 48
 KEY_N = 49
+KEY_RIGHT = 106
+BTN_LEFT = 272
+
+# The headless backend's output.
+OUTPUT = (1280, 720)
+
+
+class Client:
+    """A Wayland client process, running CLIENT, and what it's printed."""
+
+    def __init__(self, process: subprocess.Popen):
+        self.process = process
+
+        # Lines it's printed, and not yet expected.
+        self.lines: list[str] = []
+        self.printing = threading.Condition()
+        self.reader = threading.Thread(target=self.read, daemon=True)
+        self.reader.start()
+
+    def read(self):
+        assert self.process.stdout is not None
+        with self.process.stdout:
+            for line in self.process.stdout:
+                with self.printing:
+                    self.lines.append(line.strip())
+                    self.printing.notify_all()
+
+    def command(self, line: str):
+        assert self.process.stdin is not None
+        self.process.stdin.write(line + "\n")
+        self.process.stdin.flush()
+
+    def open(self, name: str) -> "Window":
+        """Open a window, and wait for it to be shown."""
+        window = Window(self, name)
+        self.command(f"open {name}")
+        window.expect("exposed")
+        return window
+
+    def stop(self):
+        self.process.kill()
+        self.process.wait()
+        assert self.process.stdin is not None
+        self.process.stdin.close()
+        self.reader.join()
+
+
+class Window:
+    """One of a Client's windows."""
+
+    def __init__(self, client: Client, name: str):
+        self.client = client
+        self.name = name
+        self.process = client.process
+
+    def command(self, verb: str, *args: str):
+        self.client.command(" ".join([verb, self.name, *args]))
+
+    def expect(self, line: str, timeout: float = 10):
+        """Wait for it to print a line, if it hasn't already; the lines
+        before it are kept, for later."""
+        client = self.client
+        line = f"{self.name} {line}"
+        with client.printing:
+            if not client.printing.wait_for(lambda: line in client.lines, timeout):
+                pytest.fail(f"the client didn't print {line!r}, only {client.lines}")
+            client.lines.remove(line)
+
+    def printed(self, wait: float = 0.3) -> list[str]:
+        """What it's printed, and not been expected, after a while."""
+        time.sleep(wait)
+        prefix = self.name + " "
+        with self.client.printing:
+            return [line.removeprefix(prefix) for line in self.client.lines if line.startswith(prefix)]
 
 
 class Harness:
@@ -223,28 +330,31 @@ class Harness:
 
         # Its environment, for clients, and theirs, to clean up.
         self.env = env
-        self.clients: list[subprocess.Popen] = []
+        self.clients: list[Client] = []
 
     def stop(self) -> int:
         return self.started.stop()
 
 
-@pytest.fixture
-def compositor(tmp_path):
-    """The compositor, headless, with the test keyboard."""
+def headless(runtime: pathlib.Path) -> dict[str, str]:
+    """An environment for a headless compositor, and its clients."""
     if not COMPOSITOR.exists():
         pytest.skip("the compositor isn't built: see doc/terminal.rst")
-    runtime = tmp_path / "run"
     runtime.mkdir(mode=0o700)
     env = {k: v for k, v in os.environ.items() if not k.startswith(("WAYLAND_", "QT_"))}
-    env |= {"XDG_RUNTIME_DIR": str(runtime), "WLR_BACKENDS": "headless", "WLR_RENDERER": "pixman"}
+    return env | {"XDG_RUNTIME_DIR": str(runtime), "WLR_BACKENDS": "headless", "WLR_RENDERER": "pixman"}
+
+
+@pytest.fixture
+def compositor(tmp_path):
+    """The compositor, headless, with the test keyboard and pointer."""
+    env = headless(tmp_path / "run")
     with open(tmp_path / "compositor.log", "w") as log:
         harness = Harness(Compositor.start(args=["-k"], env=env, stdin=subprocess.PIPE, stderr=log), env)
         yield harness
 
         for client in harness.clients:
-            client.kill()
-            client.communicate()
+            client.stop()
         harness.stop()
         assert harness.process.stdin is not None
         harness.process.stdin.close()
@@ -271,22 +381,48 @@ def settle():
     time.sleep(0.2)
 
 
-def keys(compositor, *events: tuple[int, int]):
+def test_input(compositor, *lines: str):
     assert compositor.process.stdin is not None
-    compositor.process.stdin.write("".join(f"{code} {state}\n" for code, state in events).encode())
+    compositor.process.stdin.write("".join(line + "\n" for line in lines).encode())
     compositor.process.stdin.flush()
 
 
-def client(compositor, title: str, **env):
-    """Start a Wayland client, and wait for its window to be shown."""
-    process = subprocess.Popen(
-        [sys.executable, "-c", CLIENT, title], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        text=True, env=compositor.env | {"QT_QPA_PLATFORM": "wayland", "QT_QPA_PLATFORMTHEME": "generic"} | env,
-        pass_fds=[int(env["WAYLAND_SOCKET"])] if "WAYLAND_SOCKET" in env else [])
-    compositor.clients.append(process)
-    assert process.stdout is not None
-    assert process.stdout.readline().strip() == "exposed"
-    return process
+def keys(compositor, *events: tuple[int, int]):
+    test_input(compositor, *(f"key {code} {state}" for code, state in events))
+
+
+def move(compositor, x: int, y: int):
+    test_input(compositor, f"move {x} {y}")
+
+
+def click(compositor, x: int, y: int):
+    move(compositor, x, y)
+    test_input(compositor, f"button {BTN_LEFT} 1", f"button {BTN_LEFT} 0")
+
+
+def client(compositor, name: str, terminal: bool = False) -> Window:
+    """Start a Wayland client, with a window, and wait for it to be
+    shown.  With terminal=True, it's the Terminal: on the Terminal's own
+    connection, which only one process can use."""
+    env = compositor.env | {"QT_QPA_PLATFORM": "wayland", "QT_QPA_PLATFORMTHEME": "generic"}
+    fds = []
+    if terminal:
+        fds = [compositor.wayland.fileno()]
+        env["WAYLAND_SOCKET"] = str(fds[0])
+    else:
+        env["WAYLAND_DISPLAY"] = "darq-0"
+    process = subprocess.Popen([sys.executable, "-c", CLIENT], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               text=True, env=env, pass_fds=fds)
+    started = Client(process)
+    compositor.clients.append(started)
+    return started.open(name)
+
+
+def unlocked(compositor):
+    """Wait for it to start, and unlock it."""
+    assert receive(compositor) == Ready()
+    compositor.channel.send(Unlock())
+    settle()
 
 
 def test_hotkeys(compositor):
@@ -320,32 +456,198 @@ def test_hotkeys(compositor):
 
 
 def test_windows(compositor):
-    assert receive(compositor) == Ready()
+    unlocked(compositor)
 
     # The Terminal's own window isn't in the window list.
-    client(compositor, "darq:background", WAYLAND_SOCKET=str(compositor.wayland.fileno()))
+    client(compositor, "darq:background", terminal=True)
     nothing_more(compositor)
 
     # Another client's is, and it's focused when it's mapped.
-    app = client(compositor, "first", WAYLAND_DISPLAY="darq-0")
+    app = client(compositor, "first")
     added = receive(compositor)
     assert added == WindowAdded(window=added.window, title="first", app_id="darq-test")
     assert receive(compositor) == WindowFocused(window=added.window)
 
-    assert app.stdin is not None
-    app.stdin.write("title second\n")
-    app.stdin.flush()
+    app.command("title", "second")
     assert receive(compositor) == WindowRetitled(window=added.window, title="second")
 
     # Unknown windows are ignored; a known one's client is asked to
-    # close it.
+    # close it.  The focus goes back to the background.
     compositor.channel.send(RaiseWindow(window=added.window))
     compositor.channel.send(FocusWindow(window=added.window))
     compositor.channel.send(CloseWindow(window=added.window + 100))
     compositor.channel.send(CloseWindow(window=added.window))
     assert receive(compositor) == WindowRemoved(window=added.window)
     assert receive(compositor) == WindowFocused(window=0)
-    assert app.wait(10) == 0
+    assert app.process.wait(10) == 0
+
+
+def test_starts_locked(compositor):
+    assert receive(compositor) == Ready()
+
+    # The lock window fills the output, and has the keyboard; an
+    # application window doesn't, while it's locked.
+    lock = client(compositor, "darq:lock", terminal=True)
+    lock.expect(f"size {OUTPUT[0]} {OUTPUT[1]}")
+    lock.expect("active 1")
+    app = client(compositor, "app")
+    added = receive(compositor)
+    assert isinstance(added, WindowAdded)
+    nothing_more(compositor)
+    compositor.channel.send(FocusWindow(window=added.window))
+    click(compositor, OUTPUT[0] // 2, OUTPUT[1] // 2)
+    keys(compositor, (KEY_A, 1), (KEY_A, 0))
+    lock.expect("key a")
+    assert not [line for line in app.printed() if line.startswith(("key", "active"))]
+    nothing_more(compositor, 0)
+
+    # Unlocked, with the lock window hidden, the application has it.
+    compositor.channel.send(Unlock())
+    lock.command("hide")
+    assert receive(compositor) == WindowFocused(window=added.window)
+    app.expect("active 1")
+    keys(compositor, (KEY_A, 1), (KEY_A, 0))
+    app.expect("key a")
+
+    # Locked again, nothing has it until the lock window's back.
+    compositor.channel.send(Lock())
+    assert receive(compositor) == WindowFocused(window=0)
+    app.expect("active 0")
+    lock.command("show")
+    lock.expect("active 1")
+    keys(compositor, (KEY_A, 1), (KEY_A, 0))
+    lock.expect("key a")
+    assert not [line for line in app.printed() if line.startswith("key")]
+
+
+def test_layers(compositor):
+    unlocked(compositor)
+    middle = (OUTPUT[0] // 2, OUTPUT[1] // 2)
+
+    # A background, mapped after an application window, is below it,
+    # fills the output, and doesn't take the focus.
+    move(compositor, *middle)
+    app = client(compositor, "app")
+    added = receive(compositor)
+    assert receive(compositor) == WindowFocused(window=added.window)
+    app.expect("active 1")
+    background = client(compositor, "darq:background", terminal=True)
+    background.expect(f"size {OUTPUT[0]} {OUTPUT[1]}")
+    nothing_more(compositor)
+
+    # Focus follows the mouse, but not into the background: clicking
+    # it does, though.
+    move(compositor, 10, 10)
+    nothing_more(compositor)
+    click(compositor, 10, 10)
+    assert receive(compositor) == WindowFocused(window=0)
+    click(compositor, *middle)
+    assert receive(compositor) == WindowFocused(window=added.window)
+
+    # An overlay window, one of the Terminal's panels, is above the
+    # application, and keeps the focus from the mouse until it's gone.
+    panel = background.client.open("darq:panel")
+    assert receive(compositor) == WindowFocused(window=0)
+    panel.expect("active 1")
+    app.expect("active 0")
+    move(compositor, 10, 10)
+    move(compositor, *middle)
+    keys(compositor, (KEY_A, 1), (KEY_A, 0))
+    panel.expect("key a")
+    nothing_more(compositor)
+    panel.command("hide")
+    assert receive(compositor) == WindowFocused(window=added.window)
+    app.expect("active 1")
+
+
+def test_window_mode(compositor):
+    unlocked(compositor)
+    x, y = OUTPUT[0] // 2, OUTPUT[1] // 2
+
+    # Two windows, 200 by 100, centred: b on top.
+    move(compositor, x, y)
+    client(compositor, "a")
+    a = receive(compositor).window
+    assert receive(compositor) == WindowFocused(window=a)
+    b_client = client(compositor, "b")
+    b = receive(compositor).window
+    assert receive(compositor) == WindowFocused(window=b)
+
+    # With Sys-w held, b moves with the mouse, 400 to the left.
+    keys(compositor, (KEY_LEFTCTRL, 1), (KEY_W, 1))
+    move(compositor, x - 400, y)
+    keys(compositor, (KEY_W, 0), (KEY_LEFTCTRL, 0))
+    move(compositor, x, y)
+    assert receive(compositor) == WindowFocused(window=a)
+    move(compositor, x - 400, y)
+    assert receive(compositor) == WindowFocused(window=b)
+
+    # b's right edge is 300 left of the middle: a step right reaches
+    # 5 beyond it.
+    move(compositor, x - 295, y)
+    nothing_more(compositor)
+    keys(compositor, (KEY_LEFTCTRL, 1), (KEY_W, 1), (KEY_RIGHT, 1), (KEY_RIGHT, 0),
+         (KEY_W, 0), (KEY_LEFTCTRL, 0))
+    move(compositor, x, y)
+    assert receive(compositor) == WindowFocused(window=a)
+    move(compositor, x - 295, y)
+    assert receive(compositor) == WindowFocused(window=b)
+
+    # Taller and broader.
+    keys(compositor, (KEY_LEFTCTRL, 1), (KEY_W, 1), (KEY_T, 1), (KEY_T, 0), (KEY_B, 1), (KEY_B, 0),
+         (KEY_W, 0), (KEY_LEFTCTRL, 0))
+    b_client.expect("size 216 116")
+
+    # A held arrow repeats: in 1.2 seconds, many more than the 5 steps
+    # it'd take to reach 100 left of the middle.
+    keys(compositor, (KEY_LEFTCTRL, 1), (KEY_W, 1), (KEY_RIGHT, 1))
+    time.sleep(1.2)
+    keys(compositor, (KEY_RIGHT, 0), (KEY_W, 0), (KEY_LEFTCTRL, 0))
+    move(compositor, x + 50, y)
+    assert receive(compositor) == WindowFocused(window=a)
+    move(compositor, x - 100, y)
+    assert receive(compositor) == WindowFocused(window=b)
+
+    # Sys-w keys aren't hotkeys, or a client's.
+    assert not [line for line in b_client.printed(0) if line.startswith("key")]
+    nothing_more(compositor)
+
+
+def test_dies_with_the_terminal(tmp_path):
+    # A Terminal whose policy channel is held open by another process,
+    # as if it were stuck: the compositor still exits when it dies.
+    script = textwrap.dedent("""
+        import select, subprocess, sys
+        from darq.compositor import Compositor
+        quiet = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+        c = Compositor.start(**quiet)
+        select.select([c.channel], [], [], 10)
+        assert c.channel.receive() is not None
+        holder = subprocess.Popen(["sleep", "30"], pass_fds=[c.channel.fileno()], **quiet)
+        print(c.process.pid, holder.pid, flush=True)
+    """)
+    env = headless(tmp_path / "run") | {"PYTHONPATH": str(SOURCE.parent)}
+    holder = subprocess.run([sys.executable, "-c", script], env=env,
+                            capture_output=True, text=True, timeout=30)
+    assert holder.returncode == 0, holder.stderr
+    pid, sleeper = map(int, holder.stdout.split())
+    try:
+        deadline = time.monotonic() + 10
+        while status(pid) != "Z":
+            if time.monotonic() > deadline:
+                os.kill(pid, signal.SIGKILL)
+                pytest.fail("the compositor didn't exit")
+            time.sleep(0.05)
+    finally:
+        os.kill(sleeper, signal.SIGKILL)
+
+
+def status(pid: int) -> str:
+    """A process' state, from /proc: "Z" once it's gone, too."""
+    try:
+        return pathlib.Path(f"/proc/{pid}/stat").read_text().split(")")[1].split()[0]
+    except (FileNotFoundError, IndexError):
+        return "Z"
 
 
 def test_exits_when_channel_closed(compositor):

@@ -155,14 +155,31 @@ The compositor adds:
   layers; all other clients' windows go in the applications layer.
   The Terminal names a window's layer in its title (``darq:background``,
   ``darq:overlay``, or ``darq:lock``), which is honoured only on the
-  Terminal's own connection.
+  Terminal's own connection; its windows with any other title go in
+  the overlay layer.  The layer is decided by the title at the
+  window's first commit (Qt sets it before then), and a later title
+  doesn't move it.
+- Background and lock windows fill an output: the one the client asks
+  for with ``set_fullscreen`` (as Qt's ``showFullScreen`` does), or else
+  the cursor's, and they're refitted when outputs change.  Other
+  windows pick their own size, and are centred on the cursor's output
+  when they're mapped.
 - No decorations: it tells clients that it draws decorations
   (xdg-decoration, server-side mode), and then draws nothing.
-- Focus follows the mouse, and a click raises the window.
-- While *Sys-w* is held, the focused window moves with the mouse, or
-  in small steps with the arrow keys, and is resized in small steps
-  with t, s, b, and n (taller, shorter, broader, narrower).  This is
-  all done in the compositor: the Terminal isn't involved.
+- Focus follows the mouse, sloppily: into application and overlay
+  windows, but not into the background, or out of an overlay window
+  (one of the Terminal's panels keeps the focus until it's gone).  A
+  click focuses and raises the window, within its layer, background
+  included.  A newly mapped window takes the focus, except a
+  background, unless nothing has it; when the focused window goes, the
+  frontmost window in the highest layer that can have it does.
+- While *Sys-w* is held, the focused application window moves with
+  the mouse (no button needed), or 16 pixels at a time with the arrow
+  keys, and is resized 16 pixels at a time with t, s, b, and n
+  (taller, shorter, broader, narrower), within the client's limits.
+  The keys repeat while they're held.  It ends when *w* or System is
+  released.  This is all done in the compositor: the Terminal isn't
+  involved, and while *w* is held, those keys aren't hotkeys.
 - Keys pressed with the System modifier are never delivered to
   clients: those the Terminal has bound are passed to it, and the
   rest are dropped.
@@ -170,7 +187,10 @@ The compositor adds:
   raise, and close them, for the switcher and *Sys-x*.
 - It starts locked.  While locked, the applications and overlay layers
   aren't shown, and input goes only to the lock layer, so nothing is
-  reachable until the Terminal unlocks it.
+  reachable until the Terminal unlocks it.  Locking takes the focus
+  from anything not in the lock layer; unlocking gives it back to the
+  frontmost window in the highest layer, so the Terminal hides its
+  lock window when it unlocks.
 
 It's written in C, and kept to mechanism: what a hotkey does, which
 panel to show, and when to lock, are all decided by the Terminal.
@@ -201,8 +221,9 @@ the compositor: no other client can connect over it, so no other proof
 is needed.
 
 The compositor exits when the policy channel is closed: that's how it
-dies with the Terminal, and on ``SIGTERM``, removing its socket.  It also sets ``PR_SET_PDEATHSIG`` itself, and
-checks that its parent hasn't already gone, in case it's stuck.
+dies with the Terminal, and on ``SIGTERM``, removing its socket.  In
+case the Terminal's stuck, it also sets ``PR_SET_PDEATHSIG`` (to
+``SIGTERM``) itself, and exits if its parent has already gone.
 
 The compositor also listens on a public socket, ``darq-0``.  The
 p-kernel sets ``WAYLAND_DISPLAY=darq-0`` and
@@ -229,9 +250,10 @@ The compositor is in ``compositor/``, built with meson::
 Run from the host's desktop, it's a window there, listening on
 ``darq-0``: ``-s`` starts a command once it's running.  Headless, for
 tests, it runs with ``WLR_BACKENDS=headless`` and
-``WLR_RENDERER=pixman``, and ``-k`` adds a test keyboard, pressing and
-releasing keys from lines of ``<evdev keycode> <1|0>`` on its standard
-input.  The runtime directory must have a short path: a Unix socket's
+``WLR_RENDERER=pixman``, and ``-k`` adds a test keyboard and pointer,
+driven by lines on its standard input: ``key <evdev keycode> <1|0>``,
+``move <x> <y>`` (in layout coordinates), and ``button <evdev button>
+<1|0>``.  The runtime directory must have a short path: a Unix socket's
 path is limited to 108 bytes.
 
 The Terminal starts it with ``darq.compositor.Compositor.start``,
@@ -241,7 +263,8 @@ the policy channel.  Without ``-p``, *Sys-Escape* exits.
 ``tests/test_compositor.py`` checks the policy channel's C against the
 generated Python, through ``compositor/policy-check.c``, which it
 builds itself; and, if the compositor's built, runs it headless, with
-Qt clients.
+Qt clients: the policy channel, layers, locking, focus, *Sys-w*, and
+dying with the Terminal.
 
 Policy Channel
 ~~~~~~~~~~~~~~
@@ -275,8 +298,7 @@ From the Terminal to the compositor (protocol ``Policy``):
 - ``BindHotkey`` and ``UnbindHotkey``: a keysym and exact modifiers,
   with System.  System keys that aren't bound, or the compositor's own
   (*Sys-w*), are dropped.
-- ``Lock`` and ``Unlock``, which are only logged until the lock layer
-  exists.
+- ``Lock`` and ``Unlock``.
 - ``FocusWindow``, ``RaiseWindow`` and ``CloseWindow`` (which asks the
   window's client to close it).  An unknown window, such as one just
   removed, is ignored.

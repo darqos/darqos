@@ -10,14 +10,23 @@
 //   (-t), so its toplevels can be told apart from other clients'.
 // - The policy channel to the Terminal, on another (-p): see policy.h.
 //   It reports bound hotkeys and the window list, and focuses, raises
-//   and closes windows; the compositor exits when it's closed.
+//   and closes windows; the compositor exits when it's closed, or when
+//   the Terminal dies (PR_SET_PDEATHSIG).
+// - Four layers: background, applications, overlay and lock.  The
+//   Terminal's windows go in the layer their title names; everyone
+//   else's in applications.  It starts locked: only the background and
+//   lock layers are shown, and only the lock layer gets input.
+// - Focus follows the mouse, and a click raises.  While Sys-w is held,
+//   the focused application window moves with the mouse or the arrow
+//   keys, and t, s, b and n resize it.
 // - Server-side decorations (xdg-decoration), which it doesn't draw.
 // - Our keymap: System, on Left Control, is a modifier of its own
 //   (darq:system, in xkb/), and keys pressed with it never reach
 //   clients.  Without a policy channel, Sys-Escape exits.
 // - A public socket, darq-0.
-// - A test keyboard (-k): lines of "<evdev keycode> <1|0>" on stdin
-//   press and release keys, for running headless.
+// - A test keyboard and pointer (-k), driven by lines on stdin, for
+//   running headless: "key <evdev keycode> <1|0>", "move <x> <y>" (in
+//   layout coordinates) and "button <evdev button> <1|0>".
 // - A clean exit on SIGTERM and SIGINT, removing its socket.
 
 #include <assert.h>
@@ -29,12 +38,14 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
 #include <wayland-server-core.h>
 #include <wlr/backend.h>
 #include <wlr/interfaces/wlr_keyboard.h>
+#include <wlr/interfaces/wlr_pointer.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_cursor.h>
@@ -63,6 +74,21 @@
  * it's assumed to be stuck. */
 #define MAX_POLICY_QUEUE 4096
 
+/* How far Sys-w's keys move or resize a window, in pixels, and their
+ * repeat delay and rate (as the keyboard's), in milliseconds. */
+#define WINDOW_STEP 16
+#define REPEAT_DELAY 600
+#define REPEAT_INTERVAL 40
+
+/* The layers, bottom to top. */
+enum darq_layer {
+	LAYER_BACKGROUND,
+	LAYER_APPS,
+	LAYER_OVERLAY,
+	LAYER_LOCK,
+	NUM_LAYERS,
+};
+
 /* For brevity's sake, struct members are annotated where they are used. */
 enum tinywl_cursor_mode {
 	TINYWL_CURSOR_PASSTHROUGH,
@@ -77,6 +103,12 @@ struct tinywl_server {
 	struct wlr_allocator *allocator;
 	struct wlr_scene *scene;
 	struct wlr_scene_output_layout *scene_layout;
+
+	/* The layers' scene trees, and whether it's locked: then, only the
+	 * background and lock layers are shown, and only the lock layer
+	 * gets input. */
+	struct wlr_scene_tree *layers[NUM_LAYERS];
+	bool locked;
 
 	struct wlr_xdg_shell *xdg_shell;
 	struct wl_listener new_xdg_toplevel;
@@ -105,6 +137,7 @@ struct tinywl_server {
 	struct wlr_output_layout *output_layout;
 	struct wl_list outputs;
 	struct wl_listener new_output;
+	struct wl_listener layout_change;
 
 	/* The Terminal's Wayland connection, if it was given one: NULL once
 	 * it's gone, so another client can't be mistaken for it. */
@@ -135,15 +168,25 @@ struct tinywl_server {
 	/* Keys whose press was the compositor's, so their release is too. */
 	bool swallowed[256];
 
-	/* The next window number, and the focused window's (0 for none). */
+	/* The toplevel with the keyboard focus, if any.  The next window
+	 * number, and the one last reported focused (0 for none). */
+	struct tinywl_toplevel *focused;
 	uint32_t next_window;
 	uint32_t focused_window;
+
+	/* While Sys-w is held: the focused window's size, as it's been
+	 * asked to be, and the key repeating, if any. */
+	bool window_mode;
+	int window_width, window_height;
+	xkb_keysym_t repeat_sym;
+	struct wl_event_source *repeat_timer;
 
 	/* The System modifier's mask, in the keymap's modifiers. */
 	xkb_mod_mask_t system_mask;
 
-	/* The test keyboard, and its input so far (-k). */
+	/* The test keyboard and pointer, and their input so far (-k). */
 	struct wlr_keyboard test_keyboard;
+	struct wlr_pointer test_pointer;
 	struct wl_event_source *test_input_source;
 	char test_input[256];
 	size_t test_input_length;
@@ -179,6 +222,10 @@ struct tinywl_toplevel {
 	 * while it's mapped, if it isn't the Terminal's own. */
 	uint32_t window;
 	bool reported;
+
+	/* Its layer, decided on its first commit.  Background and lock
+	 * windows fill an output. */
+	enum darq_layer layer;
 	struct wl_listener set_title;
 };
 
@@ -291,36 +338,47 @@ static void report_focus(struct tinywl_server *server, uint32_t window) {
 }
 
 static void raise_toplevel(struct tinywl_toplevel *toplevel) {
-	/* Move the toplevel to the front */
+	/* Move the toplevel to the front of its layer */
 	wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
 	wl_list_remove(&toplevel->link);
 	wl_list_insert(&toplevel->server->toplevels, &toplevel->link);
 }
 
-static void focus_toplevel(struct tinywl_toplevel *toplevel, struct wlr_surface *surface) {
-	/* Note: this function only deals with keyboard focus. */
-	if (toplevel == NULL) {
-		return;
-	}
-	struct tinywl_server *server = toplevel->server;
-	struct wlr_seat *seat = server->seat;
-	struct wlr_surface *prev_surface = seat->keyboard_state.focused_surface;
-	if (prev_surface == surface) {
-		/* Don't re-focus an already focused surface. */
-		return;
-	}
+static bool reachable(struct tinywl_toplevel *toplevel) {
+	/* Whether a mapped toplevel can have the keyboard focus. */
+	return !toplevel->server->locked || toplevel->layer == LAYER_LOCK;
+}
+
+static void deactivate_focused(struct tinywl_server *server) {
+	/*
+	 * Deactivate the previously focused surface. This lets the client know
+	 * it no longer has focus and the client will repaint accordingly, e.g.
+	 * stop displaying a caret.
+	 */
+	struct wlr_surface *prev_surface = server->seat->keyboard_state.focused_surface;
 	if (prev_surface) {
-		/*
-		 * Deactivate the previously focused surface. This lets the client know
-		 * it no longer has focus and the client will repaint accordingly, e.g.
-		 * stop displaying a caret.
-		 */
 		struct wlr_xdg_toplevel *prev_toplevel =
 			wlr_xdg_toplevel_try_from_wlr_surface(prev_surface);
 		if (prev_toplevel != NULL) {
 			wlr_xdg_toplevel_set_activated(prev_toplevel, false);
 		}
 	}
+}
+
+static void focus_toplevel(struct tinywl_toplevel *toplevel) {
+	/* Note: this function only deals with keyboard focus. */
+	if (toplevel == NULL || !reachable(toplevel)) {
+		return;
+	}
+	struct tinywl_server *server = toplevel->server;
+	struct wlr_seat *seat = server->seat;
+	struct wlr_surface *surface = toplevel->xdg_toplevel->base->surface;
+	if (seat->keyboard_state.focused_surface == surface) {
+		/* Don't re-focus an already focused surface. */
+		return;
+	}
+	deactivate_focused(server);
+	server->focused = toplevel;
 	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
 	/* Activate the new surface */
 	wlr_xdg_toplevel_set_activated(toplevel->xdg_toplevel, true);
@@ -334,10 +392,55 @@ static void focus_toplevel(struct tinywl_toplevel *toplevel, struct wlr_surface 
 		modifiers.depressed &= ~server->system_mask;
 		modifiers.latched &= ~server->system_mask;
 		modifiers.locked &= ~server->system_mask;
-		wlr_seat_keyboard_notify_enter(seat, toplevel->xdg_toplevel->base->surface,
+		wlr_seat_keyboard_notify_enter(seat, surface,
 			keyboard->keycodes, keyboard->num_keycodes, &modifiers);
+	} else {
+		wlr_seat_keyboard_notify_enter(seat, surface, NULL, 0, NULL);
 	}
 	report_focus(server, toplevel->reported ? toplevel->window : 0);
+}
+
+static void refocus(struct tinywl_server *server) {
+	/* Focus the frontmost reachable toplevel, preferring the higher
+	 * layers, or nothing, when the focused one's gone or unreachable. */
+	struct tinywl_toplevel *best = NULL;
+	struct tinywl_toplevel *toplevel;
+	wl_list_for_each(toplevel, &server->toplevels, link) {
+		if (reachable(toplevel) && (best == NULL || toplevel->layer > best->layer)) {
+			best = toplevel;
+		}
+	}
+	if (best != NULL) {
+		focus_toplevel(best);
+		return;
+	}
+	deactivate_focused(server);
+	server->focused = NULL;
+	wlr_seat_keyboard_notify_clear_focus(server->seat);
+	report_focus(server, 0);
+}
+
+static void end_window_mode(struct tinywl_server *server);
+static void reset_cursor_mode(struct tinywl_server *server);
+static void process_cursor_motion(struct tinywl_server *server, uint32_t time);
+
+static void set_locked(struct tinywl_server *server, bool locked) {
+	/* While locked, the applications and overlay layers are neither
+	 * shown, nor reachable, by the keyboard or the pointer. */
+	if (locked == server->locked) {
+		return;
+	}
+	server->locked = locked;
+	end_window_mode(server);
+	reset_cursor_mode(server);
+	wlr_scene_node_set_enabled(&server->layers[LAYER_APPS]->node, !locked);
+	wlr_scene_node_set_enabled(&server->layers[LAYER_OVERLAY]->node, !locked);
+	if (server->focused != NULL && !reachable(server->focused)) {
+		server->focused = NULL;
+	}
+	refocus(server);
+	/* The pointer may now be over something else. */
+	process_cursor_motion(server, 0);
 }
 
 static void keyboard_handle_modifiers(
@@ -409,6 +512,112 @@ static void handle_system_key(struct tinywl_server *server,
 	wlr_log(WLR_DEBUG, "System key %s, modifiers %#x: not bound", name, modifiers);
 }
 
+static void stop_repeat(struct tinywl_server *server) {
+	server->repeat_sym = XKB_KEY_NoSymbol;
+	wl_event_source_timer_update(server->repeat_timer, 0);
+}
+
+static void end_window_mode(struct tinywl_server *server) {
+	if (!server->window_mode) {
+		return;
+	}
+	server->window_mode = false;
+	stop_repeat(server);
+	reset_cursor_mode(server);
+}
+
+static void begin_window_mode(struct tinywl_server *server) {
+	/* Sys-w: only an application window moves, and only while it's
+	 * unlocked. */
+	struct tinywl_toplevel *toplevel = server->focused;
+	if (server->window_mode || toplevel == NULL ||
+			toplevel->layer != LAYER_APPS || server->locked) {
+		return;
+	}
+	struct wlr_box geo_box;
+	wlr_xdg_surface_get_geometry(toplevel->xdg_toplevel->base, &geo_box);
+	server->window_mode = true;
+	server->window_width = geo_box.width;
+	server->window_height = geo_box.height;
+
+	/* The mouse moves it, as an interactive move does. */
+	server->grabbed_toplevel = toplevel;
+	server->cursor_mode = TINYWL_CURSOR_MOVE;
+	server->grab_x = server->cursor->x - toplevel->scene_tree->node.x;
+	server->grab_y = server->cursor->y - toplevel->scene_tree->node.y;
+}
+
+static int clamp_size(int size, int min, int max) {
+	/* Within the client's limits (0 for none), and at least a step. */
+	if (max > 0 && size > max) {
+		size = max;
+	}
+	if (size < min) {
+		size = min;
+	}
+	return size < WINDOW_STEP ? WINDOW_STEP : size;
+}
+
+static bool window_step(struct tinywl_server *server, xkb_keysym_t sym) {
+	/* In window mode, a step for an arrow key (move), or t, s, b and n
+	 * (taller, shorter, broader, narrower).  Returns whether it was
+	 * one. */
+	struct tinywl_toplevel *toplevel = server->grabbed_toplevel;
+	struct wlr_scene_node *node = &toplevel->scene_tree->node;
+	int dx = 0, dy = 0, dw = 0, dh = 0;
+	switch (sym) {
+	case XKB_KEY_Left: dx = -WINDOW_STEP; break;
+	case XKB_KEY_Right: dx = WINDOW_STEP; break;
+	case XKB_KEY_Up: dy = -WINDOW_STEP; break;
+	case XKB_KEY_Down: dy = WINDOW_STEP; break;
+	case XKB_KEY_t: dh = WINDOW_STEP; break;
+	case XKB_KEY_s: dh = -WINDOW_STEP; break;
+	case XKB_KEY_b: dw = WINDOW_STEP; break;
+	case XKB_KEY_n: dw = -WINDOW_STEP; break;
+	default:
+		return false;
+	}
+	if (dx || dy) {
+		wlr_scene_node_set_position(node, node->x + dx, node->y + dy);
+		/* Keep the mouse's hold on it. */
+		server->grab_x -= dx;
+		server->grab_y -= dy;
+	} else {
+		struct wlr_xdg_toplevel_state *current = &toplevel->xdg_toplevel->current;
+		server->window_width = clamp_size(server->window_width + dw,
+			current->min_width, current->max_width);
+		server->window_height = clamp_size(server->window_height + dh,
+			current->min_height, current->max_height);
+		wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel,
+			server->window_width, server->window_height);
+	}
+	return true;
+}
+
+static int handle_repeat(void *data) {
+	struct tinywl_server *server = data;
+	if (server->window_mode && server->repeat_sym != XKB_KEY_NoSymbol) {
+		window_step(server, server->repeat_sym);
+		wl_event_source_timer_update(server->repeat_timer, REPEAT_INTERVAL);
+	}
+	return 0;
+}
+
+static bool handle_window_key(struct tinywl_server *server, xkb_keysym_t sym) {
+	/* Sys-w is the compositor's, and so are its steps while it's held.
+	 * Returns whether the key was one of them. */
+	if (sym == XKB_KEY_w) {
+		begin_window_mode(server);
+		return true;
+	}
+	if (!server->window_mode || !window_step(server, sym)) {
+		return false;
+	}
+	server->repeat_sym = sym;
+	wl_event_source_timer_update(server->repeat_timer, REPEAT_DELAY);
+	return true;
+}
+
 static void keyboard_handle_key(
 		struct wl_listener *listener, void *data) {
 	/* This event is raised when a key is pressed or released. */
@@ -436,6 +645,9 @@ static void keyboard_handle_key(
 	bool handled = false;
 	if (sym == XKB_KEY_Hyper_L) {
 		handled = true;
+		if (!pressed) {
+			end_window_mode(server);
+		}
 		if (!pressed && server->system_chord) {
 			server->system_chord = false;
 			struct policy_buffer buffer;
@@ -450,10 +662,17 @@ static void keyboard_handle_key(
 		if (swallowed) {
 			*swallowed = true;
 		}
-		handle_system_key(server, sym, hotkey_modifiers(state));
+		if (!handle_window_key(server, sym)) {
+			handle_system_key(server, sym, hotkey_modifiers(state));
+		}
 	} else if (!pressed && swallowed && *swallowed) {
 		handled = true;
 		*swallowed = false;
+		if (sym == XKB_KEY_w) {
+			end_window_mode(server);
+		} else if (sym == server->repeat_sym) {
+			stop_repeat(server);
+		}
 	}
 
 	if (!handled) {
@@ -726,6 +945,16 @@ static void process_cursor_motion(struct tinywl_server *server, uint32_t time) {
 		 * the last client to have the cursor over it. */
 		wlr_seat_pointer_clear_focus(seat);
 	}
+
+	/* Focus follows the mouse, sloppily: into application and overlay
+	 * windows, but not into the background, or out of an overlay window,
+	 * one of the Terminal's panels, which keeps it until it's gone. */
+	struct tinywl_toplevel *focused = server->focused;
+	if (toplevel && toplevel != focused &&
+			(toplevel->layer == LAYER_APPS || toplevel->layer == LAYER_OVERLAY) &&
+			!(focused && focused->layer == LAYER_OVERLAY)) {
+		focus_toplevel(toplevel);
+	}
 }
 
 static void server_cursor_motion(struct wl_listener *listener, void *data) {
@@ -774,14 +1003,15 @@ static void server_cursor_button(struct wl_listener *listener, void *data) {
 	struct tinywl_toplevel *toplevel = desktop_toplevel_at(server,
 			server->cursor->x, server->cursor->y, &surface, &sx, &sy);
 	if (event->state == WL_POINTER_BUTTON_STATE_RELEASED) {
-		/* If you released any buttons, we exit interactive move/resize mode. */
-		reset_cursor_mode(server);
-	} else {
-		/* Focus that client if the button was _pressed_ */
-		if (toplevel != NULL) {
-			raise_toplevel(toplevel);
+		/* If you released any buttons, we exit interactive move/resize
+		 * mode, unless it's Sys-w's. */
+		if (!server->window_mode) {
+			reset_cursor_mode(server);
 		}
-		focus_toplevel(toplevel, surface);
+	} else if (toplevel != NULL && reachable(toplevel)) {
+		/* Raise and focus that client if the button was _pressed_ */
+		raise_toplevel(toplevel);
+		focus_toplevel(toplevel);
 	}
 }
 
@@ -908,6 +1138,88 @@ static void server_new_output(struct wl_listener *listener, void *data) {
 	wlr_scene_output_layout_add_output(server->scene_layout, l_output, scene_output);
 }
 
+static bool fills_output(struct tinywl_toplevel *toplevel) {
+	return toplevel->layer == LAYER_BACKGROUND || toplevel->layer == LAYER_LOCK;
+}
+
+static void set_layer(struct tinywl_toplevel *toplevel) {
+	/* The Terminal's windows go in the layer their title names, or the
+	 * overlay; everyone else's go in the applications layer. */
+	struct tinywl_server *server = toplevel->server;
+	struct wl_client *client = wl_resource_get_client(toplevel->xdg_toplevel->resource);
+	const char *title = toplevel->xdg_toplevel->title ? toplevel->xdg_toplevel->title : "";
+	enum darq_layer layer = LAYER_APPS;
+	if (client == server->terminal) {
+		if (strcmp(title, "darq:background") == 0) {
+			layer = LAYER_BACKGROUND;
+		} else if (strcmp(title, "darq:lock") == 0) {
+			layer = LAYER_LOCK;
+		} else {
+			layer = LAYER_OVERLAY;
+		}
+	}
+	toplevel->layer = layer;
+	wlr_scene_node_reparent(&toplevel->scene_tree->node, server->layers[layer]);
+}
+
+static struct wlr_output *cursor_output(struct tinywl_server *server) {
+	struct wlr_output *output = wlr_output_layout_output_at(server->output_layout,
+		server->cursor->x, server->cursor->y);
+	return output ? output : wlr_output_layout_get_center_output(server->output_layout);
+}
+
+static void fit_to_output(struct tinywl_toplevel *toplevel, bool initial) {
+	/* Fill the output the client asked for (Qt's showFullScreen does),
+	 * or the one it's on, or, at first, the cursor's. */
+	struct tinywl_server *server = toplevel->server;
+	struct wlr_scene_node *node = &toplevel->scene_tree->node;
+	struct wlr_output *output = toplevel->xdg_toplevel->requested.fullscreen_output;
+	if (output == NULL || wlr_output_layout_get(server->output_layout, output) == NULL) {
+		output = initial ? cursor_output(server) :
+			wlr_output_layout_output_at(server->output_layout, node->x, node->y);
+	}
+	if (output == NULL) {
+		output = wlr_output_layout_get_center_output(server->output_layout);
+	}
+	if (output == NULL) {
+		/* No outputs yet: it's fitted when there are. */
+		wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, 0, 0);
+		return;
+	}
+	struct wlr_box box;
+	wlr_output_layout_get_box(server->output_layout, output, &box);
+	wlr_xdg_toplevel_set_fullscreen(toplevel->xdg_toplevel, true);
+	wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, box.width, box.height);
+	wlr_scene_node_set_position(node, box.x, box.y);
+}
+
+static void place_centred(struct tinywl_toplevel *toplevel) {
+	/* In the middle of the cursor's output. */
+	struct tinywl_server *server = toplevel->server;
+	struct wlr_output *output = cursor_output(server);
+	if (output == NULL) {
+		return;
+	}
+	struct wlr_box box, geo_box;
+	wlr_output_layout_get_box(server->output_layout, output, &box);
+	wlr_xdg_surface_get_geometry(toplevel->xdg_toplevel->base, &geo_box);
+	wlr_scene_node_set_position(&toplevel->scene_tree->node,
+		box.x + (box.width - geo_box.width) / 2 - geo_box.x,
+		box.y + (box.height - geo_box.height) / 2 - geo_box.y);
+}
+
+static void layout_change(struct wl_listener *listener, void *data) {
+	/* Outputs were added, removed, or resized: refit the windows that
+	 * fill them. */
+	struct tinywl_server *server = wl_container_of(listener, server, layout_change);
+	struct tinywl_toplevel *toplevel;
+	wl_list_for_each(toplevel, &server->toplevels, link) {
+		if (fills_output(toplevel)) {
+			fit_to_output(toplevel, false);
+		}
+	}
+}
+
 static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 	/* Called when the surface is mapped, or ready to display on-screen. */
 	struct tinywl_toplevel *toplevel = wl_container_of(listener, toplevel, map);
@@ -925,8 +1237,14 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 		policy_send(server, &buffer);
 	}
 
+	if (toplevel->layer == LAYER_APPS || toplevel->layer == LAYER_OVERLAY) {
+		place_centred(toplevel);
+	}
 	raise_toplevel(toplevel);
-	focus_toplevel(toplevel, toplevel->xdg_toplevel->base->surface);
+	/* A new background doesn't take the focus from anything. */
+	if (toplevel->layer != LAYER_BACKGROUND || server->focused == NULL) {
+		focus_toplevel(toplevel);
+	}
 }
 
 static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
@@ -934,21 +1252,23 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	struct tinywl_toplevel *toplevel = wl_container_of(listener, toplevel, unmap);
 
 	/* Reset the cursor mode if the grabbed toplevel was unmapped. */
-	if (toplevel == toplevel->server->grabbed_toplevel) {
-		reset_cursor_mode(toplevel->server);
+	struct tinywl_server *server = toplevel->server;
+	if (toplevel == server->grabbed_toplevel) {
+		end_window_mode(server);
+		reset_cursor_mode(server);
 	}
 
 	wl_list_remove(&toplevel->link);
 
-	struct tinywl_server *server = toplevel->server;
 	if (toplevel->reported) {
 		toplevel->reported = false;
 		struct policy_buffer buffer;
 		policy_encode_window_removed(&buffer, toplevel->window);
 		policy_send(server, &buffer);
-		if (server->focused_window == toplevel->window) {
-			report_focus(server, 0);
-		}
+	}
+	if (toplevel == server->focused) {
+		server->focused = NULL;
+		refocus(server);
 	}
 }
 
@@ -968,10 +1288,16 @@ static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 
 	if (toplevel->xdg_toplevel->base->initial_commit) {
 		/* When an xdg_surface performs an initial commit, the compositor must
-		 * reply with a configure so the client can map the surface. tinywl
-		 * configures the xdg_toplevel with 0,0 size to let the client pick the
-		 * dimensions itself. */
-		wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, 0, 0);
+		 * reply with a configure so the client can map the surface.  The
+		 * toplevel's title says its layer, by now, if it's the Terminal's.
+		 * Background and lock windows fill an output; others pick their
+		 * own size. */
+		set_layer(toplevel);
+		if (fills_output(toplevel)) {
+			fit_to_output(toplevel, true);
+		} else {
+			wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, 0, 0);
+		}
 		if (toplevel->decoration) {
 			wlr_xdg_toplevel_decoration_v1_set_mode(toplevel->decoration,
 				WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
@@ -1104,9 +1430,13 @@ static void xdg_toplevel_request_fullscreen(
 	/* Just as with request_maximize, we must send a configure here. */
 	struct tinywl_toplevel *toplevel =
 		wl_container_of(listener, toplevel, request_fullscreen);
-	if (toplevel->xdg_toplevel->base->initialized) {
-		wlr_xdg_surface_schedule_configure(toplevel->xdg_toplevel->base);
+	if (!toplevel->xdg_toplevel->base->initialized) {
+		return;
 	}
+	if (fills_output(toplevel)) {
+		fit_to_output(toplevel, false);
+	}
+	wlr_xdg_surface_schedule_configure(toplevel->xdg_toplevel->base);
 }
 
 static void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
@@ -1119,8 +1449,9 @@ static void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 	toplevel->server = server;
 	toplevel->xdg_toplevel = xdg_toplevel;
 	toplevel->window = server->next_window++;
+	toplevel->layer = LAYER_APPS;
 	toplevel->scene_tree =
-		wlr_scene_xdg_surface_create(&toplevel->server->scene->tree, xdg_toplevel->base);
+		wlr_scene_xdg_surface_create(server->layers[LAYER_APPS], xdg_toplevel->base);
 	toplevel->scene_tree->node.data = toplevel;
 	xdg_toplevel->base->data = toplevel->scene_tree;
 
@@ -1200,26 +1531,59 @@ static const struct wlr_keyboard_impl test_keyboard_impl = {
 	.name = "darq-test-keyboard",
 };
 
-static void test_key(struct tinywl_server *server, const char *line) {
-	unsigned int keycode, pressed;
-	if (sscanf(line, "%u %u", &keycode, &pressed) != 2) {
-		wlr_log(WLR_ERROR, "test keyboard: bad line '%s'", line);
-		return;
-	}
+static const struct wlr_pointer_impl test_pointer_impl = {
+	.name = "darq-test-pointer",
+};
+
+static uint32_t now_msec(void) {
 	struct timespec now;
 	clock_gettime(CLOCK_MONOTONIC, &now);
-	struct wlr_keyboard_key_event event = {
-		.time_msec = now.tv_sec * 1000 + now.tv_nsec / 1000000,
-		.keycode = keycode,
-		.update_state = true,
-		.state = pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED,
-	};
-	wlr_keyboard_notify_key(&server->test_keyboard, &event);
+	return now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+static void test_input(struct tinywl_server *server, const char *line) {
+	/* A line of test input: see the top of this file. */
+	unsigned int code, pressed;
+	double x, y;
+	if (sscanf(line, "key %u %u", &code, &pressed) == 2) {
+		struct wlr_keyboard_key_event event = {
+			.time_msec = now_msec(),
+			.keycode = code,
+			.update_state = true,
+			.state = pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED,
+		};
+		wlr_keyboard_notify_key(&server->test_keyboard, &event);
+	} else if (sscanf(line, "move %lf %lf", &x, &y) == 2) {
+		/* Absolute motion is from 0 to 1, across the layout. */
+		struct wlr_box box;
+		wlr_output_layout_get_box(server->output_layout, NULL, &box);
+		if (wlr_box_empty(&box)) {
+			return;
+		}
+		struct wlr_pointer_motion_absolute_event event = {
+			.pointer = &server->test_pointer,
+			.time_msec = now_msec(),
+			.x = (x - box.x) / box.width,
+			.y = (y - box.y) / box.height,
+		};
+		wl_signal_emit_mutable(&server->test_pointer.events.motion_absolute, &event);
+		wl_signal_emit_mutable(&server->test_pointer.events.frame, &server->test_pointer);
+	} else if (sscanf(line, "button %u %u", &code, &pressed) == 2) {
+		struct wlr_pointer_button_event event = {
+			.pointer = &server->test_pointer,
+			.time_msec = now_msec(),
+			.button = code,
+			.state = pressed ? WL_POINTER_BUTTON_STATE_PRESSED : WL_POINTER_BUTTON_STATE_RELEASED,
+		};
+		wl_signal_emit_mutable(&server->test_pointer.events.button, &event);
+		wl_signal_emit_mutable(&server->test_pointer.events.frame, &server->test_pointer);
+	} else {
+		wlr_log(WLR_ERROR, "test input: bad line '%s'", line);
+	}
 }
 
 static int handle_test_input(int fd, uint32_t mask, void *data) {
-	/* Lines of "<evdev keycode> <1|0>", pressing and releasing keys.
-	 * At the end of the input, the keyboard stays, unused. */
+	/* Lines of test input.  At its end, the test devices stay, unused. */
 	struct tinywl_server *server = data;
 	size_t room = sizeof(server->test_input) - server->test_input_length - 1;
 	ssize_t n = read(fd, server->test_input + server->test_input_length, room);
@@ -1238,7 +1602,7 @@ static int handle_test_input(int fd, uint32_t mask, void *data) {
 	char *end;
 	while ((end = strchr(line, '\n')) != NULL) {
 		*end = '\0';
-		test_key(server, line);
+		test_input(server, line);
 		line = end + 1;
 	}
 	server->test_input_length -= line - server->test_input;
@@ -1300,14 +1664,10 @@ static void handle_policy_message(struct tinywl_server *server,
 		break;
 	case POLICY_LOCK:
 	case POLICY_UNLOCK:
-		/* The lock layer isn't there yet. */
-		wlr_log(WLR_INFO, "policy: %s isn't implemented",
-			message->method == POLICY_LOCK ? "Lock" : "Unlock");
+		set_locked(server, message->method == POLICY_LOCK);
 		break;
 	case POLICY_FOCUS_WINDOW:
-		if (toplevel) {
-			focus_toplevel(toplevel, toplevel->xdg_toplevel->base->surface);
-		}
+		focus_toplevel(toplevel);
 		break;
 	case POLICY_RAISE_WINDOW:
 		if (toplevel) {
@@ -1404,8 +1764,20 @@ int main(int argc, char *argv[]) {
 		return 0;
 	}
 
+	/* With a Terminal, die with it: the policy channel closing is how,
+	 * usually, but this is in case it's stuck.  It may have gone
+	 * already. */
+	if (policy_fd >= 0) {
+		pid_t parent = getppid();
+		prctl(PR_SET_PDEATHSIG, SIGTERM);
+		if (getppid() != parent) {
+			return 1;
+		}
+	}
+
 	struct tinywl_server server = {0};
 	server.policy_fd = -1;
+	server.locked = true;
 	server.next_window = 1;
 	wl_list_init(&server.policy_queue);
 	/* The Wayland display is managed by libwayland. It handles accepting
@@ -1473,6 +1845,15 @@ int main(int argc, char *argv[]) {
 	 */
 	server.scene = wlr_scene_create();
 	server.scene_layout = wlr_scene_attach_output_layout(server.scene, server.output_layout);
+
+	/* The layers, bottom to top: it starts locked. */
+	for (int i = 0; i < NUM_LAYERS; i++) {
+		server.layers[i] = wlr_scene_tree_create(&server.scene->tree);
+	}
+	wlr_scene_node_set_enabled(&server.layers[LAYER_APPS]->node, false);
+	wlr_scene_node_set_enabled(&server.layers[LAYER_OVERLAY]->node, false);
+	server.layout_change.notify = layout_change;
+	wl_signal_add(&server.output_layout->events.change, &server.layout_change);
 
 	/* Set up xdg-shell version 3. The xdg-shell is a Wayland protocol which is
 	 * used for application windows. For more detail on shells, refer to
@@ -1575,6 +1956,7 @@ int main(int argc, char *argv[]) {
 	struct wl_event_loop *loop = wl_display_get_event_loop(server.wl_display);
 	wl_event_loop_add_signal(loop, SIGTERM, handle_signal, &server);
 	wl_event_loop_add_signal(loop, SIGINT, handle_signal, &server);
+	server.repeat_timer = wl_event_loop_add_timer(loop, handle_repeat, &server);
 
 	if (policy_fd >= 0) {
 		fcntl(policy_fd, F_SETFD, FD_CLOEXEC);
@@ -1589,6 +1971,8 @@ int main(int argc, char *argv[]) {
 	if (test_keyboard) {
 		wlr_keyboard_init(&server.test_keyboard, &test_keyboard_impl, "test");
 		server_new_keyboard(&server, &server.test_keyboard.base);
+		wlr_pointer_init(&server.test_pointer, &test_pointer_impl, "test");
+		server_new_pointer(&server, &server.test_pointer.base);
 		wlr_seat_set_capabilities(server.seat,
 			WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD);
 		server.test_input_source = wl_event_loop_add_fd(loop, STDIN_FILENO,

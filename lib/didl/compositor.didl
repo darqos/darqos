@@ -63,7 +63,8 @@ protocol Policy {
     1: BindHotkey(uint32 keysym, uint32 modifiers);
     2: UnbindHotkey(uint32 keysym, uint32 modifiers);
 
-    // Show only the lock layer, or show everything again.
+    // Show only the background and lock layers, with input only to the
+    // lock layer, or show everything again.
     3: Lock();
     4: Unlock();
 
