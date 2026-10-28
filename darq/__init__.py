@@ -8,43 +8,8 @@
 #
 # Programs should `import darq` to import all DarqOS API elements.
 
-import os
-import uuid
-
-from typing import Union
-
-from darq.runtime.service import Service
-from darq.runtime.service import ServiceAPI
-from darq.runtime.tool import Tool
-from darq.runtime.type import Type
-from darq.runtime.util import Facility, Level, log
-
 from .errors import *
 from .identifier import *
 from .loop import *
 from .process import *
 from .system import *
-
-
-# Globals
-#
-# These values represent the basic runtime state of the application
-# process at the system level.  All applications have them.
-
-# FIXME: make service APIs dynamic, such that they self-construct on use
-
-_local_context_id: str = ''
-
-# Storage API.
-#storage: Storage = Storage.api()
-storage = None
-
-
-################################################################
-# Kernel API -- System calls
-################################################################
-
-def get_state():
-    global _darq_process_state
-    return _darq_process_state
-

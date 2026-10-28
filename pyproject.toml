@@ -8,7 +8,7 @@ version = "0.1"
 dependencies = []
 
 [tool.setuptools]
-packages = ["darq", "darq.kernel", "darq.protocols", "darq.runtime", "darq.services", "darq.type"]
+packages = ["darq", "darq.protocols", "darq.ui"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

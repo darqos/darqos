@@ -1,7 +1,6 @@
 PyQt6
 
 ada-url
-orjson
 pillow
 setproctitle
 vobject
