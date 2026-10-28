@@ -1,22 +1,22 @@
 History Service
 ===============
 
-The history service records _events_, their subject _items_, and orders
+The history service records *events*, their subject *items*, and orders
 the records by time.
 
 Each record consists of:
 
-* datetime timestamp, in UTC.
-  
+* datetime timestamp
+  * In UTC.
   * Must have at least microsecond precision.
 
 * Item identifier for the subject item
-* Event identifier
+* An event identifier
   
-  * UTF-8 string.
-  * NFKC_CaseFold normalized to lower case.
-  * At most, 31 bytes long (allowing the 32nd byte to be a trailing U+0000).
-  * No whitespace or control characters.
+  * A UTF-8 string
+  * NFKC_CaseFold normalized to lower case
+  * At most, 31 bytes long (allowing the 32nd byte to be a trailing U+0000)
+  * No whitespace or control characters
   * Predefined values:
 
     * created
@@ -26,44 +26,44 @@ Each record consists of:
 
   * These events seem to be mostly verbs, representing some action
     that has occurred, so that's probably a decent guideline for
-    choosing the available actions.
+    choosing other actions.
 
-* a string name for the source of the event
+* A string name for the source of the event
 
+  * A UTF-8 string
+  * NFKC_CaseFold normalized to lower case
+  * At most, 31 bytes long (allowing the 32nd byte to be a trailing U+0000)
+  * No whitespace or control characters
   * Examples might be "lens" or "indexer".  Some way to filter events
     to a specific component.
-  * UTF-8 string.
-  * NFKC_CaseFold normalized to lower case.
-  * At most, 31 bytes long (allowing the 32nd byte to be a trailing U+0000).
-  * No whitespace or control characters.
 
 This volume would become overwhelming fairly quickly, so the records are
 compressed as they become older:
 
-* For the current week, all events are maintained
-* For the last month, events within each wall-clock hour are coalesced,
-  by removing duplicate event identifiers.  eg. a document saved multiple
-  times is recorded only to have been saved within that hour.
-* For periods over a month old, events are coalesced into days.
+* For the last hour, all events are maintained
+* For the previous 24 hours, events are coalesced to 10 minute intervals.
+* For the previous week, all events are coalesced to hourly intervals
+* For the previous four weeks, events are coalesced to daily intervals
+* For periods over 36 days old, events are coalesced to weekly intervals
 
 
 API
 ---
 
- * add_event(item_id, event, source)
+ * ``add_event(item_id, event, source)``
 
    * The timestamp is recorded within the History service.
    * The `source` is a string that describes what instigated the
      event.  Possible values are like "type_lens" or "indexer".
 
- * get_events(start_time, end_time, type_ids=[], item_ids=[], events=[], sources=[], max=0) -> \[events\]
+ * ``get_events(start_time, end_time, type_ids=[], item_ids=[], events=[], sources=[], max=0) -> [events]``
 
    * Return all events within the time bounds that match the provided
      parameters.
    * If one or more type_ids are specified, only return events
      matching those types.
      
-     * It'd be _ideal_ if this supported the UTI subtyping, but not
+     * It'd be *ideal* if this supported the UTI subtyping, but not
        for early editions.
 
    * If one or more item_ids are specified, only return events for
@@ -136,9 +136,9 @@ log, and isn't synced on each event: a crash can lose the last few.
 Not Yet
 ~~~~~~~
 
-* Coalescing old events by hour and by day, as above, by adding their
-  counts.  It could run as a daily background task.  With the 10 minute
-  throttle, 1ed's volumes are small.
+* Implement the coalescing strategy described above.  It could run as
+  a daily background task.  With the 10 minute throttle, 1ed's volumes
+  are small.
 * Filtering by type conformance, rather than exact type identifiers.
 * A query for the most recently used items, each once, for the
   Terminal's selector.  Its order would want the latest time of a

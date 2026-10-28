@@ -315,13 +315,13 @@ windows: the equivalent of Alt-Tab.  The compositor passes the
 switching hotkey to the Terminal, which shows the switcher, and asks
 the compositor to raise and focus the chosen window.
 
-Object Properties
-~~~~~~~~~~~~~~~~~
+Item Properties
+~~~~~~~~~~~~~~~
 
 There should be a way to easily access the system information about an
-object.  This would include metadata, indexing, and history.  You
-should be able to edit the metadata -- eg. add a tag, view the
-history, and .. not sure about indexing?
+item.  This would include metadata, indexing, and history.  You should
+be able to edit the metadata -- eg. add a tag, view the history,
+and .. not sure about indexing?
 
 This might be another system-wide hotkey?
 
@@ -337,16 +337,14 @@ a standard widget set to provide UI elements.  One option would be to
 use a widget server model, perhaps similar to O/mero from PlanB.  Or
 it might be a more traditional library-based approach.
 
-It's also possible that we'll move away from Wayland and/or Wayfire to
-a dedicated compositor.
-
 
 Architecture
 ------------
 
-The Terminal service will be implemented as a Linux Python process,
+The Terminal service will be implemented as a Darq Python process,
 using PyQt6 to provide the GUI, on a Qt event loop (as lenses are).
 
 It will communicate using the system IPC with the p-kernel.  It will
-interact with other services to populate the New, Search, and Event
-overlays.
+interact with the compositor, likely using a custom Wayland protocol,
+if required. It will interact with other services to populate the New,
+Search, and Event overlays.
