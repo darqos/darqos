@@ -34,7 +34,7 @@ from darq.protocols.compositor import (
     WindowRetitled,
 )
 
-from test_devterm import DOC, TEXT, FakeServices
+from test_devterm import DOC, TEXT, FakeServices, inline
 from test_pkernel import live_pkernel, pkernel, run_kernel_until  # noqa: F401
 
 
@@ -99,6 +99,7 @@ def terminal(qt_app):
     ours, theirs = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
     services = FakeServices()
     started = main.Terminal(qt_app, PolicyChannel(ours), services)
+    started.launcher.run = started.launcher.post = inline
     started.start()
     compositor = Compositor(theirs)
     started.bindings = compositor.received()
@@ -108,6 +109,7 @@ def terminal(qt_app):
 
     for panel in started.panels:
         panel.close()
+    started.loop.close()
     for screen in list(started.screens.windows):
         started.screens.remove(screen)
     started.notifier.setEnabled(False)
@@ -274,6 +276,84 @@ def test_new_failure_stays(terminal):
     terminal.new.types.create_item()
     assert visible(terminal) == [terminal.new]
     assert terminal.new.status.text() == f"Can't create a UTF-8 Text: Can't activate {TEXT}"
+
+
+class Deferred:
+    """Runs launches only when told: as if they were still starting."""
+
+    def __init__(self):
+        self.jobs = []
+
+    def __call__(self, job):
+        self.jobs.append(job)
+
+    def finish(self):
+        jobs, self.jobs = self.jobs, []
+        for job in jobs:
+            job()
+
+
+def test_one_create_at_a_time(terminal):
+    unlock(terminal)
+    terminal.launcher.run = deferred = Deferred()
+    hotkey(terminal, main.XK_n)
+    types = terminal.new.types
+    types.create_item()
+    assert not types.create_button.isEnabled()
+
+    # A second Enter, even after reopening, doesn't make a second item.
+    types.create_item()
+    assert terminal.new.status.text() == "Still starting a UTF-8 Text ..."
+    hotkey(terminal, main.XK_n)
+    types.create_item()
+    assert len(deferred.jobs) == 1
+
+    deferred.finish()
+    assert types.creating is None and types.create_button.isEnabled()
+    assert terminal.fake_services.launch.created == [TEXT]
+    assert visible(terminal) == []
+
+
+def test_failure_after_panel_closed(terminal):
+    from PyQt6.QtCore import Qt
+    unlock(terminal)
+    terminal.launcher.run = deferred = Deferred()
+    terminal.fake_services.launch.fail = True
+    hotkey(terminal, main.XK_n)
+    terminal.new.types.create_item()
+    terminal.new.keyPressEvent(key(Qt.Key.Key_Escape))
+    deferred.finish()
+
+    # It's shown in a notice, which any key closes.
+    assert visible(terminal) == [terminal.notice]
+    assert terminal.notice.message.text() == f"Can't create a UTF-8 Text: Can't activate {TEXT}"
+    terminal.notice.keyPressEvent(key(Qt.Key.Key_Shift))
+    assert terminal.notice.isVisible()
+    terminal.notice.keyPressEvent(key(Qt.Key.Key_Return))
+    assert visible(terminal) == []
+
+
+def test_history_use(terminal):
+    unlock(terminal)
+    services = terminal.fake_services
+    services.history.events = [main_event()]
+    hotkey(terminal, main.XK_h)
+    terminal.history.view.use(0)
+    assert services.launch.used == [(DOC, None)]
+    assert visible(terminal) == []
+
+    # A failure, while it's open, is shown in it.
+    hotkey(terminal, main.XK_h)
+    services.launch.fail = True
+    terminal.history.view.use(0)
+    assert visible(terminal) == [terminal.history]
+    assert terminal.history.status.text() == f"No lens for {DOC}"
+
+
+def main_event():
+    from darq.protocols.history import Event
+    return Event(time=int(time.time() * 1_000_000) - 1_000_000, item_id=DOC, event="edited",
+                 source="text-lens", count=1)
 
 
 def test_closes_when_deactivated(terminal):

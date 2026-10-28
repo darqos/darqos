@@ -365,7 +365,9 @@ snake case::
         darq.serve("darq.storage", StorageService())
 
 * A client's requests are sent from its thread's *reply port*, opened
-  on first use, so the service's replies come back to it.
+  on first use, so the service's replies come back to it.  It's kept
+  until the thread exits: a short-lived thread that makes calls should
+  close it first, with ``darq.release_reply_port()``.
 * Each request gets the next transaction identifier (txid), skipping
   0, which marks one-way messages.  The reply is the message on the
   reply port from the service's handle (the same handle, since handles

@@ -3,10 +3,11 @@
 
 # User interface parts shared by the Terminal (services/terminal) and the
 # development Terminal (tools/devterm): New's type list (darq.ui.types),
-# and History's event browser (darq.ui.history).
+# History's event browser (darq.ui.history), and the launcher that
+# creates and uses items without blocking them (darq.ui.launcher).
 #
 # Their widgets talk to the window holding them through a Host: the
-# services it uses, its status line, and how it uses an item.
+# services it uses, its status line, and its launcher.
 
 import logging
 import os
@@ -17,6 +18,9 @@ import darq
 import darq.launch
 from darq.protocols.history import History
 from darq.protocols.type import Type
+
+if typing.TYPE_CHECKING:
+    from .launcher import Launcher
 
 
 # Control exports
@@ -51,17 +55,15 @@ class Host(typing.Protocol):
     """The window holding a shared widget."""
 
     services: Services
+    launcher: "Launcher"
 
     def show_status(self, message: str) -> None:
-        """Show a message, such as an error, in its status line."""
+        """Show a message, such as progress or an error, in its status
+        line."""
         ...
 
-    def record(self, item_id: str, event: str) -> None:
-        """Record a History event about an item, with its own source."""
-        ...
-
-    def use(self, item_id: str, item: int | None = None) -> None:
-        """Start a lens for an item: it's opened, if no port is given."""
+    def launched(self, context: object, item_id: str | None, error: str | None) -> None:
+        """A launch has finished: see Launcher."""
         ...
 
 

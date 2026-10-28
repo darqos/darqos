@@ -15,7 +15,8 @@
 #   only Sys-b works, on the lock screen.
 #
 # Its calls to services are synchronous, on Qt's thread, as devterm's
-# are: starting a lens freezes it for a second or so.
+# are, but for creating and using items, which its Launcher does on other
+# threads (see darq.ui.launcher).
 
 import logging
 import os
@@ -27,10 +28,10 @@ from PyQt6 import QtCore
 from PyQt6.QtWidgets import QApplication
 from PyQt6.sip import voidptr
 
-import darq
 from darq.compositor import COMPOSITOR, Compositor, PolicyChannel
 from darq.dipc import Message
 from darq.errors import ChannelClosedError, MessageDecodingError
+from darq.loop import QtEventLoop
 from darq.protocols.compositor import (
     BindHotkey,
     CloseWindow,
@@ -48,8 +49,9 @@ from darq.protocols.compositor import (
     WindowRetitled,
 )
 from darq.ui import Services
+from darq.ui.launcher import Launcher
 
-from panels import HistoryPanel, NewPanel, Panel, PowerPanel, SwitcherPanel, TbdPanel
+from panels import HistoryPanel, NewPanel, NoticePanel, Panel, PowerPanel, SwitcherPanel, TbdPanel
 from screens import Screens
 
 
@@ -94,6 +96,8 @@ class Terminal:
         self.app = app
         self.channel = channel
         self.services = services
+        self.loop = QtEventLoop()
+        self.launcher = Launcher(self, SOURCE, self.loop.post)
 
         # The compositor's windows, by number, with their titles; their
         # numbers, most recently focused first; and the focused one's (0
@@ -114,7 +118,9 @@ class Terminal:
         self.switcher = SwitcherPanel()
         self.power_panel = PowerPanel(self.power)
         self.tbd = TbdPanel()
-        self.panels: list[Panel] = [self.new, self.history, self.switcher, self.power_panel, self.tbd]
+        self.notice = NoticePanel()
+        self.panels: list[Panel] = [self.new, self.history, self.switcher, self.power_panel, self.tbd,
+                                    self.notice]
 
         self.notifier = QtCore.QSocketNotifier(voidptr(channel.fileno()), QtCore.QSocketNotifier.Type.Read)
         self.notifier.activated.connect(self.read_channel)
@@ -133,22 +139,21 @@ class Terminal:
             if panel.isVisible():
                 panel.set_status(message)
 
-    def record(self, item_id: str, event: str):
-        try:
-            self.services.history.add_event(item_id=item_id, event=event, source=SOURCE)
-        except darq.DarqError as e:
-            logging.warning(f"Can't record {event} for {item_id}: {e!r}")
-
-    def use(self, item_id: str, item: int | None = None):
-        """Start a lens for an item, and close the panel, unless it fails."""
-        self.show_status(f"Starting a lens for {item_id} ...")
-        QApplication.processEvents()
-        try:
-            self.services.launch.use_item(item_id, item)
-        except (darq.DarqError, TimeoutError) as e:
-            self.show_status(str(e))
-            return
-        self.hide_panels()
+    def launched(self, context: object, item_id: str | None, error: str | None):
+        """A launch from New or History has finished: close its panel, or
+        show what went wrong, in the panel, or, if it's closed, a notice."""
+        panel = {self.new.types: self.new, self.history.view: self.history}.get(context)
+        if error is None:
+            logging.info(f"Using {item_id}")
+            if panel is not None:
+                panel.hide()
+        elif panel is not None and panel.isVisible():
+            logging.info(error)
+            panel.set_status(error)
+        else:
+            logging.info(error)
+            self.hide_panels(but=self.notice)
+            self.notice.show_message(error)
 
     def type_ids(self) -> list[str]:
         return [entry.type_id for entry in self.new.types.entries]

@@ -605,3 +605,74 @@ def test_text_lens(live_pkernel, tmp_path):  # noqa: F811
     [lens_process] = [p for p in kernel._process_table.values() if p._image_path == str(LENS_PATH)]
     run_kernel_until(kernel, lambda: lens_process.get_status() == zombie, "the lens to exit")
     assert (lens_process.get_exit_status(), lens_process.get_exit_error()) == (0, None)
+
+
+def test_launch_doesnt_block(live_pkernel, tmp_path):  # noqa: F811
+    kernel = live_pkernel
+
+    # Plays the Terminal, with darq.ui's Launcher: the item's created, and
+    # its lens started, on another thread, while the Qt loop keeps running.
+    client_path = write_app(tmp_path / "client", """
+        import time
+        import darq
+        from PyQt6.QtCore import QCoreApplication, QTimer
+        from darq.loop import QtEventLoop
+        from darq.protocols.history import History
+        from darq.protocols.type import Type
+        from darq.ui import Services
+        from darq.ui.launcher import Launcher
+
+        TEXT = "public.utf8-plain-text"
+
+        class Host:
+            def __init__(self, app):
+                self.app = app
+                self.services = Services()
+                self.results = []
+
+            def show_status(self, message):
+                pass
+
+            def launched(self, context, item_id, error):
+                self.results.append((context, item_id, error))
+                self.app.exit(0)
+
+        def darq_main():
+            types = Type.Client(darq.connect("darq.type"), timeout=30)
+            deadline = time.monotonic() + 30
+            while not types.find_lenses(type_id=TEXT, context="terminal").lenses:
+                if time.monotonic() > deadline:
+                    return "no text lens registered"
+                time.sleep(0.05)
+
+            app = QCoreApplication([])
+            loop = QtEventLoop()
+            host = Host(app)
+            ticks = []
+            timer = QTimer()
+            timer.timeout.connect(lambda: ticks.append(True))
+            timer.start(10)
+            Launcher(host, "test", loop.post).create(TEXT, "UTF-8 Text", context="new")
+            QTimer.singleShot(30_000, lambda: app.exit(1))
+            if app.exec() != 0:
+                return "no result"
+
+            [(context, item_id, error)] = host.results
+            if context != "new" or error is not None:
+                return f"launched {host.results!r}"
+            if len(ticks) < 5:
+                return f"the loop ticked {len(ticks)} times while launching"
+            history = History.Client(darq.connect("darq.history"), timeout=10)
+            events = sorted((e.event, e.source) for e in history.get_events(item_ids=[item_id]).events)
+            if events != [("created", "test"), ("opened", "text-lens")]:
+                return f"events are {events!r}"
+            loop.close()
+            return 0
+        """)
+
+    kernel.do_boot()
+    client = kernel._process_table[kernel.do_spawn_process(None, client_path)]
+    zombie = kernel.module.KernelProcessStatus.ZOMBIE
+    run_kernel_until(kernel, lambda: client.get_status() == zombie, "the client to exit")
+    assert (client.get_exit_status(), client.get_exit_error()) == (0, None)
+    assert [p for p in kernel._process_table.values() if p._image_path == str(LENS_PATH)]

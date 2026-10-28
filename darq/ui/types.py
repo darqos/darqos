@@ -2,7 +2,9 @@
 # Copyright (C) 2026 David Arnold
 
 # The implemented types, for New: create an item of one, and use it in
-# its lens.  Types with no Terminal lens are shown greyed out.
+# its lens (with the host's Launcher).  Types with no Terminal lens are
+# shown greyed out.  While one's being created, another can't be: a
+# second Enter doesn't make a second item.
 
 import typing
 
@@ -20,7 +22,6 @@ from PyQt6.QtWidgets import (
 )
 
 import darq
-import darq.history
 from darq.protocols.type import Status, Type
 
 from . import Host
@@ -105,6 +106,9 @@ class TypeList(QWidget):
 
         self.entries: list[TypeEntry] = []
 
+        # The name of the type being created, if one is.
+        self.creating: str | None = None
+
     def refresh(self) -> bool:
         """Load the types again.
 
@@ -171,16 +175,20 @@ class TypeList(QWidget):
         return entry if entry.usable else None
 
     def create_item(self):
-        """Create an item of the selected type, and use it."""
+        """Create an item of the selected type, and use it: the host's
+        launched() is called with this as the context."""
+        if self.creating is not None:
+            self.host.show_status(f"Still starting a {self.creating} ...")
+            return
         entry = self.selected()
         if entry is None:
             self.host.show_status("Select a type with a lens")
             return
-        launch = self.host.services.launch
-        try:
-            item_id, item = launch.create_item(entry.type_id)
-        except (darq.DarqError, TimeoutError) as e:
-            self.host.show_status(f"Can't create a {entry.name}: {e}")
-            return
-        self.host.record(item_id, darq.history.CREATED)
-        self.host.use(item_id, item)
+        self.creating = entry.name
+        self.create_button.setEnabled(False)
+        self.host.launcher.create(entry.type_id, entry.name, context=self, done=self.created)
+
+    def created(self):
+        """The create has finished, whether or not it worked."""
+        self.creating = None
+        self.create_button.setEnabled(True)

@@ -293,6 +293,22 @@ def test_close_port(pproc):
     assert pproc._pending == {}
 
 
+def test_release_reply_port(pproc):
+    def app():
+        # A thread's reply port is opened by its first call, and closed
+        # once: then, the next call opens another.
+        darq.release_reply_port()
+        port = darq.system._reply_port()
+        darq.release_reply_port()
+        darq.release_reply_port()
+        return port, darq.system._reply_port()
+
+    port, again = run_app(pproc, app)
+    assert again != port
+    closed = [m.port for m in pcalls(pproc) if isinstance(m, pk.ClosePortRequest)]
+    assert closed == [port]
+
+
 def test_spawn_process(pproc):
     assert run_app(pproc, lambda: darq.spawn_process("/darq/bin/x")) == 7
     assert pcalls(pproc)[-1].get_exec_path() == "/darq/bin/x"

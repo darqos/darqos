@@ -173,6 +173,7 @@ __all__ = [
     "Timer",
     "call",
     "connect",
+    "release_reply_port",
     "send",
     "serve",
     "transact",
@@ -1054,6 +1055,23 @@ def _reply_port() -> int:
         port = open_port()
         _local.reply_port = port
     return port
+
+
+def release_reply_port():
+    """Close this thread's reply port, if it has one.
+
+    Each thread that makes calls (see transact) opens a port for their
+    replies, kept until the thread exits; one that's about to exit should
+    close it, or the port is left open."""
+    port = getattr(_local, "reply_port", None)
+    if port is None:
+        return
+    _local.reply_port = None
+    _local.watched = set()
+    try:
+        close_port(port)
+    except DarqError as e:
+        logging.warning(f"Can't close reply port {port}: {e!r}")
 
 
 def _allocate_txid() -> int:

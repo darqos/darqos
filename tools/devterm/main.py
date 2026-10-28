@@ -16,17 +16,16 @@
 #   item.
 # - System: Shutdown, Reboot, and Quit (just this window).
 #
-# Its calls are synchronous, on Qt's thread: starting a lens freezes the
-# window for a second or so.
-
-import logging
+# Its calls are synchronous, on Qt's thread, but for creating and using
+# items, which its Launcher does on other threads.
 
 from PyQt6 import QtCore
 from PyQt6.QtWidgets import QApplication, QLabel, QMainWindow, QTabWidget
 
-import darq
+from darq.loop import QtEventLoop
 from darq.ui import Services, wait_for_display
 from darq.ui.history import HistoryView
+from darq.ui.launcher import Launcher
 from darq.ui.types import TypeList
 
 
@@ -44,6 +43,8 @@ class DevTerminal(QMainWindow):
     def __init__(self, services: Services):
         super().__init__()
         self.services = services
+        self.loop = QtEventLoop()
+        self.launcher = Launcher(self, SOURCE, self.loop.post)
         self.setWindowTitle("DarqOS Development Terminal")
         self.resize(1000, 700)
 
@@ -85,22 +86,8 @@ class DevTerminal(QMainWindow):
     def show_status(self, message: str):
         self.status.setText(message)
 
-    def record(self, item_id: str, event: str):
-        try:
-            self.services.history.add_event(item_id=item_id, event=event, source=SOURCE)
-        except darq.DarqError as e:
-            logging.warning(f"Can't record {event} for {item_id}: {e!r}")
-
-    def use(self, item_id: str, item: int | None = None):
-        """Start a lens for an item: it's opened, if no port is given."""
-        self.show_status(f"Starting a lens for {item_id} ...")
-        QApplication.processEvents()
-        try:
-            self.services.launch.use_item(item_id, item)
-        except (darq.DarqError, TimeoutError) as e:
-            self.show_status(str(e))
-            return
-        self.show_status(f"Using {item_id}")
+    def launched(self, context: object, item_id: str | None, error: str | None):
+        self.show_status(error or f"Using {item_id}")
 
 
 def darq_main():

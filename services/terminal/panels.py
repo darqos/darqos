@@ -141,6 +141,24 @@ class PowerPanel(Panel):
             self.power(choice)
 
 
+class NoticePanel(Panel):
+    """A launch that failed after its panel had closed: any key closes it."""
+
+    def __init__(self):
+        super().__init__("Couldn't start it", 600, 140)
+        self.message = QLabel()
+        self.message.setWordWrap(True)
+        self.contents.addWidget(self.message)
+
+    def show_message(self, message: str):
+        self.message.setText(message)
+        self.open()
+
+    def keyPressEvent(self, a0: QKeyEvent | None):
+        if a0 is not None and not is_modifier(a0):
+            self.hide()
+
+
 class TbdPanel(Panel):
     """Sys-space, Sys-e and Sys-i, for now: any key closes it."""
 

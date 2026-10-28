@@ -3,7 +3,7 @@
 
 # History's event browser: events from the History service, between two
 # times, and filtered by type, event and source, newest first.  Choosing
-# one (double-click, or Enter) uses its item.
+# one (double-click, or Enter) uses its item, with the host's Launcher.
 
 import datetime
 import re
@@ -206,5 +206,7 @@ class HistoryView(QWidget):
         self.host.show_status(f"{len(self.shown)} events" + (", and more" if len(response.events) == PAGE else ""))
 
     def use(self, row: int):
+        """Use an event's item: the host's launched() is called with this
+        as the context."""
         if 0 <= row < len(self.shown):
-            self.host.use(self.shown[row].item_id)
+            self.host.launcher.use(self.shown[row].item_id, context=self)

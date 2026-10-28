@@ -112,6 +112,11 @@ class FakeServices:
         self.calls.append("reboot")
 
 
+def inline(function):
+    """Run a launch, or post its result, at once: see darq.ui.launcher."""
+    function()
+
+
 @pytest.fixture
 def terminal(qt_app):
     created = []
@@ -119,6 +124,7 @@ def terminal(qt_app):
     def make(types=None):
         services = FakeServices(types)
         window = devterm.DevTerminal(services)
+        window.launcher.run = window.launcher.post = inline
         window.show()
         created.append(window)
         return window, services
@@ -126,6 +132,7 @@ def terminal(qt_app):
     yield make
     for window in created:
         window.close()
+        window.loop.close()
 
 
 ################################################################

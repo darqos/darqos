@@ -76,8 +76,8 @@ It has:
 * System: Shutdown and Reboot (it's a system process, so it may), and
   Quit, which closes just this window.
 
-Its calls are synchronous, on Qt's thread, so starting a lens freezes
-it for a second or so.
+It creates and uses items with the Terminal's launcher, so it doesn't
+freeze while a lens starts (see Architecture, below).
 
 
 First Edition Graphical Terminal
@@ -548,8 +548,23 @@ New and History are shared with devterm, in ``darq.ui``.
 
 If the compositor isn't built, or isn't ready within 10 seconds, or
 closes the policy channel, the Terminal exits with status 1: the
-p-kernel then reboots.  Its calls to services are synchronous, on
-Qt's thread, so starting a lens freezes it for a second or so.
+p-kernel then reboots.
+
+Its calls to services are synchronous, on Qt's thread, but for
+creating and using items, which take a second or more: activating the
+type's implementation, creating or opening the item, and starting a
+lens, which waits for its Ready.  Those are done by
+``darq.ui.launcher.Launcher``, each on a thread of its own, where its
+calls can wait (each thread has its own reply port, closed when it's
+done), with its result posted back to Qt's thread.  Meanwhile, the
+panel stays open, showing that it's starting, and closes once the
+lens is using the item; Escape closes it anyway.  While an item is
+being created, New won't create another, so a second Enter doesn't
+make a second item.  If it fails, the error is shown in the panel, or,
+if it's been closed, in a notice, which any key closes.
+
+Asynchronous generated clients, with replies posted to the event loop,
+would do without the threads: see ``TODO.org``.
 
 It communicates using the system IPC with the p-kernel and the other
 services, to populate the New and History panels, and to check the
