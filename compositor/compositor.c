@@ -4,14 +4,17 @@
 // The DarqOS compositor (see doc/terminal.rst).
 //
 // Forked from tinywl, the reference compositor in the wlroots 0.18.2
-// source tree (CC0).  So far, it's the compositor spike: tinywl with
+// source tree (CC0).  So far, it's tinywl with
 //
 // - The Terminal's Wayland connection on a file descriptor it's given
 //   (-t), so its toplevels can be told apart from other clients'.
+// - The policy channel to the Terminal, on another (-p): see policy.h.
+//   It reports bound hotkeys and the window list, and focuses, raises
+//   and closes windows; the compositor exits when it's closed.
 // - Server-side decorations (xdg-decoration), which it doesn't draw.
 // - Our keymap: System, on Left Control, is a modifier of its own
 //   (darq:system, in xkb/), and keys pressed with it never reach
-//   clients.
+//   clients.  Without a policy channel, Sys-Escape exits.
 // - A public socket, darq-0.
 // - A test keyboard (-k): lines of "<evdev keycode> <1|0>" on stdin
 //   press and release keys, for running headless.
@@ -19,12 +22,14 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
 #include <wayland-server-core.h>
@@ -48,6 +53,15 @@
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/util/log.h>
 #include <xkbcommon/xkbcommon.h>
+
+#include "policy.h"
+
+/* How many hotkeys the Terminal can bind. */
+#define MAX_HOTKEYS 64
+
+/* How many messages can wait to be sent to the Terminal: more, and
+ * it's assumed to be stuck. */
+#define MAX_POLICY_QUEUE 4096
 
 /* For brevity's sake, struct members are annotated where they are used. */
 enum tinywl_cursor_mode {
@@ -100,6 +114,31 @@ struct tinywl_server {
 	struct wlr_xdg_decoration_manager_v1 *decoration_manager;
 	struct wl_listener new_decoration;
 
+	/* The policy channel, if there is one (-p): -1 if not.  Messages
+	 * the socket has no room for wait in the queue, of
+	 * tinywl_policy_packet, until it's writable. */
+	int policy_fd;
+	struct wl_event_source *policy_source;
+	struct wl_list policy_queue;
+	int policy_queue_length;
+
+	/* The hotkeys the Terminal has bound. */
+	struct {
+		xkb_keysym_t keysym;
+		uint32_t modifiers;
+	} hotkeys[MAX_HOTKEYS];
+	int num_hotkeys;
+
+	/* A bound hotkey has been pressed since System was. */
+	bool system_chord;
+
+	/* Keys whose press was the compositor's, so their release is too. */
+	bool swallowed[256];
+
+	/* The next window number, and the focused window's (0 for none). */
+	uint32_t next_window;
+	uint32_t focused_window;
+
 	/* The System modifier's mask, in the keymap's modifiers. */
 	xkb_mod_mask_t system_mask;
 
@@ -135,6 +174,18 @@ struct tinywl_toplevel {
 
 	struct wlr_xdg_toplevel_decoration_v1 *decoration;
 	struct wl_listener decoration_destroy;
+
+	/* Its window number, and whether it's reported to the Terminal:
+	 * while it's mapped, if it isn't the Terminal's own. */
+	uint32_t window;
+	bool reported;
+	struct wl_listener set_title;
+};
+
+struct tinywl_policy_packet {
+	struct wl_list link;
+	size_t length;
+	uint8_t data[];
 };
 
 struct tinywl_popup {
@@ -152,6 +203,99 @@ struct tinywl_keyboard {
 	struct wl_listener key;
 	struct wl_listener destroy;
 };
+
+static int policy_writable(int fd, uint32_t mask, void *data);
+
+static void policy_close(struct tinywl_server *server) {
+	/* Without the Terminal, there's nothing for the compositor to do. */
+	wlr_log(WLR_INFO, "the policy channel is closed: exiting");
+	wl_event_source_remove(server->policy_source);
+	server->policy_source = NULL;
+	close(server->policy_fd);
+	server->policy_fd = -1;
+	while (!wl_list_empty(&server->policy_queue)) {
+		struct tinywl_policy_packet *packet =
+			wl_container_of(server->policy_queue.next, packet, link);
+		wl_list_remove(&packet->link);
+		free(packet);
+	}
+	server->policy_queue_length = 0;
+	wl_display_terminate(server->wl_display);
+}
+
+static bool policy_try_send(struct tinywl_server *server,
+		const uint8_t *data, size_t length) {
+	/* Returns false if there's no room for it yet.  On an error, the
+	 * channel is closed, and its queue emptied. */
+	if (send(server->policy_fd, data, length, MSG_DONTWAIT | MSG_NOSIGNAL) >= 0) {
+		return true;
+	}
+	if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+		wlr_log_errno(WLR_ERROR, "can't send on the policy channel");
+		policy_close(server);
+		return true;
+	}
+	return false;
+}
+
+static void policy_send(struct tinywl_server *server, struct policy_buffer *buffer) {
+	/* Send a message to the Terminal, or queue it, in order. */
+	if (server->policy_fd < 0) {
+		return;
+	}
+	if (wl_list_empty(&server->policy_queue) &&
+			policy_try_send(server, buffer->data, buffer->length)) {
+		return;
+	}
+	if (server->policy_queue_length == MAX_POLICY_QUEUE) {
+		wlr_log(WLR_ERROR, "the Terminal isn't reading the policy channel");
+		policy_close(server);
+		return;
+	}
+	struct tinywl_policy_packet *packet = malloc(sizeof(*packet) + buffer->length);
+	packet->length = buffer->length;
+	memcpy(packet->data, buffer->data, buffer->length);
+	wl_list_insert(server->policy_queue.prev, &packet->link);
+	server->policy_queue_length++;
+	wl_event_source_fd_update(server->policy_source,
+		WL_EVENT_READABLE | WL_EVENT_WRITABLE);
+}
+
+static int policy_writable(int fd, uint32_t mask, void *data) {
+	struct tinywl_server *server = data;
+	while (!wl_list_empty(&server->policy_queue)) {
+		struct tinywl_policy_packet *packet =
+			wl_container_of(server->policy_queue.next, packet, link);
+		if (!policy_try_send(server, packet->data, packet->length)) {
+			return 0;
+		}
+		if (server->policy_fd < 0) {
+			return 0;
+		}
+		wl_list_remove(&packet->link);
+		server->policy_queue_length--;
+		free(packet);
+	}
+	wl_event_source_fd_update(server->policy_source, WL_EVENT_READABLE);
+	return 0;
+}
+
+static void report_focus(struct tinywl_server *server, uint32_t window) {
+	if (window == server->focused_window) {
+		return;
+	}
+	server->focused_window = window;
+	struct policy_buffer buffer;
+	policy_encode_window_focused(&buffer, window);
+	policy_send(server, &buffer);
+}
+
+static void raise_toplevel(struct tinywl_toplevel *toplevel) {
+	/* Move the toplevel to the front */
+	wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
+	wl_list_remove(&toplevel->link);
+	wl_list_insert(&toplevel->server->toplevels, &toplevel->link);
+}
 
 static void focus_toplevel(struct tinywl_toplevel *toplevel, struct wlr_surface *surface) {
 	/* Note: this function only deals with keyboard focus. */
@@ -178,10 +322,6 @@ static void focus_toplevel(struct tinywl_toplevel *toplevel, struct wlr_surface 
 		}
 	}
 	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
-	/* Move the toplevel to the front */
-	wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
-	wl_list_remove(&toplevel->link);
-	wl_list_insert(&server->toplevels, &toplevel->link);
 	/* Activate the new surface */
 	wlr_xdg_toplevel_set_activated(toplevel->xdg_toplevel, true);
 	/*
@@ -190,9 +330,14 @@ static void focus_toplevel(struct tinywl_toplevel *toplevel, struct wlr_surface 
 	 * clients without additional work on your part.
 	 */
 	if (keyboard != NULL) {
+		struct wlr_keyboard_modifiers modifiers = keyboard->modifiers;
+		modifiers.depressed &= ~server->system_mask;
+		modifiers.latched &= ~server->system_mask;
+		modifiers.locked &= ~server->system_mask;
 		wlr_seat_keyboard_notify_enter(seat, toplevel->xdg_toplevel->base->surface,
-			keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
+			keyboard->keycodes, keyboard->num_keycodes, &modifiers);
 	}
+	report_focus(server, toplevel->reported ? toplevel->window : 0);
 }
 
 static void keyboard_handle_modifiers(
@@ -217,31 +362,51 @@ static void keyboard_handle_modifiers(
 	wlr_seat_keyboard_notify_modifiers(keyboard->server->seat, &modifiers);
 }
 
-static bool handle_keybinding(struct tinywl_server *server, xkb_keysym_t sym) {
-	/*
-	 * Here we handle compositor keybindings. This is when the compositor is
-	 * processing keys, rather than passing them on to the client for its own
-	 * processing.
-	 *
-	 * This function assumes Alt is held down.
-	 */
-	switch (sym) {
-	case XKB_KEY_Escape:
-		wl_display_terminate(server->wl_display);
-		break;
-	case XKB_KEY_F1:
-		/* Cycle to the next toplevel */
-		if (wl_list_length(&server->toplevels) < 2) {
-			break;
+static uint32_t hotkey_modifiers(struct xkb_state *state) {
+	/* The modifiers a hotkey is bound with, besides System. */
+	static const struct {
+		const char *name;
+		uint32_t bit;
+	} modifiers[] = {
+		{XKB_MOD_NAME_SHIFT, POLICY_SHIFT},
+		{XKB_MOD_NAME_ALT, POLICY_ALT},
+		{XKB_MOD_NAME_CTRL, POLICY_CONTROL},
+		{XKB_MOD_NAME_LOGO, POLICY_SUPER},
+	};
+	uint32_t bits = 0;
+	for (size_t i = 0; i < sizeof(modifiers) / sizeof(modifiers[0]); i++) {
+		if (xkb_state_mod_name_is_active(state, modifiers[i].name,
+				XKB_STATE_MODS_EFFECTIVE) > 0) {
+			bits |= modifiers[i].bit;
 		}
-		struct tinywl_toplevel *next_toplevel =
-			wl_container_of(server->toplevels.prev, next_toplevel, link);
-		focus_toplevel(next_toplevel, next_toplevel->xdg_toplevel->base->surface);
-		break;
-	default:
-		return false;
 	}
-	return true;
+	return bits;
+}
+
+static void handle_system_key(struct tinywl_server *server,
+		xkb_keysym_t sym, uint32_t modifiers) {
+	/* A key pressed with System: the compositor's own, or a hotkey the
+	 * Terminal has bound, or nothing. */
+	if (server->policy_fd < 0) {
+		/* Without a Terminal, there has to be a way out. */
+		if (sym == XKB_KEY_Escape) {
+			wl_display_terminate(server->wl_display);
+		}
+		return;
+	}
+	for (int i = 0; i < server->num_hotkeys; i++) {
+		if (server->hotkeys[i].keysym == sym &&
+				server->hotkeys[i].modifiers == modifiers) {
+			struct policy_buffer buffer;
+			policy_encode_hotkey_pressed(&buffer, sym, modifiers);
+			policy_send(server, &buffer);
+			server->system_chord = true;
+			return;
+		}
+	}
+	char name[64];
+	xkb_keysym_get_name(sym, name, sizeof(name));
+	wlr_log(WLR_DEBUG, "System key %s, modifiers %#x: not bound", name, modifiers);
 }
 
 static void keyboard_handle_key(
@@ -252,35 +417,43 @@ static void keyboard_handle_key(
 	struct tinywl_server *server = keyboard->server;
 	struct wlr_keyboard_key_event *event = data;
 	struct wlr_seat *seat = server->seat;
+	struct xkb_state *state = keyboard->wlr_keyboard->xkb_state;
 
 	/* Translate libinput keycode -> xkbcommon */
 	uint32_t keycode = event->keycode + 8;
-	/* Get a list of keysyms based on the keymap for this keyboard */
+	/* The key's keysym on its first level, regardless of Shift, and so
+	 * on, which is how hotkeys are bound. */
 	const xkb_keysym_t *syms;
-	int nsyms = xkb_state_key_get_syms(
-			keyboard->wlr_keyboard->xkb_state, keycode, &syms);
+	int nsyms = xkb_keymap_key_get_syms_by_level(keyboard->wlr_keyboard->keymap,
+		keycode, xkb_state_key_get_layout(state, keycode), 0, &syms);
+	xkb_keysym_t sym = nsyms > 0 ? syms[0] : XKB_KEY_NoSymbol;
+	bool pressed = event->state == WL_KEYBOARD_KEY_STATE_PRESSED;
+	bool *swallowed = event->keycode < sizeof(server->swallowed) ?
+		&server->swallowed[event->keycode] : NULL;
 
 	/* The key event comes before the keyboard's state is updated, so
-	 * System's own press is seen by its keysym, and its release while
-	 * it's still a modifier. */
-	bool system = xkb_state_serialize_mods(keyboard->wlr_keyboard->xkb_state,
-		XKB_STATE_MODS_EFFECTIVE) & server->system_mask;
-	for (int i = 0; i < nsyms; i++) {
-		system = system || syms[i] == XKB_KEY_Hyper_L;
-	}
-
+	 * System's own press and release are seen by its keysym. */
 	bool handled = false;
-	if (system) {
-		/* Keys pressed with System never reach clients. */
+	if (sym == XKB_KEY_Hyper_L) {
 		handled = true;
-		if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
-			for (int i = 0; i < nsyms; i++) {
-				char name[64];
-				xkb_keysym_get_name(syms[i], name, sizeof(name));
-				wlr_log(WLR_INFO, "spike: System key %s", name);
-				handle_keybinding(server, syms[i]);
-			}
+		if (!pressed && server->system_chord) {
+			server->system_chord = false;
+			struct policy_buffer buffer;
+			policy_encode_system_released(&buffer);
+			policy_send(server, &buffer);
 		}
+	} else if (pressed && (xkb_state_serialize_mods(state, XKB_STATE_MODS_EFFECTIVE) &
+			server->system_mask)) {
+		/* Keys pressed with System never reach clients, nor do their
+		 * releases. */
+		handled = true;
+		if (swallowed) {
+			*swallowed = true;
+		}
+		handle_system_key(server, sym, hotkey_modifiers(state));
+	} else if (!pressed && swallowed && *swallowed) {
+		handled = true;
+		*swallowed = false;
 	}
 
 	if (!handled) {
@@ -605,6 +778,9 @@ static void server_cursor_button(struct wl_listener *listener, void *data) {
 		reset_cursor_mode(server);
 	} else {
 		/* Focus that client if the button was _pressed_ */
+		if (toplevel != NULL) {
+			raise_toplevel(toplevel);
+		}
 		focus_toplevel(toplevel, surface);
 	}
 }
@@ -736,13 +912,20 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 	/* Called when the surface is mapped, or ready to display on-screen. */
 	struct tinywl_toplevel *toplevel = wl_container_of(listener, toplevel, map);
 
-	wl_list_insert(&toplevel->server->toplevels, &toplevel->link);
+	struct tinywl_server *server = toplevel->server;
+	wl_list_insert(&server->toplevels, &toplevel->link);
 
+	/* The Terminal's own windows aren't in the window list. */
 	struct wl_client *client = wl_resource_get_client(toplevel->xdg_toplevel->resource);
-	wlr_log(WLR_INFO, "spike: mapped '%s' from %s",
-		toplevel->xdg_toplevel->title ? toplevel->xdg_toplevel->title : "",
-		client == toplevel->server->terminal ? "the Terminal" : "another client");
+	if (client != server->terminal) {
+		toplevel->reported = true;
+		struct policy_buffer buffer;
+		policy_encode_window_added(&buffer, toplevel->window,
+			toplevel->xdg_toplevel->title, toplevel->xdg_toplevel->app_id);
+		policy_send(server, &buffer);
+	}
 
+	raise_toplevel(toplevel);
 	focus_toplevel(toplevel, toplevel->xdg_toplevel->base->surface);
 }
 
@@ -756,6 +939,27 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	}
 
 	wl_list_remove(&toplevel->link);
+
+	struct tinywl_server *server = toplevel->server;
+	if (toplevel->reported) {
+		toplevel->reported = false;
+		struct policy_buffer buffer;
+		policy_encode_window_removed(&buffer, toplevel->window);
+		policy_send(server, &buffer);
+		if (server->focused_window == toplevel->window) {
+			report_focus(server, 0);
+		}
+	}
+}
+
+static void xdg_toplevel_set_title(struct wl_listener *listener, void *data) {
+	struct tinywl_toplevel *toplevel = wl_container_of(listener, toplevel, set_title);
+	if (toplevel->reported) {
+		struct policy_buffer buffer;
+		policy_encode_window_retitled(&buffer, toplevel->window,
+			toplevel->xdg_toplevel->title);
+		policy_send(toplevel->server, &buffer);
+	}
 }
 
 static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
@@ -792,7 +996,6 @@ static void server_new_decoration(struct wl_listener *listener, void *data) {
 	toplevel->decoration = decoration;
 	toplevel->decoration_destroy.notify = decoration_destroy;
 	wl_signal_add(&decoration->events.destroy, &toplevel->decoration_destroy);
-	wlr_log(WLR_INFO, "spike: decoration requested");
 	if (decoration->toplevel->base->initialized) {
 		wlr_xdg_toplevel_decoration_v1_set_mode(decoration,
 			WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
@@ -811,6 +1014,7 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 	wl_list_remove(&toplevel->request_resize.link);
 	wl_list_remove(&toplevel->request_maximize.link);
 	wl_list_remove(&toplevel->request_fullscreen.link);
+	wl_list_remove(&toplevel->set_title.link);
 	if (toplevel->decoration) {
 		wl_list_remove(&toplevel->decoration_destroy.link);
 	}
@@ -914,6 +1118,7 @@ static void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 	struct tinywl_toplevel *toplevel = calloc(1, sizeof(*toplevel));
 	toplevel->server = server;
 	toplevel->xdg_toplevel = xdg_toplevel;
+	toplevel->window = server->next_window++;
 	toplevel->scene_tree =
 		wlr_scene_xdg_surface_create(&toplevel->server->scene->tree, xdg_toplevel->base);
 	toplevel->scene_tree->node.data = toplevel;
@@ -939,6 +1144,8 @@ static void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 	wl_signal_add(&xdg_toplevel->events.request_maximize, &toplevel->request_maximize);
 	toplevel->request_fullscreen.notify = xdg_toplevel_request_fullscreen;
 	wl_signal_add(&xdg_toplevel->events.request_fullscreen, &toplevel->request_fullscreen);
+	toplevel->set_title.notify = xdg_toplevel_set_title;
+	wl_signal_add(&xdg_toplevel->events.set_title, &toplevel->set_title);
 }
 
 static void xdg_popup_commit(struct wl_listener *listener, void *data) {
@@ -1050,9 +1257,116 @@ static int handle_signal(int signal, void *data) {
 	return 0;
 }
 
+static struct tinywl_toplevel *find_window(struct tinywl_server *server, uint32_t window) {
+	struct tinywl_toplevel *toplevel;
+	wl_list_for_each(toplevel, &server->toplevels, link) {
+		if (toplevel->reported && toplevel->window == window) {
+			return toplevel;
+		}
+	}
+	return NULL;
+}
+
+static void bind_hotkey(struct tinywl_server *server, struct policy_message *message,
+		bool bind) {
+	for (int i = 0; i < server->num_hotkeys; i++) {
+		if (server->hotkeys[i].keysym == message->keysym &&
+				server->hotkeys[i].modifiers == message->modifiers) {
+			if (!bind) {
+				server->hotkeys[i] = server->hotkeys[--server->num_hotkeys];
+			}
+			return;
+		}
+	}
+	if (!bind) {
+		return;
+	}
+	if (server->num_hotkeys == MAX_HOTKEYS) {
+		wlr_log(WLR_ERROR, "policy: too many hotkeys bound");
+		return;
+	}
+	server->hotkeys[server->num_hotkeys].keysym = message->keysym;
+	server->hotkeys[server->num_hotkeys].modifiers = message->modifiers;
+	server->num_hotkeys++;
+}
+
+static void handle_policy_message(struct tinywl_server *server,
+		struct policy_message *message) {
+	struct tinywl_toplevel *toplevel = find_window(server, message->window);
+	switch (message->method) {
+	case POLICY_BIND_HOTKEY:
+	case POLICY_UNBIND_HOTKEY:
+		bind_hotkey(server, message, message->method == POLICY_BIND_HOTKEY);
+		break;
+	case POLICY_LOCK:
+	case POLICY_UNLOCK:
+		/* The lock layer isn't there yet. */
+		wlr_log(WLR_INFO, "policy: %s isn't implemented",
+			message->method == POLICY_LOCK ? "Lock" : "Unlock");
+		break;
+	case POLICY_FOCUS_WINDOW:
+		if (toplevel) {
+			focus_toplevel(toplevel, toplevel->xdg_toplevel->base->surface);
+		}
+		break;
+	case POLICY_RAISE_WINDOW:
+		if (toplevel) {
+			raise_toplevel(toplevel);
+		}
+		break;
+	case POLICY_CLOSE_WINDOW:
+		if (toplevel) {
+			wlr_xdg_toplevel_send_close(toplevel->xdg_toplevel);
+		}
+		break;
+	}
+}
+
+static int handle_policy(int fd, uint32_t mask, void *data) {
+	struct tinywl_server *server = data;
+	if (mask & WL_EVENT_WRITABLE) {
+		policy_writable(fd, mask, data);
+		if (server->policy_fd < 0) {
+			return 0;
+		}
+	}
+	if (mask & WL_EVENT_READABLE) {
+		/* Everything waiting, one message per packet: MSG_TRUNC gives
+		 * a packet's whole length. */
+		while (server->policy_fd >= 0) {
+			uint8_t packet[POLICY_MAX_MESSAGE];
+			ssize_t n = recv(fd, packet, sizeof(packet), MSG_DONTWAIT | MSG_TRUNC);
+			if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+				return 0;
+			}
+			if (n < 0 && errno == EINTR) {
+				continue;
+			}
+			if (n <= 0) {
+				if (n < 0) {
+					wlr_log_errno(WLR_ERROR, "can't read the policy channel");
+				}
+				policy_close(server);
+				return 0;
+			}
+			struct policy_message message;
+			const char *error = (size_t)n > sizeof(packet) ? "too long" :
+				policy_decode(packet, n, &message);
+			if (error) {
+				wlr_log(WLR_ERROR, "policy: bad message: %s", error);
+			} else {
+				handle_policy_message(server, &message);
+			}
+		}
+	} else if (mask & (WL_EVENT_HANGUP | WL_EVENT_ERROR)) {
+		policy_close(server);
+	}
+	return 0;
+}
+
 static void terminal_destroy(struct wl_listener *listener, void *data) {
 	struct tinywl_server *server = wl_container_of(listener, server, terminal_destroy);
-	wlr_log(WLR_INFO, "spike: the Terminal disconnected");
+	wlr_log(WLR_INFO, "the Terminal disconnected");
 	wl_list_remove(&server->terminal_destroy.link);
 	server->terminal = NULL;
 }
@@ -1061,17 +1375,21 @@ int main(int argc, char *argv[]) {
 	wlr_log_init(WLR_DEBUG, NULL);
 	char *startup_cmd = NULL;
 	int terminal_fd = -1;
+	int policy_fd = -1;
 	bool test_keyboard = false;
-	const char *usage = "Usage: %s [-s startup command] [-t terminal fd] [-k]\n";
+	const char *usage = "Usage: %s [-s startup command] [-t terminal fd] [-p policy fd] [-k]\n";
 
 	int c;
-	while ((c = getopt(argc, argv, "s:t:kh")) != -1) {
+	while ((c = getopt(argc, argv, "s:t:p:kh")) != -1) {
 		switch (c) {
 		case 's':
 			startup_cmd = optarg;
 			break;
 		case 't':
 			terminal_fd = atoi(optarg);
+			break;
+		case 'p':
+			policy_fd = atoi(optarg);
 			break;
 		case 'k':
 			test_keyboard = true;
@@ -1087,6 +1405,9 @@ int main(int argc, char *argv[]) {
 	}
 
 	struct tinywl_server server = {0};
+	server.policy_fd = -1;
+	server.next_window = 1;
+	wl_list_init(&server.policy_queue);
 	/* The Wayland display is managed by libwayland. It handles accepting
 	 * clients from the Unix socket, manging Wayland globals, and so on. */
 	server.wl_display = wl_display_create();
@@ -1231,6 +1552,9 @@ int main(int argc, char *argv[]) {
 	}
 
 	if (terminal_fd >= 0) {
+		/* Neither of the Terminal's descriptors is for the startup
+		 * command. */
+		fcntl(terminal_fd, F_SETFD, FD_CLOEXEC);
 		server.terminal = wl_client_create(server.wl_display, terminal_fd);
 		if (server.terminal == NULL) {
 			wlr_log(WLR_ERROR, "can't use the Terminal's connection, fd %d", terminal_fd);
@@ -1251,6 +1575,16 @@ int main(int argc, char *argv[]) {
 	struct wl_event_loop *loop = wl_display_get_event_loop(server.wl_display);
 	wl_event_loop_add_signal(loop, SIGTERM, handle_signal, &server);
 	wl_event_loop_add_signal(loop, SIGINT, handle_signal, &server);
+
+	if (policy_fd >= 0) {
+		fcntl(policy_fd, F_SETFD, FD_CLOEXEC);
+		server.policy_fd = policy_fd;
+		server.policy_source = wl_event_loop_add_fd(loop, policy_fd,
+			WL_EVENT_READABLE, handle_policy, &server);
+		struct policy_buffer buffer;
+		policy_encode_ready(&buffer);
+		policy_send(&server, &buffer);
+	}
 
 	if (test_keyboard) {
 		wlr_keyboard_init(&server.test_keyboard, &test_keyboard_impl, "test");

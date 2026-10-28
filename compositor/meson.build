@@ -41,6 +41,9 @@ foreach name, path : protocols
 endforeach
 
 executable('darq-compositor',
-	['compositor.c'] + protocol_headers,
+	['compositor.c', 'policy.c'] + protocol_headers,
 	dependencies: [wlroots, wayland_server, xkbcommon],
 	install: true)
+
+# For tests/test_compositor.py, which also builds it itself.
+executable('policy-check', ['policy-check.c', 'policy.c'])

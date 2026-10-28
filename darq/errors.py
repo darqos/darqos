@@ -137,3 +137,8 @@ def get_exception(error_code:int) -> DarqError:
 class LocalPortNumberDoesNotExistError(Exception):
     """Specified port number doesn't exist."""
     pass
+
+
+class ChannelClosedError(DarqError):
+    """The other end of a socket channel has closed it."""
+    pass

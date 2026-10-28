@@ -5,6 +5,10 @@
 - Test out installation of Wayland, and Python Qt support for Wayland,
   on either a Debian 13 VM or a hardware MiniPC
   - Test out miniwl compositor
+    - Done: compositor/, forked from tinywl (see doc/terminal.rst):
+      decorations are server-side, and drawn by no one; the Terminal
+      controls it over the policy channel (lib/didl/compositor.didl,
+      darq/compositor.py).
     - Does it do window decoration or controls that we don't want?
     - Will need to (temporarily) install a few apps to test this
     - How can we programmatically control it?
@@ -61,7 +65,7 @@
   Terminal runs.  Started at boot with DARQ_DEV_TERMINAL=1 (see
   doc/terminal.rst).
   - Try the Text type and lens on the desktop with it.
-  - Delete it once the real Terminal has a factory and history.
+  - Keep it as a development tool, alongside the real Terminal.
 - Implement GUI Text lens
   - Done: lenses/text, started for an item with the Lens protocol
     (lib/didl/lens.didl) by darq.launch.use_item; a change is sent as

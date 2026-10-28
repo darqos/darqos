@@ -1,0 +1,76 @@
+// darqos
+// Copyright (C) 2026 David Arnold
+//
+// The compositor's policy channel: see doc/terminal.rst.
+//
+// The Terminal and the compositor it starts talk over a SOCK_SEQPACKET
+// socket pair, one message per packet, rather than through the
+// p-kernel: the compositor isn't a DarqOS process.  Every message is
+// one-way, with txid 0, and none has a port.  The compositor's side is
+// hand-written, in compositor/policy.c.
+//
+// Windows are the compositor's toplevels from clients other than the
+// Terminal, numbered from 1, and never reused.  The Terminal's own
+// windows aren't reported.
+
+library darq.compositor;
+
+// Modifier bits, in a hotkey's modifiers: System is always held, so
+// it isn't one of them.  The field is a uint32, not this enum, since
+// it's a set of them.
+enum Modifier : uint32 {
+    SHIFT = 1;
+    ALT = 2;
+    CONTROL = 4;
+    SUPER = 8;
+}
+
+// Sent by the compositor to the Terminal.
+protocol Display {
+    // Sent once, when the compositor is running: its socket, darq-0,
+    // is listening, and its backend is started.
+    1: Ready();
+
+    // A bound hotkey was pressed: a keysym, as on the key's first
+    // level (Tab, not ISO_Left_Tab, with Shift), with System held,
+    // along with the other modifiers.
+    2: HotkeyPressed(uint32 keysym, uint32 modifiers);
+
+    // System was released, after a hotkey was pressed while it was
+    // held: the end of a chord like Sys-Tab, Tab.
+    3: SystemReleased();
+
+    // A window was mapped, and with its title and Wayland app_id (both
+    // possibly empty, and with any invalid UTF-8 replaced).
+    4: WindowAdded(uint32 window, string title, string app_id);
+
+    // A window was unmapped or destroyed.
+    5: WindowRemoved(uint32 window);
+
+    // A window's title changed.
+    6: WindowRetitled(uint32 window, string title);
+
+    // The keyboard focus moved to a window, or to none of them (0): to
+    // nothing, or to one of the Terminal's own.
+    7: WindowFocused(uint32 window);
+}
+
+// Sent by the Terminal to the compositor.
+protocol Policy {
+    // Send HotkeyPressed when a keysym is pressed with System and
+    // exactly these modifiers.  System keys that aren't bound, and
+    // aren't the compositor's own (Sys-w), are dropped.
+    1: BindHotkey(uint32 keysym, uint32 modifiers);
+    2: UnbindHotkey(uint32 keysym, uint32 modifiers);
+
+    // Show only the lock layer, or show everything again.
+    3: Lock();
+    4: Unlock();
+
+    // Give a window the keyboard focus, raise it to the top of its
+    // layer, or ask its client to close it.  An unknown window, such as
+    // one just removed, is ignored.
+    5: FocusWindow(uint32 window);
+    6: RaiseWindow(uint32 window);
+    7: CloseWindow(uint32 window);
+}
