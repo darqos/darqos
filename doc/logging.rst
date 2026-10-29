@@ -1,42 +1,42 @@
 Logging
 =======
 
-DarqOS components currently log diagnostic messages via the
-standard _syslog_ protocol, using the `LOCAL*` facility
-codes, and all standard severity levels.
+DarqOS components currently log diagnostic messages via the standard
+_syslog_ protocol, using the `LOCAL*` facility codes, and all standard
+severity levels.
 
-The choice of using only the `LOCAL` facilities is to make
-it easy to distinguish between messages from the host OS and
-whatever daemons it's running in its minimalist configuration,
-and the messages logged by Darq.
+The choice of using only the `LOCAL` facilities is to make it easy to
+distinguish between messages from the host OS and whatever daemons
+it's running in its minimalist configuration, and the messages logged
+by Darq.
 
 Facilities are allocated as follows:
-- LOCAL0
 
-  - kernel /  p-kernel
+* LOCAL0
 
-- LOCAL1
+  * kernel /  p-kernel
 
-  - OS runtime support libraries
+* LOCAL1
 
-- LOCAL2
+  * OS runtime support libraries
 
-  - services
+* LOCAL2
 
-- LOCAL3
+  * services
 
-  - types
+* LOCAL3
 
-- LOCAL4
+  * types
 
-  - lenses
+* LOCAL4
 
-- LOCAL5
-- LOCAL6
-- LOCAL7
+  * lenses
 
-  - as yet unused.
+* LOCAL5
+* LOCAL6
+* LOCAL7
 
-It's likely that this will evolve in future to use an
-IPC-based protocol, rather than the TCP-based _syslog_
-standard.
+  * as yet unused.
+
+It's likely that this will evolve in future to use an IPC-based
+protocol, rather than the TCP-based _syslog_ standard.

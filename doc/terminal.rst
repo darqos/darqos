@@ -465,7 +465,7 @@ The list of events can be searched and/or filtered by the user.  A
 search-box style input allows the user to enter a full-text search
 string, plus slash command filtering parameters, like:
 
-  `/type:email /sender:user@domain keyword keyword`
+`/type:email /sender:user@domain keyword keyword`
 
 The set of slash-commands will be augmented over time.  1st Edition
 will provide a few basic operations.

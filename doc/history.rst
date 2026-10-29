@@ -50,32 +50,32 @@ compressed as they become older:
 API
 ---
 
- * ``add_event(item_id, event, source)``
+* ``add_event(item_id, event, source)``
 
-   * The timestamp is recorded within the History service.
-   * The `source` is a string that describes what instigated the
-     event.  Possible values are like "type_lens" or "indexer".
+  * The timestamp is recorded within the History service.
+  * The `source` is a string that describes what instigated the
+    event.  Possible values are like "type_lens" or "indexer".
 
- * ``get_events(start_time, end_time, type_ids=[], item_ids=[], events=[], sources=[], max=0) -> [events]``
+* ``get_events(start_time, end_time, type_ids=[], item_ids=[], events=[], sources=[], max=0) -> [events]``
 
-   * Return all events within the time bounds that match the provided
-     parameters.
-   * If one or more type_ids are specified, only return events
-     matching those types.
+  * Return all events within the time bounds that match the provided
+    parameters.
+  * If one or more type_ids are specified, only return events
+    matching those types.
      
-     * It'd be *ideal* if this supported the UTI subtyping, but not
-       for early editions.
+    * It'd be *ideal* if this supported the UTI subtyping, but not
+      for early editions.
 
-   * If one or more item_ids are specified, only return events for
-     those items.
-   * If one or more events are specified, only return those types of
-     events.
-   * If one or more sources are specified, only return events that
-     match one of those sources.
-   * All parameters are ANDed together: if more than one is set, event
-     records must match each parameter set.
-   * max is the maximum number of events to return.  If there's more,
-     the time bounds can be used to get the next batch.
+  * If one or more item_ids are specified, only return events for
+    those items.
+  * If one or more events are specified, only return those types of
+    events.
+  * If one or more sources are specified, only return events that
+    match one of those sources.
+  * All parameters are ANDed together: if more than one is set, event
+    records must match each parameter set.
+  * max is the maximum number of events to return.  If there's more,
+    the time bounds can be used to get the next batch.
 
 
 Implementation

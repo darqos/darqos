@@ -38,83 +38,82 @@ Image Layout
 
 * `/darq/dist`
 
-    * Directory containing the distributed files.  This can be either
-      a snapshot from a tarball, or a `git clone` of the source
-      repository.  This area is not used at runtime, but instead must
-      be explicitly *installed* to copy any updated components to
-      their runtime locations.
+  * Directory containing the distributed files.  This can be either a
+    snapshot from a tarball, or a `git clone` of the source
+    repository.  This area is not used at runtime, but instead must be
+    explicitly *installed* to copy any updated components to their
+    runtime locations.
 
-  * `/darq/kernel`
+* `/darq/kernel`
 
-    * The p-kernel server implementation, and the Python loader
-      (`pyloader`) it runs for each process
-    * The p-kernel's systemd units, linked into systemd by the install
-      script
+  * The p-kernel server implementation, and the Python loader
+    (`pyloader`) it runs for each process
+  * The p-kernel's systemd units, linked into systemd by the install
+    script
 
-  * `/darq/services`
+* `/darq/services`
 
-    * Contains sub-directories for each installed service, containing
-      their executable files and any associated file storage.
-    * Services are spawned by the p-kernel: they have no systemd units
-      of their own.
+  * Contains sub-directories for each installed service, containing
+    their executable files and any associated file storage.
+  * Services are spawned by the p-kernel: they have no systemd units
+    of their own.
 
-  * `/darq/types`
+* `/darq/types`
 
-    * Contains sub-directories for each installed type implementation
-      (described later).
+  * Contains sub-directories for each installed type implementation
+    (described later).
 
-  * `/darq/lenses`
+* `/darq/lenses`
 
-    * User interface modules for installed type implementations.
+  * User interface modules for installed type implementations.
 
-  * `/darq/tools`
+* `/darq/tools`
 
-    * User applications
+  * User applications
 
-  * `/darq/bin`
+* `/darq/bin`
 
-    * System scripts, or other Unix programs needed to support the
-      operation of the system.  These items should be largely, if
-      not totally, invisible from within Darq itself.
-    * Includes the DIDL tools (`didlc` and `didlpygen`), and the
-      compositor, which the Terminal service starts as a Linux child
-      process.
+  * System scripts, or other Unix programs needed to support the
+    operation of the system.  These items should be largely, if not
+    totally, invisible from within Darq itself.
+  * Includes the DIDL tools (`didlc` and `didlpygen`), and the
+    compositor, which the Terminal service starts as a Linux child
+    process.
 
-  * `/darq/lib/didl`
+* `/darq/lib/didl`
 
-    * The DIDL sources of the system's protocols (`lib/didl/*.didl` in
-      the repository).  Their generated Python modules are part of the
-      darq package, in `darq.protocols`.
+  * The DIDL sources of the system's protocols (`lib/didl/*.didl` in
+    the repository).  Their generated Python modules are part of the
+    darq package, in `darq.protocols`.
 
-  * `/darq/man`
+* `/darq/man`
 
-    * Manual pages for the Unix-level programs, by section: view them
-      with `man -M /darq/man <page>`.
+  * Manual pages for the Unix-level programs, by section: view them
+    with `man -M /darq/man <page>`.
 
-  * `/darq/env`
+* `/darq/env`
 
-    * Python virtual environment
-    * Includes all installed dependencies
-    * Install process will update this using the requirements
-      file from the distribution.
+  * Python virtual environment
+  * Includes all installed dependencies
+  * Install process will update this using the requirements
+    file from the distribution.
 
-  * `/darq/local`
+* `/darq/local`
 
-    * Installed location of any required Unix software that is not
-      provided by the host OS.
+  * Installed location of any required Unix software that is not
+    provided by the host OS.
 
-  * `/darq/run`
+* `/darq/run`
 
-    * Home for files that are modified at runtime by the installation.
-      This will notably include the SQLite databases used by the
-      various services, kernel configuration, the p-kernel's boot
-      vector, etc.
-    * In a development tree, the `DARQ_RUN` environment variable
-      points the p-kernel at `./run` instead; spawned processes find
-      it in `DARQ_RUN` too.
-    * This directory will *not* be simply overwritten during an
-      upgrade, but instead, will be processed by the install script to
-      update all storage as required by the new version.
+  * Home for files that are modified at runtime by the installation.
+    This will notably include the SQLite databases used by the various
+    services, kernel configuration, the p-kernel's boot vector, etc.
+  * In a development tree, the `DARQ_RUN` environment variable points
+    the p-kernel at `./run` instead; spawned processes find it in
+    `DARQ_RUN` too.
+  * This directory will *not* be simply overwritten during an upgrade,
+    but instead, will be processed by the install script to update all
+    storage as required by the new version.
 
 * Some items will be installed into the Linux environment:
 
