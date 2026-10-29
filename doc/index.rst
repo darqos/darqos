@@ -3,9 +3,17 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
+   The book is divided into:
+   - Parts (# over and under)
+   - Chapters (* over and under)
+   - Sections (= under)
+   - Subsections (- under)
+   - Subsubsections (~ under)
+   
 .. toctree::
    :maxdepth: 3
    :caption: Contents
+   :numbered:
 
    Introduction <overview>
    distribution

@@ -6,11 +6,13 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'DarqOS: Design, Implementation, and Use'
+project = 'The Darq Book'
 copyright = '2023-2026, David Arnold'
 author = 'David Arnold'
+release = 'First Edition'
 
-release = ''
+
+templates_path = ['_templates']
 
 
 # -- General configuration ---------------------------------------------------
@@ -24,7 +26,21 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
-html_theme = 'alabaster'
+#html_theme = 'alabaster'
+#html_theme = 'furo'
+#html_theme = 'sphinx_library'
+html_theme = 'sphinx_book_theme'
+
+html_title = "The Darq Book"
+
+html_sidebars = {
+    "**": [
+        "navbar-logo.html",
+        "sidebar-subtitle.html",
+        "search-button-field.html",
+        "sbt-sidebar-nav.html",
+    ],
+}
 
 
 # -- Options for LaTeX (PDF) output ------------------------------------------
@@ -35,7 +51,7 @@ latex_documents = [
 ]
 
 latex_elements = {
-    'releasename': '',
+    'releasename': 'First Edition',
 
     # Avoid "Too deeply nested" errors from LaTeX
     'preamble': r'''
