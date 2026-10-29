@@ -262,6 +262,9 @@ class Generator:
                     raise GenError(f"Member name {e['name']}.{m['name']} may not start with '_'")
         for s in self.ir["structs"]:
             self.add_class_name(s["name"], f"struct {s['name']}")
+            # Including those of a struct no message uses.
+            for f in s["fields"]:
+                check_identifier(f["name"], f"Field name {s['name']}.{f['name']}")
 
         messages = []
         for p in self.ir["protocols"]:

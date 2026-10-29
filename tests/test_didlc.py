@@ -514,3 +514,61 @@ def test_main_compile_error(tmp_path, monkeypatch, capsys):
 def test_main_missing_file(tmp_path, monkeypatch, capsys):
     assert run_main(monkeypatch, str(tmp_path / "missing.didl")) == 1
     assert capsys.readouterr().err.startswith("didlc: ")
+
+
+################################################################
+# Names
+################################################################
+
+@pytest.mark.parametrize("source, message, position", [
+    # One library, and only its name may have dots.
+    ("struct S {}", "No library declaration", (1, 12)),
+    ("library a;\nlibrary b;", "Duplicate library declaration: b", (2, 9)),
+    ("library t;\nstruct a.b {}", "Struct name a.b may not contain dots", (2, 8)),
+    ("library t;\nenum a.E : uint8 { A = 0; }", "Enum name a.E may not contain dots", (2, 6)),
+    ("library t;\nenum E : uint8 { A.B = 0; }", "Member name A.B may not contain dots", (2, 18)),
+    ("library t;\nstruct S { uint8 a.b; }", "Field name a.b may not contain dots", (2, 18)),
+    ("library t;\nprotocol a.P {}", "Protocol name a.P may not contain dots", (2, 10)),
+    ("library t;\nprotocol P { 1: a.M(); }", "Method name a.M may not contain dots", (2, 17)),
+    ("library t;\nprotocol P { 1: M(uint8 a.b); }", "Field name a.b may not contain dots", (2, 25)),
+
+    # Fields are unique within their struct, or request, or response.
+    ("library t;\nstruct S { uint8 x; uint16 x; }", "Duplicate field in S: x", (2, 28)),
+    ("library t;\nprotocol P { 1: M(uint8 x, uint8 x); }", "Duplicate field in P.M request: x", (2, 34)),
+    ("library t;\nprotocol P { 1: M() -> (uint8 y, bool y); }", "Duplicate field in P.M response: y", (2, 39)),
+
+    # A message's fields can't have its header's names.
+    ("library t;\nprotocol P { 1: M(uint32 txid); }",
+     "P.M request field txid has the name of a message header field", (2, 26)),
+    ("library t;\nprotocol P { 1: M() -> (uint32 txid); }",
+     "P.M response field txid has the name of a message header field", (2, 32)),
+
+    # Protocols share the type names' namespace.
+    ("library t;\nprotocol P {}\nprotocol P {}", "protocol P has the same name as protocol P", (3, 10)),
+    ("library t;\nenum Status : uint8 { OK = 0; }\nprotocol Status {}",
+     "protocol Status has the same name as enum Status", (3, 10)),
+    ("library t;\nstruct Key {}\nprotocol Key {}", "protocol Key has the same name as struct Key", (3, 10)),
+    ("library t;\nprotocol string {}", "protocol string has the name of a primitive type", (2, 10)),
+])
+def test_name_errors(source, message, position):
+    error = compile_error(source)
+    assert message in str(error)
+    assert (error.line, error.col) == position
+
+
+def test_names_allowed():
+    ir = compile_source("""
+        library darq.example.names;
+        struct S { uint32 txid; }
+        protocol P {
+            1: Get(uint8 key) -> (uint8 key);
+        }
+        protocol Q {
+            1: Put(uint8 key);
+        }
+        """)
+    # A struct's field may be txid; a request and its response may
+    # share a name, as may different methods' fields.
+    assert ir["library"] == "darq.example.names"
+    assert [f["name"] for f in ir["structs"][0]["fields"]] == ["txid"]
+    assert [m["name"] for p in ir["protocols"] for m in p["methods"]] == ["Get", "Put"]

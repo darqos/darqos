@@ -657,8 +657,18 @@ def test_keyword_field_name():
 
 
 def test_dotted_struct_name():
+    # didlc rejects it, but the IR may come from elsewhere.
+    ir = compile_ir("library t;\nstruct S { uint8 x; }")
+    ir["structs"][0]["name"] = "a.b"
+    with pytest.raises(didlpygen.GenError, match="not a valid Python identifier"):
+        didlpygen.Generator(ir, "t.dir").generate()
+
+
+@pytest.mark.parametrize("field", ["class", "None"])
+def test_unused_struct_field_name_checked(field):
+    # Not just the fields messages use: the struct's class has them all.
     assert "not a valid Python identifier" in generate_error(
-        "library t;\nstruct a.b { uint8 x; }")
+        f"library t;\nstruct S {{ uint8 {field}; }}")
 
 
 def test_class_name_collision_between_protocols():

@@ -1,0 +1,489 @@
+'\" t
+.\" darqos
+.\" Copyright (C) 2026 David Arnold
+.TH DIDL 5 2026-10-30 DarqOS "DarqOS File Formats Manual"
+.SH NAME
+didl \- DarqOS interface definition language
+.SH SYNOPSIS
+.IB name .didl
+.SH DESCRIPTION
+The Darq Interface Definition Language (DIDL) describes the messages
+DarqOS processes exchange over ports: the requests a service accepts,
+the responses it sends back, and the enums and structs they're made
+of.
+.PP
+A DIDL file is compiled by
+.BR didlc (1)
+into an intermediate representation (IR), which gives the exact byte
+layout of every message, and from which code generators such as
+.BR didlpygen (1)
+produce the classes programs use to encode and decode them.
+.PP
+A file defines one
+.IR library :
+a set of
+.IR enums ,
+.I structs
+and
+.IR protocols .
+A protocol is a set of
+.IR methods ,
+each a request, with or without a response.
+For example:
+.PP
+.RS
+.nf
+// An example: a file browser's protocol.
+
+library example.files;
+
+enum Status : uint32 {
+    OK = 0;
+    NOT_FOUND = 1;
+    NOT_ALLOWED = 0x10;
+}
+
+// A directory entry.
+struct Entry {
+    string name;
+    uint64 size;
+    bool directory;
+}
+
+protocol Files {
+    // List a directory, a page at a time.
+    1: List(string path, uint32 max) \-> (sequence<Entry> entries, Status status);
+
+    // Open a file: its port is returned.
+    2: Open(string path) \-> (port file, Status status);
+
+    // Forget a path's cached entries.  One\-way.
+    3: Forget(string path);
+}
+.fi
+.RE
+.SH LEXICAL STRUCTURE
+A DIDL file is ASCII text.
+Other characters may appear only in comments.
+.SS Whitespace and comments
+Spaces, tabs and newlines separate tokens, and are otherwise
+ignored: a declaration may span lines, or several share one.
+.PP
+A comment starts with
+.B //
+and runs to the end of the line.
+There are no block comments:
+.B /*
+is an error.
+.SS Identifiers
+An identifier is a letter or underscore, followed by any number of
+letters, digits, underscores and dots:
+.PP
+.RS
+.B [a\-zA\-Z_][a\-zA\-Z0\-9_.]*
+.RE
+.PP
+Identifiers are case-sensitive.
+Dots are for library names, such as
+.BR darq.storage :
+no other name may contain them (see
+.BR NAMES ).
+.SS Keywords
+.BR enum ,
+.BR library ,
+.B protocol
+and
+.B struct
+are reserved: they can't be used as identifiers, even as field names.
+The type names, such as
+.B uint32
+and
+.BR sequence ,
+are not keywords, but can't be used as the names of enums or structs.
+.SS Numbers
+A number is decimal, or hexadecimal with a
+.B 0x
+or
+.B 0X
+prefix, and may be negative, with a
+.B \-
+directly before it:
+.BR 42 ,
+.BR 0x2A ,
+.BR \-1 .
+Leading zeros don't make a number octal:
+.B 010
+is ten.
+Numbers are used for enum member values and method numbers.
+.SS Punctuation
+.TS
+l l.
+\fB{ }\fP	enclose the body of an enum, struct or protocol
+\fB( )\fP	enclose a method's request or response fields
+\fB< >\fP	enclose a sequence's element type
+\fB;\fP	ends a library declaration, an enum member, a field, or a method
+\fB,\fP	separates a method's fields
+\fB:\fP	follows a method number, and introduces an enum's base type
+\fB=\fP	gives an enum member its value
+\fB\->\fP	introduces a method's response
+.TE
+.SH GRAMMAR
+In this grammar,
+.I italic
+names are rules, bold text is literal,
+.RI [ x ]
+is optional, and
+.IR x ...
+is zero or more of
+.IR x .
+.PP
+.RS
+.nf
+.IR file "        = " declaration ...
+.IR declaration " = " library " | " enum " | " struct " | " protocol
+.IR library "     = " \fBlibrary\fP " " identifier " " \fB;\fP
+.IR enum "        = " \fBenum\fP " " identifier " " \fB:\fP " " identifier " " \fB{\fP " " member "... " \fB}\fP
+.IR member "      = " identifier " " \fB=\fP " " number " " \fB;\fP
+.IR struct "      = " \fBstruct\fP " " identifier " " \fB{\fP " " field "... " \fB}\fP
+.IR field "       = " type " " identifier " " \fB;\fP
+.IR protocol "    = " \fBprotocol\fP " " identifier " " \fB{\fP " " method "... " \fB}\fP
+.IR method "      = " number " " \fB:\fP " " identifier " " \fB(\fP " " fields " " \fB)\fP " [ " \fB\->\fP " " \fB(\fP " " fields " " \fB)\fP " ] " \fB;\fP
+.IR fields "      = [ " type " " identifier " [ " \fB,\fP " " type " " identifier " ]... ]"
+.IR type "        = " identifier " | " \fBsequence\fP " " \fB<\fP " " type " " \fB>\fP
+.fi
+.RE
+.PP
+A field list in a method has no trailing comma.
+No semicolon follows the closing brace of an enum, struct or protocol.
+.SH DECLARATIONS
+Declarations may appear in any order: a type may be used before it's
+declared.
+.SS Library
+.PP
+.RS
+.B library darq.storage;
+.RE
+.PP
+Names the library, which is recorded in the IR and the generated
+module; without
+.BR \-o ,
+.BR didlpygen (1)
+names its output after it.
+Each file has exactly one library declaration, which by convention
+comes before its other declarations; DarqOS's are named after their
+service, as
+.BR darq.history .
+Its name is the only one that may contain dots.
+.SS Enums
+.PP
+.RS
+.nf
+enum Status : uint32 {
+    OK = 0;
+    NOT_FOUND = 1;
+}
+.fi
+.RE
+.PP
+An enum names a set of integer values.
+Its base type, after the colon, sets its size and alignment in a
+message, and the range of its values.
+It must be an integer type:
+.BR int8 ,
+.BR uint8 ,
+.BR int16 ,
+.BR uint16 ,
+.BR int32 ,
+.BR uint32 ,
+.B int64
+or
+.BR uint64 ;
+not
+.B bool
+or a real type.
+.PP
+An enum has at least one member.
+Each member's value is given explicitly, must fit the base type, and
+must be unique within the enum, as must each member's name.
+.PP
+An enum field holds one of its members: decoding a value that isn't
+one fails.
+So an enum isn't a set of flags; a field holding a combination of
+bits should be an integer, with an enum naming the bits, as
+.I lib/didl/compositor.didl
+does for its
+.BR Modifier s.
+.PP
+Where an enum has a member with value 0, a new message's field of that
+type starts with it, otherwise with its first member; by convention,
+a
+.B Status
+enum's
+.B OK
+is 0.
+.SS Structs
+.PP
+.RS
+.nf
+struct Entry {
+    string name;
+    uint64 size;
+    bool directory;
+}
+.fi
+.RE
+.PP
+A struct is a sequence of named fields, each of any type, including
+other structs, enums and sequences.
+A struct may be empty, but then can't be a sequence's element type.
+.PP
+A struct may not contain itself, directly, or through other structs,
+or in a sequence: there are no recursive types.
+.SS Protocols
+.PP
+.RS
+.nf
+protocol Files {
+    1: List(string path, uint32 max) \-> (sequence<Entry> entries, Status status);
+    3: Forget(string path);
+}
+.fi
+.RE
+.PP
+A protocol is a set of methods.
+Each method has a number, a name, and a request: its fields, in
+parentheses, which may be empty.
+.PP
+A method with
+.B \->
+and a second field list has a response: a client sends the request,
+and waits for the response.
+A method without one is
+.IR one-way :
+it's just sent, and has no reply.
+A response may have no fields,
+.BR "\-> ()" ,
+when the client only needs to know the request was handled.
+.PP
+Each method's number identifies it in the message header.
+Numbers run from 1 to 65535, must be unique within the protocol, and
+are assigned by hand: they needn't be in order, or contiguous.
+A method's number should never be changed, or reused for a different
+method, once programs use it; a new method gets a new number.
+.PP
+A protocol may have no methods.
+One library may have several protocols, such as a service's own and
+the one spoken on its bootstrap port.
+.SH TYPES
+.TS
+l l l l.
+\fBType\fP	\fBSize\fP	\fBAlign\fP	\fBHolds\fP
+bool	1	1	true or false
+int8, uint8	1	1	8-bit integer, signed or not
+int16, uint16	2	2	16-bit integer
+int32, uint32	4	4	32-bit integer
+int64, uint64	8	8	64-bit integer
+real32	4	4	IEEE 754 single precision
+real64	8	8	IEEE 754 double precision
+opaque	8	4	a sequence of bytes, of any length
+string	8	4	UTF-8 text, of any length
+sequence<\fIT\fP>	8	4	elements of type \fIT\fP, any number
+port	2	2	a port, transferred with the message
+\fIenum\fP	base	base	one of its members
+\fIstruct\fP	layout	layout	its fields
+.TE
+.PP
+An enum's size and alignment are its base type's; a struct's come from
+its layout (see
+.BR LAYOUT ).
+Integers and reals are little-endian.
+.TP
+.BR opaque ", " string
+In the message, a descriptor: a
+.B uint32
+offset of the value from the start of the message, then its
+.B uint32
+length.
+The bytes themselves follow the message's fixed part (see
+.BR didlpygen (1)).
+A string's bytes must be valid UTF-8.
+.TP
+.BI sequence< T >
+In the message, a descriptor: a
+.B uint32
+offset of an array of the elements, then their
+.B uint32
+count.
+The array follows the message's fixed part, holding each element at a
+stride of
+.IR T 's
+size.
+.I T
+may be any type, including another sequence, such as
+.BR sequence<sequence<string>> ,
+but not an empty struct.
+.TP
+.B port
+A
+.B uint16
+index into the list of handles transferred with the message, or
+0xFFFF for no port.
+The p-kernel translates each handle into one the receiver holds, so a
+port field is how a send right to a port is passed to another process
+(see
+.IR doc/ipc.rst ).
+A message transfers at most 64 handles.
+.SH NAMES
+Names are case-sensitive, and each kind has its own rules.
+.B didlc
+enforces the language's rules, below, and
+.BR didlpygen (1)
+those for Python; the others are conventions.
+No name but the library's may contain dots.
+.TP
+.IR Types " and " protocols
+Enum, struct and protocol names share one namespace: no two of them,
+of whichever kind, can have the same name.
+Nor can any have the name of a built-in type, such as
+.B string
+or
+.BR sequence .
+By convention, they're in CamelCase.
+.TP
+.I Methods
+A method's name must be unique within its protocol.
+By convention, methods are in CamelCase:
+.B didlpygen
+makes each a Python method in snake case
+.RB ( GetEvents
+becomes
+.BR get_events ),
+and those must be distinct too, and not names its base classes use,
+such as
+.B call
+or
+.BR dispatch .
+.IP
+A method's messages are named after it: a one-way method's message has
+its name, and a method with a response has
+.IB name Request
+and
+.IB name Response\fR.
+Those names must be distinct from each other, and from the types and
+protocols, across the whole library: two protocols in one library
+can't have methods with the same name.
+.TP
+.I Fields
+A field's name must be unique within its struct, or within its
+method's request or response.
+A request's or response's field must not be named
+.BR txid ,
+which every message has, in its header.
+By convention, fields are in snake case.
+.TP
+.I Enum members
+A member's name must be unique within its enum, and not start with an
+underscore.
+By convention, members are in upper case.
+.PP
+Every name but the library's must also be a valid identifier, and not
+a keyword, in the languages code is generated for: for Python, not a
+name like
+.BR class ,
+.B None
+or
+.BR lambda .
+.B didlpygen
+checks that.
+.SH LAYOUT
+Each message's body, like each struct, is laid out in field order,
+following the C ABI: each field at the next offset aligned to its
+type's alignment, the whole aligned to its most strictly aligned
+field, and padded to a multiple of that.
+So reordering fields changes the layout, and wastes less padding with
+the most strictly aligned first.
+.PP
+In the example above,
+.B Entry
+is 24 bytes, aligned to 8:
+.B name
+at offset 0 (8 bytes),
+.B size
+at 8 (8 bytes),
+.B directory
+at 16 (1 byte), and 7 bytes of padding.
+.BR Open 's
+response is 8 bytes:
+.B file
+at 0 (2 bytes), 2 bytes of padding, and
+.B status
+at 4 (4 bytes).
+.PP
+Every message starts with an 8-byte header: a
+.B uint32
+transaction identifier
+.RB ( txid ),
+0 for a one-way message; a
+.B uint16
+of flags; and the
+.B uint16
+method number.
+The body follows it, so
+.BR Open 's
+response is 16 bytes, with no out-of-line values.
+See
+.BR didlc (1)
+for the header, and
+.BR didlpygen (1)
+for how out-of-line values are appended.
+.SH CONVENTIONS
+DarqOS's own DIDL files follow these conventions, beyond the naming
+ones:
+.IP \(bu 3
+A header comment says what the protocols are for, and refers to the
+document describing them.
+.IP \(bu
+A service's errors are a
+.B Status
+enum, based on
+.BR uint32 ,
+with
+.B OK
+as 0, returned as the last field of each response that can fail.
+An error reply (see
+.BR darq.dipc.ErrorReply )
+is for a request that couldn't be handled at all, not for a request
+that failed for a reason the protocol defines.
+.IP \(bu
+Each protocol, method, and non-obvious field or member has a comment
+before it: what it does, who sends it, and what it returns, and for a
+service, the name it's registered as.
+.IP \(bu
+A method that may take a long time to answer says so: the service
+defers its reply.
+.SH FILES
+.TP
+.I /darq/lib/didl/*.didl
+DarqOS's DIDL files, installed.
+.TP
+.I lib/didl/*.didl
+The same, in the source tree.
+.TP
+.I darq/protocols/*.py
+The Python modules generated from them, by
+.BR "make protocols" ,
+which runs
+.BR didlc (1)
+and
+.BR didlpygen (1)
+for each.
+The modules are committed with the DIDL files: run it after changing
+one.
+.SH BUGS
+There are no constants, no optional fields, and no versioning: a
+protocol changes compatibly only by adding methods.
+.SH SEE ALSO
+.BR didlc (1),
+.BR didlpygen (1),
+DarqOS documentation,
+.IR doc/ipc.rst .

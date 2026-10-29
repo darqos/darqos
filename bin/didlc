@@ -122,12 +122,13 @@ class Parser:
         return t
 
     def parse(self) -> Dict[str, Any]:
-        ast = {"library": "", "enums": [], "structs": [], "protocols": []}
+        ast: Dict[str, Any] = {"libraries": [], "enums": [], "structs": [], "protocols": []}
         while self.peek().type != 'EOF':
             t = self.peek()
             if t.type == 'LIBRARY':
                 self.consume('LIBRARY')
-                ast["library"] = self.consume('ID').value
+                name = self.consume('ID')
+                ast["libraries"].append({"name": name.value, "line": name.line, "col": name.col})
                 self.consume('SEMI')
             elif t.type == 'ENUM':
                 ast["enums"].append(self.parse_enum())
@@ -137,6 +138,8 @@ class Parser:
                 ast["protocols"].append(self.parse_protocol())
             else:
                 raise DidlError(f"Unexpected global scope token: {t}", t.line, t.col)
+        end = self.peek()
+        ast["end"] = {"line": end.line, "col": end.col}
         return ast
 
     def parse_enum(self) -> Dict[str, Any]:
@@ -174,15 +177,15 @@ class Parser:
         fields = []
         while self.peek().type != 'RBRACE':
             type_ = self.parse_type()
-            f_name = self.consume('ID').value
+            f_name = self.consume('ID')
             self.consume('SEMI')
-            fields.append({"name": f_name, **type_})
+            fields.append({**type_, "name": f_name.value, "name_line": f_name.line, "name_col": f_name.col})
         self.consume('RBRACE')
         return {"name": name.value, "raw_fields": fields, "line": name.line, "col": name.col}
 
     def parse_protocol(self) -> Dict[str, Any]:
         self.consume('PROTOCOL')
-        name = self.consume('ID').value
+        name = self.consume('ID')
         self.consume('LBRACE')
         methods = []
         while self.peek().type != 'RBRACE':
@@ -204,7 +207,7 @@ class Parser:
                             "line": m_name.line, "col": m_name.col,
                             "number_line": number_token.line, "number_col": number_token.col})
         self.consume('RBRACE')
-        return {"name": name, "methods": methods}
+        return {"name": name.value, "methods": methods, "line": name.line, "col": name.col}
 
     def parse_method_args(self) -> List[Dict[str, Any]]:
         args = []
@@ -212,8 +215,8 @@ class Parser:
             return args
         while True:
             type_ = self.parse_type()
-            name = self.consume('ID').value
-            args.append({"name": name, **type_})
+            name = self.consume('ID')
+            args.append({**type_, "name": name.value, "name_line": name.line, "name_col": name.col})
             if self.peek().type == 'COMMA':
                 self.consume('COMMA')
                 continue
@@ -221,14 +224,62 @@ class Parser:
         return args
 
 
+# The name of a message header field, which a message's own fields can't have.
+HEADER_FIELDS = {"txid"}
+
+
+def check_names(ast: Dict[str, Any]):
+    """Checks the rules for names that layout doesn't: one library,
+    which alone may have dots in its name, and fields' names unique
+    within their struct, or their method's request or response."""
+    libraries = ast["libraries"]
+    if not libraries:
+        raise DidlError("No library declaration", ast["end"]["line"], ast["end"]["col"])
+    if len(libraries) > 1:
+        extra = libraries[1]
+        raise DidlError(f"Duplicate library declaration: {extra['name']}", extra["line"], extra["col"])
+
+    def undotted(name: str, what: str, line: int, col: int):
+        if "." in name:
+            raise DidlError(f"{what} {name} may not contain dots: only the library's name may", line, col)
+
+    def check_fields(fields: List[Dict[str, Any]], where: str, message: bool):
+        seen = set()
+        for f in fields:
+            undotted(f["name"], "Field name", f["name_line"], f["name_col"])
+            if f["name"] in seen:
+                raise DidlError(f"Duplicate field in {where}: {f['name']}", f["name_line"], f["name_col"])
+            if message and f["name"] in HEADER_FIELDS:
+                raise DidlError(f"{where} field {f['name']} has the name of a message header field",
+                                f["name_line"], f["name_col"])
+            seen.add(f["name"])
+
+    for e in ast["enums"]:
+        undotted(e["name"], "Enum name", e["line"], e["col"])
+        for m in e["members"]:
+            undotted(m["name"], "Member name", m["line"], m["col"])
+    for st in ast["structs"]:
+        undotted(st["name"], "Struct name", st["line"], st["col"])
+        check_fields(st["raw_fields"], st["name"], message=False)
+    for p in ast["protocols"]:
+        undotted(p["name"], "Protocol name", p["line"], p["col"])
+        for m in p["methods"]:
+            undotted(m["name"], "Method name", m["line"], m["col"])
+            check_fields(m["request"], f"{p['name']}.{m['name']} request", message=True)
+            if m["response"] is not None:
+                check_fields(m["response"], f"{p['name']}.{m['name']} response", message=True)
+
+
 def compile_ir(ast: Dict[str, Any]) -> Dict[str, Any]:
     """Computes exact memory alignments, insertions of padding, and field byte offsets."""
+    check_names(ast)
     declared_structs = {s["name"]: s for s in ast["structs"]}
     declared_enums = {e["name"]: e for e in ast["enums"]}
 
-    # Type names must be distinct from each other, and from the primitive types.
+    # Type and protocol names share a namespace: they must be distinct
+    # from each other, and from the primitive types.
     type_names: Dict[str, str] = {}
-    for kind, declared in (("enum", ast["enums"]), ("struct", ast["structs"])):
+    for kind, declared in (("enum", ast["enums"]), ("struct", ast["structs"]), ("protocol", ast["protocols"])):
         for d in declared:
             if d["name"] in TYPE_MAP:
                 raise DidlError(f"{kind} {d['name']} has the name of a primitive type", d["line"], d["col"])
@@ -356,7 +407,7 @@ def compile_ir(ast: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "version": IR_VERSION,
-        "library": ast["library"],
+        "library": ast["libraries"][0]["name"],
         "enums": [compile_enum(e) for e in ast["enums"]],
         "structs": [layout_struct(s) for s in ast["structs"]],
         "protocols": [compile_protocol(p) for p in ast["protocols"]],
