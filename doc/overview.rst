@@ -1,10 +1,6 @@
-########################################################################
-Introduction
-########################################################################
 
-************************************************************************
 What is DarqOS?
-************************************************************************
+========================================================================
 
 *DarqOS* is an operating system, in the broader sense of the term,
 that includes a user interface and a collection of application and
@@ -33,7 +29,7 @@ operating system that moves beyond a 1970s model of a computer with a
 
    
 Features and Limitations
-========================================================================
+------------------------------------------------------------------------
 
 The DarqOS system is:
 
@@ -76,7 +72,7 @@ and history.
 
 
 Implementation Strategy
-========================================================================
+------------------------------------------------------------------------
 
 In keeping with the goal of being an experimental platform, the
 implementation of the system leverages available hardware and software
@@ -92,7 +88,7 @@ A future release will rehost the system onto a lightweight dedicated
 kernel.
 
 Editions
-------------------------------------------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 While the development process is driven in part by the results of
 experimentation and use of the system to date, it is somewhat planned,
@@ -107,7 +103,7 @@ plans for future editions, obviously subject to change.
 
 
 Target Platforms
-------------------------------------------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The sole supported platform for the First Edition is a Lenovo mini PC
 (AMD64, Intel i5 CPU), running Debian 13, with an HDMI monitor, a USB

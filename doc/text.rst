@@ -1,7 +1,7 @@
 Text Type
 =========
 
-A key first edition goal is to support a Text type.  The point is less
+A key First Edition goal is to support a Text type.  The point is less
 the actual type functionality, and more the mechanisms of types,
 items, type implementations, and lenses.
 
@@ -9,12 +9,12 @@ A text item should be a sequence of UTF-8 characters.  It is
 essentially a Unix-style text file.  The text should be persisted
 using the Storage Service.
 
-In the first edition story, a new text item is created via the
+In the First Edition story, a new text item is created via the
 Terminal's factory UI.  It is then edited, and the Lens closed.
 
 The requirements to implement this are:
 
-* the Text type implementation must be registered
+* the Text type implementation must be registered with the Type service
 * the factory must have a way to obtain the set of available type implementations
 * the factory must have a way to request the type implementation create a new item
 * the factory(?) must be able to choose a Lens to interact with the new item

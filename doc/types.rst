@@ -1,55 +1,61 @@
+*Items*, *Types* and *Lenses* form the basis of most Darq applications.
+
 Types
 =====
 
-Types are a fundamental aspect of DarqOS.  A *Type* describes an
-*Item*, classifying it by its properties and behaviour.  Types can
-be both general and specific, with a rich conformance model that
-allows generalisation of entire classes of entities.
+*Items* are the most basic elements of the use of Darq.  They most
+closely correspond to files in traditional operating systems, but can
+also be virtual placeholders for physical things.  Examples of Darq
+Items could include, a person, a book, a Word document, or a GIF
+image.
 
-Example types are: person, book, text document, PNG image, etc.
+A *Type* describes an *Item*, classifying it by its properties and
+behaviour.  Types can be both general and specific, with a rich
+conformance model that allows generalisation of entire classes of
+entities.
 
 Strictly, a *type* is an abstract concept; the concrete artifacts
 are a *type identifier*, a *type description*, and a *type
 implementation*.
 
+
 Type Identifiers
 ----------------
 
-A *type identifier* is a globally-unique, string identifier for a *type*
-concept.  Type identifiers are derived from IETF MIME types and Apple's
-Uniform Type Identifiers, but do not conform to either of those
-specifications directly.
+A *type identifier* is a globally-unique string identifier for a
+*type* concept.  Type identifiers are derived from IETF MIME types and
+Apple's Uniform Type Identifiers, but do not conform to either of
+those specifications directly.
 
-A type identifier is
+A type identifier
 
-  * A UTF-8 string
-  * Stored and compared in its Unicode NFKC_Casefold form, so type
-    identifiers are case-insensitive, and canonically lower-case.  The
-    rules below apply to that form.
-  * The first character must be from the set:
+* is a UTF-8 string;
+* stored and compared in its Unicode NFKC_Casefold form, so type
+  identifiers are case-insensitive, and canonically lower-case.  The
+  rules below apply to that form;
+* must have its first character from the Unicode UAX#31 core property set `XID_Start`;
+* must have its Subsequent characters from the set
 
-    * Unicode UAX#31 core property XID_Start
-  * Subsequent characters must be from the set:
+  * Unicode UAX#31 core property `XID_Continue`,
+  * U+002D (hyphen),
+  * U+002E (period), or
+  * U+002F (forward slash);
+* cannot contain a U+003A (colon);
+* be Less than 128 bytes in length, after NFKC_Casefold (NOT including
+  any terminating U+0000); and,
+* typically have a dotted string format, eg. "public.item".
 
-    * Unicode UAX#31 core property XID_Continue
-    * U+002D (hyphen)
-    * U+002E (period)
-    * U+002F (forward slash)
-  * Never contains a colon (U+003A), so that an Item Identifier can be
-    split into its parts at its first colon (see :doc:`item`)
-  * Less than 128 bytes in length, after NFKC_Casefold (NOT including
-    any terminating U+0000)
-  * Typically have a dotted string format, eg. "public.item"
+The Python runtime module ``darq`` provides functions to check type
+identifiers, and to convert them to their canonical, NFKC_Casefold
+form: ``is_valid_type_id()`` and ``canonical_type_id()``.  Programs
+should canonicalize a type identifier before storing or comparing it.
 
-The ``darq`` module provides functions to check type identifiers, and
-to convert them to their canonical, NFKC_Casefold form:
-``is_valid_type_id()`` and ``canonical_type_id()``.  Programs should
-canonicalize a type identifier before storing or comparing it.  The
-functions for item identifiers are described in :doc:`item`.
+The set of basic types described by Apple's Uniform Type Identifier
+system is used as the basis for DarqOS types.  That set is described
+in Apple's `System-Declared Uniform Type Identifiers
+<https://developer.apple.com/library/archive/documentation/Miscellaneous/Reference/UTIRef/Articles/System-DeclaredUniformTypeIdentifiers.html#//apple_ref/doc/uid/TP40009259-SW1>`_
+document.
 
-The set of basic types described by Apple's Uniform Type Identifier system
-is used as the basis for DarqOS types.  That set is described in Apple's
-`System-Declared Uniform Type Identifiers <https://developer.apple.com/library/archive/documentation/Miscellaneous/Reference/UTIRef/Articles/System-DeclaredUniformTypeIdentifiers.html#//apple_ref/doc/uid/TP40009259-SW1>`_ document.
 
 Type Service
 ------------
@@ -136,7 +142,7 @@ These are stable, persistent properties of the type.  The type's
 implementation is registered separately, since it can be replaced at
 runtime:
 
-* For 1ed, it's a path to the type implementation's directory,
+* For First Edition, it's a path to the type implementation's directory,
   suitable for spawn()ing by the p-kernel.
 * In future editions, it should be a storage key for the
   implementation's executable.
@@ -213,7 +219,7 @@ Lenses) to operators.
 An Item Identifier  (aka *iid*) consists of a Type Identifier, a
 colon, and an *item specifier* for the specific Item, like
 
-  ``net.daringfireball.markdown:c5f1ad2a-ea33-4248-b116-9c363cbade66``
+  ``net.daringfireball.markdown:c5f1ad2aea334248b1169c363cbade66``
 
 Items are described in more detail in :doc:`item`.
 
@@ -284,54 +290,77 @@ This choice is made and implemented by the Type Implementation,
 and is not expected to be implemented in early editions.
 
 Lenses
-------
+======
 
-A Type Implementation provides the *behaviour* of type instances:
-basically, the code.  It also determines how instances of the type
-are persisted (for example, using the storage service, or the knowledge
-base service).
+A Type Implementation provides the *behaviour* of items: basically,
+the code.  It also determines how instances of the type are persisted
+(for example, using the storage service, or the knowledge base
+service).
 
-Access to an item's behaviour is via the IPC system.  The type implementation
-essentially exports an API for instances of the type, operating on specific
-instance data loaded from and saved to a persistence backend.
+Access to an item's behaviour is via the IPC system.  The type
+implementation exports an API for items of the type, operating on
+specific instance data loaded from and saved to a persistence backend.
 
 But ... this is just the actual behaviour of the item: the "model" in
-MVC terms.  In addition to type implementations, there is a second class
-of applications in DarqOS: *Lenses*.
+MVC terms.  In addition to type implementations, there is a closely
+related second class of applications in DarqOS: *Lenses*.
 
-A *lens* is a way to use an item of a type.  For example, Lenses expose
-the item's data to its operators via the Terminal service.
+A *lens* is a way to use an item of a type.  For example, Lenses
+expose the item's data to its operators via the Terminal service.
+
+As an example, consider a plain text document.  The type
+implementation is responsible for storing the text data, and making it
+available to lenses.  An example text document type lens is a text
+editor: it provides an interface that enables a system operator to
+view or alter the document's text.
+
+This is similar to the "default application" configuration for a
+filename extension in Windows: the file extension basically identifies
+the file as being of a particular type, and the application is a lens
+through which the operator can see the data.
+
 
 Contexts
 --------
 
-A Lens is activated in a *Context*.  There is initially only one context
-defined: the Terminal context.
+Lenses are activated in a *Context*.  There is initially only one context
+defined: the graphical Terminal context.
 
 The Terminal context is the full DarqOS graphical shell, with high
 resolution bit-mapped graphics, a keyboard, a pointer, a set of
 pointer-relative actions (clicks), mono audio input, and stereo
 audio output.
 
+The system compares the facilities available in the invoking *context*
+before determining which *lenses* are able to be used for a specific
+*type* of *item*.
+
+For example, if you were to try to use an Amazon Alexa-like device to
+use a recipe document, then a typical graphical recipe viewer would
+not be appropriate, and you'd need to use a different, audio-only,
+*lens*.
+
 Additional contexts might be added in future, including things like
-Jupyter Workbooks, Alexa-style voice interfaces, etc.
+this Alexa-style voice interface, Jupyter Workbooks, a remote
+text-only console, etc.
+
 
 Lens Activation
 ---------------
 
-Within a Terminal Service, the user has several means of managing
-Item Identifiers, and requesting actions upon them.  These requests
+Within a Terminal Service, the user has several means of obtaining
+*item identifiers*, and requesting actions upon them.  These requests
 combine:
 
-* a Context
-* an Item Identifier (which includes the item's Type Identifier), and,
+* a *Context*
+* an *Item Identifier* (which includes the item's *Type Identifier*), and,
 * an action.
 
-The terminal must process that request and determine (with or without
-help from the user) which of its available Lenses should be used.
+The Terminal must process that request and determine (with or without
+help from the user) which of its available *lenses* should be used.
 
-In 1ed, there's only one action, "use", so the action plays no part in
-choosing a lens.
+In First Edition, there's only one action, "use", so the action plays
+no part in choosing a lens.
 
 The collection of Lenses, and their supported types and contexts,
 is maintained by the Type Service.  A lens is identified by the path of
@@ -364,7 +393,7 @@ each starts its own Qt: a lens could later serve several items from
 one process instead, without changing the protocol.
 
 References
-==========
+----------
 
 * https://www.unicode.org/reports/tr31/ (UAX#31: Unicode Identifiers and Syntax)
 * https://en.wikipedia.org/wiki/Uniform_Type_Identifier

@@ -1,5 +1,3 @@
-Runtime
-=======
 
 The so-called "runtime" component is a library that's available to all
 applications and, like the C runtime, provides both access to the
@@ -7,10 +5,10 @@ kernel's functionality, as well as various local supporting functions.
 
 
 Architecture
-------------
+============
 
 Python
-~~~~~~
+------
 
 A Python process is started by the p-kernel using a "loader"
 executable.  This process establishes a socket connection to the
@@ -43,7 +41,7 @@ crash, host OS process kill, etc) is detected by closure of the TCP
 connection to the p-kernel.
 
 API
----
+===
 
 The runtime environment for DarqOS applications consists of:
 
@@ -79,7 +77,7 @@ The runtime environment for DarqOS applications consists of:
 
     
 create_object
-~~~~~~~~~~~~~
+-------------
 
 * The most basic representation of an object is a collection of
   metadata properties, including
@@ -91,7 +89,7 @@ create_object
   * a content link, be it to local storage or a URL.
 
 activate_object
-~~~~~~~~~~~~~~~
+---------------
 * An object "at rest" is an entry in the metadata database.  In order
   to "use" the object, it must be activated.  This involves:
 
@@ -136,7 +134,7 @@ activate_object
   service, recording significant events in the object's lifecycle.
 
 deactivate_object
-~~~~~~~~~~~~~~~~~
+-----------------
 
 * Inform the type implementation that the object is no longer required
   to be active.
@@ -144,14 +142,14 @@ deactivate_object
   unload its storage, etc.
 
 send_to_object
-~~~~~~~~~~~~~~
+--------------
 
 * Send an IPC message to an object
 * I need to think about how I want receiving messages to work, but
   there should be a complementary call.
 
 create_process
-~~~~~~~~~~~~~~
+--------------
 
 * Execute a program in a new process.
 * I'm not sure what form the program will take:

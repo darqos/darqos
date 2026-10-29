@@ -1,11 +1,11 @@
 Items
 =====
 
-In DarqOS, *items* are things that, for instance, would usually be a
-file in Unix-style operating systems.  They are not, typically, small
-things like a programming language object (like, an integer or string),
-but larger things like a document, a spreadsheet, an image, etc. They
-are also used to represent real-world items, like people or places.
+*Items* are things that, for instance, would usually be a file in
+traditional operating systems.  They are not, typically, small things
+like a programming language object (like, an integer or string), but
+larger things like a document, a spreadsheet, an image, etc. They are
+also used to represent real-world items, like people or places.
 
 Items are identified using an *Item Identifier* (aka *iid*).
 An item identifier is a string, with two parts: a type identifier and an
@@ -17,29 +17,29 @@ splitting it at its first colon.
 The type identifier is defined in :doc:`types`.  The item
 specifier constraints are:
 
-  * A non-empty UTF-8 string
-  * Normalized using Unicode NFKC normalization, but case-sensitive
-  * Characters must be from the set:
+* A non-empty UTF-8 string
+* Normalized using Unicode NFKC normalization, but case-sensitive
+* Characters must be from the set:
 
-    * Unicode UAX#31 core property XID_Continue, excluding
-      default-ignorable code points (which are invisible, like
-      U+200D ZERO WIDTH JOINER)
-    * Printable ASCII, U+0021 (``!``) to U+007E (``~``), which includes
-      U+003A (colon)
+  * Unicode UAX#31 core property XID_Continue, excluding
+    default-ignorable code points (which are invisible, like
+    U+200D ZERO WIDTH JOINER)
+  * Printable ASCII, U+0021 (``!``) to U+007E (``~``), which includes
+    U+003A (colon)
 
-    This rules out spaces, controls, and other invisible or
-    formatting characters, so an item identifier can be safely logged
-    or displayed.  Unlike a type identifier, there's no special rule
-    for the first character.
-  * A URL used as an item specifier must be in its serialized form,
-    as produced by the WHATWG URL Standard's serializer: non-ASCII host
-    names are converted to Punycode, and other non-ASCII characters are
-    percent-encoded.  The serialized form is printable ASCII.
-  * At most 895 bytes in length (NOT including any terminating U+0000)
+  This rules out spaces, controls, and other invisible or
+  formatting characters, so an item identifier can be safely logged
+  or displayed.  Unlike a type identifier, there's no special rule
+  for the first character.
+* A URL used as an item specifier must be in its serialized form,
+  as produced by the WHATWG URL Standard's serializer: non-ASCII host
+  names are converted to Punycode, and other non-ASCII characters are
+  percent-encoded.  The serialized form is printable ASCII.
+* At most 895 bytes in length (NOT including any terminating U+0000)
 
-    * Thus making the entire *iid* a maximum of 1023 bytes: at most 127
-      for the type identifier, 1 for the colon, and 895 for the item
-      specifier, so it fits in 1024 bytes with a terminating U+0000
+  * Thus making the entire *iid* a maximum of 1023 bytes: at most 127
+    for the type identifier, 1 for the colon, and 895 for the item
+    specifier, so it fits in 1024 bytes with a terminating U+0000
 
 The ``darq`` module provides functions to check and canonicalize
 item identifiers, and to serialize URLs: ``is_valid_item_id()``,

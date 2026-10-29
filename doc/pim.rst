@@ -77,12 +77,12 @@ Person
 Place
 -----
 
- * A place is really just any identified geography.
- * It could have:
+* A place is really just any identified geography.
+* It could have:
 
-   * Latitude and longitude
-   * Street address
-   * Containment hierarchy
+  * Latitude and longitude
+  * Street address
+  * Containment hierarchy
 
 Organisation
 ------------
