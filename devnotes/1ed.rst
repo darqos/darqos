@@ -16,7 +16,7 @@ replace the initial note, but be added to its description.
 
 * I am concerned about the use of the flags byte in the IPC
   header to hack in error response and notification messages.
-  This seems like a simple hack
+  This seems like a simple hack.
 
   (2026-10-27)
 
@@ -54,6 +54,10 @@ replace the initial note, but be added to its description.
   * Would keeping both ends of the interval help?
   * This might be skewed because the initial implementation
     starts coalescing immediately at a fairly coarse interval?
+  * Does this only matter for the most-recent interval?
+
+    * And if so, does keeping all events for the most-recent
+      interval avoid this issue?
 
   (2026-10-28)
 
@@ -130,7 +134,7 @@ replace the initial note, but be added to its description.
   necessary scripts several migrations down the line.
 
   So ... maybe just a cron job in the host Linux that snapshots the
-  volume and rsyncs the backup to my nas?
+  volume and runs rsync to the backup to my NAS?
 
   (2026-10-28)
 
@@ -140,3 +144,48 @@ replace the initial note, but be added to its description.
 
   (2026-10-28)
   
+* In the history panel, the display of items matching the filter
+  should display the event time in a more operator-friendly way.
+  I think "today", "yesterday", "last week", and then month
+  name and year.  And then the time should be similar: "just now",
+  "an hour ago", "earlier today", "last night", etc.  Once you select
+  or hover over an item, the exact timestamp could be shown in a
+  tooltip-like panel.
+
+  And get rid of the 90's table widget style!
+
+  (2026-10-29)
+
+* In the history panel, the filter could also use a less precise
+  date picker for most uses.  A non-linear slider, from "now",
+  through, "Earlier today", "yesterday", "last week", etc, would
+  be a lot easier most of the time.  The quick buttons, eg "today",
+  do seem useful -- I think keep them.
+
+  (2026-10-29)
+
+* How do things like spell-check fit into the Lenses?  Are they
+  reimplemented for every text-based lens?  Or is there a way
+  to make them more universal, like NeXTStep's Services?
+
+  (2026-10-29)
+
+* The Sys-Space search should support !tags: !w !g etc.  I think
+  DDG or Kagi has a list.  It should also support explicit tags
+  using #tag syntax, and maybe @name for people?  That might be
+  too far.  But in general, it should be a bit "smart".
+
+  (2026-10-29)
+
+* Sys-i should be "info" or "inspect" on an item.  If focused
+  on a lens, then it's identified, but somehow the info panel
+  would need to get a port.
+
+  Similarly, opening a REPL should be triggered by a hotkey
+  while focused on a Lens.
+
+  How does the Terminal, which processes the hotkey, de termine
+  what item the lens is using?  Do Lenses need to register a
+  request port with the Terminal?
+
+  (2026-10-29)
