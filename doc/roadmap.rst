@@ -42,8 +42,8 @@ Python, to ensure it is easily malleable.
 Infrastructure
 
 * Repository (DONE)
-* Project structure
-* CI (GitHub-CI, I suppose?)
+* Project structure (DONE)
+* CI (DONE)
 * Manual stack
 
   * All system documentation:
@@ -78,19 +78,19 @@ Infrastructure
 
 System
 
-* Host platform
+* Host platform  (DONE)
 
   * Lenovo MiniPC
   * AMD64 VM
 
-* Host OS
+* Host OS  (DONE)
 
   * Debian (13, as of late 2026)
   * There's not really any point going for a more minimalist OS
     for early editions: all it does it create hardware compatibility
     issues.
 
-* IPC
+* IPC  (DONE)
 
   * API in Python runtime module
   * Use a single central message broker process to provide the shared
@@ -161,7 +161,7 @@ System
 
 Services
 
-* Storage
+* Storage  (DONE)
 
   * Key-value blob store
 
@@ -191,16 +191,16 @@ Services
 
   * Lookup by keywords
 
-* History
+* History  (DONE)
 
   * System-wide
   * Activity timeline
 
-* Security
+* Security  (DONE)
 
   * User authentication
 
-* Type
+* Type  (DONE)
 
   * Catalogue of type identifiers and descriptions
   * In-memory registry of type implementations
@@ -213,26 +213,26 @@ Services
   * Handles login/logout, locking, and reboot/shutdown
   * Like X11, does window decorations (if any?)
     
-  * Compositor
+  * Compositor  (DONE)
 
     * Basically, a window manager
     * Based on miniwl / wlroots
 
-  * Keyboard
+  * Keyboard  (DONE)
 
     * via Qt?
     * What about global shortcuts?  miniwl?
 
-  * Mouse, trackpad, etc.
+  * Mouse, trackpad, etc.  (DONE)
 
     * via Qt
 
   * Supports login, etc, through interaction with the security
-    service.
+    service.  (DONE)
 
     * Login, logout, lock, reboot, shutdown
 
-  * Factory
+  * Factory  (DONE)
 
     * Create instances of installed types
 
@@ -254,7 +254,7 @@ Services
 
   * REPL
 
-Runtime
+Runtime  (DONE)
 
 * Python application loader
 * Library for access to
@@ -271,7 +271,7 @@ Types
     * Register with type service
     * Check registration during boot
 
-* Text
+* Text  (DONE)
 
   * CRUD
   * UTF8
@@ -316,8 +316,19 @@ Story
     * Events (S-e)
     * REPL (S-s)
     * How does we lock / shutdown from here?
-    * Do these _replace_ each other on screen?  eg. S-n S-space will
+
+      * S-b, dialog panel to choose shutdown or reboot (or cancel)
+
+        * Calls appropriate p-kernel syscall
+
+      * S-l, lock screen, password required to unlock
+
+        * S-b shutdown/reboot hotkey active while locked
+
+    * Do these *replace* each other on screen?  eg. S-n S-space will
       pop the factory, then hide factory and pop search?
+
+      * Yes.
 
 * Create a new text document
 * Close the text viewer
@@ -325,11 +336,19 @@ Story
 * Logout
 
   * Possibly a system hotkey?
+
+    * No logout, just screen lock, reboot, or shutdown.
+
   * Ultimately, has to be a kernel function (syscall)
+
+    * Yes.  Reboot and shutdown are both p-kernel syscalls.
 
 * Keyboard
 
   * Do I want a custom keyboard for the first edition?
+
+    * Yes, but no.  Not for 1ed.
+
   * Custom plate
   * Custom PCB
   * Controller and firmware
@@ -350,7 +369,7 @@ System
 
 * Host Platform
 
-  * Consider adding PinePhone
+  * Consider adding PinePhone?
 
 Services
 
@@ -450,7 +469,7 @@ Story
   * Web page appears in new window (search panel goes away)
   * Clicking on links in the page works as usual [Keyboard nav: next
     link, cf eBook, Red Book p47]
-  * THe user tags a specific page for future reference [How?]
+  * The operator tags a specific page for future reference [How?]
   * Close the viewer [How?]
 
 * Open search
@@ -465,6 +484,8 @@ Story
         * Should load quickly (ie. from cache)
 
       * Close page [How?]
+
+        * S-x hotkey will close the focus window.
 
   * Enter one of the tags associated earlier
 
