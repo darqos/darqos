@@ -578,7 +578,39 @@ Notes:
 * Specification of a return type(s) for method x implies two messages: xRequest and xResponse
 * The 'port' type is a uint16 index into the list of handles transferred with the message, or 0xFFFF for no port (see Ports in Messages): the generated code converts between indexes and handles.  A message can transfer at most 64 handles.
 * The 'opaque' type is a sequence of bytes.  It's encoded as a uint32 offset (from the start of the message) and a uint32 length, and the bytes are appended to the end of the message, 8-byte aligned.
-* The 'string' type is UTF-8 text, encoded as an opaque.  Decoding invalid UTF-8 fails.
+* The 'string' type is UTF-8 text, encoded as an opaque, with no NUL in it, and always followed by one, so it can be used in place as a C string: its value takes its length plus one, padded to a multiple of 8.  Decoding a string that isn't valid UTF-8, or has a NUL in it, or not after it, fails.
+* The 'bool' type is a byte, 0 or 1: decoding any other value fails.
 * The 'sequence<T>' type is a sequence of elements of any type T, including other sequences: `sequence<string>`, `sequence<sequence<Key>>`.  It's encoded as a uint32 offset and a uint32 count of elements, and the elements are appended to the end of the message as an array, at a stride of T's size.  The elements' own strings, opaques and sequences follow the array.  T can't be an empty struct, and a struct can't contain itself through a sequence.
-* Out-of-line values (opaques, strings and sequences) are appended in the order they're encoded: fields in order, and a sequence's array before its elements' values.  Decoding requires exactly that order, so one value can't be referred to many times.
+* Out-of-line values (opaques, strings and sequences) go after the message's fixed part, each on an 8-byte boundary.  They may be in any order, so a message can be built in place with its fields set in any order, but no two may overlap, so one value can't be referred to twice.  The Python encoder appends them in the order it encodes them: fields in order, and a sequence's array before its elements' values.
+* A message starts on an 8-byte boundary, and is used in place, where it's built or received: nothing in it is an address, since every descriptor is an offset from its start.  The aim is to pass messages between processes in shared memory, without copying, whatever language each is written in.
+
+C
+~
+
+``didlcgen`` generates C from the same IR: a header and a source file,
+named after the library (see ``man/didlcgen.1``), using the DIPC
+runtime in ``lib/c/darq``.  It's the first piece of a C runtime: there
+are no p-calls in C yet, so no clients, only message handling, which
+the compositor uses for its policy channel, generating its C at build
+time.
+
+Messages are used in place: each message, and each DIDL struct, is a C
+struct laid out exactly as it is on the wire, with ``static_assert``\ s
+checking every offset and size against the IR, so the host must be
+little-endian, as x86-64 and ARM64 are.
+
+* A message is built in a buffer that doesn't move: its fixed fields
+  are assigned, and generated helpers set its strings, opaques,
+  sequences and ports, which a ``darq_builder`` appends.
+* A received message is checked once, by its generated ``_verify()``
+  function, which makes every check the Python decoder makes, and is
+  then read in place, through a pointer: strings are pointers into the
+  message.
+* Each protocol has a dispatcher, which verifies a request and calls a
+  handler with it, building an error reply if it can't.
+
+Verifying a message protects its reader only while its sender can't
+change it: across shared memory, the transport will have to ensure
+that, such as by the sender giving up its write access before the
+receiver verifies the message.
   

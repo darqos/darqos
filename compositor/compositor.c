@@ -8,7 +8,9 @@
 //
 // - The Terminal's Wayland connection on a file descriptor it's given
 //   (-t), so its toplevels can be told apart from other clients'.
-// - The policy channel to the Terminal, on another (-p): see policy.h.
+// - The policy channel to the Terminal, on another (-p): its messages
+//   (lib/didl/compositor.didl) are built and read in place, with C
+//   generated at build time by didlcgen.
 //   It reports bound hotkeys and the window list, and focuses, raises
 //   and closes windows; the compositor exits when it's closed, or when
 //   the Terminal dies (PR_SET_PDEATHSIG).
@@ -68,7 +70,13 @@
 #include <wlr/util/log.h>
 #include <xkbcommon/xkbcommon.h>
 
-#include "policy.h"
+#include "darq_compositor.h"
+
+/* The longest string, in bytes, sent to the Terminal: a longer title is
+ * cut short.  And the longest message: a WindowAdded, with a title and
+ * an app_id that long. */
+#define MAX_STRING 1024
+#define MAX_MESSAGE 4096
 
 /* How many hotkeys the Terminal can bind. */
 #define MAX_HOTKEYS 64
@@ -157,6 +165,10 @@ struct tinywl_server {
 	struct wl_event_source *policy_source;
 	struct wl_list policy_queue;
 	int policy_queue_length;
+
+	/* The message being built for the Terminal: one at a time. */
+	struct darq_builder builder;
+	_Alignas(8) uint8_t message[MAX_MESSAGE];
 
 	/* The hotkeys the Terminal has bound. */
 	struct {
@@ -294,8 +306,14 @@ static bool policy_try_send(struct tinywl_server *server,
 	return false;
 }
 
-static void policy_send(struct tinywl_server *server, struct policy_buffer *buffer) {
-	/* Send a message to the Terminal, or queue it, in order. */
+static struct darq_builder *policy_builder(struct tinywl_server *server) {
+	/* Start a message for the Terminal: see policy_send. */
+	darq_builder_init(&server->builder, server->message, sizeof(server->message));
+	return &server->builder;
+}
+
+static void policy_send(struct tinywl_server *server, struct darq_builder *buffer) {
+	/* Send the message built, to the Terminal, or queue it, in order. */
 	if (server->policy_fd < 0) {
 		return;
 	}
@@ -315,6 +333,12 @@ static void policy_send(struct tinywl_server *server, struct policy_buffer *buff
 	server->policy_queue_length++;
 	wl_event_source_fd_update(server->policy_source,
 		WL_EVENT_READABLE | WL_EVENT_WRITABLE);
+}
+
+static void set_client_string(struct darq_builder *builder, struct darq_ref *field, const char *text) {
+	/* A client's text, such as a title, isn't always valid UTF-8, and
+	 * may be long: invalid UTF-8 is replaced, and it's cut short. */
+	darq_set_string_lossy(builder, field, text, text ? strlen(text) : 0, MAX_STRING);
 }
 
 static int policy_writable(int fd, uint32_t mask, void *data) {
@@ -341,9 +365,9 @@ static void report_focus(struct tinywl_server *server, uint32_t window) {
 		return;
 	}
 	server->focused_window = window;
-	struct policy_buffer buffer;
-	policy_encode_window_focused(&buffer, window);
-	policy_send(server, &buffer);
+	struct darq_builder *builder = policy_builder(server);
+	darq_compositor_window_focused_init(builder, 0)->window = window;
+	policy_send(server, builder);
 }
 
 static void raise_toplevel(struct tinywl_toplevel *toplevel) {
@@ -503,10 +527,10 @@ static uint32_t hotkey_modifiers(struct xkb_state *state) {
 		const char *name;
 		uint32_t bit;
 	} modifiers[] = {
-		{XKB_MOD_NAME_SHIFT, POLICY_SHIFT},
-		{XKB_MOD_NAME_ALT, POLICY_ALT},
-		{XKB_MOD_NAME_CTRL, POLICY_CONTROL},
-		{XKB_MOD_NAME_LOGO, POLICY_SUPER},
+		{XKB_MOD_NAME_SHIFT, DARQ_COMPOSITOR_MODIFIER_SHIFT},
+		{XKB_MOD_NAME_ALT, DARQ_COMPOSITOR_MODIFIER_ALT},
+		{XKB_MOD_NAME_CTRL, DARQ_COMPOSITOR_MODIFIER_CONTROL},
+		{XKB_MOD_NAME_LOGO, DARQ_COMPOSITOR_MODIFIER_SUPER},
 	};
 	uint32_t bits = 0;
 	for (size_t i = 0; i < sizeof(modifiers) / sizeof(modifiers[0]); i++) {
@@ -532,9 +556,12 @@ static void handle_system_key(struct tinywl_server *server,
 	for (int i = 0; i < server->num_hotkeys; i++) {
 		if (server->hotkeys[i].keysym == sym &&
 				server->hotkeys[i].modifiers == modifiers) {
-			struct policy_buffer buffer;
-			policy_encode_hotkey_pressed(&buffer, sym, modifiers);
-			policy_send(server, &buffer);
+			struct darq_builder *builder = policy_builder(server);
+			struct darq_compositor_hotkey_pressed *message =
+				darq_compositor_hotkey_pressed_init(builder, 0);
+			message->keysym = sym;
+			message->modifiers = modifiers;
+			policy_send(server, builder);
 			server->system_chord = true;
 			return;
 		}
@@ -682,9 +709,9 @@ static void keyboard_handle_key(
 		}
 		if (!pressed && server->system_chord) {
 			server->system_chord = false;
-			struct policy_buffer buffer;
-			policy_encode_system_released(&buffer);
-			policy_send(server, &buffer);
+			struct darq_builder *builder = policy_builder(server);
+			darq_compositor_system_released_init(builder, 0);
+			policy_send(server, builder);
 		}
 	} else if (pressed && (xkb_state_serialize_mods(state, XKB_STATE_MODS_EFFECTIVE) &
 			server->system_mask)) {
@@ -1268,10 +1295,12 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 	struct wl_client *client = wl_resource_get_client(toplevel->xdg_toplevel->resource);
 	if (client != server->terminal) {
 		toplevel->reported = true;
-		struct policy_buffer buffer;
-		policy_encode_window_added(&buffer, toplevel->window,
-			toplevel->xdg_toplevel->title, toplevel->xdg_toplevel->app_id);
-		policy_send(server, &buffer);
+		struct darq_builder *builder = policy_builder(server);
+		struct darq_compositor_window_added *message = darq_compositor_window_added_init(builder, 0);
+		message->window = toplevel->window;
+		set_client_string(builder, &message->title, toplevel->xdg_toplevel->title);
+		set_client_string(builder, &message->app_id, toplevel->xdg_toplevel->app_id);
+		policy_send(server, builder);
 	}
 
 	if (toplevel->layer == LAYER_APPS || toplevel->layer == LAYER_OVERLAY) {
@@ -1299,9 +1328,9 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 
 	if (toplevel->reported) {
 		toplevel->reported = false;
-		struct policy_buffer buffer;
-		policy_encode_window_removed(&buffer, toplevel->window);
-		policy_send(server, &buffer);
+		struct darq_builder *builder = policy_builder(server);
+		darq_compositor_window_removed_init(builder, 0)->window = toplevel->window;
+		policy_send(server, builder);
 	}
 	if (toplevel == server->focused) {
 		server->focused = NULL;
@@ -1312,10 +1341,12 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 static void xdg_toplevel_set_title(struct wl_listener *listener, void *data) {
 	struct tinywl_toplevel *toplevel = wl_container_of(listener, toplevel, set_title);
 	if (toplevel->reported) {
-		struct policy_buffer buffer;
-		policy_encode_window_retitled(&buffer, toplevel->window,
-			toplevel->xdg_toplevel->title);
-		policy_send(toplevel->server, &buffer);
+		struct darq_builder *builder = policy_builder(toplevel->server);
+		struct darq_compositor_window_retitled *message =
+			darq_compositor_window_retitled_init(builder, 0);
+		message->window = toplevel->window;
+		set_client_string(builder, &message->title, toplevel->xdg_toplevel->title);
+		policy_send(toplevel->server, builder);
 	}
 }
 
@@ -1671,11 +1702,10 @@ static struct tinywl_toplevel *find_window(struct tinywl_server *server, uint32_
 	return NULL;
 }
 
-static void bind_hotkey(struct tinywl_server *server, struct policy_message *message,
+static void bind_hotkey(struct tinywl_server *server, uint32_t keysym, uint32_t modifiers,
 		bool bind) {
 	for (int i = 0; i < server->num_hotkeys; i++) {
-		if (server->hotkeys[i].keysym == message->keysym &&
-				server->hotkeys[i].modifiers == message->modifiers) {
+		if (server->hotkeys[i].keysym == keysym && server->hotkeys[i].modifiers == modifiers) {
 			if (!bind) {
 				server->hotkeys[i] = server->hotkeys[--server->num_hotkeys];
 			}
@@ -1689,38 +1719,63 @@ static void bind_hotkey(struct tinywl_server *server, struct policy_message *mes
 		wlr_log(WLR_ERROR, "policy: too many hotkeys bound");
 		return;
 	}
-	server->hotkeys[server->num_hotkeys].keysym = message->keysym;
-	server->hotkeys[server->num_hotkeys].modifiers = message->modifiers;
+	server->hotkeys[server->num_hotkeys].keysym = keysym;
+	server->hotkeys[server->num_hotkeys].modifiers = modifiers;
 	server->num_hotkeys++;
 }
 
-static void handle_policy_message(struct tinywl_server *server,
-		struct policy_message *message) {
-	struct tinywl_toplevel *toplevel = find_window(server, message->window);
-	switch (message->method) {
-	case POLICY_BIND_HOTKEY:
-	case POLICY_UNBIND_HOTKEY:
-		bind_hotkey(server, message, message->method == POLICY_BIND_HOTKEY);
-		break;
-	case POLICY_LOCK:
-	case POLICY_UNLOCK:
-		set_locked(server, message->method == POLICY_LOCK);
-		break;
-	case POLICY_FOCUS_WINDOW:
-		focus_toplevel(toplevel);
-		break;
-	case POLICY_RAISE_WINDOW:
-		if (toplevel) {
-			raise_toplevel(toplevel);
-		}
-		break;
-	case POLICY_CLOSE_WINDOW:
-		if (toplevel) {
-			wlr_xdg_toplevel_send_close(toplevel->xdg_toplevel);
-		}
-		break;
+/* The Policy protocol's messages, all one-way, verified, and in place. */
+
+static void handle_bind_hotkey(void *context, const struct darq_compositor_bind_hotkey *message,
+		const uint64_t *handles, size_t num_handles) {
+	bind_hotkey(context, message->keysym, message->modifiers, true);
+}
+
+static void handle_unbind_hotkey(void *context, const struct darq_compositor_unbind_hotkey *message,
+		const uint64_t *handles, size_t num_handles) {
+	bind_hotkey(context, message->keysym, message->modifiers, false);
+}
+
+static void handle_lock(void *context, const struct darq_compositor_lock *message,
+		const uint64_t *handles, size_t num_handles) {
+	set_locked(context, true);
+}
+
+static void handle_unlock(void *context, const struct darq_compositor_unlock *message,
+		const uint64_t *handles, size_t num_handles) {
+	set_locked(context, false);
+}
+
+static void handle_focus_window(void *context, const struct darq_compositor_focus_window *message,
+		const uint64_t *handles, size_t num_handles) {
+	focus_toplevel(find_window(context, message->window));
+}
+
+static void handle_raise_window(void *context, const struct darq_compositor_raise_window *message,
+		const uint64_t *handles, size_t num_handles) {
+	struct tinywl_toplevel *toplevel = find_window(context, message->window);
+	if (toplevel) {
+		raise_toplevel(toplevel);
 	}
 }
+
+static void handle_close_window(void *context, const struct darq_compositor_close_window *message,
+		const uint64_t *handles, size_t num_handles) {
+	struct tinywl_toplevel *toplevel = find_window(context, message->window);
+	if (toplevel) {
+		wlr_xdg_toplevel_send_close(toplevel->xdg_toplevel);
+	}
+}
+
+static const struct darq_compositor_policy_handler policy_handler = {
+	.handle_bind_hotkey = handle_bind_hotkey,
+	.handle_unbind_hotkey = handle_unbind_hotkey,
+	.handle_lock = handle_lock,
+	.handle_unlock = handle_unlock,
+	.handle_focus_window = handle_focus_window,
+	.handle_raise_window = handle_raise_window,
+	.handle_close_window = handle_close_window,
+};
 
 static int handle_policy(int fd, uint32_t mask, void *data) {
 	struct tinywl_server *server = data;
@@ -1734,7 +1789,7 @@ static int handle_policy(int fd, uint32_t mask, void *data) {
 		/* Everything waiting, one message per packet: MSG_TRUNC gives
 		 * a packet's whole length. */
 		while (server->policy_fd >= 0) {
-			uint8_t packet[POLICY_MAX_MESSAGE];
+			_Alignas(8) uint8_t packet[MAX_MESSAGE];
 			ssize_t n = recv(fd, packet, sizeof(packet), MSG_DONTWAIT | MSG_TRUNC);
 			if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
 				return 0;
@@ -1749,13 +1804,11 @@ static int handle_policy(int fd, uint32_t mask, void *data) {
 				policy_close(server);
 				return 0;
 			}
-			struct policy_message message;
-			const char *error = (size_t)n > sizeof(packet) ? "too long" :
-				policy_decode(packet, n, &message);
-			if (error) {
-				wlr_log(WLR_ERROR, "policy: bad message: %s", error);
-			} else {
-				handle_policy_message(server, &message);
+			int status = (size_t)n > sizeof(packet) ? DARQ_DIPC_VALUE_OUT_OF_RANGE :
+				darq_compositor_policy_dispatch(&policy_handler, server, packet, n, NULL, 0, NULL);
+			if (status != DARQ_DIPC_OK) {
+				wlr_log(WLR_ERROR, "policy: bad message: %s",
+					(size_t)n > sizeof(packet) ? "too long" : darq_dipc_strerror(status));
 			}
 		}
 	} else if (mask & (WL_EVENT_HANGUP | WL_EVENT_ERROR)) {
@@ -2003,9 +2056,9 @@ int main(int argc, char *argv[]) {
 		server.policy_fd = policy_fd;
 		server.policy_source = wl_event_loop_add_fd(loop, policy_fd,
 			WL_EVENT_READABLE, handle_policy, &server);
-		struct policy_buffer buffer;
-		policy_encode_ready(&buffer);
-		policy_send(&server, &buffer);
+		struct darq_builder *builder = policy_builder(&server);
+		darq_compositor_ready_init(builder, 0);
+		policy_send(&server, builder);
 	}
 
 	if (test_keyboard) {

@@ -88,9 +88,10 @@ jobs:
           latexmk texlive-latex-recommended texlive-latex-extra
           texlive-fonts-recommended tex-gyre
 
-      # The docs import nothing from darq: install just the pinned Sphinx.
+      # The docs import nothing from darq: install just the pinned Sphinx,
+      # and its theme.
       - name: Install sphinx
-        run: pip install "$(grep '^sphinx==' requirements-dev.txt)"
+        run: pip install "$(grep '^sphinx==' requirements-dev.txt)" "$(grep '^sphinx-book-theme==' requirements-dev.txt)"
 
       # Warnings are errors (see doc/Makefile).
       - name: Build HTML

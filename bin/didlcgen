@@ -1,0 +1,654 @@
+#! /usr/bin/env python3
+# darqos
+# Copyright (C) 2026 David Arnold
+
+# Generates C from a DIDL IR (.dir) file produced by didlc: a header and
+# a source file, named after the library, using the DIPC runtime in
+# lib/c/darq/dipc.h.
+#
+# Messages are used in place, where they're built or received, so the
+# header has a struct for each message and each DIDL struct, laid out
+# exactly as it is on the wire (with static_asserts checking each
+# offset and size against the IR), and inline helpers: to start
+# building a message, to set its strings, opaques, sequences and ports,
+# which the builder appends, and to read them.  Fixed fields are just
+# assigned and read.  The source file has, for each message, a
+# function to verify a received one before it's used; and for each
+# protocol, a dispatcher that verifies a request, and calls a handler
+# with it.
+
+
+import argparse
+import json
+import os
+import re
+import sys
+from typing import Any, Dict, List
+
+
+# IR format version this generator reads, matching didlc's IR_VERSION
+IR_VERSION = 4
+
+# Message header length, matching DARQ_DIPC_HEADER_LENGTH
+HEADER_LENGTH = 8
+
+# C types for primitive types, as fields and sequence elements
+C_TYPES = {
+    'bool': 'bool',
+    'int8': 'int8_t', 'uint8': 'uint8_t',
+    'int16': 'int16_t', 'uint16': 'uint16_t',
+    'int32': 'int32_t', 'uint32': 'uint32_t',
+    'int64': 'int64_t', 'uint64': 'uint64_t',
+    'real32': 'float', 'real64': 'double',
+    'opaque': 'struct darq_ref', 'string': 'struct darq_ref', 'sequence': 'struct darq_ref',
+    'port': 'uint16_t',
+}
+
+# Integer constant macros for enum values, by base type
+CONSTANT_MACROS = {
+    'int8': 'INT8_C', 'uint8': 'UINT8_C', 'int16': 'INT16_C', 'uint16': 'UINT16_C',
+    'int32': 'INT32_C', 'uint32': 'UINT32_C', 'int64': 'INT64_C', 'uint64': 'UINT64_C',
+}
+
+# C keywords (to C23), and names with a meaning in the generated code
+C_KEYWORDS = {
+    "alignas", "alignof", "auto", "bool", "break", "case", "char", "const", "constexpr", "continue",
+    "default", "do", "double", "else", "enum", "extern", "false", "float", "for", "goto", "if",
+    "inline", "int", "long", "nullptr", "register", "restrict", "return", "short", "signed",
+    "sizeof", "static", "static_assert", "struct", "switch", "thread_local", "true", "typedef",
+    "typeof", "typeof_unqual", "union", "unsigned", "void", "volatile", "while",
+    "_Alignas", "_Alignof", "_Atomic", "_BitInt", "_Bool", "_Complex", "_Decimal128",
+    "_Decimal32", "_Decimal64", "_Generic", "_Imaginary", "_Noreturn", "_Static_assert",
+    "_Thread_local",
+}
+
+# The member of every message struct holding its header
+HEADER_MEMBER = "header"
+
+
+class GenError(Exception):
+    pass
+
+
+def snake_case(name: str) -> str:
+    """GetAttributes -> get_attributes, GetHTTPStatus -> get_http_status."""
+    name = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)
+    return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name).lower()
+
+
+def check_identifier(name: str, what: str):
+    """A name used in C, alone or within a longer one."""
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        raise GenError(f"{what} '{name}' is not a valid C identifier")
+    if name in C_KEYWORDS:
+        raise GenError(f"{what} '{name}' is a C keyword")
+    if name.startswith("__") or re.match(r"_[A-Z]", name):
+        raise GenError(f"{what} '{name}' is reserved in C")
+
+
+def file_name(library: str) -> str:
+    """The generated files' name, without extension: the library's, with
+    dots as underscores."""
+    return library.replace(".", "_") or "didl"
+
+
+class Generator:
+    def __init__(self, ir: Dict[str, Any], source: str):
+        version = ir.get("version")
+        if version != IR_VERSION:
+            raise GenError(f"IR format version {version}, expected {IR_VERSION}: recompile with didlc")
+
+        self.ir = ir
+        self.source = source
+        self.name = file_name(ir["library"])
+        check_identifier(self.name, "Library name")
+        self.prefix = self.name.lower()
+        self.macro = self.name.upper()
+        self.structs = {s["name"]: s for s in ir["structs"]}
+        self.enums = {e["name"]: e for e in ir["enums"]}
+        self.lines: List[str] = []
+
+        # Every name the generated code defines, with what it's for.
+        self.names: Dict[str, str] = {}
+
+    def emit(self, line: str = ""):
+        self.lines.append(line)
+
+    def define(self, name: str, what: str) -> str:
+        """Note a name the generated code defines: it mustn't clash."""
+        if name in self.names:
+            raise GenError(f"{what} would be named {name}, as {self.names[name]} is")
+        self.names[name] = what
+        return name
+
+    ################################################################
+    # Names and types
+
+    def type_name(self, name: str) -> str:
+        """An enum's or struct's C name, without 'struct'."""
+        return f"{self.prefix}_{snake_case(name)}"
+
+    def c_type(self, ref: Dict[str, Any]) -> str:
+        """A field's or element's C type."""
+        if ref["type"] in self.structs:
+            return f"struct {self.type_name(ref['type'])}"
+        if ref["type"] in self.enums:
+            return self.type_name(ref["type"])
+        return C_TYPES[ref["type"]]
+
+    @staticmethod
+    def message_name(p: Dict[str, Any], m: Dict[str, Any], kind: str | None) -> str:
+        """A message's name, as didlpygen's class names: x, or xRequest
+        and xResponse."""
+        return m["name"] + (kind or "")
+
+    def messages(self) -> List[tuple[Dict[str, Any], Dict[str, Any], str, Dict[str, Any], str]]:
+        """Every message: (protocol, method, name, layout, description)."""
+        result = []
+        for p in self.ir["protocols"]:
+            for m in p["methods"]:
+                if m["response"] is None:
+                    result.append((p, m, m["name"], m["request"], "one-way message"))
+                else:
+                    result.append((p, m, m["name"] + "Request", m["request"], "request"))
+                    result.append((p, m, m["name"] + "Response", m["response"], "response"))
+        return result
+
+    def struct_order(self) -> List[Dict[str, Any]]:
+        """The structs, each after those it contains by value: C needs
+        them defined first."""
+        order: List[Dict[str, Any]] = []
+
+        def visit(s: Dict[str, Any]):
+            if s in order:
+                return
+            for f in s["fields"]:
+                if f["type"] in self.structs:
+                    visit(self.structs[f["type"]])
+            order.append(s)
+
+        for s in self.ir["structs"]:
+            visit(s)
+        return order
+
+    @staticmethod
+    def constant(value: int, base: str) -> str:
+        macro = CONSTANT_MACROS[base]
+        if base.startswith("int") and value == -2 ** (int(base[3:]) - 1):
+            # The most negative value isn't a constant that fits.
+            return f"({macro}({value + 1}) - 1)"
+        return f"{macro}({value})"
+
+    ################################################################
+    # Checks
+
+    def check_names(self):
+        for e in self.ir["enums"]:
+            check_identifier(e["name"], "Enum name")
+            self.define(self.type_name(e["name"]), f"enum {e['name']}")
+            self.define(f"{self.type_name(e['name'])}_valid", f"enum {e['name']}'s check")
+            for member in e["members"]:
+                check_identifier(member["name"], f"Member name {e['name']}.{member['name']}")
+                self.define(f"{self.macro}_{snake_case(e['name']).upper()}_{member['name'].upper()}",
+                            f"{e['name']}.{member['name']}")
+        for s in self.ir["structs"]:
+            check_identifier(s["name"], "Struct name")
+            if not s["fields"]:
+                raise GenError(f"struct {s['name']} is empty: C has no empty structs")
+            self.define(self.type_name(s["name"]), f"struct {s['name']}")
+            self.check_fields(s["fields"], self.type_name(s["name"]), s["name"])
+        for p in self.ir["protocols"]:
+            check_identifier(p["name"], "Protocol name")
+            name = self.type_name(p["name"])
+            for suffix in ("handler", "dispatch", "methods"):
+                self.define(f"{name}_{suffix}", f"protocol {p['name']}'s {suffix}")
+            self.define(f"{self.macro}_{snake_case(p['name']).upper()}_NUM_METHODS",
+                        f"protocol {p['name']}'s method count")
+            for m in p["methods"]:
+                check_identifier(m["name"], f"Method name {p['name']}.{m['name']}")
+        for p, m, name, layout, _ in self.messages():
+            c_name = self.type_name(name)
+            self.define(c_name, f"message {p['name']}.{name}")
+            self.define(f"{c_name.upper()}_METHOD", f"message {name}'s method number")
+            self.define(f"{c_name.upper()}_LENGTH", f"message {name}'s length")
+            for suffix in ("init", "verify"):
+                self.define(f"{c_name}_{suffix}", f"message {name}'s {suffix}")
+            for f in layout["fields"]:
+                if f["name"] == HEADER_MEMBER:
+                    raise GenError(f"Field {p['name']}.{name}.{f['name']} has the name of the header member")
+            self.check_fields(layout["fields"], c_name, f"{p['name']}.{name}")
+
+    def check_fields(self, fields: List[Dict[str, Any]], c_name: str, what: str):
+        for f in fields:
+            check_identifier(f["name"], f"Field name {what}.{f['name']}")
+            if f["type"] in ("string", "opaque", "sequence", "port"):
+                self.define(f"{c_name}_{f['name']}", f"{what}.{f['name']}'s accessor")
+                self.define(f"{c_name}_set_{f['name']}", f"{what}.{f['name']}'s setter")
+
+    ################################################################
+    # Header
+
+    def generate_header(self) -> str:
+        self.lines = []
+        guard = f"{self.macro}_H"
+        self.emit(f"// Generated by didlcgen from {self.source}: do not edit.")
+        self.emit("//")
+        self.emit(f"// DIDL library: {self.ir['library']}")
+        self.emit()
+        self.emit(f"#ifndef {guard}")
+        self.emit(f"#define {guard}")
+        self.emit()
+        self.emit("#include <stddef.h>")
+        self.emit()
+        self.emit("#include <darq/dipc.h>")
+        self.emit()
+        self.emit("#ifdef __cplusplus")
+        self.emit('extern "C" {')
+        self.emit("#endif")
+        self.emit()
+
+        if self.ir["enums"]:
+            self.banner("Enums")
+            for e in self.ir["enums"]:
+                self.emit_enum(e)
+        if self.ir["structs"]:
+            self.banner("Structs")
+            for s in self.struct_order():
+                self.emit_struct(s)
+        messages = self.messages()
+        if messages:
+            self.banner("Messages")
+            for p, m, name, layout, description in messages:
+                self.emit_message(p, m, name, layout, description)
+        if self.ir["protocols"]:
+            self.banner("Protocols")
+            for p in self.ir["protocols"]:
+                self.emit_protocol_declarations(p)
+
+        self.emit("#ifdef __cplusplus")
+        self.emit("}")
+        self.emit("#endif")
+        self.emit()
+        self.emit("#endif")
+        return "\n".join(self.lines) + "\n"
+
+    def banner(self, title: str):
+        self.emit("////////////////////////////////////////////////////////////////")
+        self.emit(f"// {title}")
+        self.emit()
+
+    def emit_enum(self, e: Dict[str, Any]):
+        name = self.type_name(e["name"])
+        self.emit(f"/* enum {e['name']} : {e['type']} */")
+        self.emit(f"typedef {C_TYPES[e['type']]} {name};")
+        for member in e["members"]:
+            self.emit(f"#define {self.macro}_{snake_case(e['name']).upper()}_{member['name'].upper()} "
+                      f"(({name}){self.constant(member['value'], e['type'])})")
+        self.emit()
+        self.emit(f"static inline bool {name}_valid({name} value) {{")
+        self.emit("\tswitch (value) {")
+        for member in e["members"]:
+            self.emit(f"\tcase {self.constant(member['value'], e['type'])}:")
+        self.emit("\t\treturn true;")
+        self.emit("\tdefault:")
+        self.emit("\t\treturn false;")
+        self.emit("\t}")
+        self.emit("}")
+        self.emit()
+
+    def emit_fields(self, fields: List[Dict[str, Any]]):
+        for f in fields:
+            comment = ""
+            if f["type"] in ("string", "opaque", "port"):
+                comment = f"  /* {f['type']} */"
+            elif f["type"] == "sequence":
+                comment = f"  /* {self.didl_type(f)} */"
+            self.emit(f"\t{self.c_type(f)} {f['name']};{comment}")
+
+    def didl_type(self, ref: Dict[str, Any]) -> str:
+        if ref["type"] == "sequence":
+            return f"sequence<{self.didl_type(ref['element'])}>"
+        return ref["type"]
+
+    def emit_layout_asserts(self, c_struct: str, size: int, fields: List[Dict[str, Any]], base: int,
+                            message: bool = False):
+        if message:
+            # The struct is aligned to at least the header's 4 bytes, so it
+            # may be longer than the message's fixed part: its padding
+            # isn't part of the message.
+            self.emit(f'static_assert(sizeof({c_struct}) >= {size} && sizeof({c_struct}) < {size} + 4, '
+                      f'"{c_struct}: size");')
+        else:
+            self.emit(f'static_assert(sizeof({c_struct}) == {size}, "{c_struct}: size");')
+        for f in fields:
+            self.emit(f"static_assert(offsetof({c_struct}, {f['name']}) == {base + f['offset']}, "
+                      f'"{c_struct}: {f["name"]}");')
+
+    def emit_struct(self, s: Dict[str, Any]):
+        name = self.type_name(s["name"])
+        self.emit(f"/* struct {s['name']} */")
+        self.emit(f"struct {name} {{")
+        self.emit_fields(s["fields"])
+        self.emit("};")
+        self.emit_layout_asserts(f"struct {name}", s["total_size"], s["fields"], 0)
+        self.emit()
+        self.emit_helpers(name, s["fields"], message=False)
+
+    def emit_message(self, p: Dict[str, Any], m: Dict[str, Any], name: str,
+                     layout: Dict[str, Any], description: str):
+        c_name = self.type_name(name)
+        length = HEADER_LENGTH + layout["total_size"]
+        self.emit(f"/* {p['name']}.{m['name']} {description} (method {m['number']}): its fixed")
+        self.emit(" * part is LENGTH bytes, which may be less than the struct's size. */")
+        self.emit(f"#define {c_name.upper()}_METHOD {m['number']}")
+        self.emit(f"#define {c_name.upper()}_LENGTH {length}")
+        self.emit(f"struct {c_name} {{")
+        self.emit(f"\tstruct darq_header {HEADER_MEMBER};")
+        self.emit_fields(layout["fields"])
+        self.emit("};")
+        self.emit_layout_asserts(f"struct {c_name}", length, layout["fields"], HEADER_LENGTH, message=True)
+        self.emit()
+        self.emit("/* Start building one: assign its fixed fields, and set the rest. */")
+        self.emit(f"static inline struct {c_name} *{c_name}_init(struct darq_builder *builder, uint32_t txid) {{")
+        self.emit(f"\treturn darq_builder_begin(builder, {c_name.upper()}_LENGTH, txid, 0, {m['number']});")
+        self.emit("}")
+        self.emit()
+        self.emit("/* Check a received one, before it's used. */")
+        self.emit(f"int {c_name}_verify(const void *data, size_t length, size_t num_handles);")
+        self.emit()
+        self.emit_helpers(c_name, layout["fields"], message=True)
+
+    def emit_helpers(self, c_name: str, fields: List[Dict[str, Any]], message: bool):
+        """Setters and accessors for the fields that need them.  A
+        message's accessors read from the message; a struct's are given
+        the message it's in, since values' offsets are from its start."""
+        self_type = f"struct {c_name}"
+        base_param = "" if message else "const void *message, "
+        base = "m" if message else "message"
+        for f in fields:
+            field = f["name"]
+            setter = f"{c_name}_set_{field}"
+            getter = f"{c_name}_{field}"
+            if f["type"] == "string":
+                self.emit(f"static inline int {setter}(struct darq_builder *builder, {self_type} *m, "
+                          "const char *value, size_t length) {")
+                self.emit(f"\treturn darq_set_string(builder, &m->{field}, value, length);")
+                self.emit("}")
+                self.emit(f"static inline const char *{getter}({base_param}const {self_type} *m) {{")
+                self.emit(f"\treturn darq_string({base}, m->{field});")
+                self.emit("}")
+            elif f["type"] == "opaque":
+                self.emit(f"static inline int {setter}(struct darq_builder *builder, {self_type} *m, "
+                          "const void *value, size_t length) {")
+                self.emit(f"\treturn darq_set_opaque(builder, &m->{field}, value, length);")
+                self.emit("}")
+                self.emit(f"static inline const uint8_t *{getter}({base_param}const {self_type} *m) {{")
+                self.emit(f"\treturn darq_opaque({base}, m->{field});")
+                self.emit("}")
+            elif f["type"] == "sequence":
+                element = self.c_type(f["element"])
+                self.emit(f"static inline {element} *{setter}(struct darq_builder *builder, {self_type} *m, "
+                          "uint32_t count) {")
+                self.emit(f"\treturn darq_set_sequence(builder, &m->{field}, count, sizeof({element}));")
+                self.emit("}")
+                self.emit(f"static inline const {element} *{getter}({base_param}const {self_type} *m) {{")
+                self.emit(f"\treturn darq_sequence({base}, m->{field});")
+                self.emit("}")
+            elif f["type"] == "port":
+                self.emit(f"static inline int {setter}(struct darq_builder *builder, {self_type} *m, "
+                          "uint64_t handle) {")
+                self.emit(f"\treturn darq_set_port(builder, &m->{field}, handle);")
+                self.emit("}")
+                self.emit(f"static inline uint64_t {getter}(const {self_type} *m, const uint64_t *handles) {{")
+                self.emit(f"\treturn darq_port(m->{field}, handles);")
+                self.emit("}")
+            else:
+                continue
+            self.emit()
+
+    def emit_protocol_declarations(self, p: Dict[str, Any]):
+        name = self.type_name(p["name"])
+        self.emit(f"/* protocol {p['name']} */")
+        self.emit(f"#define {self.macro}_{snake_case(p['name']).upper()}_NUM_METHODS {len(p['methods'])}")
+        self.emit(f"extern const struct darq_method {name}_methods[];")
+        self.emit()
+        self.emit("/* A server's handlers, each given the context passed to dispatch, and")
+        self.emit(" * the verified request, in place.  One with a response builds it in")
+        self.emit(" * reply, with the request's txid, and returns 0; or returns an error")
+        self.emit(" * code (enum darq_error_code), for an error reply.  A missing handler")
+        self.emit(" * gets a NOT_IMPLEMENTED error reply. */")
+        self.emit(f"struct {name}_handler {{")
+        for m in p["methods"]:
+            method = f"handle_{snake_case(m['name'])}"
+            if m["response"] is None:
+                message = self.type_name(m["name"])
+                self.emit(f"\tvoid (*{method})(void *context, const struct {message} *message,")
+                self.emit("\t\tconst uint64_t *handles, size_t num_handles);")
+            else:
+                message = self.type_name(m["name"] + "Request")
+                self.emit(f"\tint (*{method})(void *context, const struct {message} *request,")
+                self.emit("\t\tconst uint64_t *handles, size_t num_handles, struct darq_builder *reply);")
+        self.emit("};")
+        self.emit()
+        self.emit("/* Verify a request, and call its handler.  Returns 0, or what's wrong")
+        self.emit(" * with the message (enum darq_dipc_status).  A reply to send, if any,")
+        self.emit(" * is built in reply: its length is 0 if there's none.  reply may be")
+        self.emit(" * NULL, if no reply will be sent. */")
+        self.emit(f"int {name}_dispatch(const struct {name}_handler *handler, void *context,")
+        self.emit("\tconst void *data, size_t length, const uint64_t *handles, size_t num_handles,")
+        self.emit("\tstruct darq_builder *reply);")
+        self.emit()
+
+    ################################################################
+    # Source
+
+    def generate_source(self) -> str:
+        self.lines = []
+        self.emit(f"// Generated by didlcgen from {self.source}: do not edit.")
+        self.emit("//")
+        self.emit(f"// DIDL library: {self.ir['library']}")
+        self.emit()
+        self.emit("#include <stddef.h>")
+        self.emit()
+        self.emit(f'#include "{self.name}.h"')
+        self.emit()
+        self.emit("#define CHECK(expression) do { int status_ = (expression); "
+                  "if (status_ != DARQ_DIPC_OK) return status_; } while (0)")
+        self.emit()
+        for s in self.struct_order():
+            self.emit(f"static int verify_{self.type_name(s['name'])}(struct darq_verifier *verifier, "
+                      f"const struct {self.type_name(s['name'])} *s);")
+        if self.ir["structs"]:
+            self.emit()
+        for s in self.struct_order():
+            name = self.type_name(s["name"])
+            self.emit(f"static int verify_{name}(struct darq_verifier *verifier, const struct {name} *s) {{")
+            self.emit("\t(void)verifier;")
+            self.emit("\t(void)s;")
+            self.emit_field_checks(s["fields"], "s")
+            self.emit("\treturn DARQ_DIPC_OK;")
+            self.emit("}")
+            self.emit()
+        for p, m, name, layout, _ in self.messages():
+            self.emit_verify(m, self.type_name(name), layout)
+        for p in self.ir["protocols"]:
+            self.emit_protocol(p)
+        return "\n".join(self.lines).rstrip("\n") + "\n"
+
+    def needs_check(self, ref: Dict[str, Any]) -> bool:
+        """Whether a value of a type has anything to verify."""
+        if ref["type"] in ("int8", "uint8", "int16", "uint16", "int32", "uint32", "int64", "uint64",
+                           "real32", "real64"):
+            return False
+        return True
+
+    def emit_field_checks(self, fields: List[Dict[str, Any]], owner: str):
+        for f in fields:
+            self.emit_value_check(f, f"{owner}->{f['name']}", 1)
+
+    def emit_value_check(self, ref: Dict[str, Any], value: str, depth: int):
+        indent = "\t" * depth
+        f_type = ref["type"]
+        if f_type == "bool":
+            self.emit(f"{indent}CHECK(darq_verify_bool(&{value}));")
+        elif f_type in self.enums:
+            self.emit(f"{indent}if (!{self.type_name(f_type)}_valid({value})) return DARQ_DIPC_BAD_ENUM;")
+        elif f_type == "port":
+            self.emit(f"{indent}CHECK(darq_verify_port(verifier, {value}));")
+        elif f_type == "string":
+            self.emit(f"{indent}CHECK(darq_verify_string(verifier, {value}));")
+        elif f_type == "opaque":
+            self.emit(f"{indent}CHECK(darq_verify_opaque(verifier, {value}));")
+        elif f_type in self.structs:
+            self.emit(f"{indent}CHECK(verify_{self.type_name(f_type)}(verifier, &{value}));")
+        elif f_type == "sequence":
+            element = ref["element"]
+            c_element = self.c_type(element)
+            self.emit(f"{indent}CHECK(darq_verify_sequence(verifier, {value}, sizeof({c_element})));")
+            if self.needs_check(element):
+                i = f"i{depth}"
+                elements = f"e{depth}"
+                self.emit(f"{indent}{{")
+                self.emit(f"{indent}\tconst {c_element} *{elements} = "
+                          f"darq_sequence(verifier->data, {value});")
+                self.emit(f"{indent}\tfor (uint32_t {i} = 0; {i} < {value}.length; {i}++) {{")
+                self.emit_value_check(element, f"{elements}[{i}]", depth + 2)
+                self.emit(f"{indent}\t}}")
+                self.emit(f"{indent}}}")
+
+    def emit_verify(self, m: Dict[str, Any], c_name: str, layout: Dict[str, Any]):
+        self.emit(f"static int verify_fields_{c_name}(struct darq_verifier *verifier, const struct {c_name} *m) {{")
+        self.emit("\t(void)verifier;")
+        self.emit("\t(void)m;")
+        self.emit_field_checks(layout["fields"], "m")
+        self.emit("\treturn DARQ_DIPC_OK;")
+        self.emit("}")
+        self.emit()
+        self.emit(f"int {c_name}_verify(const void *data, size_t length, size_t num_handles) {{")
+        self.emit("\tstruct darq_verifier verifier;")
+        self.emit(f"\tint status = darq_verify_begin(&verifier, data, length, {c_name.upper()}_LENGTH, 0, "
+                  f"{m['number']}, num_handles);")
+        self.emit("\tif (status == DARQ_DIPC_OK) {")
+        self.emit(f"\t\tstatus = verify_fields_{c_name}(&verifier, data);")
+        self.emit("\t}")
+        self.emit("\tdarq_verify_end(&verifier);")
+        self.emit("\treturn status;")
+        self.emit("}")
+        self.emit()
+
+    def emit_protocol(self, p: Dict[str, Any]):
+        name = self.type_name(p["name"])
+        self.emit(f"const struct darq_method {name}_methods[] = {{")
+        for m in p["methods"]:
+            request = self.type_name(m["name"] + ("Request" if m["response"] is not None else ""))
+            response = (f"{self.type_name(m['name'] + 'Response').upper()}_LENGTH"
+                        if m["response"] is not None else "0")
+            self.emit(f'\t{{{m["number"]}, "{m["name"]}", {request.upper()}_LENGTH, {response}}},')
+        if not p["methods"]:
+            self.emit('\t{0, NULL, 0, 0},')
+        self.emit("};")
+        self.emit()
+        self.emit("/* An error reply, if the request has a txid: a one-way message has none. */")
+        self.emit(f"static void error_{name}(struct darq_builder *reply, const struct darq_header *header,")
+        self.emit("\t\tuint32_t code, const char *description) {")
+        self.emit("\tif (reply != NULL && header->txid != 0) {")
+        self.emit("\t\tdarq_build_error_reply(reply, header->txid, header->method, code, description);")
+        self.emit("\t}")
+        self.emit("}")
+        self.emit()
+        self.emit(f"int {name}_dispatch(const struct {name}_handler *handler, void *context,")
+        self.emit("\t\tconst void *data, size_t length, const uint64_t *handles, size_t num_handles,")
+        self.emit("\t\tstruct darq_builder *reply) {")
+        self.emit("\tif (reply != NULL) {")
+        self.emit("\t\treply->length = 0;")
+        self.emit("\t\treply->num_handles = 0;")
+        self.emit("\t}")
+        self.emit("\tif ((uintptr_t)data % 8 != 0) {")
+        self.emit("\t\treturn DARQ_DIPC_MISALIGNED;")
+        self.emit("\t}")
+        self.emit("\tif (length < DARQ_DIPC_HEADER_LENGTH) {")
+        self.emit("\t\treturn DARQ_DIPC_SHORT;")
+        self.emit("\t}")
+        self.emit("\tconst struct darq_header *header = data;")
+        self.emit("\tint status;")
+        self.emit("\tswitch (header->method) {")
+        for m in p["methods"]:
+            method = f"handle_{snake_case(m['name'])}"
+            one_way = m["response"] is None
+            message = self.type_name(m["name"] + ("" if one_way else "Request"))
+            self.emit(f"\tcase {m['number']}:")
+            self.emit(f"\t\tif ((status = {message}_verify(data, length, num_handles)) != DARQ_DIPC_OK) {{")
+            self.emit(f"\t\t\terror_{name}(reply, header, DARQ_ERROR_BAD_MESSAGE, darq_dipc_strerror(status));")
+            self.emit("\t\t\treturn status;")
+            self.emit("\t\t}")
+            self.emit(f"\t\tif (handler->{method} == NULL) {{")
+            self.emit(f"\t\t\terror_{name}(reply, header, DARQ_ERROR_NOT_IMPLEMENTED, "
+                      f'"{m["name"]} isn\'t implemented");')
+            self.emit("\t\t\treturn DARQ_DIPC_OK;")
+            self.emit("\t\t}")
+            if one_way:
+                self.emit(f"\t\thandler->{method}(context, data, handles, num_handles);")
+            else:
+                self.emit("\t\tif (reply == NULL) {")
+                self.emit("\t\t\treturn DARQ_DIPC_OK;")
+                self.emit("\t\t}")
+                self.emit(f"\t\tstatus = handler->{method}(context, data, handles, num_handles, reply);")
+                self.emit("\t\tif (status != 0) {")
+                self.emit(f'\t\t\terror_{name}(reply, header, status, "{m["name"]} failed");')
+                self.emit("\t\t} else if (reply->length == 0) {")
+                self.emit(f"\t\t\terror_{name}(reply, header, DARQ_ERROR_INTERNAL_ERROR, "
+                          f'"{m["name"]} built no response");')
+                self.emit("\t\t}")
+            self.emit("\t\treturn DARQ_DIPC_OK;")
+        self.emit("\tdefault:")
+        self.emit(f'\t\terror_{name}(reply, header, DARQ_ERROR_UNKNOWN_METHOD, "no such method");')
+        self.emit("\t\treturn DARQ_DIPC_BAD_METHOD;")
+        self.emit("\t}")
+        self.emit("}")
+        self.emit()
+
+    ################################################################
+
+    def generate(self) -> tuple[str, str]:
+        """Return the header and the source file."""
+        self.names = {}
+        self.check_names()
+        return self.generate_header(), self.generate_source()
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Generate C from a .dir IR file, for messages used in place.")
+    ap.add_argument("input", help="source .dir file")
+    ap.add_argument("-d", "--directory",
+                    help="where to write the header and source file, named after the library; "
+                         "- for stdout (default: next to the input)")
+    args = ap.parse_args()
+
+    try:
+        with open(args.input) as f:
+            ir = json.load(f)
+        header, source = Generator(ir, os.path.basename(args.input)).generate()
+    except OSError as e:
+        print(f"didlcgen: {e}", file=sys.stderr)
+        return 1
+    except (ValueError, KeyError, TypeError) as e:
+        print(f"{args.input}: error: invalid IR: {e!r}", file=sys.stderr)
+        return 1
+    except GenError as e:
+        print(f"{args.input}: error: {e}", file=sys.stderr)
+        return 1
+
+    name = file_name(ir["library"])
+    if args.directory == "-":
+        sys.stdout.write(header)
+        sys.stdout.write(source)
+        return 0
+    directory = args.directory if args.directory is not None else os.path.dirname(args.input)
+    for extension, text in ((".h", header), (".c", source)):
+        with open(os.path.join(directory, name + extension), "w") as f:
+            f.write(text)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

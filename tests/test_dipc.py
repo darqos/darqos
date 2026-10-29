@@ -203,13 +203,68 @@ def test_decoder_reads_in_order():
     assert inp.string(*descriptors[1]) == "two"
 
 
-def test_decoder_rejects_reordered_values():
+def test_decoder_accepts_any_order():
+    out = dipc.Encoder(8, [])
+    first = out.opaque(b"one")
+    second = out.string("two")
+    inp = dipc.Decoder(b"\0" * 8 + bytes(out.data), 8)
+    assert inp.string(*second) == "two"
+    assert inp.opaque(*first) == b"one"
+
+
+@pytest.mark.parametrize("descriptor, message", [
+    ((8, 3), "overlaps another"),
+    ((8, 1), "overlaps another"),
+    ((0, 3), "out of range"),
+    ((9, 1), "not 8-byte aligned"),
+    ((24, 9), "out of range"),
+])
+def test_decoder_rejects_misplaced_values(descriptor, message):
     out = dipc.Encoder(8, [])
     out.opaque(b"one")
-    second = out.opaque(b"two")
+    out.opaque(b"two")
     inp = dipc.Decoder(b"\0" * 8 + bytes(out.data), 8)
-    with pytest.raises(MessageDecodingError, match="at offset 16, expected 8"):
-        inp.opaque(*second)
+    inp.opaque(8, 3)
+    with pytest.raises(MessageDecodingError, match=message):
+        inp.opaque(*descriptor)
+
+
+def test_string_followed_by_nul():
+    # A string of 8 bytes takes two blocks: its NUL is in the second.
+    out = dipc.Encoder(8, [])
+    assert out.string("12345678") == (8, 8)
+    assert bytes(out.data) == b"12345678" + b"\0" * 8
+    assert out.string("") == (24, 0)
+    assert bytes(out.data)[16:] == b"\0" * 8
+
+
+@pytest.mark.parametrize("data, message", [
+    (b"abc\x01\0\0\0\0", "isn't followed by a NUL"),
+    (b"a\0c\0\0\0\0\0", "contains a NUL"),
+])
+def test_bad_strings_rejected(data, message):
+    with pytest.raises(MessageDecodingError, match=message):
+        dipc.Decoder(b"\0" * 8 + data, 8).string(8, 3 if "followed" in message else 3)
+
+
+def test_string_without_room_for_nul_rejected():
+    with pytest.raises(MessageDecodingError, match="out of range"):
+        dipc.Decoder(b"\0" * 8 + b"abcdefgh", 8).string(8, 8)
+
+
+def test_nul_not_encoded():
+    with pytest.raises(ValueError, match="NUL"):
+        dipc.Encoder(8, []).string("a\0b")
+
+
+@pytest.mark.parametrize("value, decoded", [(0, False), (1, True), (2, None), (255, None)])
+def test_bool_codec(value, decoded):
+    buf = b"\0" * 8 + bytes([value]) + b"\0" * 7
+    if decoded is None:
+        with pytest.raises(MessageDecodingError, match=f"bool value {value}"):
+            dipc.Decoder(buf, 8).sequence(dipc.BOOL_CODEC, 8, 1)
+    else:
+        assert dipc.Decoder(buf, 8).sequence(dipc.BOOL_CODEC, 8, 1) == [decoded]
 
 
 def test_sequence_of_scalars():

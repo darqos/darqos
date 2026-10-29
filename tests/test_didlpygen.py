@@ -270,6 +270,22 @@ def test_fields_at_ir_offsets(fs):
     assert len(buf) == fs.Foo.LENGTH == 8 + foo["request"]["total_size"]
 
 
+@pytest.mark.parametrize("value, decoded", [(0, False), (1, True), (2, None), (0xff, None)])
+def test_bool_field_is_0_or_1(fs, value, decoded):
+    ir = compile_ir(SOURCE)
+    foo = next(m for m in ir["protocols"][0]["methods"] if m["name"] == "Foo")
+    offset = 8 + next(f["offset"] for f in foo["request"]["fields"] if f["name"] == "f")
+    buf = bytearray(fs.Foo(0).encode()[0])
+    buf[offset] = value
+    message = fs.Foo()
+    if decoded is None:
+        with pytest.raises(MessageDecodingError, match=f"bool value {value}, not 0 or 1"):
+            message.decode(bytes(buf), [])
+    else:
+        message.decode(bytes(buf), [])
+        assert message.f is decoded
+
+
 def test_padding_is_zero(fs):
     buf = fs.Foo(0, a=0xff, b=0xffff, c=-1, d=-1.0, e=-1.0, f=True, h=0xffffffff).encode()[0]
     assert buf[9] == 0                      # between a and b
@@ -602,13 +618,33 @@ def test_sequence_out_of_range(seqs):
 
 
 def test_values_must_not_overlap(seqs):
-    # Two descriptors for the same value: decoding requires each value
-    # where the encoder would have put it, so one can't be referred to twice.
+    # Two descriptors for the same value: values may be in any order,
+    # but no two may overlap, so one can't be referred to twice.
     buf = bytearray(seqs.StringsRequest(0, "abc", b"", "abc").encode()[0])
     assert struct.unpack_from("<II", buf, 24) == (40, 3)
     struct.pack_into("<II", buf, 24, 32, 3)
-    with pytest.raises(MessageDecodingError, match="string value at offset 32, expected 40"):
+    with pytest.raises(MessageDecodingError, match="string value at offset 32, length 4, overlaps another"):
         seqs.StringsRequest().decode(bytes(buf))
+
+
+def test_values_in_any_order(seqs):
+    # The same message, with its two strings swapped round.
+    buf = bytearray(seqs.StringsRequest(0, "abc", b"", "xyz").encode()[0])
+    first, third = struct.unpack_from("<II", buf, 8), struct.unpack_from("<II", buf, 24)
+    struct.pack_into("<II", buf, 8, *third)
+    struct.pack_into("<II", buf, 24, *first)
+    decoded = seqs.StringsRequest()
+    decoded.decode(bytes(buf))
+    assert (decoded.a, decoded.c) == ("xyz", "abc")
+
+
+def test_bad_bool_in_sequence(seqs):
+    buf = bytearray(seqs.NumbersRequest(0, [], [True], []).encode()[0])
+    offset = struct.unpack_from("<I", buf, 16)[0]
+    assert buf[offset] == 1
+    buf[offset] = 2
+    with pytest.raises(MessageDecodingError, match="bool value 2"):
+        seqs.NumbersRequest().decode(bytes(buf))
 
 
 def test_bad_enum_in_sequence(seqs):

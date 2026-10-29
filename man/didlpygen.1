@@ -68,10 +68,12 @@ field a
 raises
 .B darq.errors.MessageDecodingError
 if the buffer is too short, the method number doesn't match, the
-flags are wrong, an out-of-line value is out of range or not where the
-encoder would have put it, a string isn't valid UTF-8, a port index is
-past the end of the handles, or an enum field's value isn't one of its
-members.
+flags are wrong, an out-of-line value is out of range, not 8-byte
+aligned, or overlaps another, a string isn't valid UTF-8, has a NUL in
+it, or isn't followed by one, a
+.B bool
+isn't 0 or 1, a port index is past the end of the handles, or an enum
+field's value isn't one of its members.
 Each request class's
 .B RESPONSE
 is its response class;
@@ -113,8 +115,15 @@ and
 to read a message header for dispatching.
 Struct and message objects compare equal when their fields are equal.
 .SS Wire format
+This is the format
+.BR didlcgen (1)
+uses too, in place; see
+.BR didl (5).
 Fields are little-endian, at the offsets given in the IR.
 The body follows the 8-byte header.
+A
+.B bool
+is a byte, 0 or 1.
 An
 .B opaque
 field is an 8-byte descriptor: a
@@ -124,7 +133,9 @@ offset of its value from the start of the message, then a
 length.
 A
 .B string
-is encoded as an opaque, holding UTF-8.
+is encoded as an opaque, holding UTF-8 with no NUL in it, and always
+followed by a NUL, which its value includes, so it can be read in
+place as a C string.
 A
 .B sequence
 is an 8-byte descriptor: a
@@ -136,13 +147,12 @@ The array holds each element's fixed part, at a stride of the element
 type's size; the elements' own out-of-line values follow it, in
 element order.
 .PP
-The values are appended after the fixed part of the message, in the
-order they're encoded: fields in order, and a sequence's array before
-its elements' values.
-Each starts on an 8-byte boundary, and is padded with zeros to a
-multiple of 8 bytes.
-Decoding requires exactly that order, so a value can't be referred to
-more than once.
+The values follow the fixed part of the message, each on an 8-byte
+boundary, and padded with zeros to a multiple of 8 bytes.
+They may be in any order, but no two may overlap, so a value can't be
+referred to more than once.
+The generated code appends them in the order it encodes them: fields
+in order, and a sequence's array before its elements' values.
 .PP
 Message fields are encoded by generated code; sequence elements by the
 codecs in
@@ -207,4 +217,5 @@ didlpygen filesystem.dir
 .RE
 .SH SEE ALSO
 .BR didl (5),
-.BR didlc (1)
+.BR didlc (1),
+.BR didlcgen (1)

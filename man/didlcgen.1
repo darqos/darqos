@@ -1,0 +1,297 @@
+.\" darqos
+.\" Copyright (C) 2026 David Arnold
+.TH DIDLCGEN 1 2026-10-30 DarqOS "DarqOS User's Manual"
+.SH NAME
+didlcgen \- generate C for DIPC messages from DIDL
+.SH SYNOPSIS
+.B didlcgen
+.RB [ \-d
+.IR directory ]
+.I input
+.SH DESCRIPTION
+.B didlcgen
+reads the intermediate representation (IR) written by
+.BR didlc (1)
+and generates C for the messages it defines: a header and a source
+file, named after the DIDL library with dots replaced by underscores,
+so the library
+.B darq.compositor
+produces
+.I darq_compositor.h
+and
+.IR darq_compositor.c .
+The generated code uses the DIPC runtime,
+.I darq/dipc.h
+and
+.I darq/dipc.c
+(see
+.BR FILES ).
+It's C11, and needs a little-endian host.
+.PP
+Messages are used in place, in the buffer where they're built or
+received: nothing is copied into, or out of, them.
+So the header has a struct for each message, and for each DIDL struct,
+laid out exactly as it is on the wire (see
+.BR didl (5)),
+with a
+.B static_assert
+checking each field's offset, and each struct's size, against the IR.
+A message is built by assigning its fixed fields, and setting its
+strings, opaques, sequences and ports with generated helpers, which
+append their values; a received message is verified once, and then
+read through a pointer to its struct.
+.SS Names
+Everything generated is prefixed with the library's name in lower
+case,
+.I L
+below, and DIDL names are converted to snake case:
+.B FileAttributes
+becomes
+.BR file_attributes .
+.TP
+.I enums
+An integer typedef of the base type,
+.IB L _ enum\fR,
+a macro for each member,
+.IB L _ ENUM _ MEMBER\fR,
+in upper case, and
+.IB L _ enum _valid( value )\fR,
+true if a value is a member.
+.TP
+.I structs
+.BI "struct " L _ struct\fR,
+with its fields.
+.TP
+.I messages
+For a method
+.I x
+with a response,
+.BI "struct " L _ x _request
+and
+.BI "struct " L _ x _response\fR;
+for a one-way method,
+.BI "struct " L _ x\fR.
+Each starts with a
+.B struct darq_header
+named
+.BR header ,
+holding the
+.BR txid ,
+the flags and the method number, followed by its fields.
+.IB MESSAGE _METHOD
+is its method number, and
+.IB MESSAGE _LENGTH
+the length of its fixed part, which may be a few bytes less than the
+struct's size: the struct is aligned to at least 4 bytes, and its
+trailing padding isn't part of the message.
+.TP
+.I fields
+A number, bool or enum field is a member of its type:
+.BR bool ,
+.BR int8_t ,
+\&...,
+.BR uint64_t ,
+.BR float ,
+.BR double ,
+or the enum's typedef.
+A struct field is a member of the struct's type.
+An
+.BR opaque ,
+.B string
+or
+.B sequence
+is a
+.BR "struct darq_ref" :
+its value's offset from the start of the message, and its length (for
+a string, without its NUL) or count of elements.
+A
+.B port
+is a
+.BR uint16_t :
+an index into the message's handles.
+.TP
+.I protocols
+.BI "const struct darq_method " L _ protocol _methods[]\fR,
+listing each method's number, name, and its messages' lengths, with
+.IB L _ PROTOCOL _NUM_METHODS
+entries;
+.BI "struct " L _ protocol _handler\fR,
+of a function for each method, named
+.BI handle_ method
+in snake case; and
+.IB L _ protocol _dispatch()\fR.
+.SS Building
+A message is built with a
+.BR "struct darq_builder" ,
+in a buffer that starts on an 8-byte boundary, and doesn't move while
+it's built, such as a shared memory region: so pointers into it stay
+valid.
+.PP
+.RS
+.nf
+_Alignas(8) uint8_t buffer[4096];
+struct darq_builder builder;
+darq_builder_init(&builder, buffer, sizeof(buffer));
+
+struct example_files_list_request *m =
+    example_files_list_request_init(&builder, txid);
+m\->max = 100;
+example_files_list_request_set_path(&builder, m, path, strlen(path));
+
+/* Send builder.data, builder.length bytes, and builder.num_handles
+ * handles from builder.handles. */
+.fi
+.RE
+.PP
+.IB MESSAGE _init( builder ", " txid )
+writes the header and zeroes the fixed part, returning the message, or
+NULL if the buffer's too small.
+The fields are then set, in any order.
+For each opaque, string, sequence and port field
+.IR f ,
+.IB MESSAGE _set_ f\fR(\fIbuilder\fR, \fImessage\fR, ...)
+sets its value:
+.TP
+.B string
+.RI ( "const char *value" ", " "size_t length" ):
+it must be valid UTF-8, with no NUL.
+.B darq_set_string_lossy()
+sets text that may not be: invalid UTF-8, and NULs, are replaced with
+U+FFFD, and it's cut short, at a character's boundary, at a length.
+.TP
+.B opaque
+.RI ( "const void *value" ", " "size_t length" ).
+.TP
+.B sequence
+.RI ( "uint32_t count" ):
+returns the element array, zeroed, to fill in, or NULL.
+An element that's a string, opaque or sequence is set with
+.BR darq_set_string() ,
+.B darq_set_opaque()
+or
+.BR darq_set_sequence() ,
+given a pointer to it; a port, with
+.BR darq_set_port() .
+.TP
+.B port
+.RI ( "uint64_t handle" ):
+the handle's index in
+.BR builder.handles ,
+added if it isn't there; handle 0 is no port.
+.PP
+A struct's fields have setters too:
+.IB L _ struct _set_ f\fR(\fIbuilder\fR, \fIstruct\fR, ...),
+for a struct within the message, or an element of a sequence.
+The setters return 0, or
+.B DARQ_DIPC_TOO_SMALL
+if the buffer's full,
+.B DARQ_DIPC_INVALID_VALUE
+for a string that isn't valid, or
+.BR DARQ_DIPC_TOO_MANY_HANDLES .
+.SS Reading
+A received message must be checked before it's used:
+.IB MESSAGE _verify( data ", " length ", " num_handles )
+returns 0, or what's wrong with it
+.RB ( "enum darq_dipc_status" ;
+.B darq_dipc_strerror()
+describes it).
+It checks everything
+.BR didlpygen (1)'s
+decoders check: that the message is 8-byte aligned and long enough,
+with the right flags and method; that each value is 8-byte aligned,
+within the message, and doesn't overlap another; that each string is
+valid UTF-8, with no NUL, and followed by one; that each
+.B bool
+is 0 or 1, each enum value is a member, and each port index is within
+the handles.
+.PP
+Then the message is read in place, through a pointer to its struct.
+For each opaque, string, sequence and port field
+.IR f ,
+.IB MESSAGE _ f ( message )
+returns its value: a
+.B "const char *"
+for a string, which is NUL-terminated, a pointer to the bytes of an
+opaque, or to the elements of a sequence, with
+.IB message -> f .length
+their length or count; a port's takes the handles too, and returns the
+handle, or 0.
+A struct's take the message, as
+.IB L _ struct _ f ( message ", " struct )\fR,
+since values' offsets are from the message's start.
+.B darq_string()
+and the like read a sequence's elements.
+.PP
+Verifying a message protects its reader only while its sender can't
+change it.
+.SS Dispatching
+.IB L _ protocol _dispatch( handler ", " context ", " data ", " length ", "
+.IB handles ", " num_handles ", " reply )
+verifies a request, and calls the handler's function for it, with the
+context, the request, in place, and its handles.
+A function for a method with a response builds it in
+.IR reply ,
+with the request's
+.BR txid ,
+and returns 0, or an error code
+.RB ( "enum darq_error_code" ).
+.PP
+If the request can't be verified, or its method is unknown, or its
+handler is NULL or fails, or builds no response, an error reply is
+built in
+.IR reply ,
+as
+.B darq.dipc.ErrorReply
+is, unless the request is one-way.
+A reply to send, if any, is in
+.IR reply :
+its length is 0 if there's none.
+.I reply
+may be NULL, if no reply will be sent.
+.B dispatch()
+returns 0, or what's wrong with the message.
+.SH OPTIONS
+.TP
+.BI \-d " directory\fR, " \-\-directory " directory"
+Write the files to
+.IR directory ,
+or both to standard output, header first, if it's
+.BR \- .
+By default, they're written next to
+.IR input .
+.TP
+.BR \-h ", " \-\-help
+Show a usage summary.
+.SH EXIT STATUS
+0 on success; 1 if the input can't be read, isn't valid IR, has a
+format version this
+.B didlcgen
+doesn't support, or can't be generated; 2 if the command line is
+invalid.
+.SH DIAGNOSTICS
+Errors are reported on standard error as
+.IB file ": error: " message\fR.
+Generation fails if a name isn't a valid C identifier, or is a C
+keyword or reserved, if two generated names would be the same, if a
+message's field is named
+.BR header ,
+or if a struct is empty.
+.SH FILES
+.TP
+.IR /darq/lib/c/darq/dipc.h ", " /darq/lib/c/darq/dipc.c
+The DIPC runtime the generated code uses, which a program compiles with
+it, with
+.I /darq/lib/c
+on its include path;
+.I lib/c/darq
+in the source tree.
+.SH BUGS
+C has no empty structs, so a DIDL file with one can't be generated.
+.PP
+There are no clients: the C runtime doesn't make p-calls yet.
+.SH SEE ALSO
+.BR didl (5),
+.BR didlc (1),
+.BR didlpygen (1),
+DarqOS documentation,
+.IR doc/ipc.rst .

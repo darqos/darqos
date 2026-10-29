@@ -34,7 +34,7 @@ from typing import Any, Dict, List
 
 # struct module format codes, and Python type hints, for primitive types
 TYPE_CODES = {
-    'bool':   ('?', 'bool'),
+    'bool':   ('B', 'bool'),
     'int8':   ('b', 'int'),   'uint8':  ('B', 'int'),
     'int16':  ('h', 'int'),   'uint16': ('H', 'int'),
     'int32':  ('i', 'int'),   'uint32': ('I', 'int'),
@@ -50,7 +50,7 @@ TYPE_CODES = {
 OUT_OF_LINE = {'opaque', 'string', 'sequence'}
 
 # Codecs for primitive types that aren't numbers or bools
-CODECS = {'opaque': 'OPAQUE_CODEC', 'string': 'STRING_CODEC', 'port': 'PORT_CODEC'}
+CODECS = {'bool': 'BOOL_CODEC', 'opaque': 'OPAQUE_CODEC', 'string': 'STRING_CODEC', 'port': 'PORT_CODEC'}
 
 # struct module byte order prefix, matching darq.dipc.BYTE_ORDER
 BYTE_ORDER = "<"
@@ -66,7 +66,7 @@ HEADER_LENGTH = 8
 # Names the generated module imports
 RESERVED_NAMES = {"IntEnum", "Message", "Record", "struct", "typing", "system", "MessageDecodingError",
                   "Decoder", "Encoder", "Codec", "EnumCodec", "SequenceCodec", "StructCodec",
-                  "OPAQUE_CODEC", "PORT_CODEC", "STRING_CODEC"}
+                  "BOOL_CODEC", "OPAQUE_CODEC", "PORT_CODEC", "STRING_CODEC"}
 
 # Names used by the darq.system Client and Handler base classes
 RESERVED_METHOD_NAMES = {"call", "send", "service", "timeout", "dispatch", "error", "defer", "server", "port_destroyed"}
@@ -492,6 +492,9 @@ class Generator:
                     index += 1
                 elif "enum" in leaf:
                     self.emit(f"        {leaf['path']} = self.decode_enum({leaf['enum']}, bits[{index}])")
+                    index += 1
+                elif leaf["type"] == "bool":
+                    self.emit(f"        {leaf['path']} = self.decode_bool(bits[{index}])")
                     index += 1
                 else:
                     self.emit(f"        {leaf['path']} = bits[{index}]")

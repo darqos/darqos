@@ -3,8 +3,10 @@
 
 # You can set these variables from the command line, and also
 # from the environment for the first two.  Warnings are errors, as in CI.
+# Sphinx is the development virtual environment's, if there is one (it
+# has the theme), or else whichever is on the path, as in CI.
 SPHINXOPTS    ?= -W --keep-going
-SPHINXBUILD   ?= sphinx-build
+SPHINXBUILD   ?= $(or $(wildcard $(abspath ../venv313/bin/sphinx-build)),sphinx-build)
 SOURCEDIR     = .
 BUILDDIR      = _build
 

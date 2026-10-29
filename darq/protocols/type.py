@@ -638,7 +638,7 @@ class ListTypesRequest(Message):
 
     METHOD = 8
     RESPONSE = ListTypesResponse
-    BODY_FORMAT = "<?"
+    BODY_FORMAT = "<B"
     BODY_START = 8
     LENGTH = 9
 
@@ -658,7 +658,7 @@ class ListTypesRequest(Message):
             raise MessageDecodingError("buffer too short for message")
 
         bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
-        self.implemented = bits[0]
+        self.implemented = self.decode_bool(bits[0])
         return
 
 

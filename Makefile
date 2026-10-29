@@ -18,7 +18,7 @@ darq/protocols/%.py: lib/didl/%.didl bin/didlc bin/didlpygen
 
 # HTML and PDF documentation, in doc/_build/html and doc/_build/latex.
 docs:
-	$(MAKE) -C doc html latexpdf SPHINXBUILD=$(abspath venv313/bin/sphinx-build)
+	$(MAKE) -C doc html latexpdf
 
 world: docs protocols
 

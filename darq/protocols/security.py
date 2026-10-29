@@ -49,7 +49,7 @@ class IsPasswordSetResponse(Message):
     """Security.IsPasswordSet response."""
 
     METHOD = 1
-    BODY_FORMAT = "<?"
+    BODY_FORMAT = "<B"
     BODY_START = 8
     LENGTH = 9
 
@@ -69,7 +69,7 @@ class IsPasswordSetResponse(Message):
             raise MessageDecodingError("buffer too short for message")
 
         bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
-        self.set = bits[0]
+        self.set = self.decode_bool(bits[0])
         return
 
 
