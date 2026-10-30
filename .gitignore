@@ -18,3 +18,6 @@ snapshots/darqos-*.tar.gz
 
 # Development run directory (DARQ_RUN=./run)
 /run/
+
+# Personal data used by experiments, such as address books
+experiments/**/*.vcf

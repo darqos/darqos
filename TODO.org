@@ -135,6 +135,14 @@ Issues
 ** Second Edition
 
 - Implement Knowledgebase service
+  - Design in doc/kb-service.rst; data model prototyped in
+    experiments/kb, and copied into services/kb to become the service.
+  - Done: persistence in SQLite (services/kb/store.py), with every
+    revision kept, conflict checks, and label, link and value indexes;
+    stable ids for local properties and imported entities; repeatable
+    imports; redirects (merge) and destruction; subclass-aware lookups.
+  - Next: the protocol (lib/didl/kb.didl), and the service around the
+    store; the Item identifier datatype; language fallback chains.
 - Implement URL handling
   - as a Type?
   - as an object identifier?

@@ -51,6 +51,7 @@ Services
 .. include:: metadata.rst
 .. include:: history.rst
 .. include:: search-service.rst
+.. include:: kb-service.rst
 .. include:: network.rst
 
 ************************************************************************
