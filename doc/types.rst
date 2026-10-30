@@ -205,6 +205,15 @@ When an implementation's port is destroyed, which happens when it exits
 or crashes, the Type Service forgets it.  It isn't restarted until
 something next asks for it with `Activate`.
 
+An `Activate` can arrive after the implementation has exited, but
+before the notification that its port is dead.  The p-kernel then
+refuses the reply carrying the port (`DEAD_TRANSFERRED_PORT`, see
+:doc:`ipc`): the Type Service forgets the implementation, and starts
+it again for that `Activate`.  (It replies with `Deferred.try_reply`,
+which leaves the request unanswered when that happens.)  An
+implementation that's gone by the time its `Ready` is answered fails
+its waiting `Activate` requests, rather than being restarted.
+
 Every implementation serves the `Implementation` protocol (also in
 `lib/didl/type.didl`):
 

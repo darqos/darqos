@@ -190,10 +190,15 @@ class EntityImplementation(Implementation.Handler):
         if type_id not in model.KIND_TYPES:
             return CreateResponse(status=Status.NOT_FOUND)
 
+        # Its statements are DarqOS's: an import that says the same adds
+        # its own reference to them (see darq.kb.restate).
         entity = model.Item()
+        claims: list[tuple[str, model.Value]] = [(model.DARQOS_TYPE, model.StringValue(type_id))]
         if type_id in classes:
-            entity.claim(model.INSTANCE_OF, model.EntityValue(classes[type_id]))
-        entity.claim(model.DARQOS_TYPE, model.StringValue(type_id))
+            claims.insert(0, (model.INSTANCE_OF, model.EntityValue(classes[type_id])))
+        for property_id, value in claims:
+            entity.claim(property_id, value).add_reference(
+                model.Reference().add(model.STATED_IN, model.EntityValue(model.DARQOS)))
         try:
             self.kb.put(entity)
         except KB_ERRORS as e:

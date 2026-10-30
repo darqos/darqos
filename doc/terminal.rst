@@ -42,11 +42,14 @@ Development Terminal
 --------------------
 
 `tools/devterm` is a development tool: an ordinary window for
-creating items, browsing History, and shutting down or rebooting.  It
-was written to try types and lenses before the compositor existed,
-and is kept alongside the real Terminal, sharing its New and History
-parts (``darq.ui``).  It's started at boot, last, when
-`DARQ_DEV_TERMINAL=1` is set.
+creating items, browsing History, starting tools, and shutting down or
+rebooting.  It was written to try types and lenses before the
+compositor existed, and is kept alongside the real Terminal, sharing
+its New and History parts (``darq.ui``).  It's started at boot, last,
+when `DARQ_DEV_TERMINAL=1` is set.  Its Tools menu lists the
+installed tools, those under `tools/` with a `tool.json` manifest,
+`{"name": ...}`, such as the vCard import (see :doc:`kb-service`),
+and starts the one chosen.
 
 The real Terminal is started at boot, unless `DARQ_TERMINAL=0` is set.
 Run the p-kernel from the desktop session: with the Terminal, the

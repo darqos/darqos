@@ -120,18 +120,40 @@ entity's document as it was isn't written.
 The database can hold personal data, such as an address book, so it's
 created readable only by its owner.
 
-An import must be repeatable: a re-import updates the entities it
-created before, rather than adding them again.  Imported entities'
-identifiers are UUIDs derived (as version 5 UUIDs) from a key, such as
-a vCard's UID, or a locality's name, region, and country, so a
-re-import arrives at the same entities without looking them up.  Each
-statement an import makes has a reference stating it's from the
-import's source (stated in, P248), such as the address book's item,
-or Wikidata (Q2013) for the base vocabulary.  A re-import replaces the
-statements from its source, and keeps any others, such as those added
-by hand; a statement that's unchanged keeps its identifier and place.
-An entity with statements from the source, which a re-import no longer
-has, loses them, and is destroyed if it has none left.
+A statement's references say where it's from: each is to a source,
+by stated in (P248), such as an address book's item, Wikidata (Q2013)
+for a vocabulary, or the *DarqOS* item for the type implementation's
+own statements.  As in Wikibase, a statement can have several: when a
+source states what another has already, the statement gains a
+reference, rather than being repeated (see ``darq.kb.restate``).
+Restating a source's statements replaces them, keeping the others; a
+statement the source no longer makes loses its reference, and goes if
+it has none left.  A statement with no references is the operator's,
+and is never changed by a source.
+
+Statements are the same if they have the same value and qualifiers.  A
+source can say which qualifiers its statements always say all of
+(an address book's labels and contact types, say): then only those,
+and any others its statement has, are compared.  So a statement can be
+given qualifiers by hand, such as the start time (P580) and end time
+(P582) of a residence, and still be the source's.  When the source no
+longer makes one with qualifiers like that, or one that's deprecated,
+it's kept, as the operator's, rather than removed: a past address
+stays, with its dates.  Ranks aren't compared: a source's preferred
+rank is given to a statement it matches, but a rank's never lowered,
+since without knowing what the source said before, there's no telling
+whether a rank was set by hand.
+
+This is one-way.  Keeping the KB in step with its sources both ways
+(vCard files, CardDAV, JSContact, JMAP) needs what was last synced, to
+merge against, with conflicts kept for a person to resolve: see
+``TODO.org``.
+
+An import must be repeatable, and share what's already in the KB: a
+re-import updates the entities it created before, rather than adding
+them again, and an import from another source uses the entities that
+are already there, such as a locality, rather than making another (see
+vCard Import, below).
 
 Other ways of storing the KB were considered:
 
@@ -387,7 +409,8 @@ the same when its entity's classes change, as when a stub person turns
 out to be an organisation.
 
 The defaults are DarqOS's, stated on the classes, with references to
-a *DarqOS* source item, as an import's are (see Storage): human (Q5)
+the *DarqOS* source item (see Storage), as are the statements of the
+items it creates, their kind and class: human (Q5)
 is a person, organizational subdivision (Q9261468) an organisational
 unit, geographic location (Q2221906) and address (Q319608) places,
 organization (Q43229) an organisation, and group of humans (Q16334295)
@@ -537,6 +560,80 @@ None, for now.  These were settled:
   conform to ``public.contact``, rather than both being
   ``public.contact``.
 
+vCard Import
+------------
+
+``tools/vcard-import`` is a tool, started from the development
+Terminal's Tools menu, with a window: choose a vCard file, and the
+address book's name, and import it.  The address book is an item, the
+source its statements are stated in, so it can be imported again,
+updating what it imported before; other address books are imported
+under other names, and share what they have in common.
+
+* ``vcard.py`` reads vCard 3.0 files, such as Apple Contacts' and
+  Fastmail's.
+* ``vocabulary.py`` has the base vocabulary from Wikidata: the
+  properties and classes an address book needs, the countries and
+  regions in one, and the subclass links that give their instances
+  kinds, with local properties, with fixed UUIDs, for the rest.
+* ``cards.py`` reads cards as *drafts*: people, organisations, groups,
+  departments, given and family names, stub people for related names,
+  localities, and addresses, each with its natural key.
+* ``importer.py`` imports them, as a client of the KB service and the
+  KB type implementation.
+
+The import is:
+
+1. The vocabulary, and the address book's item, which have fixed
+   identifiers, are found or created through the KB, with ``ensure``,
+   and the vocabulary's statements stated in Wikidata.
+2. Each draft's entity is found, or else created:
+
+   * a person, group, or organisation with a card, by its vCard UID;
+   * by where the address book's statements led before, on a
+     re-import: by property, and label, and qualifier, and where a
+     property has several values, by their labels; this finds what's
+     been renamed since, too.  An address is found this way only if
+     it's the same address, with the same lines, postcode and country:
+     one that's changed is another address, so the old one isn't
+     rewritten, for whoever else lives there, and can be kept, dated;
+   * by its natural key, in the KB as a whole: an organisation, given or
+     family name, or full-name stub person by its label and class; a
+     department by its label and parent organisation; a locality by its
+     label, region, and country; an address by its street lines,
+     postcode, locality, region, and country.  A field the card hasn't
+     matches only an entity without it.  If several match, the one with
+     the lowest identifier is used, and the match is *ambiguous*.
+     People with cards are never matched by name.  Each match by
+     natural key is logged, and listed in the window, with its key and
+     the item it matched, to be checked;
+   * otherwise, it's created, as an item of its kind, with the type
+     implementation's ``Create``, and recorded in History as
+     ``created``, from ``vcard-import``, if it's of a kind other than
+     ``darq.entity``.
+
+3. Each entity's statements from the address book are restated from
+   its draft, keeping any others, in batches, with its label and
+   description, if it hasn't one.  Its labels, contact types, services,
+   departments and job titles are the qualifiers it always says all of
+   (``Vocabulary.qualifiers``), so dates added by hand are kept.  An
+   entity whose address, by property and label, was replaced with
+   another is noted, as an *address changed*, for its old address's end
+   time and the new one's start time to be added.
+4. Entities with statements from the address book, that it no longer
+   has, lose them, and are destroyed if they've nothing left but their
+   kind and classes.  An entity something else will still link to is
+   kept, with the address book's statements made the operator's: an
+   old address a dated statement still links to, and so its locality.
+
+A draft that fails is left out, and its cards' UIDs logged, and the
+import goes on.  The window shows counts, and what's to be reviewed:
+the matches to check and the addresses changed, which are logged too,
+and nothing else of the address book.  Review items are kept only
+there, for now: a sync framework would keep them, as conflicts are.  An address book of about 1200
+cards becomes about 4100 entities, and takes about 18 seconds to
+import; importing it again takes about 6, and changes nothing.
+
 Implementation
 --------------
 
@@ -549,35 +646,17 @@ copied into ``services/kb``, to become the service:
 * ``services/kb/main.py`` is the service.
 * ``types/kb`` is the type implementation, of the kinds.
 * ``lenses/entity`` is the entity lens.
-* ``kb.py`` has a ``KnowledgeBase``, kept in memory, or in a store,
-  with transactions, lookups, redirects, and checks that statements
-  fit their properties; and ``Import``, for repeatable imports.
-* ``store.py`` keeps a ``KnowledgeBase`` in SQLite, as described in
-  Storage, above.
-* ``wikidata.py`` has a base vocabulary from Wikidata: the properties
-  and classes an address book needs, and the countries and regions in
-  one, with local properties, with fixed UUIDs, for the rest.
-* ``vcard.py`` reads vCard 3.0 files.
-* ``addressbook.py`` imports an address book, exported as a vCard
-  file, into a ``KnowledgeBase``, in memory or in a database, and
-  prints what it read::
+* ``services/kb/kb.py`` has a ``KnowledgeBase``, kept in memory, or in
+  a store, with transactions, lookups, redirects, and checks that
+  statements fit their properties.
+* ``services/kb/store.py`` keeps a ``KnowledgeBase`` in SQLite, as
+  described in Storage, above.
+* ``tools/vcard-import`` imports an address book (see vCard Import,
+  below).
 
-      PYTHONPATH=../.. python addressbook.py [--db PATH] FILE [NAME ...]
-
-  It works on the database directly, so it's for when the service
-  isn't running: it's not yet a client of it.
-
-  An address book of about 1200 cards becomes about 4100 items, with
-  about 16,000 statements: people, organisations, and their
-  departments; given and family names; and countries, regions,
-  localities, and addresses.  Related names (spouse, child, and so on)
-  are linked to the card with that name, if there's just one, and to a
-  stub person otherwise.
-
-Importing the same address book into a database a second time writes
-nothing.  The tests are in ``tests/test_kb_store.py``,
-``tests/test_kb_service.py``, ``tests/test_kb_type.py``, and
-``tests/test_entity_lens.py``.
+The tests are in ``tests/test_kb_store.py``,
+``tests/test_kb_service.py``, ``tests/test_kb_type.py``,
+``tests/test_entity_lens.py``, and ``tests/test_vcard_import.py``.
 
 The service pages its lookups' results itself, from complete lists of
 the matching entities: the store's queries could page instead, when a

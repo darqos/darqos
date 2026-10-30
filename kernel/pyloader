@@ -451,6 +451,11 @@ class PythonPProcess(darq.SocketListener):
         sock = self._pkernel_sock
         assert sock is not None, "already disconnected"
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+        # Messages are small, and each waits for its reply: Nagle's
+        # algorithm would hold each back for the last one's ACK, which
+        # the p-kernel delays, adding about 40ms to every p-call.
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.io_loop.add_socket(sock, self)
         sock.connect(('127.0.0.1', self._pkernel_port))
         return

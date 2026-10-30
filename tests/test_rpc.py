@@ -17,7 +17,7 @@ import time
 import pytest
 
 from darq import dipc, system
-from darq.errors import DeadPortError, NonExistentPortError, RemoteError
+from darq.errors import DeadPortError, DeadTransferredPortError, NonExistentPortError, RemoteError
 
 
 BIN = pathlib.Path(__file__).parent.parent / "bin"
@@ -356,6 +356,9 @@ class FakePorts:
         self.order = []
         self.sent = []
 
+        # Destroyed ports: a message to one, or carrying one, is refused.
+        self.dead: set[int] = set()
+
     def deliver(self, port, source, payload, handles=()):
         self.queues[port].append((source, payload, tuple(handles)))
         self.order.append(port)
@@ -372,6 +375,10 @@ class FakePorts:
         return None
 
     def send_message(self, source, destination, buf, ports=()):
+        if destination in self.dead:
+            raise DeadPortError(f"{destination} is dead")
+        if self.dead.intersection(ports):
+            raise DeadTransferredPortError(f"transferred {sorted(self.dead.intersection(ports))} is dead")
         self.sent.append((source, destination, buf, tuple(ports)))
 
     def replies(self, kv):
@@ -513,6 +520,40 @@ def test_deferred_answered_once(kv, server, fake_ports, deferring):
     with pytest.raises(RuntimeError, match="already been answered"):
         pending.error(dipc.ErrorCode.INTERNAL_ERROR, "again")
     assert len(fake_ports.sent) == 1
+
+
+def test_try_reply_with_a_dead_port(kv, server, fake_ports, handler):
+    deferred = []
+
+    def share(request, source):
+        deferred.append(handler.defer())
+        return deferred[-1]
+
+    handler.share = share
+    request(fake_ports, kv.ShareRequest(p=1234), 4)
+    request(fake_ports, kv.ShareRequest(p=1234), 5)
+    server.run_once(timeout=0)
+    server.run_once(timeout=0)
+    first, second = deferred
+
+    # A port in the reply is dead: it's unanswered, and can be answered again.
+    fake_ports.dead = {1234}
+    with pytest.raises(DeadTransferredPortError):
+        first.try_reply(kv.ShareResponse(echoed=1234))
+    assert not first.done and fake_ports.sent == []
+    first.try_reply(kv.ShareResponse(echoed=None))
+    assert first.done and fake_ports.replies(kv) == [(SERVICE_PORT, CLIENT, kv.ShareResponse(4))]
+
+    # The client's gone: it's answered, with the error raised, or from
+    # reply(), logged.
+    fake_ports.dead, fake_ports.sent = {CLIENT}, []
+    with pytest.raises(DeadPortError):
+        second.try_reply(kv.ShareResponse())
+    assert second.done
+    request(fake_ports, kv.ShareRequest(p=1234), 6)
+    server.run_once(timeout=0)
+    deferred[2].reply(kv.ShareResponse())
+    assert deferred[2].done and fake_ports.sent == []
 
 
 def test_handler_fails_after_deferring(kv, server, fake_ports, handler):

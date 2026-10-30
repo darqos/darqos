@@ -283,6 +283,8 @@ def test_get_entity(ada):
         ("P108", "", "en", "employer"),
         (model.INSTANCE_OF, "", "en", "instance of"),
         (model.DARQOS_TYPE, "", "en", "DarqOS type"),
+        (model.STATED_IN, "", "en", "stated in"),
+        (model.DARQOS, f"darq.entity:{model.DARQOS}", "en", "DarqOS"),
     }
 
 

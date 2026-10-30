@@ -526,6 +526,33 @@ def test_tbd(terminal, keysym, name):
     assert visible(terminal) == []
 
 
+def test_vcard_import(terminal, monkeypatch):
+    spawned = []
+
+    def spawn(path):
+        spawned.append(path)
+        if len(spawned) == 2:
+            raise main.darq.SpawnError(1, "no such program")
+        return 7
+
+    monkeypatch.setattr(main.darq, "spawn_process", spawn)
+    monkeypatch.setenv("DARQ_ROOT", "/darq")
+
+    # Not while it's locked.
+    hotkey(terminal, main.XK_t)
+    assert spawned == []
+
+    unlock(terminal)
+    hotkey(terminal, main.XK_t)
+    assert spawned == ["/darq/tools/vcard-import"]
+    assert visible(terminal) == []
+
+    hotkey(terminal, main.XK_t)
+    assert visible(terminal) == [terminal.notice]
+    message = terminal.notice.message.text()
+    assert message.startswith("Can't start the vCard import:") and "no such program" in message
+
+
 def test_lock(terminal):
     unlock(terminal)
     hotkey(terminal, main.XK_n)

@@ -43,6 +43,7 @@ include = [
     "types/text/main.py",
     "tools/devterm/main.py",
     "tools/type-sync/main.py",
+    "tools/vcard-import/*.py",
 ]
 line-length = 120
 target-version = "py313"
@@ -85,6 +86,7 @@ include = [
     "types/text/main.py",
     "tools/devterm/main.py",
     "tools/type-sync/main.py",
+    "tools/vcard-import/*.py",
     "tests",
 ]
 pythonVersion = "3.13"

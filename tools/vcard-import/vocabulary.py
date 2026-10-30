@@ -1,7 +1,7 @@
 # darqos
 # Copyright (C) 2026 David Arnold
 
-"""Base vocabulary from Wikidata, for the knowledge base examples.
+"""Base vocabulary, from Wikidata, for importing an address book.
 
 Registers the properties and items the address book example needs,
 with their Wikidata identifiers, plus a few local properties, for things
@@ -10,16 +10,16 @@ the same in every knowledge base.  The places are the countries and
 regions the address book uses; its localities and addresses are created
 as it's read.
 
-The vocabulary is an import, whose statements are stated in Wikidata,
-so loading it again updates it, rather than adding to it.
+Its statements are stated in Wikidata (Q2013): the importer finds, or
+creates, its entities, and replaces their statements from Wikidata with
+these, keeping any others.
 
 The identifiers, labels, datatypes and classes were checked against
 Wikidata on 2026-10-30."""
 
 from typing import Dict, List, Optional, Set, Tuple
 
-from darq.kb import Datatype, EntityValue, Item
-from kb import Import, KnowledgeBase
+from darq.kb import Datatype, Entity, EntityValue, Item, Property
 
 
 # Countries: identifier, label, class, and the names used for them,
@@ -91,14 +91,18 @@ _SUPERCLASSES = [
 ]
 
 
+# Wikidata, the source of the vocabulary's statements.
+WIKIDATA = "Q2013"
+
+
 class Vocabulary:
-    """The base properties and items, registered with a KnowledgeBase.
+    """The base properties and items.
 
     Attributes are the entities' identifiers, so wd.spouse is "P26"."""
 
-    def __init__(self, kb: KnowledgeBase):
-        self.kb = kb
-        self.source = Import(kb, "Q2013", "P248")
+    def __init__(self):
+        # The entities, by identifier.
+        self.entities: Dict[str, Entity] = {}
         p = self._property
         i = self._item
 
@@ -182,6 +186,17 @@ class Vocabulary:
             "dcf85e3f-6247-42f7-b2b3-e5c77fa1b987", "vCard UID",
             Datatype.ExternalId)
 
+        # The qualifiers the address book's statements always say all
+        # of: others, such as start and end times, can be added by hand
+        # (see darq.kb.restate).
+        self.qualifiers = frozenset({
+            self.label, self.contact_type, self.service, self.department,
+            self.job_title})
+
+        # Properties linking an entity to its addresses.
+        self.addresses = (self.residence, self.work_location,
+                          self.other_address, self.headquarters_location)
+
         # Sources, and classes.
         i("Q2013", "Wikidata")
         self.human = i("Q5", "human").get_id()
@@ -210,8 +225,7 @@ class Vocabulary:
         i("Q1048835", "political territorial entity")
         i("Q10864048", "first-level administrative division")
         for cls, superclasses in _SUPERCLASSES:
-            item = self.kb.get(cls)
-            assert item is not None
+            item = self.entities[cls]
             for superclass in superclasses:
                 item.claim(self.subclass_of, EntityValue(superclass))
 
@@ -234,19 +248,24 @@ class Vocabulary:
                 self.region_countries.setdefault(
                     name.casefold(), set()).add(country)
 
-        self.source.finish()
-
     def _property(self,
                   pid: str,
                   label: str,
                   datatype: Datatype,
                   desc: Optional[str] = None) -> str:
-        """Register a property, and return its identifier."""
-        return self.source.property(pid, label, datatype, desc).get_id()
+        """Add a property, and return its identifier."""
+        prop = Property(datatype, pid)
+        prop.set_label(label)
+        if desc is not None:
+            prop.set_description(desc)
+        self.entities[pid] = prop
+        return pid
 
     def _item(self, qid: str, label: str, cls: Optional[str] = None) -> Item:
-        """Register an item, an instance of a class if given."""
-        item = self.source.item(qid, label)
+        """Add an item, an instance of a class if given."""
+        item = Item(qid)
+        item.set_label(label)
+        self.entities[qid] = item
         if cls is not None:
             item.claim(self.instance_of, EntityValue(cls))
         return item
@@ -277,8 +296,3 @@ class Vocabulary:
         """Return the country of the only regions with a name, if any."""
         countries = self.region_countries.get(name.strip().casefold(), set())
         return next(iter(countries)) if len(countries) == 1 else None
-
-
-def load(kb: KnowledgeBase) -> Vocabulary:
-    """Register the base vocabulary with a KnowledgeBase, and return it."""
-    return Vocabulary(kb)

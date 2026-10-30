@@ -17,7 +17,10 @@
 # An implementation is started by Activate: it's spawned with a
 # bootstrap port, and reports its port there with Ready.  Activates
 # wait (deferred) until then.  When an implementation's port dies, its
-# entry is removed, and the next Activate starts it again.
+# entry is removed, and the next Activate starts it again.  An Activate
+# can come between its death and the notification of it: then the
+# p-kernel refuses the reply, carrying the dead port, and that Activate
+# starts it again.
 
 import json
 import logging
@@ -310,21 +313,42 @@ class TypeService(Type.Handler):
         if path is None:
             return ActivateResponse(status=Status.NOT_FOUND)
 
+        pending = self.defer()
         port = self.running.get(path)
-        if port is not None:
-            return ActivateResponse(implementation=port, status=Status.OK)
+        if port is not None and self.answer(pending, path, port):
+            return pending
 
         starting = self.starting.get(path)
         if starting is None:
             starting = self.start(path)
             if starting is None:
-                return ActivateResponse(status=Status.FAILED)
+                pending.reply(ActivateResponse(status=Status.FAILED))
+                return pending
 
-        pending = self.defer()
         starting.waiting.append(pending)
         return pending
 
     # Activation
+
+    def answer(self, pending: darq.Deferred, path: str, port: int) -> bool:
+        """Answer an Activate with a running implementation's port.
+
+        The implementation may have exited, with its death notification
+        still to come: then the p-kernel refuses the reply, and it's
+        no longer running.
+
+        :returns: False if its port is dead: the Activate isn't answered."""
+        try:
+            pending.try_reply(ActivateResponse(implementation=port, status=Status.OK))
+        except darq.DeadTransferredPortError:
+            logging.warning(f"Implementation {path} has gone (port {port}), before its notification")
+            if self.running.get(path) == port:
+                del self.running[path]
+            return False
+        except darq.DarqError as e:
+            # Most likely, the client has gone.
+            logging.warning(f"Reply to Activate failed: {e!r}")
+        return True
 
     def start(self, path: str) -> Starting | None:
         """Spawn an implementation, with a bootstrap port for its Ready.
@@ -357,12 +381,11 @@ class TypeService(Type.Handler):
         self.server.remove(starting.bootstrap)
         darq.close_port(starting.bootstrap)
 
-        if port is None:
-            response = ActivateResponse(status=Status.FAILED)
-        else:
-            response = ActivateResponse(implementation=port, status=Status.OK)
+        # If it's gone already, its Activates fail, rather than start
+        # it again.
         for pending in starting.waiting:
-            pending.reply(response)
+            if port is None or not self.answer(pending, path, port):
+                pending.reply(ActivateResponse(status=Status.FAILED))
 
     def ready(self, path: str, port: int | None):
         """Record a started implementation's port, from its Ready."""

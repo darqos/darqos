@@ -86,7 +86,7 @@ def service(tmp_path, monkeypatch):
     handler.server = FakeServer(clock)
     handler.replies = {}
 
-    def send_reply(port, source, reply):
+    def send_reply(port, source, reply, strict=False):
         assert (port, source) == (PORT, CLIENT)
         handler.replies[reply.txid] = reply
     monkeypatch.setattr(system, "_send_reply", send_reply)

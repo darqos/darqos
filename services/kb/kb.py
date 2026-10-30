@@ -3,12 +3,10 @@
 
 """A knowledge base: entities, kept in memory, or in a Store.
 
-This is the Knowledge Base service's own (see main.py), and that of
-tools working on its database directly, such as addressbook.py.  The
-data model is darq.kb's."""
+This is the Knowledge Base service's own (see main.py).  The data model
+is darq.kb's."""
 
 import contextlib
-import json
 import re
 
 from typing import (TYPE_CHECKING, Dict, Iterable, Iterator, List, Optional,
@@ -18,8 +16,7 @@ from darq.kb import (INSTANCE_OF, SUBCLASS_OF, VALUE_TYPES, ConflictError,
                      Datatype, Entity, EntityValue, Item, Property,
                      QuantityValue, Rank, Reference, Snak, Statement,
                      StringValue, TextValue, TimeValue, document,
-                     encode_statement, entity_links, entity_strings, fold,
-                     normalise)
+                     entity_links, entity_strings, fold, normalise)
 
 if TYPE_CHECKING:
     from store import Store
@@ -525,144 +522,6 @@ class KnowledgeBase:
         else:
             text = str(value)
         return f"{name}: {text}"
-
-
-def _content(statement: Statement) -> str:
-    """Return a statement's content, without its identifier, as text."""
-    return json.dumps(encode_statement(statement, with_id=False),
-                      sort_keys=True)
-
-
-class Import:
-    """Entities and statements from a source, such as an address book.
-
-    An import can be repeated.  The first time it gets an entity, by
-    item() or property(), the statements an earlier import from the same
-    source made about it are removed, and the entity's other statements
-    are kept.  finish() gives each new statement a reference to the
-    source: one that's the same as a statement removed keeps its
-    identifier, and its place, so an entity that hasn't changed isn't
-    written again.
-    An entity the earlier import made statements about, which this one
-    didn't get, loses them, and is destroyed if it has none left."""
-
-    def __init__(self, kb: KnowledgeBase, source_id: str, stated_in: str):
-        """Constructor.
-
-        :param kb: KnowledgeBase to import into.
-        :param source_id: Identifier of the source's item.
-        :param stated_in: Identifier of the property for a reference to
-        the source, such as stated in (P248)."""
-        self.kb = kb
-        self.source_id = source_id
-        self.stated_in = stated_in
-
-        # Entities got, by identifier; the statements on them that are
-        # kept; the identifiers of those removed, by content; and the
-        # order of their statements, by identifier.
-        self.entities: Dict[str, Entity] = {}
-        self.kept: Set[str] = set()
-        self.removed: Dict[str, Dict[str, List[str]]] = {}
-        self.order: Dict[str, Dict[str, int]] = {}
-
-    def _sourced(self, statement: Statement) -> bool:
-        """Return whether a statement has a reference to the source."""
-        return any(a.property_id == self.stated_in
-                   and isinstance(a.value, EntityValue)
-                   and a.value.entity_id == self.source_id
-                   for r in statement.references for a in r.snaks)
-
-    def _got(self, entity: Entity):
-        """Remove an entity's statements from an earlier import."""
-        if entity.id in self.entities:
-            return
-        self.entities[entity.id] = entity
-        self.order[entity.id] = {s.id: i for i, s in
-                                 enumerate(entity.statements)}
-        removed: Dict[str, List[str]] = {}
-        for s in list(entity.statements):
-            if self._sourced(s):
-                removed.setdefault(_content(s), []).append(s.id)
-                entity.remove_statement(s)
-            else:
-                self.kept.add(s.id)
-        self.removed[entity.id] = removed
-
-    def _describe(self,
-                  entity: Entity,
-                  label: Optional[str],
-                  desc: Optional[str],
-                  language: str):
-        if label is not None and entity.get_label(language) != label:
-            entity.set_label(label, language)
-        if desc is not None and entity.get_description(language) != desc:
-            entity.set_description(desc, language)
-
-    def item(self,
-             item_id: str,
-             label: Optional[str] = None,
-             desc: Optional[str] = None,
-             language: str = "en") -> Item:
-        """Return an item, creating it if needed, with a label."""
-        entity = self.kb.get(item_id)
-        if entity is None:
-            entity = self.kb.add_item(label, item_id, desc, language)
-        elif not isinstance(entity, Item):
-            raise ValueError(f"{item_id} isn't an item")
-        else:
-            self._describe(entity, label, desc, language)
-        self._got(entity)
-        return entity
-
-    def property(self,
-                 property_id: str,
-                 label: Optional[str],
-                 datatype: Datatype,
-                 desc: Optional[str] = None,
-                 language: str = "en") -> Property:
-        """Return a property, creating it if needed, with a label."""
-        entity = self.kb.get(property_id)
-        if entity is None:
-            entity = self.kb.add_property(label, datatype, property_id, desc,
-                                          language)
-        elif not isinstance(entity, Property):
-            raise ValueError(f"{property_id} isn't a property")
-        else:
-            self._describe(entity, label, desc, language)
-            if entity.get_datatype() != datatype:
-                entity.set_datatype(datatype)
-        self._got(entity)
-        return entity
-
-    def finish(self):
-        """Give the new statements references to the source, and remove
-        an earlier import's statements about entities not got since."""
-        for entity in self.entities.values():
-            removed = self.removed[entity.id]
-            for s in entity.statements:
-                if s.id in self.kept:
-                    continue
-                if not self._sourced(s):
-                    s.add_reference(Reference().add(
-                        self.stated_in, EntityValue(self.source_id)))
-                ids = removed.get(_content(s))
-                if ids:
-                    s.id = ids.pop(0)
-
-            # Statements that were there before go back in their places,
-            # and new ones go after them.
-            order = self.order[entity.id]
-            entity.statements.sort(key=lambda st: order.get(st.id, len(order)))
-
-        for entity in self.kb.find_links(self.source_id, self.stated_in,
-                                         "reference"):
-            if entity.id in self.entities:
-                continue
-            for s in list(entity.statements):
-                if self._sourced(s):
-                    entity.remove_statement(s)
-            if not entity.statements:
-                self.kb.destroy(entity.id)
 
 
 if __name__ == "__main__":

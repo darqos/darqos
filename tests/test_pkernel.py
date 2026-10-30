@@ -1202,7 +1202,7 @@ def test_bad_transfer_refused(pkernel, problem):
         a_to_extra = grant_send_right(pkernel, a, b, extra)
         assert close_port(pkernel, b, b_peer, extra) == 0
         handles = (a_to_c, a_to_extra)
-        expected = pk.SendResult.DEAD_PORT
+        expected = pk.SendResult.DEAD_TRANSFERRED_PORT
     else:
         handles = (a_to_c,) * (pk.MAX_HANDLES + 1)
         expected = pk.SendResult.TOO_MANY_HANDLES

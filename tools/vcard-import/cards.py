@@ -1,38 +1,29 @@
 # darqos
 # Copyright (C) 2026 David Arnold
 
-"""Example: an address book as a knowledge base.
+"""Reading vCards: an address book's cards, as entities to import.
 
-Reads a vCard 3.0 file, such as one exported from Apple Contacts or
-Fastmail, into a KnowledgeBase using the Wikidata vocabulary from
-wikidata.py: people, organisations and groups become items, as do the
-departments, given names, family names, localities and addresses they
-refer to.
+Reads vCard 3.0 cards, such as those exported from Apple Contacts or
+Fastmail, as entities using the Wikidata vocabulary (vocabulary.py):
+people, organisations and groups, and the departments, given names,
+family names, stub people, localities and addresses they refer to.
 
-    python addressbook.py [--db PATH] FILE [NAME ...]
+Each is a Draft, with a temporary identifier, derived from its key, so
+cards that refer to the same thing share it; and with its natural key,
+by which the importer (importer.py) finds it in the KB, if it's there.
+Statements refer to drafts by their temporary identifiers, and to the
+vocabulary by its own."""
 
-prints counts of what was read, and describes the entries with the
-labels given.  It never prints the whole address book.
-
-With --db, the knowledge base is kept in an SQLite database, and the
-import can be repeated: entities' identifiers are derived from keys,
-such as a card's UID, and the import's statements are stated in the
-address book, so a re-import replaces them, and keeps any others."""
-
-import argparse
 import collections
 import re
-import sys
 
 from typing import Counter, Dict, List, Optional, Set, Tuple
 
 import vcard
-import wikidata
+import vocabulary
 
-from darq.kb import (EntityValue, Item, Property, Rank, Statement,
-                     StringValue, TextValue, TimeValue, Value, fold, key_id)
-from kb import Import, KnowledgeBase
-from store import Store
+from darq.kb import (EntityValue, Item, Rank, Statement, StringValue,
+                     TextValue, TimeValue, Value, fold, key_id)
 
 
 # Properties read, and properties skipped as bookkeeping or images.
@@ -77,20 +68,52 @@ DATE = re.compile(r"(\d{4})-?(\d{2})-?(\d{2})")
 NO_YEAR = 1604
 
 
-class Importer:
-    """Reads vCards into a KnowledgeBase."""
+class Draft:
+    """An entity read from cards, to be found or created in the KB.
 
-    def __init__(self,
-                 kb: KnowledgeBase,
-                 wd: wikidata.Vocabulary,
-                 name: str = "Address book"):
-        self.kb = kb
+    Its category says how it's found: by its cards' UIDs ("card"), or by
+    its natural key, the other fields, which are None if not known.
+    Statements in other drafts refer to it by its temporary identifier,
+    the entity's."""
+
+    def __init__(self, entity: Item, category: str, label: str = "",
+                 cls: Optional[str] = None, parent: Optional[str] = None,
+                 region: Optional[str] = None, country: Optional[str] = None,
+                 lines: Optional[str] = None, postcode: Optional[str] = None):
+        self.entity = entity
+        self.category = category
+        self.label = label
+
+        # Its class (a name's), parent (a department's organisation, or
+        # an address's locality, as a draft), region and country, and an
+        # address's lines and postcode.
+        self.cls = cls
+        self.parent = parent
+        self.region = region
+        self.country = country
+        self.lines = lines
+        self.postcode = postcode
+
+        # The UIDs of the cards it's from, or that refer to it.
+        self.cards: Set[str] = set()
+
+    def key(self) -> str:
+        """Its natural key, as text, for logging matches."""
+        fields = (self.label, self.lines, self.postcode, self.parent,
+                  self.region, self.country, self.cls)
+        return ", ".join(f for f in fields if f)
+
+
+class Importer:
+    """Reads vCards as drafts."""
+
+    def __init__(self, wd: vocabulary.Vocabulary):
         self.wd = wd
 
-        # The address book, which the statements are stated in.
-        source = key_id(f"address book:{name}")
-        self.source = Import(kb, source, wd.stated_in)
-        self.source.item(source, name, "address book, imported from vCards")
+        # The drafts, by temporary identifier, and the UID of the card
+        # being read.
+        self.drafts: Dict[str, Draft] = {}
+        self.card_uid = ""
 
         # Related-name labels, and the property each is.  Others are
         # related persons, with the label as a qualifier.
@@ -130,6 +153,9 @@ class Importer:
         self.related: List[Tuple[Item, str, str]] = []
         self.members: List[Tuple[Item, str]] = []
 
+        # Card UIDs, by draft.
+        self.uids_of: Dict[str, str] = {}
+
         # Counts.
         self.cards: Counter[str] = collections.Counter()
         self.unmapped: Counter[str] = collections.Counter()
@@ -142,6 +168,7 @@ class Importer:
             self.card(card)
 
         for person, label, name in self.related:
+            self.card_uid = self.uids_of.get(person.get_id(), "")
             self.relate(person, label, name)
 
         for group, uid in self.members:
@@ -151,12 +178,29 @@ class Importer:
             else:
                 group.claim(self.wd.has_parts, EntityValue(member.get_id()))
 
-        self.source.finish()
+    def item(self, key: str, category: str, label: Optional[str] = None,
+             desc: Optional[str] = None, **natural) -> Item:
+        """Return the draft item for a key, creating it if needed, and
+        note that the card being read refers to it."""
+        temp_id = key_id(key)
+        draft = self.drafts.get(temp_id)
+        if draft is None:
+            item = Item(temp_id)
+            if label:
+                item.set_label(label)
+            if desc:
+                item.set_description(desc)
+            draft = Draft(item, category, label or "", **natural)
+            self.drafts[temp_id] = draft
+        if self.card_uid:
+            draft.cards.add(self.card_uid)
+        return draft.entity
 
-    def item(self, key: str, label: Optional[str] = None,
-             desc: Optional[str] = None) -> Item:
-        """Return the item for a key, creating it if needed."""
-        return self.source.item(key_id(key), label, desc)
+    def touch(self, item: Item) -> Item:
+        """Note that the card being read refers to a draft, and return it."""
+        if self.card_uid:
+            self.drafts[item.get_id()].cards.add(self.card_uid)
+        return item
 
     def card(self, card: vcard.Card):
         """Read a card."""
@@ -164,6 +208,7 @@ class Importer:
         show_as = (card.text("X-ABSHOWAS") or "").casefold()
         uid = (card.text("UID") or "").strip()
         key = f"vcard:{uid}" if uid else f"card:{card.text('FN') or ''}"
+        self.card_uid = uid
         if kind == "group":
             self.cards["group"] += 1
             entity = self.group(card, key)
@@ -177,6 +222,7 @@ class Importer:
         if uid:
             entity.claim(self.wd.vcard_uid, StringValue(uid))
             self.uids[uid] = entity
+            self.uids_of[entity.get_id()] = uid
 
         self.contacts(card, entity, show_as == "company")
 
@@ -188,7 +234,7 @@ class Importer:
         """Create a person from a card."""
         wd = self.wd
         fn = (card.text("FN") or "").strip()
-        person = self.item(key, fn or None)
+        person = self.item(key, "card", fn or None)
         person.claim(wd.instance_of, EntityValue(wd.human))
         if fn:
             self.people.setdefault(fn.casefold(), []).append(person)
@@ -264,7 +310,7 @@ class Importer:
 
     def group(self, card: vcard.Card, key: str) -> Item:
         """Create a group from a card; its members are added later."""
-        group = self.item(key, (card.text("FN") or "").strip() or None)
+        group = self.item(key, "card", (card.text("FN") or "").strip() or None)
         group.claim(self.wd.instance_of, EntityValue(self.wd.group_of_humans))
         for p in card.all("X-ADDRESSBOOKSERVER-MEMBER"):
             uid = p.text().strip()
@@ -463,10 +509,11 @@ class Importer:
         shared = len(name.split()) > 1
         key = fold(name)
         if shared and key in self.stubs:
-            return self.stubs[key]
+            return self.touch(self.stubs[key])
 
         stub = self.item(f"stub:{key}" if shared else
-                         f"stub:{person.get_id()}:{fold(label)}:{key}", name)
+                         f"stub:{person.get_id()}:{fold(label)}:{key}",
+                         "stub" if shared else "single stub", name)
         stub.claim(self.wd.instance_of, EntityValue(self.wd.human))
         self.stub_count += 1
         if shared:
@@ -478,10 +525,11 @@ class Importer:
         key = name.casefold()
         org = self.organisations.get(key)
         if org is None:
-            org = self.item(f"organisation:{fold(name)}", name or None)
+            org = self.item(f"organisation:{fold(name)}", "organisation",
+                            name or None)
             org.claim(self.wd.instance_of, EntityValue(self.wd.organization))
             self.organisations[key] = org
-        return org
+        return self.touch(org)
 
     def department(self, parent: Item, name: str) -> Item:
         """Return a department of an organisation, creating it if needed."""
@@ -490,25 +538,26 @@ class Importer:
         if unit is None:
             parent_label = parent.get_label()
             unit = self.item(f"department:{parent.get_id()}:{fold(name)}",
-                             name,
+                             "department", name,
                              f"department of {parent_label}"
-                             if parent_label else None)
+                             if parent_label else None,
+                             parent=parent.get_id())
             unit.claim(self.wd.instance_of,
                        EntityValue(self.wd.department_class))
             unit.claim(self.wd.parent_organization,
                        EntityValue(parent.get_id()))
             self.departments[key] = unit
-        return unit
+        return self.touch(unit)
 
     def name(self, cls: str, text: str) -> Item:
         """Return the given or family name item for a name."""
         key = (cls, text)
         item = self.names.get(key)
         if item is None:
-            item = self.item(f"name:{cls}:{text}", text)
+            item = self.item(f"name:{cls}:{text}", "name", text, cls=cls)
             item.claim(self.wd.instance_of, EntityValue(cls))
             self.names[key] = item
-        return item
+        return self.touch(item)
 
     def locality(self,
                  name: str,
@@ -519,14 +568,15 @@ class Importer:
         item = self.localities.get(key)
         if item is None:
             wd = self.wd
-            item = self.item("locality:" + "\x1f".join(key), name)
+            item = self.item("locality:" + "\x1f".join(key), "locality",
+                             name, region=region, country=country)
             item.claim(wd.instance_of, EntityValue(wd.human_settlement))
             if region is not None:
                 item.claim(wd.located_in, EntityValue(region))
             if country is not None:
                 item.claim(wd.country, EntityValue(country))
             self.localities[key] = item
-        return item
+        return self.touch(item)
 
     def address(self, card: vcard.Card, p: vcard.Property) -> Optional[Item]:
         """Return the place for an ADR, creating it if needed.
@@ -569,14 +619,18 @@ class Importer:
                country_id or country.casefold())
         place = self.addresses.get(key)
         if place is not None:
-            return place
+            return self.touch(place)
 
         place_locality = self.locality(locality, region_id, country_id) \
             if locality else None
         first = lines.splitlines()[0] if lines else ""
         label = ", ".join(x for x in (first, locality) if x) \
             or postcode or region or country
-        place = self.item("address:" + "\x1f".join(key), label)
+        place = self.item(
+            "address:" + "\x1f".join(key), "address", label,
+            lines=lines or None, postcode=postcode or None,
+            parent=place_locality.get_id() if place_locality else None,
+            region=region_id, country=country_id)
         place.claim(wd.instance_of, EntityValue(wd.address))
         if lines:
             place.claim(wd.street_address, TextValue(lines))
@@ -592,94 +646,21 @@ class Importer:
         return place
 
 
-def summary(importer: Importer, kb: KnowledgeBase) -> str:
-    """Return counts of what was read, and of any problems."""
-    wd = importer.wd
+def summary(importer: Importer) -> List[str]:
+    """Return counts of what was read, and what couldn't be mapped."""
     lines = []
     c = importer.cards
     groups = "group" if c["group"] == 1 else "groups"
     lines.append(f"{sum(c.values())} cards: {c['person']} people, "
                  f"{c['organisation']} organisations, {c['group']} {groups}")
-
-    # Entities, by class.
-    entities = list(kb.entities())
-    items = [e for e in entities if isinstance(e, Item)]
-    properties = [e for e in entities if isinstance(e, Property)]
-    classes: Counter[str] = collections.Counter()
-    for item in items:
-        values = [s.get_value() for s in item.get_statements(wd.instance_of)]
-        ids = [v.get_id() for v in values if isinstance(v, EntityValue)]
-        classes[ids[0] if ids else ""] += 1
-    lines.append(f"\n{len(items)} items, {len(properties)} properties")
-    for cls, n in classes.most_common():
-        item = kb.get_item(cls)
-        label = item.get_label() if item is not None else None
-        lines.append(f"  {n:6}  {label or 'unclassified'}")
-    lines.append(f"  related names: {importer.linked} linked to cards, "
+    categories = collections.Counter(d.category
+                                     for d in importer.drafts.values())
+    lines.append(f"{len(importer.drafts)} entities: " + ", ".join(
+        f"{n} {category}" for category, n in categories.most_common()))
+    lines.append(f"Related names: {importer.linked} linked to cards, "
                  f"{importer.stub_count} stub people")
-
-    # Statements, by property, and any that fail checks.
-    statements: Counter[str] = collections.Counter()
-    qualifiers = 0
-    failures: Counter[str] = collections.Counter()
-    for entity in entities:
-        for s in entity.statements:
-            statements[s.get_property_id()] += 1
-            qualifiers += len(s.qualifiers)
-            try:
-                kb.check(s)
-            except ValueError as e:
-                failures[re.sub(r"[0-9a-f-]{36}", "<uuid>", str(e))] += 1
-    lines.append(f"\n{sum(statements.values())} statements, "
-                 f"{qualifiers} qualifiers")
-    for pid, n in statements.most_common():
-        prop = kb.get_property(pid)
-        label = prop.get_label() if prop is not None else None
-        name = pid if pid[:1] in "PQ" and pid[1:].isdigit() else "local"
-        lines.append(f"  {n:6}  {label} ({name})")
-
-    lines.append(f"\n{sum(failures.values())} statements fail checks")
-    for message, n in failures.most_common():
-        lines.append(f"  {n:6}  {message}")
-
-    lines.append(f"\n{sum(importer.unmapped.values())} values not mapped")
-    for what, n in importer.unmapped.most_common():
-        lines.append(f"  {n:6}  {what}")
-    return "\n".join(lines)
-
-
-def main(argv: List[str]) -> int:
-    parser = argparse.ArgumentParser(
-        prog=argv[0], description="Import an address book, from a vCard "
-        "file, into a knowledge base.")
-    parser.add_argument("--db", help="SQLite database to import into")
-    parser.add_argument("file", help="vCard file")
-    parser.add_argument("names", nargs="*", metavar="NAME",
-                        help="label of an entry to describe")
-    args = parser.parse_args(argv[1:])
-
-    store = Store(args.db) if args.db else None
-    try:
-        kb = KnowledgeBase(store)
-        with kb.transaction():
-            importer = Importer(kb, wikidata.load(kb))
-            importer.read(vcard.read(args.file))
-        print(summary(importer, kb))
-        if store is not None:
-            print(f"\n{store.writes} entities written to {args.db}")
-
-        for name in args.names:
-            print()
-            entities = kb.find_items(name)
-            if not entities:
-                print(f"No entry labelled {name!r}")
-            for entity in entities:
-                print(kb.describe(entity.get_id()))
-    finally:
-        if store is not None:
-            store.close()
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    unmapped = importer.unmapped
+    lines.append(f"{sum(unmapped.values())} values not mapped" + (
+        ": " + ", ".join(f"{n} {what}" for what, n in unmapped.most_common())
+        if unmapped else ""))
+    return lines

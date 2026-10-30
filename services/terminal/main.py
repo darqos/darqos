@@ -13,7 +13,8 @@
 #   boot, it asks for one, to set.
 # - Sys-n New, Sys-h History, Sys-Tab the switcher, Sys-b shut down or
 #   reboot, Sys-x close the focused window, Sys-l lock; Sys-space,
-#   Sys-e and Sys-i show a TBD panel (panels.py).  While it's locked,
+#   Sys-e and Sys-i show a TBD panel (panels.py); and, for now, Sys-t
+#   starts the vCard import (tools/vcard-import).  While it's locked,
 #   only Sys-b works, on the lock screen.
 #
 # Its calls to services are synchronous, on Qt's thread, as devterm's
@@ -22,6 +23,7 @@
 
 import logging
 import os
+import pathlib
 import select
 import time
 import typing
@@ -73,6 +75,7 @@ XK_h = 0x68
 XK_i = 0x69
 XK_l = 0x6c
 XK_n = 0x6e
+XK_t = 0x74
 XK_x = 0x78
 XK_Tab = 0xff09
 
@@ -88,7 +91,16 @@ HOTKEYS: dict[tuple[int, int], str] = {
     (XK_space, 0): "show_search",
     (XK_e, 0): "show_events",
     (XK_i, 0): "show_item_info",
+
+    # Temporary, until tools have a place in the Terminal.
+    (XK_t, 0): "start_vcard_import",
 }
+
+# Where the tools are, under DARQ_ROOT, as devterm finds them.
+DEFAULT_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+
+# The vCard import, under the root.
+VCARD_IMPORT = "tools/vcard-import"
 
 
 class Terminal:
@@ -306,6 +318,24 @@ class Terminal:
     def show_item_info(self):
         self.hide_panels(but=self.tbd)
         self.tbd.show_for("Item info")
+
+    def start_vcard_import(self):
+        """Start the vCard import: temporarily, Sys-t.  Spawning waits for
+        it to run, so it's done off Qt's thread."""
+        root = pathlib.Path(os.environ.get("DARQ_ROOT", DEFAULT_ROOT))
+        path = str(root / VCARD_IMPORT)
+        self.show_status("Starting the vCard import ...")
+
+        def started(dpid: int | None, error: Exception | None):
+            if error is None:
+                logging.info(f"Started the vCard import, dpid {dpid}")
+                return
+            message = f"Can't start the vCard import: {error}"
+            logging.warning(message)
+            self.hide_panels(but=self.notice)
+            self.notice.show_message(message)
+
+        self.launcher.background(lambda: darq.spawn_process(path), started)
 
     # The switcher
 

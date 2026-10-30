@@ -353,6 +353,7 @@ def test_send_message_blocks_until_answered(pproc):
     (pk.SendResult.BAD_HANDLE, darq.NonExistentPortError),
     (pk.SendResult.NOT_RECEIVE_RIGHT, darq.PortRightError),
     (pk.SendResult.DEAD_PORT, darq.DeadPortError),
+    (pk.SendResult.DEAD_TRANSFERRED_PORT, darq.DeadTransferredPortError),
     (99, darq.DarqError),
 ])
 def test_send_message_errors(pproc, result, error):

@@ -52,6 +52,12 @@ class DeadPortError(DarqError):
     pass
 
 
+class DeadTransferredPortError(DeadPortError):
+    """A port transferred with a message has been destroyed: the
+    destination may still be alive."""
+    pass
+
+
 class TooManyHandlesError(DarqError):
     """A message can't transfer that many handles (see MAX_HANDLES)."""
     pass

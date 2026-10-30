@@ -33,9 +33,6 @@ def load(name: str):
 
 kb = load("kb")
 store = load("store")
-vcard = load("vcard")
-wikidata = load("wikidata")
-addressbook = load("addressbook")
 
 
 # Stores opened by a test, closed after it.
@@ -258,83 +255,3 @@ def test_merge_and_destroy(path):
     assert k.get("gone").destroyed
     assert "gone" not in [e.id for e in k.entities()]
     assert [e.id for e in k.find_links("old")] == ["friend"]
-
-
-CARD = """BEGIN:VCARD
-VERSION:3.0
-UID:{uid}
-FN:{name}
-N:{family};{given};;;
-ORG:Acme Widgets;Sales
-TEL;TYPE=WORK:+61 7 3000 1234
-ADR;TYPE=HOME:;;1 Example St;Brisbane;QLD;4000;Australia
-X-ABRELATEDNAMES;TYPE=pref:Sam
-END:VCARD
-"""
-
-
-def book(*people):
-    return list(vcard.parse("".join(CARD.format(uid=uid, name=f"{g} {f}",
-                                           given=g, family=f)
-                               for uid, g, f in people)))
-
-
-def import_book(path, cards):
-    s = open_store(path)
-    k = kb.KnowledgeBase(s)
-    with k.transaction():
-        importer = addressbook.Importer(k, wikidata.load(k))
-        importer.read(cards)
-    return k, s
-
-
-def person(k, uid):
-    return k.get(model.key_id(f"vcard:{uid}"))
-
-
-def test_reimport(path):
-    cards = book(("u1", "Ann", "Example"), ("u2", "Ben", "Example"))
-    k, s = import_book(path, cards)
-    assert s.writes > 0
-    statements = {e.id: model.document(e) for e in k.entities()}
-
-    k, s = import_book(path, cards)
-    assert s.writes == 0
-    assert {e.id: model.document(e) for e in k.entities()} == statements
-
-    # A statement made by hand is kept by a re-import.
-    with k.transaction():
-        person(k, "u1").claim("P1329", model.StringValue("+61 400 000 000"))
-    k, s = import_book(path, cards)
-    assert s.writes == 0
-    assert len(k.find_by_value("P1329", "+61400000000")) == 1
-
-    # A card that's gone loses its statements, and a person with none
-    # left is destroyed: the one with a statement made by hand isn't.
-    k, s = import_book(path, book(("u3", "Cat", "Example")))
-    ann, ben = person(k, "u1"), person(k, "u2")
-    assert [st.get_property_id() for st in ann.statements] == ["P1329"]
-    assert not ann.destroyed
-    assert ben.destroyed and not ben.statements
-    assert person(k, "u3").get_label() == "Cat Example"
-    assert len(k.find_items("Acme Widgets")) == 1
-
-    # Every check passes, references included.
-    for e in k.entities():
-        for st in e.statements:
-            k.check(st)
-
-
-def test_vocabulary_reload(path):
-    k = open_kb(path)
-    with k.transaction():
-        wikidata.load(k)
-    k = open_kb(path)
-    with k.transaction():
-        wd = wikidata.load(k)
-    assert k.store.writes == 0
-    assert k.get(wd.birthday).get_label() == "birthday"
-    australia = k.get("Q408")
-    assert [s.get_property_id() for s in australia.statements] == ["P31"]
-    assert australia.statements[0].references[0].snaks[0].value.get_id() == \
-        "Q2013"

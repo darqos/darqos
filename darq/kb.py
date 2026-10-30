@@ -17,8 +17,8 @@ import uuid
 
 from decimal import Decimal, InvalidOperation
 from enum import Enum
-from typing import (Any, Callable, Dict, Iterable, Iterator, List, Optional,
-                    Protocol, Set, Tuple, Union)
+from typing import (AbstractSet, Any, Callable, Dict, Iterable, Iterator, List,
+                    Optional, Protocol, Set, Tuple, Union)
 
 from darq import identifier, system
 from darq.protocols import kb as wire
@@ -1142,18 +1142,150 @@ def entity_from_wire(e: wire.Entity) -> Entity:
     return entity
 
 
-def _sourced(statement: Statement, source_id: str) -> bool:
-    """Return whether a statement has a reference to a source."""
+class Restated:
+    """What restate() did to an entity's statements: true if it changed
+    the entity."""
+
+    def __init__(self):
+        # The source's statements: those added, and those the entity
+        # had already, as they are in it now.
+        self.added: List[Statement] = []
+        self.matched: List[Statement] = []
+
+        # Statements the source no longer makes, which lost its
+        # reference; and those of them kept, as the operator's, though
+        # they had no other references (see restate()).
+        self.dropped: List[Statement] = []
+        self.kept: List[Statement] = []
+
+        self.changed = False
+
+    def __bool__(self) -> bool:
+        return self.changed
+
+
+def restate(entity: Entity,
+            source_id: str,
+            statements: Iterable[Statement],
+            qualifiers: Optional[AbstractSet[str]] = None) -> Restated:
+    """Make an entity's statements from a source be some statements.
+
+    As in Wikibase, a statement can have several references, each to a
+    source (stated in, P248).  A statement that's the same as one the
+    entity has, with references, gains a reference to the source,
+    rather than being added again; others are added, with one.  A
+    statement the source no longer makes loses its reference, and is
+    removed if it has none left.  The entity's statements without any
+    references, its operator's, are kept as they are: a statement that's
+    the same as one of those isn't added.
+
+    Statements are the same if they have the same value, and the same
+    qualifiers: all of them, or, with qualifiers, those of its
+    properties, and of the others the source's statement has.  So a
+    statement can have qualifiers added by hand, such as start and end
+    times, and still be the source's.  One the source no longer makes,
+    with any qualifier not of those properties, or deprecated rank, is
+    kept, as the operator's, rather than removed.
+
+    Rank isn't compared: a source's preferred rank is given to a
+    statement it matches with normal rank, but a rank's never lowered.
+
+    :param qualifiers: The qualifier properties the source's statements
+                       always say all of.
+    :returns: What it did."""
+    before = document(entity)
+    result = Restated()
+    wanted = list(statements)
+
+    def same(have: Statement, want: Statement) -> bool:
+        if _snak_key(have.main_snak) != _snak_key(want.main_snak):
+            return False
+        if qualifiers is None:
+            compared = None
+        else:
+            compared = set(qualifiers) | {q.property_id for q in want.qualifiers}
+        return _qualifiers_key(have, compared) == _qualifiers_key(want, compared)
+
+    def annotated(statement: Statement) -> bool:
+        return qualifiers is not None and (
+            statement.rank == Rank.Deprecated
+            or any(q.property_id not in qualifiers for q in statement.qualifiers))
+
+    # Each wanted statement's match: the source's own, or else another
+    # source's, or else the operator's.
+    def preference(s: Statement) -> int:
+        return 0 if is_sourced(s, source_id) else 1 if s.references else 2
+
+    candidates = sorted(entity.statements, key=preference)
+    pairs = [(want, next((s for s in candidates if same(s, want)), None))
+             for want in wanted]
+    matched = {id(have) for _, have in pairs if have is not None}
+
+    # Statements the source no longer makes lose its references.
+    for s in list(entity.statements):
+        if is_sourced(s, source_id) and id(s) not in matched:
+            unsource(s, source_id)
+            result.dropped.append(s)
+            if not s.references:
+                if annotated(s):
+                    result.kept.append(s)
+                else:
+                    entity.remove_statement(s)
+
+    for want, have in pairs:
+        if have is None:
+            have = next((s for s in result.added if same(s, want)), None)
+        if have is None:
+            copy = Statement(want.main_snak, want.qualifiers, want.references, want.rank)
+            if not is_sourced(copy, source_id):
+                copy.add_reference(Reference().add(STATED_IN,
+                                                   EntityValue(source_id)))
+            entity.add_statement(copy)
+            result.added.append(copy)
+            continue
+        if have.references:
+            if not is_sourced(have, source_id):
+                have.add_reference(Reference().add(STATED_IN,
+                                                   EntityValue(source_id)))
+            if want.rank == Rank.Preferred and have.rank == Rank.Normal:
+                have.rank = Rank.Preferred
+        if not any(s is have for s in [*result.added, *result.matched]):
+            result.matched.append(have)
+
+    result.changed = document(entity) != before
+    return result
+
+
+def _cites(reference: Reference, source_id: str) -> bool:
+    """Return whether a reference is to a source."""
     return any(a.property_id == STATED_IN
                and isinstance(a.value, EntityValue)
                and a.value.entity_id == source_id
-               for r in statement.references for a in r.snaks)
+               for a in reference.snaks)
 
 
-def _content(statement: Statement) -> str:
-    """Return a statement's content, without its identifier, as text."""
-    return json.dumps(encode_statement(statement, with_id=False),
-                      sort_keys=True)
+def _snak_key(snak: Snak) -> str:
+    """Return a snak, for comparing."""
+    return json.dumps(_encode_snak(snak), sort_keys=True)
+
+
+def _qualifiers_key(statement: Statement,
+                    properties: Optional[AbstractSet[str]]) -> List[str]:
+    """Return a statement's qualifiers, or those of some properties, for
+    comparing."""
+    return sorted(_snak_key(q) for q in statement.qualifiers
+                  if properties is None or q.property_id in properties)
+
+
+def is_sourced(statement: Statement, source_id: str) -> bool:
+    """Return whether a statement has a reference to a source."""
+    return any(_cites(r, source_id) for r in statement.references)
+
+
+def unsource(statement: Statement, source_id: str):
+    """Remove a statement's references to a source."""
+    statement.references = [r for r in statement.references
+                            if not _cites(r, source_id)]
 
 
 class KB:
@@ -1246,22 +1378,12 @@ class KB:
         :returns: The entity, as it is.
         :raises LookupError: if there's no such entity."""
         new = list(statements)
-        for s in new:
-            if not _sourced(s, source_id):
-                s.add_reference(Reference().add(STATED_IN,
-                                                EntityValue(source_id)))
         for _ in range(3):
             entity = self.get(entity_id, follow=False)
             if entity is None:
                 raise LookupError(f"{entity_id}: not found")
-            old = [s for s in entity.statements if _sourced(s, source_id)]
-            if [_content(s) for s in old] == [_content(s) for s in new]:
+            if not restate(entity, source_id, new):
                 return entity
-            for s in old:
-                entity.remove_statement(s)
-            for s in new:
-                entity.add_statement(Statement(s.main_snak, s.qualifiers,
-                                               s.references, s.rank))
             try:
                 self.put(entity)
             except ConflictError:

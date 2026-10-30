@@ -405,6 +405,47 @@ def test_dead_implementation_restarted(served, fake_ports, processes):
     assert replies(fake_ports) == [(CLIENT, 2, Status.OK, IMPLEMENTATION + 1)]
 
 
+def test_activate_before_death_notification(served, fake_ports, processes):
+    service, server = served
+    activate(fake_ports, 1)
+    server.run_once(timeout=0)
+    ready(fake_ports, processes.spawned[0][1])
+    server.run_once(timeout=0)
+    replies(fake_ports)
+
+    # It's exited, but the notification hasn't come: the reply's refused,
+    # and it's started again.
+    fake_ports.dead.add(IMPLEMENTATION)
+    activate(fake_ports, 2)
+    server.run_once(timeout=0)
+    assert replies(fake_ports) == []
+    assert service.running == {}
+    assert len(processes.spawned) == 2
+    ready(fake_ports, processes.spawned[1][1], IMPLEMENTATION + 1)
+    server.run_once(timeout=0)
+    assert replies(fake_ports) == [(CLIENT, 2, Status.OK, IMPLEMENTATION + 1)]
+
+    # The notification, when it comes, only closes the handle.
+    fake_ports.deliver(SERVICE_PORT, 0, dipc.PortDestroyed(IMPLEMENTATION).encode()[0])
+    server.run_once(timeout=0)
+    assert service.running == {"/darq/types/thing": IMPLEMENTATION + 1}
+    assert IMPLEMENTATION in processes.closed
+
+
+def test_gone_once_ready(served, fake_ports, processes):
+    service, server = served
+    activate(fake_ports, 1)
+    server.run_once(timeout=0)
+
+    # It exits straight after Ready: its Activates fail, without a restart.
+    fake_ports.dead.add(IMPLEMENTATION)
+    ready(fake_ports, processes.spawned[0][1])
+    server.run_once(timeout=0)
+    assert replies(fake_ports) == [(CLIENT, 1, Status.FAILED, None)]
+    assert service.running == {}
+    assert len(processes.spawned) == 1
+
+
 def test_spawn_failure(served, fake_ports, processes):
     service, server = served
     processes.fail_spawn = True

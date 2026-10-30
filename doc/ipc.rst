@@ -31,6 +31,11 @@ abstract ports.
 Communication between a process and the p-kernel uses TCP, in order to
 have reliable delivery, and a well-known port, avoiding a need to
 bootstrap the connection and resolve addresses between processes.
+Both ends set `TCP_NODELAY`: messages are small, and a sender usually
+waits for the reply, so Nagle's algorithm would hold each message back
+for the previous one's delayed acknowledgement, adding about 40ms to
+every p-call.  Without it, a call to a service takes about half a
+millisecond.
 
 Messages
 --------
@@ -169,6 +174,13 @@ are:
   (`PortRightError`).
 * `DEAD_PORT`: the destination port has been destroyed
   (`DeadPortError`).
+* `TOO_MANY_HANDLES`: more than 64 handles to transfer
+  (`TooManyHandlesError`).
+* `DEAD_TRANSFERRED_PORT`: a transferred port has been destroyed
+  (`DeadTransferredPortError`, a kind of `DeadPortError`).  The
+  destination may still be alive: a service passing on another
+  process's port learns, this way, that it has gone, perhaps before
+  its death notification arrives.
 
 The p-kernel answers after delivering, so a message sent to one of the
 sender's own ports is already queued for `receive_message()` when

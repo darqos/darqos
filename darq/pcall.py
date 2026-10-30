@@ -122,11 +122,14 @@ class SendResult(IntEnum):
     # The source isn't a receive right: replies would go elsewhere.
     NOT_RECEIVE_RIGHT = 2
 
-    # The destination port, or a transferred port, has been destroyed.
+    # The destination port has been destroyed.
     DEAD_PORT = 3
 
     # More than MAX_HANDLES handles to transfer.
     TOO_MANY_HANDLES = 4
+
+    # A transferred port has been destroyed.
+    DEAD_TRANSFERRED_PORT = 5
 
 
 class NameResult(IntEnum):

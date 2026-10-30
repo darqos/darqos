@@ -109,6 +109,7 @@ from .errors import (
     BootVectorFullError,
     DarqError,
     DeadPortError,
+    DeadTransferredPortError,
     InvalidNameError,
     MessageDecodingError,
     NameTakenError,
@@ -353,6 +354,7 @@ _SEND_ERRORS: dict[int, type[DarqError]] = {
     SendResult.NOT_RECEIVE_RIGHT: PortRightError,
     SendResult.DEAD_PORT: DeadPortError,
     SendResult.TOO_MANY_HANDLES: TooManyHandlesError,
+    SendResult.DEAD_TRANSFERRED_PORT: DeadTransferredPortError,
 }
 
 
@@ -372,8 +374,9 @@ def send_message(source: int, destination: int, message: bytes,
                   gets a send right to each (see doc/ipc.rst).
     :raises NonExistentPortError: if any handle isn't open.
     :raises PortRightError: if the source isn't a receive right.
-    :raises DeadPortError: if the destination port, or a transferred
-                           port, has been destroyed.
+    :raises DeadPortError: if the destination port has been destroyed.
+    :raises DeadTransferredPortError: if a transferred port has been
+                                      destroyed (it's a DeadPortError).
     :raises TooManyHandlesError: if there are more than MAX_HANDLES
                                  ports."""
     if len(ports) > MAX_HANDLES:
@@ -1236,6 +1239,8 @@ class Deferred:
     def reply(self, response: dipc.Message):
         """Send the response.
 
+        A failure to send it is logged: it's answered, either way.
+
         :raises RuntimeError: if it's already been answered.
         :raises TypeError: if the response isn't of the request's response class."""
         if not isinstance(response, self.response_class):
@@ -1243,6 +1248,33 @@ class Deferred:
         self._finish()
         response.txid = self.txid
         _send_reply(self.port, self.source, response)
+        return
+
+    def try_reply(self, response: dipc.Message):
+        """Send the response, or raise if it can't be sent.
+
+        If a port in the response has been destroyed, it isn't
+        answered: it can be answered again, with another response.
+        Otherwise, it's answered, even if sending failed (the client's
+        most likely gone).
+
+        :raises RuntimeError: if it's already been answered.
+        :raises TypeError: if the response isn't of the request's response class.
+        :raises DeadTransferredPortError: if a port in the response has
+                                          been destroyed.
+        :raises DarqError: if it can't be sent otherwise."""
+        if not isinstance(response, self.response_class):
+            raise TypeError(f"reply is {type(response).__name__}, not {self.response_class.__name__}")
+        self._check()
+        response.txid = self.txid
+        try:
+            _send_reply(self.port, self.source, response, strict=True)
+        except DeadTransferredPortError:
+            raise
+        except DarqError:
+            self._discard()
+            raise
+        self._discard()
         return
 
     def error(self, code: ErrorCode, description: str):
@@ -1255,11 +1287,14 @@ class Deferred:
         return
 
     def _finish(self):
+        self._check()
+        self._discard()
+
+    def _check(self):
         if self.done:
             raise RuntimeError(f"Request {self.txid} (method {self.method}) has already been answered")
         if self.port is None:
             raise RuntimeError("Can't reply: the request's port isn't known")
-        self._discard()
 
     def _discard(self):
         """Mark it answered, without sending anything."""
@@ -1279,13 +1314,17 @@ class Deferred:
                             f"was never answered")
 
 
-def _send_reply(port: int | None, source: int, reply: dipc.Message):
-    """Send a reply from a port, logging a failure."""
+def _send_reply(port: int | None, source: int, reply: dipc.Message, strict: bool = False):
+    """Send a reply from a port, logging a failure.
+
+    :param strict: Raise the failure, rather than logging it."""
     assert port is not None, "reply without a port"
     buf, handles = reply.encode()
     try:
         send_message(port, source, buf, handles)
     except DarqError as e:
+        if strict:
+            raise
         # Most likely, the client has gone.
         logging.warning(f"Reply to {source} failed: {e!r}")
     return
