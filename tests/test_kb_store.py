@@ -2,7 +2,8 @@
 # Copyright (C) 2026 David Arnold
 
 # Tests for the knowledge base's SQLite store, services/kb/store.py,
-# with the data model in services/kb/kb.py: documents, the index
+# with its KnowledgeBase, services/kb/model.py, and the data model,
+# darq/model.py: documents, the index
 # tables, revisions and conflicts, redirects, and repeatable imports,
 # with an address book made up for them.
 
@@ -14,6 +15,8 @@ import stat
 import sys
 
 import pytest
+
+import darq.kb as model
 
 
 KB_PATH = pathlib.Path(__file__).parent.parent / "services" / "kb"
@@ -48,7 +51,7 @@ def close_stores():
 
 @pytest.fixture
 def path(tmp_path):
-    return str(tmp_path / "kb.sqlite")
+    return str(tmp_path / "model.sqlite")
 
 
 def open_store(path):
@@ -63,18 +66,18 @@ def open_kb(path):
 
 def vocabulary(k):
     """A few properties and classes."""
-    k.add_property("instance of", kb.Datatype.Item, "P31")
-    k.add_property("subclass of", kb.Datatype.Item, "P279")
-    k.add_property("employer", kb.Datatype.Item, "P108")
-    k.add_property("start time", kb.Datatype.Time, "P580")
-    k.add_property("stated in", kb.Datatype.Item, "P248")
-    k.add_property("phone number", kb.Datatype.String, "P1329")
-    k.add_property("height", kb.Datatype.Quantity, "P2048")
-    k.add_property("note", kb.Datatype.Text, "note")
+    k.add_property("instance of", model.Datatype.Item, "P31")
+    k.add_property("subclass of", model.Datatype.Item, "P279")
+    k.add_property("employer", model.Datatype.Item, "P108")
+    k.add_property("start time", model.Datatype.Time, "P580")
+    k.add_property("stated in", model.Datatype.Item, "P248")
+    k.add_property("phone number", model.Datatype.String, "P1329")
+    k.add_property("height", model.Datatype.Quantity, "P2048")
+    k.add_property("note", model.Datatype.Text, "note")
     k.add_item("human", "Q5")
     k.add_item("organization", "Q43229")
     k.add_item("business", "Q4830453").claim(
-        "P279", kb.EntityValue("Q43229"))
+        "P279", model.EntityValue("Q43229"))
     k.add_item("metre", "Q11573")
 
 
@@ -98,29 +101,29 @@ def test_entity_round_trip(path):
         person = k.add_item("Ada", "Q7259", "mathematician")
         person.set_label("Ada", "fr")
         person.add_alias("Augusta Ada King")
-        person.claim("P31", kb.EntityValue("Q5"), kb.Rank.Preferred)
-        person.claim("P2048", kb.QuantityValue("1.650", "Q11573", "1.6", "1.7"))
-        person.claim("P108", kb.EntityValue("Q43229")) \
-            .add_qualifier("P580", kb.TimeValue(
-                -44, 3, 15, 12, 30, 5, 120, kb.TimePrecision.Nanoseconds,
+        person.claim("P31", model.EntityValue("Q5"), model.Rank.Preferred)
+        person.claim("P2048", model.QuantityValue("1.650", "Q11573", "1.6", "1.7"))
+        person.claim("P108", model.EntityValue("Q43229")) \
+            .add_qualifier("P580", model.TimeValue(
+                -44, 3, 15, 12, 30, 5, 120, model.TimePrecision.Nanoseconds,
                 before=2, after=1, calendar="julian")) \
-            .add_reference(kb.Reference().add("P248", kb.EntityValue("Q5")))
-        person.claim("P1329", kb.StringValue("+61 7 3000 1234"))
-        note = kb.TextValue("hello")
+            .add_reference(model.Reference().add("P248", model.EntityValue("Q5")))
+        person.claim("P1329", model.StringValue("+61 7 3000 1234"))
+        note = model.TextValue("hello")
         note.set_text("bonjour", "fr")
         person.claim("note", note)
 
-    expected = kb.document(person)
+    expected = model.document(person)
     again = open_kb(path)
     loaded = again.get("Q7259")
     assert loaded is not person
-    assert kb.document(loaded) == expected
+    assert model.document(loaded) == expected
     assert loaded.revision == 1
     assert str(loaded.get_statements("P2048")[0].get_value()) == \
         "1.650 [1.6, 1.7] Q11573"
     time = loaded.get_statements("P108")[0].qualifiers[0].value
     assert (time.year, time.nanosecond, time.calendar) == (-44, 120, "julian")
-    assert again.get_property("P580").get_datatype() == kb.Datatype.Time
+    assert again.get_property("P580").get_datatype() == model.Datatype.Time
     assert [s.get_id() for s in loaded.statements] == \
         [s.get_id() for s in person.statements]
 
@@ -131,11 +134,11 @@ def test_lookups(path):
         vocabulary(k)
         acme = k.add_item("Acme Widgets", "acme")
         acme.add_alias("Acme Pty Ltd")
-        acme.claim("P31", kb.EntityValue("Q4830453"))
-        acme.claim("P1329", kb.StringValue("+61 (7) 3000-1234"))
+        acme.claim("P31", model.EntityValue("Q4830453"))
+        acme.claim("P1329", model.StringValue("+61 (7) 3000-1234"))
         ada = k.add_item("Ada", "ada")
-        ada.claim("P108", kb.EntityValue("acme")) \
-            .add_reference(kb.Reference().add("P248", kb.EntityValue("Q5")))
+        ada.claim("P108", model.EntityValue("acme")) \
+            .add_reference(model.Reference().add("P248", model.EntityValue("Q5")))
 
     k = open_kb(path)
     assert [e.id for e in k.find_items("Acme Widgets")] == ["acme"]
@@ -166,8 +169,8 @@ def test_in_memory_lookups_match():
     vocabulary(k)
     acme = k.add_item("Acme Widgets", "acme")
     acme.add_alias("Acme Pty Ltd")
-    acme.claim("P31", kb.EntityValue("Q4830453"))
-    acme.claim("P1329", kb.StringValue("+61 (7) 3000-1234"))
+    acme.claim("P31", model.EntityValue("Q4830453"))
+    acme.claim("P1329", model.StringValue("+61 (7) 3000-1234"))
     assert k.search("acm pty") == [acme]
     assert k.find_by_value("P1329", "+61730001234") == [acme]
     assert k.instances("Q43229") == [acme]
@@ -203,14 +206,14 @@ def test_conflict(path):
     a, b = first.get("x"), second.get("x")
     with first.transaction():
         a.set_label("first")
-    with pytest.raises(kb.ConflictError):
+    with pytest.raises(model.ConflictError):
         with second.transaction():
             b.set_label("second")
     assert second.get("x").get_label() == "first"
 
-    with pytest.raises(kb.ConflictError):
+    with pytest.raises(model.ConflictError):
         with second.transaction():
-            second.register(kb.Item("y"))
+            second.register(model.Item("y"))
             first.add_item("other", "y")
             first.commit()
 
@@ -236,10 +239,10 @@ def test_merge_and_destroy(path):
     k = open_kb(path)
     with k.transaction():
         vocabulary(k)
-        k.add_item("Robert Smith", "old").claim("P31", kb.EntityValue("Q5"))
+        k.add_item("Robert Smith", "old").claim("P31", model.EntityValue("Q5"))
         k.add_item("Bob Smith", "new")
         k.add_item("gone", "gone")
-        k.add_item("friend", "friend").claim("P108", kb.EntityValue("old"))
+        k.add_item("friend", "friend").claim("P108", model.EntityValue("old"))
     with k.transaction():
         k.merge("old", "new")
         k.destroy("gone")
@@ -286,22 +289,22 @@ def import_book(path, cards):
 
 
 def person(k, uid):
-    return k.get(kb.key_id(f"vcard:{uid}"))
+    return k.get(model.key_id(f"vcard:{uid}"))
 
 
 def test_reimport(path):
     cards = book(("u1", "Ann", "Example"), ("u2", "Ben", "Example"))
     k, s = import_book(path, cards)
     assert s.writes > 0
-    statements = {e.id: kb.document(e) for e in k.entities()}
+    statements = {e.id: model.document(e) for e in k.entities()}
 
     k, s = import_book(path, cards)
     assert s.writes == 0
-    assert {e.id: kb.document(e) for e in k.entities()} == statements
+    assert {e.id: model.document(e) for e in k.entities()} == statements
 
     # A statement made by hand is kept by a re-import.
     with k.transaction():
-        person(k, "u1").claim("P1329", kb.StringValue("+61 400 000 000"))
+        person(k, "u1").claim("P1329", model.StringValue("+61 400 000 000"))
     k, s = import_book(path, cards)
     assert s.writes == 0
     assert len(k.find_by_value("P1329", "+61400000000")) == 1

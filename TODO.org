@@ -141,8 +141,13 @@ Issues
     revision kept, conflict checks, and label, link and value indexes;
     stable ids for local properties and imported entities; repeatable
     imports; redirects (merge) and destruction; subclass-aware lookups.
-  - Next: the protocol (lib/didl/kb.didl), and the service around the
-    store; the Item identifier datatype; language fallback chains.
+  - Done: the protocol (lib/didl/kb.didl), and the service
+    (services/kb/main.py), started at boot, with darq.kb as its data
+    model and client: get and put whole entities, merge, destroy,
+    lookups in batches, and watches.
+  - Next: Query (graph patterns); the type implementation, with
+    find-or-create of the entities it needs; the Item identifier
+    datatype; addressbook.py as a client of the service.
 - Implement URL handling
   - as a Type?
   - as an object identifier?

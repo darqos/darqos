@@ -14,7 +14,6 @@ So you could
 * finger it
 * get NTP from it
 
-
 A host could/would have:
 
 * multiple IPs
@@ -51,3 +50,44 @@ access too.  So, yeah, Host has to cache HTTP content (maybe via an
 external provider).
 
 Similarly, the SSH session logs would probably belong to the host too.
+
+Host Data Model
+
+Ultimately, the Internet consists of interface, not hosts.
+
+* A DNS name maybe refer to multiple IPs (round-robin DNS, geographic DNS)
+* One IP address can have (very) many DNS namees (multi-hosting)
+* One machine can have multiple IP addresses
+* All of these things can change over time.  Correctness now doesn't mean correctness in future.
+* A DNS address may really be an alias for one or more other DNS addresses
+* HTTP redirects might be considered a host alias too?
+
+The input could be any of: a local hostname, a DNS name, an IPv4 or IPv6 address.
+
+Let's leave HTTP aside for a moment, and just look at SSH:
+
+* You invoke the factory, and choose "host"
+* The type implementation creates a new item, as yet unidentified, and connects a lens
+* You enter a local hostname, a DNS name, or an IP into the lens, and the type implementation does a lookup.
+* The lookup returns an IP.  Either:
+
+  * It's *unknown*, in which case this is a new host
+
+    * The type implementation allocates an identifier, and records a "created" event
+    * The type implementation populates the host by doing lookups
+
+  * It's *known*, in which this is an existing host
+
+    * The type implementation records a "used" event for an existing host item.
+    * The type implementation populates the host from its existing databae.
+
+* You see the lens showing information about the host
+* You invoke the hotkey to open an SSH session
+* A new window is created, showing the SSH session content
+
+  * A session log item is created
+  * A history event is recorded for the session
+  * Periodically, the session log is indexed, and uploaded to the index server
+
+* When the session is complete, the window is closed, and the session log finalized.
+  * A history event is recorded for the session.

@@ -3,7 +3,7 @@
 
 """A knowledge base's entities, kept in an SQLite database.
 
-Each entity is a row holding its JSON document (see kb.document) and
+Each entity is a row holding its JSON document (see darq.kb.document) and
 revision, and every revision is kept.  Index tables of labels, links
 and string values are derived from the documents, and updated in the
 same transaction as each change.  The design is in doc/kb-service.rst.
@@ -23,8 +23,9 @@ import sqlite3
 
 from typing import List, Optional, Set
 
-from kb import (INSTANCE_OF, SUBCLASS_OF, ConflictError, Entity,
-                Property, decode_entity, entity_links, entity_strings, fold)
+from darq.kb import (INSTANCE_OF, SUBCLASS_OF, ConflictError, Entity,
+                     Property, decode_entity, entity_links, entity_strings,
+                     fold)
 
 
 # Version of the schema, kept as the database's user_version.
@@ -185,7 +186,8 @@ class Store:
                                     (entity.id, kind, revision, text,
                                      entity.redirect, destroyed, now))
                 except sqlite3.IntegrityError:
-                    raise ConflictError(f"{entity.id} already exists") from None
+                    raise ConflictError(f"{entity.id} already exists",
+                                        entity.id) from None
             else:
                 cursor = self.db.execute(
                     "update entities set revision = ?, document = ?, "
@@ -195,7 +197,8 @@ class Store:
                      entity.id, entity.revision))
                 if cursor.rowcount == 0:
                     raise ConflictError(f"{entity.id} has changed since "
-                                        f"revision {entity.revision}")
+                                        f"revision {entity.revision}",
+                                        entity.id)
             self.db.execute("insert into revisions values (?, ?, ?, ?)",
                             (entity.id, revision, text, now))
             entity.revision = revision

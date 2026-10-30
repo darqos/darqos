@@ -1,0 +1,235 @@
+// darqos
+// Copyright (C) 2026 David Arnold
+//
+// Knowledge Base service protocol: see doc/kb-service.rst.
+//
+// Entities are items and properties, with string identifiers: a
+// Wikidata identifier, such as Q42 or P31, or a UUID.  DIDL has no
+// unions or optional fields, so a value is a struct tagged by its type,
+// and an absent string is empty.
+
+library darq.kb;
+
+enum Status : uint32 {
+    OK = 0;
+
+    // No such entity.
+    NOT_FOUND = 1;
+
+    // An identifier, cursor, or value isn't valid.
+    INVALID_ARGUMENT = 2;
+
+    // An entity has changed since the revision given, or one given as
+    // new already exists.
+    CONFLICT = 3;
+
+    // A statement doesn't fit its property: the property isn't known,
+    // or the value hasn't its datatype, refers to an unknown entity, or
+    // is out of its bounds.
+    INVALID_STATEMENT = 4;
+}
+
+enum Kind : uint8 {
+    ITEM = 0;
+    PROPERTY = 1;
+}
+
+// A property's datatype.
+enum Datatype : uint8 {
+    NONE = 0;
+    ITEM = 1;
+    PROPERTY = 2;
+    STRING = 3;
+    TEXT = 4;
+    QUANTITY = 5;
+    TIME = 6;
+    URL = 7;
+    EXTERNAL_ID = 8;
+}
+
+enum Rank : uint8 {
+    NORMAL = 0;
+    PREFERRED = 1;
+    DEPRECATED = 2;
+}
+
+enum ValueType : uint8 {
+    ENTITY = 0;
+    STRING = 1;
+    TEXT = 2;
+    QUANTITY = 3;
+    TIME = 4;
+}
+
+// Where a link to an entity is, in a statement.
+enum Role : uint8 {
+    MAIN = 0;
+    QUALIFIER = 1;
+    REFERENCE = 2;
+}
+
+// How FindByLabel matches.
+enum Match : uint8 {
+    // A label, exactly.
+    EXACT = 0;
+
+    // A label or alias with words starting with each of the text's
+    // words, ignoring case.
+    WORDS = 1;
+}
+
+// Text in a language, by language tag, such as "en" or "en-AU": a
+// label, description, alias, or part of a text value.
+struct Text {
+    string language;
+    string text;
+}
+
+// A value: only its type's fields are used.
+struct Value {
+    ValueType type;
+
+    // ENTITY: the entity's identifier.  QUANTITY: its unit's, or empty
+    // for none.
+    string entity_id;
+
+    // STRING.
+    string string_value;
+
+    // TEXT: one per language.
+    sequence<Text> text;
+
+    // QUANTITY: decimals, which keep their significant digits, with
+    // empty bounds for none.
+    string amount;
+    string lower;
+    string upper;
+
+    // TIME: the fields the precision covers are set, and the others are
+    // 0.  The year is negative for BCE.  The bounds are counted in
+    // units of the precision; an empty calendar is gregorian.
+    int64 year;
+    uint8 month;
+    uint8 day;
+    uint8 hour;
+    uint8 minute;
+    uint8 second;
+    uint32 nanosecond;
+    uint8 precision;
+    uint32 before;
+    uint32 after;
+    string calendar;
+}
+
+// A property and its value.
+struct Snak {
+    string property_id;
+    Value value;
+}
+
+// A source for a statement.
+struct Reference {
+    sequence<Snak> snaks;
+}
+
+struct Statement {
+    // Unique within its entity: a UUID.
+    string id;
+
+    Snak main_snak;
+    sequence<Snak> qualifiers;
+    sequence<Reference> references;
+    Rank rank;
+}
+
+struct Entity {
+    string id;
+    Kind kind;
+
+    // A property's datatype; NONE for an item.
+    Datatype datatype;
+
+    // The revision it was read at, or 0 for a new entity.
+    uint64 revision;
+
+    // One label and description per language, and any number of
+    // aliases.
+    sequence<Text> labels;
+    sequence<Text> descriptions;
+    sequence<Text> aliases;
+
+    sequence<Statement> statements;
+
+    // The entity a merged one redirects to, or empty.
+    string redirect;
+
+    // A destroyed entity is kept, but left out of lookups.
+    bool destroyed;
+}
+
+// An entity's label, in the first language of a chain that it has one
+// in.
+struct Label {
+    string entity_id;
+    string language;
+    string text;
+}
+
+// The Knowledge Base service, registered as "darq.kb".
+//
+// Lookups return identifiers sorted, in batches: at most max (0 for the
+// service's limit), after the identifier after (empty for the first
+// batch).  To get the next batch, ask again with after set to the last
+// identifier returned.  Destroyed and merged entities are left out.
+protocol KB {
+    // Return the entities with some identifiers, in that order, leaving
+    // out those that don't exist.  With follow, a merged entity's
+    // redirect is followed.  If languages isn't empty, labels has the
+    // labels, in that chain of languages, of the entities the returned
+    // ones refer to.
+    1: GetEntities(sequence<string> ids, bool follow, sequence<string> languages) -> (sequence<Entity> entities, sequence<Label> labels, Status status);
+
+    // Write entities, whole, all or none.  Each has the revision it was
+    // read at, or 0 if it's new; a new one with an empty identifier is
+    // given a UUID.  Returns the entities as written, with their new
+    // revisions; or, if one fails, its identifier, and why.
+    2: PutEntities(sequence<Entity> entities) -> (sequence<Entity> entities, string failed_id, Status status);
+
+    // Merge one entity into another: its statements move to the other,
+    // its labels and aliases become the other's aliases, and it
+    // redirects to the other.
+    3: Merge(string old_id, string new_id) -> (Status status);
+
+    // Mark an entity destroyed, keeping its statements, and the links
+    // to it.
+    4: Destroy(string entity_id) -> (Status status);
+
+    // Find entities by label.  If class_id isn't empty, only instances
+    // of the class, or of its subclasses, are found.
+    5: FindByLabel(string text, string language, Match match, string class_id, uint32 max, string after) -> (sequence<string> ids, Status status);
+
+    // Find entities with a string value for a property.  Values are
+    // compared normalised: ignoring case, and with a phone number just
+    // its digits.
+    6: FindByValue(string property_id, string value, uint32 max, string after) -> (sequence<string> ids, Status status);
+
+    // Find the entities that link to one, by a property (or any, if
+    // it's empty), in a statement's role.
+    7: FindLinks(string target_id, string property_id, Role role, uint32 max, string after) -> (sequence<string> ids, Status status);
+
+    // Find the instances of a class, or of any of its subclasses.
+    8: Instances(string class_id, uint32 max, string after) -> (sequence<string> ids, Status status);
+
+    // Have changes to some entities (or all, if ids is empty) reported
+    // to a listener, which serves Listener, until it's unwatched, or
+    // its port is destroyed.
+    9: Watch(sequence<string> ids, port listener) -> (uint32 watch_id, Status status);
+    10: Unwatch(uint32 watch_id) -> (Status status);
+}
+
+// Served by a watcher, on the port it gives Watch.
+protocol Listener {
+    // An entity was changed, to a revision.  Sent after the change is
+    // committed.
+    1: Changed(string entity_id, uint64 revision);
+}

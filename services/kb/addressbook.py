@@ -29,9 +29,9 @@ from typing import Counter, Dict, List, Optional, Set, Tuple
 import vcard
 import wikidata
 
-from kb import (EntityValue, Import, Item, KnowledgeBase, Property, Rank,
-                Statement, StringValue, TextValue, TimeValue, Value, fold,
-                key_id)
+from darq.kb import (EntityValue, Item, Property, Rank, Statement,
+                     StringValue, TextValue, TimeValue, Value, fold, key_id)
+from kb import Import, KnowledgeBase
 from store import Store
 
 

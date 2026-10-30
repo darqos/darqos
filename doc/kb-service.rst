@@ -11,9 +11,10 @@ It's the store behind the PIM types (see :doc:`pim`), and for anything
 else that's better described as assertions and relationships than as
 a blob (see :doc:`item`).
 
-This is a design: the service isn't implemented yet (see the Second
-Edition in ``TODO.org``).  The data model is prototyped in
-``services/kb`` (see Prototype, below).
+The service, in ``services/kb``, is the start of an implementation of
+this design (see Implementation, below, and the Second Edition in
+``TODO.org``): it has the data model, storage, and protocol, but not
+yet queries, or the type implementation.
 
 Data Model
 ----------
@@ -58,7 +59,7 @@ External identifier       An identifier in another system, such as a
                           vCard UID.
 Item identifier           A DarqOS item identifier (see :doc:`item`),
                           linking the KB to the rest of the system.
-                          This one isn't in the prototype yet.
+                          This one isn't implemented yet.
 ========================  ============================================
 
 An item's classes are given by *instance of* (P31) statements, and
@@ -148,52 +149,79 @@ Protocol
 --------
 
 The KB is a service, registered as ``darq.kb``, with a DIDL protocol
-in ``lib/didl/kb.didl``.  It has four groups of methods.
+in ``lib/didl/kb.didl``.  It's started at boot, and keeps
+``kb.sqlite``: while it runs, it's the database's only writer, so what
+it's read stays current.  It starts with whatever's in the database,
+and loads no base vocabulary: each type implementation finds, or
+creates, the entities it needs, which have the same identifiers
+whichever creates them, as Wikidata identifiers, or ones derived from
+keys.
 
 Entities
 ~~~~~~~~
 
-* ``GetEntities(ids, languages, parts)`` returns entities, with their
-  revisions.  ``languages`` is a fallback chain, such as
-  ``["en-AU", "en"]``, so a label always comes back in the best
-  language there is.  ``parts`` selects labels, descriptions, aliases,
-  statements, and references, optionally only for some properties, so
-  a business-card view needn't get every note.  A flag also returns
-  the labels of the entities the results refer to, so a client can
-  show a person's employer, address, and spouse by name, without a
-  request for each.
-* ``ApplyChanges(changes)`` makes a batch of changes atomically: adding
-  or removing statements, setting labels, and so on.  Each change
-  gives the revision of the entity it was based on, so a client
-  editing an out-of-date entity gets a conflict, rather than
-  overwriting someone else's change.  A whole import can be one batch.
+* ``GetEntities(ids, follow, languages)`` returns the entities with
+  some identifiers, that exist, with their revisions.  With
+  ``follow``, a merged entity's redirect is followed.  If
+  ``languages``, a fallback chain such as ``["en-AU", "en"]``, isn't
+  empty, it also returns the labels of the entities the results refer
+  to (their statements' properties, values, and units), each in the
+  first language of the chain it has one in, so a client can show a
+  person's employer, address, and spouse by name, without a request
+  for each.
+* ``PutEntities(entities)`` writes entities, whole, all or none.  Each
+  has the revision it was read at, or 0 if it's new; a new one without
+  an identifier is given a UUID.  An entity that's changed since its
+  revision, or that's new but exists, is a conflict, rather than
+  overwriting someone else's change.  Every statement is checked
+  against its property: that the property exists, and the value has
+  its datatype, refers to an entity that exists, and is within its
+  bounds.  The entities in a batch can refer to each other.  The reply
+  has the entities as written, with their new revisions, or the
+  identifier of the one that failed, and why.  An entity's redirect,
+  and whether it's destroyed, are kept as they were: only these set
+  them:
+* ``Merge(old_id, new_id)`` merges one entity into another, and
+* ``Destroy(entity_id)`` marks one destroyed.
+
+Writing whole entities, rather than changes to their statements, keeps
+the protocol small, and is what the store does; it's how Wikibase's own
+``wbeditentity`` works, too.  Finer-grained changes can be added as
+other methods, if they're needed.
 
 Lookups
 ~~~~~~~
 
 Most questions are answered by a lookup, each backed by an index:
 
-* ``FindByLabel(text, languages, match, classes, max, cursor)`` finds
-  entities by label or alias: exactly, by prefix, or by full-text
-  match.
-* ``FindByValue(property, value)`` finds entities by a property's
-  value: an email address, a phone number, or a vCard UID.
-* ``FindLinks(target, property, max, cursor)`` finds the entities
-  that link to one: its employees, residents, or members.
+* ``FindByLabel(text, language, match, class_id, max, after)`` finds
+  entities by label, exactly, or by words: a label or alias with words
+  starting with each of the text's words, ignoring case.
+* ``FindByValue(property_id, value, max, after)`` finds entities by a
+  property's string value: an email address, a phone number, or a
+  vCard UID, normalised, so a phone number matches however it's
+  written.
+* ``FindLinks(target_id, property_id, role, max, after)`` finds the
+  entities that link to one, by a property, or any, from a statement's
+  main snak, a qualifier, or a reference: its employees, residents, or
+  members.
+* ``Instances(class_id, max, after)`` finds the instances of a class.
 
-A class filter matches by conformance: *human* matches instances of
-its subclasses too, by subclass of (P279), as types match by
-conformance (see :doc:`types`).  Results are returned in batches, like
-History's ``GetEvents``: at most ``max``, with an opaque cursor for
-the next batch.
+A class matches by conformance: *human* matches instances of its
+subclasses too, by subclass of (P279), as types match by conformance
+(see :doc:`types`).  Results are identifiers, sorted, in batches, like
+History's ``GetEvents``: at most ``max`` (0 for the service's limit,
+1000), after the identifier ``after``, so the next batch is asked for
+with the last identifier returned.  Destroyed and merged entities are
+left out.
 
 Queries
 ~~~~~~~
 
-Anything else is a ``Query(patterns, filters, max, cursor)``: a
-conjunction of graph patterns, each a subject, property, and object,
-any of which may be a numbered variable rather than a constant, such
-as
+Anything else would be a ``Query(patterns, filters, max, cursor)``,
+which isn't in the protocol yet: a conjunction of graph patterns, each
+a subject, property, and object, any of which may be a numbered
+variable rather than a constant, such as
 
 .. code-block:: text
 
@@ -213,20 +241,25 @@ can be a client library that builds these structures.
 Notifications
 ~~~~~~~~~~~~~
 
-``Watch(ids or query, port)`` asks for changes to some entities to be
-reported on a port: the KB sends a one-way ``Changed(entity_id,
-revision)`` for each.  It keeps an open lens up to date, and keeps the
-Index service (see :doc:`search-service`) up to date with entities'
-labels, aliases, email addresses, and phone numbers, under their item
-identifiers, so the system-wide search finds a person as a person.
+``Watch(ids, listener)`` asks for changes to some entities, or all of
+them, if ``ids`` is empty, to be reported to a port, which serves the
+``Listener`` protocol: once each change is committed, the KB sends a
+one-way ``Changed(entity_id, revision)`` for each entity it changed.
+``Unwatch(watch_id)`` ends a watch, and a watch ends when its
+listener's port is destroyed.  This keeps an open lens up to date, and
+would keep the Index service (see :doc:`search-service`) up to date
+with entities' labels, aliases, email addresses, and phone numbers,
+under their item identifiers, so the system-wide search finds a person
+as a person.
 
 Values
 ~~~~~~
 
 A statement's value can be of any of the datatypes, and DIDL has no
 unions or optional fields (see :manpage:`didl(5)`), so a value is a
-struct with an enum giving its datatype, and fields for each kind of
-value, where an empty string is no value.  Every value carries every
+struct with an enum giving its type, and fields for each type of
+value, where an empty string is no value.  A time's fields are those
+its precision covers, and the others are 0.  Every value carries every
 field, and nothing stops a client setting the wrong ones.  That will
 do for now: the KB would be the first good use for unions, and
 optional fields, in DIDL, and the values can move to them when DIDL
@@ -235,14 +268,29 @@ has them.
 Access
 ~~~~~~
 
-Ports are capabilities (see :doc:`ports`), so the KB can hand out a
-read-only port and a read-write port, rather than keeping access
-control lists: a lens that only shows contacts needn't be able to
-change them.
+Any client with the ``darq.kb`` port can read and change everything,
+as with the other services, for now.  Ports are capabilities (see
+:doc:`ports`), so if a lens should only read the KB, the service can
+hand out a read-only port, rather than keeping access control lists.
 
-A client library, ``darq.kb``, presents entities, statements, snaks
-and values as Python objects, as the prototype does, over the
-protocol.
+Client Library
+~~~~~~~~~~~~~~
+
+``darq.kb`` has the data model, as Python objects: ``Item`` and
+``Property``, their statements, snaks and values, and their documents;
+and ``KB``, a client of the service, which converts them to and from
+the protocol's structs::
+
+    kb = darq.kb.KB.connect()
+    person = darq.kb.Item()
+    person.set_label("Ada Lovelace")
+    person.claim("P31", darq.kb.EntityValue("Q5"))
+    kb.put(person)
+    for entity_id in kb.find_by_label("ada", words=True):
+        ...
+
+A conflict raises ``ConflictError``, and a lookup returns every
+batch's identifiers.
 
 Items, Types, and Lenses
 ------------------------
@@ -390,16 +438,19 @@ None, for now.  These were settled:
   conform to ``public.contact``, rather than both being
   ``public.contact``.
 
-Prototype
----------
+Implementation
+--------------
 
 The data model was prototyped, in Python, in ``experiments/kb``, and
 copied into ``services/kb``, to become the service:
 
-* ``kb.py`` has the data model; its JSON documents; a
-  ``KnowledgeBase``, kept in memory, or in a store, with transactions,
-  lookups, redirects, and checks that statements fit their properties;
-  and ``Import``, for repeatable imports.
+* ``darq/kb.py`` has the data model, its JSON documents, its
+  conversion to and from the protocol's structs, and the ``KB``
+  client.
+* ``services/kb/main.py`` is the service.
+* ``kb.py`` has a ``KnowledgeBase``, kept in memory, or in a store,
+  with transactions, lookups, redirects, and checks that statements
+  fit their properties; and ``Import``, for repeatable imports.
 * ``store.py`` keeps a ``KnowledgeBase`` in SQLite, as described in
   Storage, above.
 * ``wikidata.py`` has a base vocabulary from Wikidata: the properties
@@ -410,7 +461,10 @@ copied into ``services/kb``, to become the service:
   file, into a ``KnowledgeBase``, in memory or in a database, and
   prints what it read::
 
-      python addressbook.py [--db PATH] FILE [NAME ...]
+      PYTHONPATH=../.. python addressbook.py [--db PATH] FILE [NAME ...]
+
+  It works on the database directly, so it's for when the service
+  isn't running: it's not yet a client of it.
 
   An address book of about 1200 cards becomes about 4100 items, with
   about 16,000 statements: people, organisations, and their
@@ -420,7 +474,9 @@ copied into ``services/kb``, to become the service:
   stub person otherwise.
 
 Importing the same address book into a database a second time writes
-nothing.  The tests are in ``tests/test_kb_store.py``.
+nothing.  The tests are in ``tests/test_kb_store.py`` and
+``tests/test_kb_service.py``.
 
-The prototype has no protocol yet: a ``KnowledgeBase`` uses its store
-directly, in-process.
+The service pages its lookups' results itself, from complete lists of
+the matching entities: the store's queries could page instead, when a
+KB is large enough for it to matter.

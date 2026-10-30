@@ -60,6 +60,7 @@ include = [
     "darq/dipc.py",
     "darq/errors.py",
     "darq/identifier.py",
+    "darq/kb.py",
     "darq/loop.py",
     "darq/pcall.py",
     "darq/process.py",

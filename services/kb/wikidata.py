@@ -18,7 +18,8 @@ Wikidata on 2026-10-30."""
 
 from typing import Dict, List, Optional, Set, Tuple
 
-from kb import Datatype, EntityValue, Import, Item, KnowledgeBase
+from darq.kb import Datatype, EntityValue, Item
+from kb import Import, KnowledgeBase
 
 
 # Countries: identifier, label, class, and the names used for them,
