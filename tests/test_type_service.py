@@ -355,12 +355,33 @@ def test_activate_starts_implementation(served, fake_ports, processes):
     assert processes.watched == [(IMPLEMENTATION, SERVICE_PORT)]
     assert bootstrap not in server.ports
     assert processes.closed == [bootstrap]
-    assert service.running == {"test.thing": IMPLEMENTATION}
+    assert service.running == {"/darq/types/thing": IMPLEMENTATION}
 
     # Once it's running, Activate answers at once.
     activate(fake_ports, 3)
     server.run_once(timeout=0)
     assert replies(fake_ports) == [(CLIENT, 3, Status.OK, IMPLEMENTATION)]
+
+
+def test_types_share_an_implementation(served, fake_ports, processes):
+    service, server = served
+    register(service, "test.other", "/darq/types/thing", name="Other")
+    activate(fake_ports, 1)
+    server.run_once(timeout=0)
+
+    # Another of its types, while it starts, waits for the same one.
+    activate(fake_ports, 2, "test.other")
+    server.run_once(timeout=0)
+    assert len(processes.spawned) == 1
+    ready(fake_ports, processes.spawned[0][1])
+    server.run_once(timeout=0)
+    assert replies(fake_ports) == [(CLIENT, 1, Status.OK, IMPLEMENTATION), (CLIENT, 2, Status.OK, IMPLEMENTATION)]
+
+    # And once it's running.
+    activate(fake_ports, 3, "test.other")
+    server.run_once(timeout=0)
+    assert replies(fake_ports) == [(CLIENT, 3, Status.OK, IMPLEMENTATION)]
+    assert len(processes.spawned) == 1
 
 
 def test_dead_implementation_restarted(served, fake_ports, processes):
@@ -546,7 +567,7 @@ def test_type_service(live_pkernel, tmp_path, monkeypatch):  # noqa: F811
 
         class Thing(Implementation.Handler):
             def create(self, request, source):
-                return CreateResponse(item_id="test.thing:1", status=Status.OK)
+                return CreateResponse(item_id=f"{request.type_id}:1", status=Status.OK)
 
             def destroy(self, request, source):
                 # Exit once the reply has gone.
@@ -593,7 +614,7 @@ def test_type_service(live_pkernel, tmp_path, monkeypatch):  # noqa: F811
                 return "second activate gave another port"
 
             thing = Implementation.Client(first.implementation, timeout=10)
-            if thing.create().item_id != "test.thing:1":
+            if thing.create(type_id="test.thing").item_id != "test.thing:1":
                 return "create failed"
             thing.destroy(item_id="test.thing:1")
 
@@ -607,7 +628,7 @@ def test_type_service(live_pkernel, tmp_path, monkeypatch):  # noqa: F811
                 if time.monotonic() > deadline:
                     return "never restarted"
                 time.sleep(0.05)
-            if Implementation.Client(again.implementation, timeout=10).create().status != Status.OK:
+            if Implementation.Client(again.implementation, timeout=10).create(type_id="test.thing").status != Status.OK:
                 return "restarted implementation didn't answer"
             return 0
         """)

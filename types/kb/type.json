@@ -1,0 +1,46 @@
+{
+  "types": [
+    {
+      "id": "darq.entity",
+      "name": "Knowledge Base Entity",
+      "description": "Anything in the Knowledge Base: the base type of its items, and the type of those of no other kind.",
+      "conforms_to": ["public.item"],
+      "implemented": true
+    },
+    {
+      "id": "darq.person",
+      "name": "Person",
+      "description": "A person, in the Knowledge Base.",
+      "conforms_to": ["darq.entity", "public.contact"],
+      "implemented": true
+    },
+    {
+      "id": "darq.organisation",
+      "name": "Organisation",
+      "description": "An organisation, such as a company, in the Knowledge Base.",
+      "conforms_to": ["darq.entity", "public.contact"],
+      "implemented": true
+    },
+    {
+      "id": "darq.organisational-unit",
+      "name": "Organisational Unit",
+      "description": "A part of an organisation, such as a department, in the Knowledge Base (X.500's organizationalUnit).",
+      "conforms_to": ["darq.entity", "public.contact"],
+      "implemented": true
+    },
+    {
+      "id": "darq.place",
+      "name": "Place",
+      "description": "A place, such as a country, locality, or address, in the Knowledge Base.",
+      "conforms_to": ["darq.entity"],
+      "implemented": true
+    },
+    {
+      "id": "darq.group",
+      "name": "Group",
+      "description": "A group of people, in the Knowledge Base.",
+      "conforms_to": ["darq.entity"],
+      "implemented": true
+    }
+  ]
+}

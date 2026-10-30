@@ -77,6 +77,20 @@ _REGIONS = [
 ]
 
 
+# Classes' superclasses, as on Wikidata, of those it has.
+_SUPERCLASSES = [
+    ("Q2366457", ["Q9261468"]),
+    ("Q486972", ["Q2221906"]),
+    ("Q6256", ["Q1048835"]),
+    ("Q5852411", ["Q10864048"]),
+    ("Q35657", ["Q10864048"]),
+    ("Q11828004", ["Q10864048"]),
+    ("Q10864048", ["Q1048835"]),
+    ("Q1048835", ["Q56061"]),
+    ("Q56061", ["Q2221906", "Q43229"]),
+]
+
+
 class Vocabulary:
     """The base properties and items, registered with a KnowledgeBase.
 
@@ -178,11 +192,28 @@ class Vocabulary:
         self.country_class = i("Q6256", "country").get_id()
         self.human_settlement = i("Q486972", "human settlement").get_id()
         self.address = i("Q319608", "address").get_id()
+        self.department_class = i("Q2366457", "department").get_id()
         i("Q5852411", "state of Australia")
         i("Q14192234", "mainland territory of Australia")
         i("Q35657", "U.S. state")
         i("Q11828004", "province of Canada")
         i("Q779415", "special administrative region of China")
+
+        # Superclasses, so the classes' instances are of the right kinds
+        # (see darq.kb.kind_of): only those direct on Wikidata, enough to
+        # reach organizational subdivision, or geographic location.
+        # Mainland territories of Australia, and special administrative
+        # regions of China, aren't reached.
+        i("Q9261468", "organizational subdivision")
+        i("Q2221906", "geographic location")
+        i("Q56061", "administrative territorial entity")
+        i("Q1048835", "political territorial entity")
+        i("Q10864048", "first-level administrative division")
+        for cls, superclasses in _SUPERCLASSES:
+            item = self.kb.get(cls)
+            assert item is not None
+            for superclass in superclasses:
+                item.claim(self.subclass_of, EntityValue(superclass))
 
         # Places, and the names used for them.  A territory is used as
         # a country in addresses.

@@ -737,17 +737,31 @@ class CreateRequest(Message):
 
     METHOD = 1
     RESPONSE = CreateResponse
-    LENGTH = 8
+    BODY_FORMAT = "<II"
+    BODY_START = 8
+    LENGTH = 16
+    DATA_START = 16
 
-    def __init__(self, txid: int = 0):
+    def __init__(self, txid: int = 0, type_id: str = ''):
         super().__init__(txid)
+        self.type_id = type_id
 
     def encode(self) -> tuple[bytes, list[int]]:
         buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.type_id))
+        buf += out.data
         return buf, handles
 
     def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
         super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.type_id = inp.string(bits[0], bits[1])
         return
 
 
@@ -1102,9 +1116,9 @@ class Implementation:
     class Client(system.Client):
         """protocol Implementation: client, for a handle to a service."""
 
-        def create(self) -> CreateResponse:
+        def create(self, type_id: str = '') -> CreateResponse:
             """Implementation.Create."""
-            return self.call(CreateRequest(), CreateResponse)
+            return self.call(CreateRequest(type_id=type_id), CreateResponse)
 
         def open(self, item_id: str = '') -> OpenResponse:
             """Implementation.Open."""

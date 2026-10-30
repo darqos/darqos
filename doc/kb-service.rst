@@ -14,7 +14,7 @@ a blob (see :doc:`item`).
 The service, in ``services/kb``, is the start of an implementation of
 this design (see Implementation, below, and the Second Edition in
 ``TODO.org``): it has the data model, storage, and protocol, but not
-yet queries, or the type implementation.
+yet queries.
 
 Data Model
 ----------
@@ -326,73 +326,167 @@ system-declared types uses that type's identifier, as the text type
 uses ``public.utf8-plain-text``.  Apple has none for these kinds,
 though: its nearest is ``public.contact``, the base type for contact
 information, about a person or an organisation, which is broader than
-either.  So the kinds have ``darq`` identifiers, and those two conform
-to ``public.contact``:
+either.  So the kinds have ``darq`` identifiers, and those that have
+contact details also conform to ``public.contact``:
 
-======================  ==============================================
-Type                    Entities
-======================  ==============================================
-``darq.entity``         Any entity.  Those of no other kind, such as
-                        properties, given names, classes, and units,
-                        are of this type.
-``darq.person``         People.  Conforms to ``public.contact``.
-``darq.organisation``   Organisations, including departments.
-                        Conforms to ``public.contact``.
-``darq.place``          Countries, regions, localities, and addresses.
-``darq.group``          Groups of people.
-======================  ==============================================
+=============================  =======================================
+Type                           Entities
+=============================  =======================================
+``darq.entity``                Any entity: the base type of every KB
+                               item.  Those of no other kind, such as
+                               properties, given names, classes, and
+                               units, are of this type.  Conforms to
+                               ``public.item``.
+``darq.person``                People.  Also conforms to
+                               ``public.contact``.
+``darq.organisation``          Organisations, such as companies.  Also
+                               conforms to ``public.contact``.
+``darq.organisational-unit``   Parts of organisations, such as
+                               departments: X.500's
+                               organizationalUnit.  Also conforms to
+                               ``public.contact``.
+``darq.place``                 Countries, regions, localities, and
+                               addresses.
+``darq.group``                 Groups of people.
+=============================  =======================================
 
-The others conform to ``darq.entity``, too.  An item identifier is the
-type identifier and the entity's identifier, as it is:
-``darq.place:Q408`` is Australia, and ``darq.person:`` followed by a
-UUID is someone from an address book.
+The others conform to ``darq.entity``.  ``darq.entity`` doesn't
+conform to ``public.data``, since an entity isn't a byte stream, nor
+to ``public.content``, which is for documents.  A person's lenses are
+found through both ``public.contact`` and ``darq.entity``, which are
+the same distance away, so a contact lens and the property-sheet lens
+(see Lenses, below) are both offered.
 
-An entity's kind is chosen from its classes when it's created, using a
-table kept in the KB, as data: an instance of human (Q5) is a person,
-an instance of organization (Q43229), or any of its subclasses, is an
-organisation, and so on.  The KB still keeps all of the entity's
-classes: its kind is just one that's among them.
+An item identifier is the type identifier and the entity's identifier,
+as it is: ``darq.place:Q408`` is Australia, and ``darq.person:``
+followed by a UUID is someone from an address book.
 
-An entity's kind can change.  One whose kind changes, which should be
-rare, and two entities
-merged into one, which isn't (it's how duplicate contacts are tidied
-up), are both handled by *redirects*, as in Wikidata: the old item is
-marked destroyed, as items are (see Item Destruction, in
-:doc:`types`), and redirects to the new one, so that opening its
-identifier opens the new item, and links to it still lead somewhere.
+Kinds
+~~~~~
+
+An entity's kind is recorded when it's created as an item, by the type
+implementation, as a *DarqOS type* statement, a local property, with
+its type identifier.  An entity without one, such as one imported from
+an address book, is of the kind its classes give: each class can have
+a *DarqOS instance type* statement, another local property, giving the
+type of its instances, and of its subclasses'.  So the kind table is
+data in the KB, rather than code.  An entity's kind is the first of
+
+1. ``darq.person``,
+2. ``darq.organisational-unit``,
+3. ``darq.place``,
+4. ``darq.organisation``, and
+5. ``darq.group``
+
+that any of its classes, or of their superclasses, by subclass of
+(P279), has as its instance type, or else ``darq.entity``.  Place comes
+before organisation because Wikidata has administrative territorial
+entity, the class of regions, as a subclass of organization as well as
+of geographic location.  Recording a kind keeps an item's identifier
+the same when its entity's classes change, as when a stub person turns
+out to be an organisation.
+
+The defaults are DarqOS's, stated on the classes, with references to
+a *DarqOS* source item, as an import's are (see Storage): human (Q5)
+is a person, organizational subdivision (Q9261468) an organisational
+unit, geographic location (Q2221906) and address (Q319608) places,
+organization (Q43229) an organisation, and group of humans (Q16334295)
+a group.  The type implementation states them each time it starts,
+so a later version can change them, and a statement of the operator's,
+with preferred rank, overrides them, and is kept.  Department
+(Q2366457) and organizational unit (Q679206) are both subclasses of
+organizational subdivision, rather than one of the other.  An address
+isn't a geographic location on Wikidata.
+
+A local KB has only a little of Wikidata's class hierarchy, so a
+vocabulary adds the subclass links its classes need to reach these,
+stated in its own source: the address book's adds Wikidata's, from
+human settlement, country, and the states and provinces it uses.
+
+The KB keeps all of the entity's classes: its kind is just one that's
+among them.  A kind is changed deliberately, which should be rare, by
+making a new entity, and merging the old one into it.  Two entities
+merged into one, which isn't rare (it's how duplicate contacts are
+tidied up), are handled by *redirects*, as in Wikidata: the old entity
+redirects to the new one, so that opening its item opens the new
+item, and links to it still lead somewhere.
 
 Type Implementation
 ~~~~~~~~~~~~~~~~~~~
 
-One type implementation, registered for all of these types,
-is a client of the KB service.  It's separate from the KB service: the
-Type service spawns implementations, from a directory, while the KB
-is a system service that owns its database.
+One type implementation, ``types/kb``, registered for all of these
+types, is a client of the KB service.  It's separate from the KB
+service: the Type service spawns implementations, from a directory,
+while the KB is a system service that owns its database.  The Type
+service runs one process for all the types a directory implements
+(see :doc:`types`).  When it starts, it finds, or creates, the
+properties and items it needs (see ``darq.kb.KB.ensure``), and states
+the default instance types (see ``darq.kb.KB.state``).
 
-* ``Create()`` creates an empty entity of the type's kind: a
-  ``darq.person`` is an instance of human.
-* ``Destroy()`` marks an entity destroyed, keeping its statements and
-  the links to it.  Queries leave out destroyed entities, unless asked
-  for them.
-* An item's port serves the ``Item`` protocol's methods, and, from 16,
-  the entity's part of the KB protocol: ``Get(languages, parts)``,
-  with the labels of the entities it refers to; ``Apply(changes)``;
-  ``Links(property)``, for links to the entity; and ``Watch(port)``.
+* ``Create(type_id)`` creates an entity of the type's kind, an
+  instance of its class (a ``darq.person`` is an instance of human),
+  with its DarqOS type.
+* ``Open(item_id)`` opens an entity's item, if its kind is the item
+  identifier's type: ``darq.entity:`` and a person's identifier is
+  ``NOT_FOUND``, since conformance is for lenses, not identifiers.
+  A merged entity's item opens the entity it redirects to, whatever
+  its kind, and a destroyed one's is ``NOT_FOUND``.
+* ``Destroy(item_id)`` marks an entity destroyed, keeping its
+  statements and the links to it.
+
+An item's port serves the ``EntityItem`` protocol, in
+``lib/didl/kb.didl``: the ``Item`` protocol's ``Close``, and, from 16,
+
+* ``GetEntity(languages)``, with the entities it refers to, as
+  ``Linked``: their item identifiers, and labels in the chain of
+  languages;
+* ``PutEntity(entity)``, which writes it, as ``PutEntities`` does,
+  keeping its DarqOS type;
+* ``GetLinks(property_id, role, languages, max, after)``, for the
+  entities that link to it, as ``Linked``; and
+* ``WatchEntity(listener)``, which has the KB report the entity's
+  changes to the listener directly.
 
 So an item port is a capability for a single entity: a lens given a
-person's port can read and change that person, and see the labels of
-the entities it refers to, but no more.  To follow a link, it asks for
-the other item to be used, as with any item.  Queries across the
-whole graph are made on the KB service's own port, by tools and
-search.
+person's port can read and change that person, and see the entities
+it refers to, but no more.  To follow a link, it asks for the other
+item to be used, by its item identifier, as with any item.  Queries
+across the whole graph are made on the KB service's own port, by
+tools and search.
+
+The implementation keeps nothing of its own: each request is answered
+from the KB.  It caches the classes it reads to find kinds, and
+watches the KB to drop those that change.
 
 Lenses
 ~~~~~~
 
-A property-sheet lens for ``darq.entity`` shows any entity, with
-its labels and statements, and links to the entities it refers to.
-``FindLenses`` falls back through conformance, so every kind has this
-lens from the start.  Then, each kind can have its own:
+The entity lens, ``lenses/entity``, a property sheet for
+``darq.entity``, shows any entity.  ``FindLenses`` falls back through
+conformance, so every kind has this lens from the start.  It's
+read-only, for now: editing comes next.
+
+* It shows the entity's label, kind, and item identifier; its
+  description and aliases; its statements, by property, with their
+  qualifiers and references, preferred ones starred and deprecated
+  ones struck through; and the items that link to it, up to 200.
+  Labels and text are in the locale's languages, falling back to
+  English.
+* A link to another entity's item follows it in the same window,
+  like a web browser, with Back (Alt+Left, or Backspace) to return.
+  Ctrl+click, or a link's context menu, opens it in a new window, with
+  whatever lens its type has.
+* Each item shown is watched (``WatchEntity``), so the view keeps up
+  with changes, and recorded in History as ``opened``, from
+  ``entity-lens``.
+
+It's HTML in a ``QTextBrowser``, built by ``render.py``, which uses no
+Qt.  A link is an anchor numbered in the page's list of item
+identifiers, so nothing is parsed out of URLs.  Back opens the earlier
+item again, rather than keeping its port, so it shows it as it is
+now.
+
+Then, each kind can have its own lens:
 
 * a business-card lens for people, as described in :doc:`pim`, and
   sketched, for the old runtime, in ``types/person``;
@@ -424,15 +518,20 @@ Open Questions
 
 None, for now.  These were settled:
 
-* Person, organisation, place, and group are the first kinds.
-  Properties aren't a kind: they're the vocabulary, rather than things
+* Person, organisation, organisational unit, place, and group are the
+  first kinds, with ``darq.entity`` as their base type, and the type
+  of everything else.  Properties aren't a kind: they're the vocabulary, rather than things
   the operator works with, and are changed by tools, on the KB
   service's port, so they're ``darq.entity`` items.  Events
   might be next, as Apple's ``public.calendar-event``, the base type
   for scheduled events, rather than a ``darq`` type.  Documents'
   bibliographic records (see :doc:`bib`) can wait.
-* An entity's kind can change, with a redirect.
-* The type implementation is separate from the KB service.
+* An entity's kind is recorded when it's created, and found from its
+  classes otherwise, by a table kept in the KB.  It's changed by a new
+  entity and a redirect.
+* The type implementation is separate from the KB service, and one
+  process serves all the kinds.
+* Opening an item of another kind than its entity's is ``NOT_FOUND``.
 * Values are a tagged struct, until DIDL has unions.
 * People and organisations have ``darq`` types of their own, which
   conform to ``public.contact``, rather than both being
@@ -448,6 +547,8 @@ copied into ``services/kb``, to become the service:
   conversion to and from the protocol's structs, and the ``KB``
   client.
 * ``services/kb/main.py`` is the service.
+* ``types/kb`` is the type implementation, of the kinds.
+* ``lenses/entity`` is the entity lens.
 * ``kb.py`` has a ``KnowledgeBase``, kept in memory, or in a store,
   with transactions, lookups, redirects, and checks that statements
   fit their properties; and ``Import``, for repeatable imports.
@@ -474,8 +575,9 @@ copied into ``services/kb``, to become the service:
   stub person otherwise.
 
 Importing the same address book into a database a second time writes
-nothing.  The tests are in ``tests/test_kb_store.py`` and
-``tests/test_kb_service.py``.
+nothing.  The tests are in ``tests/test_kb_store.py``,
+``tests/test_kb_service.py``, ``tests/test_kb_type.py``, and
+``tests/test_entity_lens.py``.
 
 The service pages its lookups' results itself, from complete lists of
 the matching entities: the store's queries could page instead, when a

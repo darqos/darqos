@@ -230,6 +230,12 @@ class TextImplementation(Implementation.Handler):
     # Requests
 
     def create(self, request: CreateRequest, source: int) -> CreateResponse:
+        try:
+            if darq.canonical_type_id(request.type_id) != TYPE_ID:
+                return CreateResponse(status=Status.NOT_FOUND)
+        except darq.InvalidIdentifierError:
+            return CreateResponse(status=Status.INVALID_ID)
+
         response = self.storage.create(value=encode_blob(""))
         if response.status != storage.Status.OK:
             logging.error(f"Can't create a text blob: {response.status.name}")

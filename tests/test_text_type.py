@@ -155,9 +155,14 @@ def call(fake_ports, server):
 
 def create(call):
     """Create an item: returns its identifier and port."""
-    response = call(IMPLEMENTATION_PORT, CreateRequest())
+    response = call(IMPLEMENTATION_PORT, CreateRequest(type_id=text_module.TYPE_ID))
     assert response.status == Status.OK
     return response.item_id, response.item
+
+
+def test_create_only_its_type(call):
+    assert call(IMPLEMENTATION_PORT, CreateRequest(type_id="public.png")).status == Status.NOT_FOUND
+    assert call(IMPLEMENTATION_PORT, CreateRequest(type_id="bad:id")).status == Status.INVALID_ID
 
 
 def replace(call, port, start, end, text, expected=0):
@@ -418,7 +423,7 @@ def test_text_type(live_pkernel, tmp_path):  # noqa: F811
                 return f"activate: {activated!r}"
             implementation = Implementation.Client(activated.implementation, timeout=10)
 
-            created = implementation.create()
+            created = implementation.create(type_id="public.utf8-plain-text")
             if created.status != Status.OK:
                 return f"create: {created!r}"
             item = Text.Client(created.item, timeout=10)

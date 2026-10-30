@@ -68,21 +68,6 @@ class Failed(Exception):
         self.entity_id = entity_id
 
 
-def referenced(entity: model.Entity) -> set[str]:
-    """Return the identifiers of the entities an entity refers to: its
-    statements' properties, values, and units."""
-    ids: set[str] = set()
-    for s in entity.statements:
-        for snak in [s.main_snak, *s.qualifiers, *(a for r in s.references for a in r.snaks)]:
-            ids.add(snak.property_id)
-            if isinstance(snak.value, model.EntityValue):
-                ids.add(snak.value.entity_id)
-            elif isinstance(snak.value, model.QuantityValue) and snak.value.unit is not None:
-                ids.add(snak.value.unit)
-    ids.discard(entity.id)
-    return ids
-
-
 def page(ids: typing.Iterable[str], max_ids: int, after: str) -> list[str]:
     """Return a batch of sorted identifiers: at most max_ids (0 for
     MAX_IDS), after the identifier after."""
@@ -129,7 +114,7 @@ class KBService(KB.Handler):
 
         labels = []
         if request.languages:
-            ids = set().union(*(referenced(e) for e in entities))
+            ids = set().union(*(model.referenced(e) for e in entities))
             for entity_id in sorted(ids):
                 entity = self.kb.get(entity_id)
                 if entity is None:

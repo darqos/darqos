@@ -17,10 +17,10 @@ import uuid
 
 from decimal import Decimal, InvalidOperation
 from enum import Enum
-from typing import (Any, Dict, Iterable, Iterator, List, Optional,
-                    Protocol, Tuple, Union)
+from typing import (Any, Callable, Dict, Iterable, Iterator, List, Optional,
+                    Protocol, Set, Tuple, Union)
 
-from darq import system
+from darq import identifier, system
 from darq.protocols import kb as wire
 
 
@@ -822,6 +822,23 @@ def entity_links(entity: Entity) -> Iterator[Tuple[str, str, str, str]]:
                     yield s.id, snak.property_id, snak.value.entity_id, role
 
 
+def referenced(entity: Entity) -> Set[str]:
+    """Return the identifiers of the entities an entity refers to: its
+    statements' properties, values, and units."""
+    ids: Set[str] = set()
+    for s in entity.statements:
+        for snak in [s.main_snak, *s.qualifiers,
+                     *(a for r in s.references for a in r.snaks)]:
+            ids.add(snak.property_id)
+            if isinstance(snak.value, EntityValue):
+                ids.add(snak.value.entity_id)
+            elif (isinstance(snak.value, QuantityValue)
+                  and snak.value.unit is not None):
+                ids.add(snak.value.unit)
+    ids.discard(entity.id)
+    return ids
+
+
 def entity_strings(entity: Entity) -> Iterator[Tuple[str, str, str]]:
     """Return an entity's string values, normalised.
 
@@ -840,6 +857,113 @@ class ConflictError(Exception):
     def __init__(self, message: str, entity_id: str = ""):
         super().__init__(message)
         self.entity_id = entity_id
+
+
+# DarqOS's own vocabulary: local properties, and a source item, with
+# fixed identifiers, so they're the same in every knowledge base.
+
+# Stated in (P248): a reference to a statement's source.
+STATED_IN = "P248"
+
+# DarqOS type: an entity's type, its kind, recorded when it's created
+# as an item of that type (a String).
+DARQOS_TYPE = "2ce9711e-43eb-4c69-8739-9346b526a71a"
+
+# DarqOS instance type: on a class, the type of its instances, and its
+# subclasses' (a String).
+DARQOS_INSTANCE_TYPE = "eac9f098-d3da-4133-8fa1-e29ee5c0d9be"
+
+# DarqOS, as the source of its own statements, such as the default
+# instance types.
+DARQOS = "23333c92-3ca8-4a6f-8bd1-1d1cf24dc5c0"
+
+
+# Kinds: the types of KB items (see doc/kb-service.rst).  An entity of
+# no other kind is a darq.entity.
+ENTITY_TYPE = "darq.entity"
+
+# The other kinds, in order of priority, with the class of a new item of
+# each: an entity that's of several kinds is of the first.
+KINDS = [
+    ("darq.person", "Q5"),
+    ("darq.organisational-unit", "Q9261468"),
+    ("darq.place", "Q2221906"),
+    ("darq.organisation", "Q43229"),
+    ("darq.group", "Q16334295"),
+]
+
+KIND_TYPES = [ENTITY_TYPE] + [kind for kind, _ in KINDS]
+
+# The instance type of each class, by default, with its label: human,
+# organizational subdivision, organization, geographic location,
+# address, and group of humans.  An address isn't a geographic location
+# on Wikidata.
+DEFAULT_INSTANCE_TYPES = [
+    ("Q5", "human", "darq.person"),
+    ("Q9261468", "organizational subdivision", "darq.organisational-unit"),
+    ("Q43229", "organization", "darq.organisation"),
+    ("Q2221906", "geographic location", "darq.place"),
+    ("Q319608", "address", "darq.place"),
+    ("Q16334295", "group of humans", "darq.group"),
+]
+
+# Most classes searched for an entity's kind.
+MAX_CLASSES = 1000
+
+
+def _strings(entity: Entity, property_id: str) -> List[str]:
+    """Return an entity's string values for a property: those with
+    preferred rank, if there are any, or else those with normal rank."""
+    statements = [s for s in entity.get_statements(property_id)
+                  if isinstance(s.get_value(), StringValue)
+                  and s.rank != Rank.Deprecated]
+    preferred = [s for s in statements if s.rank == Rank.Preferred]
+    values = [s.get_value() for s in (preferred or statements)]
+    return [v.value for v in values if isinstance(v, StringValue)]
+
+
+def _targets(entity: Entity, property_id: str) -> List[str]:
+    """Return the entities a property's values refer to."""
+    values = [s.get_value() for s in entity.get_statements(property_id)
+              if s.rank != Rank.Deprecated]
+    return [v.entity_id for v in values if isinstance(v, EntityValue)]
+
+
+def kind_of(entity: Entity, get: Callable[[str], Optional[Entity]]) -> str:
+    """Return an entity's kind: the type of its item.
+
+    It's its recorded DarqOS type, if it has one; otherwise, the first
+    kind, in order of priority, that any of its classes, or their
+    superclasses, have as their instance type; otherwise darq.entity.
+
+    :param get: Returns an entity, by identifier, or None."""
+    recorded = _strings(entity, DARQOS_TYPE)
+    if recorded:
+        return recorded[0]
+
+    found: Set[str] = set()
+    seen: Set[str] = set()
+    level = _targets(entity, INSTANCE_OF)
+    while level and len(seen) < MAX_CLASSES:
+        following = []
+        for class_id in level:
+            if class_id in seen:
+                continue
+            seen.add(class_id)
+            cls = get(class_id)
+            if cls is not None:
+                found.update(_strings(cls, DARQOS_INSTANCE_TYPE))
+                following.extend(_targets(cls, SUBCLASS_OF))
+        level = following
+    for kind, _ in KINDS:
+        if kind in found:
+            return kind
+    return ENTITY_TYPE
+
+
+def item_id(entity_id: str, kind: str) -> str:
+    """Return the item identifier of an entity of a kind."""
+    return identifier.make_item_id(kind, entity_id)
 
 
 # Structs: entities as the protocol's.  Its enums are numbered from 0,
@@ -1018,6 +1142,20 @@ def entity_from_wire(e: wire.Entity) -> Entity:
     return entity
 
 
+def _sourced(statement: Statement, source_id: str) -> bool:
+    """Return whether a statement has a reference to a source."""
+    return any(a.property_id == STATED_IN
+               and isinstance(a.value, EntityValue)
+               and a.value.entity_id == source_id
+               for r in statement.references for a in r.snaks)
+
+
+def _content(statement: Statement) -> str:
+    """Return a statement's content, without its identifier, as text."""
+    return json.dumps(encode_statement(statement, with_id=False),
+                      sort_keys=True)
+
+
 class KB:
     """Client of the Knowledge Base service.
 
@@ -1073,6 +1211,63 @@ class KB:
         for entity, written in zip(entities, response.entities):
             entity.revision = written.revision
         return list(entities)
+
+    def ensure(self, *entities: Entity) -> Dict[str, Entity]:
+        """Find, or create, some entities: those that exist are left as
+        they are, and those that don't are put.
+
+        :returns: The entities as they are, by identifier."""
+        for _ in range(3):
+            found, _labels = self.get_entities([e.id for e in entities],
+                                               follow=False)
+            have = {e.id: e for e in found}
+            missing = [e for e in entities if e.id not in have]
+            if not missing:
+                return have
+            try:
+                self.put(*missing)
+            except ConflictError:
+                # Someone else created one: read them again.
+                continue
+            have.update((e.id, e) for e in missing)
+            return have
+        raise ConflictError("ensure: they keep changing")
+
+    def state(self,
+              entity_id: str,
+              source_id: str,
+              statements: Iterable[Statement]) -> Entity:
+        """Make an entity's statements from a source be some statements.
+
+        The statements are given references to the source (stated in,
+        P248), and replace those it has from it, if they're different;
+        its other statements are kept, as an Import keeps them.
+
+        :returns: The entity, as it is.
+        :raises LookupError: if there's no such entity."""
+        new = list(statements)
+        for s in new:
+            if not _sourced(s, source_id):
+                s.add_reference(Reference().add(STATED_IN,
+                                                EntityValue(source_id)))
+        for _ in range(3):
+            entity = self.get(entity_id, follow=False)
+            if entity is None:
+                raise LookupError(f"{entity_id}: not found")
+            old = [s for s in entity.statements if _sourced(s, source_id)]
+            if [_content(s) for s in old] == [_content(s) for s in new]:
+                return entity
+            for s in old:
+                entity.remove_statement(s)
+            for s in new:
+                entity.add_statement(Statement(s.main_snak, s.qualifiers,
+                                               s.references, s.rank))
+            try:
+                self.put(entity)
+            except ConflictError:
+                continue
+            return entity
+        raise ConflictError(f"{entity_id}: it keeps changing", entity_id)
 
     def merge(self, old_id: str, new_id: str):
         """Merge one entity into another."""

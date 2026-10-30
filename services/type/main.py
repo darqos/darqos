@@ -10,8 +10,9 @@
 #   type identifier, and lenses by type and context.  These are the
 #   catalogue: saved, as JSON, in a Storage blob whose key is in the
 #   boot vector, so the p-kernel must spawn the service.
-# - The ports of running implementations, by type identifier.  These
-#   last only as long as the implementations do.
+# - The ports of running implementations, by directory.  These last
+#   only as long as the implementations do.  A directory can implement
+#   several types: one process serves them all.
 #
 # An implementation is started by Activate: it's spawned with a
 # bootstrap port, and reports its port there with Ready.  Activates
@@ -147,7 +148,7 @@ class TypeService(Type.Handler):
         self.implementations: dict[str, str] = {}
         self.lenses: list[tuple[str, str, str]] = []
 
-        # Implementations' ports, and those starting, by type.
+        # Implementations' ports, and those starting, by directory.
         self.running: dict[str, int] = {}
         self.starting: dict[str, Starting] = {}
 
@@ -305,16 +306,17 @@ class TypeService(Type.Handler):
         if type_id is None:
             return ActivateResponse(status=Status.INVALID_ID)
 
-        port = self.running.get(type_id)
+        path = self.implementations.get(type_id)
+        if path is None:
+            return ActivateResponse(status=Status.NOT_FOUND)
+
+        port = self.running.get(path)
         if port is not None:
             return ActivateResponse(implementation=port, status=Status.OK)
 
-        starting = self.starting.get(type_id)
+        starting = self.starting.get(path)
         if starting is None:
-            path = self.implementations.get(type_id)
-            if path is None:
-                return ActivateResponse(status=Status.NOT_FOUND)
-            starting = self.start(type_id, path)
+            starting = self.start(path)
             if starting is None:
                 return ActivateResponse(status=Status.FAILED)
 
@@ -324,8 +326,8 @@ class TypeService(Type.Handler):
 
     # Activation
 
-    def start(self, type_id: str, path: str) -> Starting | None:
-        """Spawn a type's implementation, with a bootstrap port for its Ready.
+    def start(self, path: str) -> Starting | None:
+        """Spawn an implementation, with a bootstrap port for its Ready.
 
         :returns: Its Starting entry, or None if it couldn't be spawned."""
         assert self.server is not None, "TypeService isn't being served"
@@ -333,23 +335,23 @@ class TypeService(Type.Handler):
         try:
             dpid = darq.spawn_process(path, bootstrap=bootstrap)
         except darq.SpawnError as e:
-            logging.error(f"Can't start {type_id} implementation {path}: {e}")
+            logging.error(f"Can't start implementation {path}: {e}")
             darq.close_port(bootstrap)
             return None
 
-        logging.info(f"Started {type_id} implementation {path}, dpid {dpid}")
-        timer = self.server.call_later(ACTIVATION_TIMEOUT, lambda: self.not_ready(type_id))
+        logging.info(f"Started implementation {path}, dpid {dpid}")
+        timer = self.server.call_later(ACTIVATION_TIMEOUT, lambda: self.not_ready(path))
         starting = Starting(bootstrap, timer)
-        self.starting[type_id] = starting
-        self.server.add(bootstrap, ReadyHandler(self, type_id))
+        self.starting[path] = starting
+        self.server.add(bootstrap, ReadyHandler(self, path))
         return starting
 
-    def finish_start(self, type_id: str, port: int | None):
+    def finish_start(self, path: str, port: int | None):
         """Answer the Activates waiting for an implementation, and stop
         waiting for its Ready.
 
         :param port: Its port, or None if it failed."""
-        starting = self.starting.pop(type_id)
+        starting = self.starting.pop(path)
         starting.timer.cancel()
         assert self.server is not None
         self.server.remove(starting.bootstrap)
@@ -362,45 +364,45 @@ class TypeService(Type.Handler):
         for pending in starting.waiting:
             pending.reply(response)
 
-    def ready(self, type_id: str, port: int | None):
+    def ready(self, path: str, port: int | None):
         """Record a started implementation's port, from its Ready."""
         if port is None:
-            logging.error(f"{type_id} implementation reported Ready without a port")
-            self.finish_start(type_id, None)
+            logging.error(f"Implementation {path} reported Ready without a port")
+            self.finish_start(path, None)
             return
 
         # Its port dies with it: then it's removed (see port_destroyed).
         assert self.port is not None, "TypeService has no port for notifications"
         darq.notify_on_death(port, self.port)
-        self.running[type_id] = port
-        logging.info(f"{type_id} implementation is ready, on port {port}")
-        self.finish_start(type_id, port)
+        self.running[path] = port
+        logging.info(f"Implementation {path} is ready, on port {port}")
+        self.finish_start(path, port)
 
-    def not_ready(self, type_id: str):
+    def not_ready(self, path: str):
         """Fail an activation whose implementation didn't report Ready in time.
 
         It isn't killed: its Ready would now fail, since the bootstrap
         port is closed, and it should exit."""
-        logging.error(f"{type_id} implementation wasn't ready within {ACTIVATION_TIMEOUT}s")
-        self.finish_start(type_id, None)
+        logging.error(f"Implementation {path} wasn't ready within {ACTIVATION_TIMEOUT}s")
+        self.finish_start(path, None)
 
     def port_destroyed(self, handle: int):
-        for type_id, port in list(self.running.items()):
+        for path, port in list(self.running.items()):
             if port == handle:
-                logging.warning(f"{type_id} implementation has gone (port {handle})")
-                del self.running[type_id]
+                logging.warning(f"Implementation {path} has gone (port {handle})")
+                del self.running[path]
         darq.close_port(handle)
 
 
 class ReadyHandler(Bootstrap.Handler):
     """Answers an implementation's bootstrap port, while it starts."""
 
-    def __init__(self, service: TypeService, type_id: str):
+    def __init__(self, service: TypeService, path: str):
         self.service = service
-        self.type_id = type_id
+        self.path = path
 
     def ready(self, request: Ready, source: int):
-        self.service.ready(self.type_id, request.implementation)
+        self.service.ready(self.path, request.implementation)
 
 
 def darq_main():

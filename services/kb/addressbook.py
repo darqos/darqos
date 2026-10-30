@@ -493,7 +493,8 @@ class Importer:
                              name,
                              f"department of {parent_label}"
                              if parent_label else None)
-            unit.claim(self.wd.instance_of, EntityValue(self.wd.organization))
+            unit.claim(self.wd.instance_of,
+                       EntityValue(self.wd.department_class))
             unit.claim(self.wd.parent_organization,
                        EntityValue(parent.get_id()))
             self.departments[key] = unit

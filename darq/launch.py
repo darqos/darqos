@@ -37,7 +37,7 @@ def create_item(type_id: str) -> tuple[str, int]:
     :returns: Its identifier, and a port for it, which the caller must
               close (or pass to a lens, with use_item).
     :raises LaunchError: if it couldn't be created."""
-    response = _activate(type_id).create()
+    response = _activate(type_id).create(type_id=type_id)
     if response.status != type_protocol.Status.OK or response.item is None:
         raise LaunchError(f"Can't create a {type_id} item: {response.status.name}")
     return response.item_id, response.item

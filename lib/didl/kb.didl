@@ -233,3 +233,36 @@ protocol Listener {
     // committed.
     1: Changed(string entity_id, uint64 revision);
 }
+
+// An entity an item refers to, or that refers to it, as an item: its
+// item identifier (empty for a property, which isn't an item), and its
+// label in the first language of a chain that it has one in.
+struct Linked {
+    string entity_id;
+    string item_id;
+    string language;
+    string label;
+}
+
+// Served by the KB type implementation (types/kb) on an item's port:
+// the entity it's for, the Item protocol's Close, and its own methods
+// from 16.  A merged entity's port is for the entity it redirects to.
+protocol EntityItem {
+    1: Close() -> ();
+
+    // Return the entity, and the entities it refers to, with their
+    // labels in a chain of languages.
+    16: GetEntity(sequence<string> languages) -> (Entity entity, sequence<Linked> linked, Status status);
+
+    // Write the entity, whole, as read at its revision: as PutEntities.
+    // Its kind, its DarqOS type statements, can't be changed.
+    17: PutEntity(Entity entity) -> (uint64 revision, Status status);
+
+    // Return the entities that link to this one, by a property (or any,
+    // if it's empty), in a statement's role, in batches, as KB lookups.
+    18: GetLinks(string property_id, Role role, sequence<string> languages, uint32 max, string after) -> (sequence<Linked> linked, Status status);
+
+    // Have changes to the entity reported to a listener, which serves
+    // Listener, until its port is destroyed.
+    19: WatchEntity(port listener) -> (Status status);
+}

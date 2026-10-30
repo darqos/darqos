@@ -145,9 +145,22 @@ Issues
     (services/kb/main.py), started at boot, with darq.kb as its data
     model and client: get and put whole entities, merge, destroy,
     lookups in batches, and watches.
-  - Next: Query (graph patterns); the type implementation, with
-    find-or-create of the entities it needs; the Item identifier
-    datatype; addressbook.py as a client of the service.
+  - Done: the type implementation (types/kb), of darq.entity and its
+    kinds, darq.person, darq.organisation, darq.organisational-unit,
+    darq.place and darq.group, one process for all of them; kinds
+    recorded at creation, or found from classes by instance types kept
+    in the KB; item ports (EntityItem, in lib/didl/kb.didl).  The Type
+    service shares an implementation by directory, and Create takes
+    the type.
+  - Done: the entity lens (lenses/entity), read-only: a property sheet
+    for any KB item, following links in the same window, with Back, or
+    in a new window (Ctrl+click, or the link's menu).
+  - Next: addressbook.py as tools/vcard, a client of the service, that
+    records History "created" events for what it imports, so its items
+    can be found until there's indexing; editing in the entity lens;
+    Query (graph patterns); the Item identifier datatype.  Mainland territories of Australia and special
+    administrative regions of China aren't reached by the address
+    book's subclass links, so they're darq.entity.
 - Implement URL handling
   - as a Type?
   - as an object identifier?

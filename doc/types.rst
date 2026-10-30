@@ -164,7 +164,12 @@ Implementation active at any time; multiple Items of a Type are
 represented by a single Type Implementation.
 
 The Type Service maps the Type Identifier to the Darq *port* for each
-running Type Implementation.
+running Type Implementation.  An implementation's directory can
+implement several types (its `type.json` lists them): one process
+serves all of them, so running implementations are kept by directory,
+and activating any of its types returns the same port.  The Knowledge
+Base's implementation, `types/kb`, serves all its kinds this way (see
+:doc:`kb-service`).
 
 Note that a Type Implementation may use multiple processes in its
 implementation of the type's behaviour.  The constraint is just that
@@ -182,8 +187,8 @@ Activation
 
 * The Type Service opens a *bootstrap port*, and spawns the
   implementation with it (see :doc:`ipc`).  The `Activate` reply is
-  deferred, as is any other `Activate` for the type that arrives
-  meanwhile.
+  deferred, as is any other `Activate` for any of its directory's
+  types that arrives meanwhile.
 * The implementation opens the port it will serve the `Implementation`
   protocol on, and reports it with a one-way `Ready(implementation)`
   (protocol `Bootstrap`) on the port `darq.get_bootstrap_port()`
@@ -203,7 +208,9 @@ something next asks for it with `Activate`.
 Every implementation serves the `Implementation` protocol (also in
 `lib/didl/type.didl`):
 
-* `Create()` returns the new item's identifier, and a port for it.
+* `Create(type_id)` creates an item of a type, and returns its
+  identifier, and a port for it.  A type the implementation doesn't
+  implement is `NOT_FOUND`.
 * `Open(item_id)` returns a port for an existing item.  An implementation
   must check that the identifier's type is its own: an item of another
   type, including a conforming subtype, is `NOT_FOUND`.

@@ -80,8 +80,10 @@ protocol Bootstrap {
 
 // Served by every type implementation, on the port Activate returns.
 protocol Implementation {
-    // Create an item, returning its identifier and a port for it.
-    1: Create() -> (string item_id, port item, Status status);
+    // Create an item of a type, returning its identifier and a port for
+    // it.  An implementation can implement several types; a type it
+    // doesn't implement is NOT_FOUND.
+    1: Create(string type_id) -> (string item_id, port item, Status status);
 
     // Open an existing item, returning a port for it.  An item of
     // another type is NOT_FOUND.
