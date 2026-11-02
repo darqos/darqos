@@ -404,8 +404,12 @@ Functions
 The Terminal Service is responsible for providing several crucial
 functions of the user interface, each invoked by a hotkey (see
 :doc:`ux`).  In 1st Edition, *Sys-space* (Search), *Sys-e* (Events),
-and *Sys-i* (Item info) show a "TBD" panel: they need the Index and
-Metadata services, and an events source.
+and *Sys-i* (Item info) show a "TBD" panel, for now: Search needs the
+Index service, which is in First Edition, and Events an events source.
+The Search panel will show the time and date, too: there's no clock
+elsewhere, and no status bar.  Item info needed the Metadata service,
+which is deferred to Third Edition, and may not be needed (see
+:doc:`roadmap`); the REPL (*Sys-s*) is in Second Edition.
 
 New
 ~~~
@@ -533,7 +537,9 @@ Item Properties
 There should be a way to easily access the system information about an
 item.  This would include metadata, indexing, and history.  You should
 be able to edit the metadata -- eg. add a tag, view the history,
-and .. not sure about indexing?
+and .. not sure about indexing?  (Tags and the like may be Knowledge
+Base statements, rather than the Metadata service's: see
+:doc:`entity-vs-item`.)
 
 It's invoked with *Sys-i*.
 

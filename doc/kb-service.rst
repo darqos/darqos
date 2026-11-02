@@ -59,7 +59,8 @@ External identifier       An identifier in another system, such as a
                           vCard UID.
 Item identifier           A DarqOS item identifier (see :doc:`item`),
                           linking the KB to the rest of the system.
-                          This one isn't implemented yet.
+                          This one isn't implemented yet: see
+                          :doc:`entity-vs-item`.
 ========================  ============================================
 
 An item's classes are given by *instance of* (P31) statements, and
@@ -667,8 +668,10 @@ commits can be linked to them.  Other items refer to KB entities by
 their item identifiers.
 
 An entity's name is its label, in the KB, rather than in the Metadata
-service (see :doc:`metadata`), which holds only what isn't knowledge
-about the entity, such as the operator's tags.
+service (see :doc:`metadata`).  That service is deferred to Third
+Edition, and may not be needed: tags, too, could be KB statements
+(*has tag*), leaving it only what isn't knowledge, such as view
+positions.
 
 Importing a vCard file is something done with a ``public.vcard`` item,
 by a tool or lens for it, which creates KB items.

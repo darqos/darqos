@@ -165,22 +165,8 @@ Services
 
   * Key-value blob store
 
-* Metadata
-
-  * Two-level key?
-
-    * item_id / item_key
-
-  * Typed data
-
-    * Numbers, strings
-    * Lists (?)
-
-  * Where to store?
-
-    * blob?
-    * sqlite?
-    * other?
+* Metadata (moved to Third Edition, if it's needed at all: the
+  Knowledge Base may do instead, with statements such as *has tag*)
 
 * Index
 
@@ -240,19 +226,18 @@ Services
 
     * Index
     * History
-    * Metadata
 
   * Events
 
     * Universal inbox
     * History timeline
 
-  * Clock / calendar
+  * Clock
 
-    * Some way of showing the time & date
+    * The time and date, on the Search (Sys-space) panel, for now
     * Almost certainly not a status bar
 
-  * REPL
+  * REPL (moved to Second Edition)
 
 Runtime  (DONE)
 
@@ -314,7 +299,7 @@ Story
     * Factory (S-n)
     * Search (S-space)
     * Events (S-e)
-    * REPL (S-s)
+    * REPL (S-s), in Second Edition
     * How does we lock / shutdown from here?
 
       * S-b, dialog panel to choose shutdown or reboot (or cancel)
@@ -358,8 +343,10 @@ Story
 Second Edition
 ~~~~~~~~~~~~~~
 
-Support web browsing, and begin work on metadata/indexer support to
-make that experience better than on existing platforms.
+Documents and books: fetch them by URL, catalogue them in the
+Knowledge Base, find them again with search, and read them; and a
+REPL.  Web browsing, with the HTML type and credentials, moved to Third
+Edition.
 
 Infrastructure
 
@@ -373,7 +360,7 @@ System
 
 Services
 
-* Knowledge Base
+* Knowledge Base (largely done, ahead of time: see :doc:`kb-service`)
 
   * Wikidata-like
   * Key underlying service for a lot of the value-add types
@@ -388,34 +375,15 @@ Services
 
 * Indexer
 
-  * Uses storage and metadata
+  * Building on First Edition's Index service
+  * Fetched documents, and the Knowledge Base's labels
   * Searching and completions
 
-* Credentials
+Terminal
 
-  * Secure storage of various secrets
-  * 2FA token generation
-  * Support for web browser, basically
-  * Part of Security service?
+* REPL (moved from First Edition: see :doc:`repl`)
 
 Types
-
-* HTML
-
-  * Display-only
-  * HTML5/CSS3/ES7/SVG2/etc
-
-    * CEF / cefpython (https://github.com/cztomczak/cefpython)
-
-  * Use URL fetcher
-
-    * So we get history, metadata, caching and archiving control
-
-  * This might require some refactoring of the type/viewer design.
-
-    * ie. what's the right API for a HTML object?
-
-      * DOM?
 
 * PDF
 
@@ -460,61 +428,43 @@ Types
 
 Story
 
+This is provisional: Second Edition's story was web browsing, which
+moved to Third Edition with the HTML type (see Web Browsing, under
+Third Edition).
+
 * Boot
 * Login
-* Look up a web page
+* Fetch a document
 
   * Open Search (S-space)
-  * Type in URL and hit enter
-  * Web page appears in new window (search panel goes away)
-  * Clicking on links in the page works as usual [Keyboard nav: next
-    link, cf eBook, Red Book p47]
-  * The operator tags a specific page for future reference [How?]
-  * Close the viewer [How?]
+  * Type in a PDF's URL and hit enter: it's fetched, kept, and shown
+    in the PDF viewer
+  * Save it as a book [How?]
+
+    * Enter its metadata as prompted: a BookRecord, in the Knowledge
+      Base, with its author and title
+
+  * Close the viewer (S-x)
 
 * Open search
 
-  * Enter a word or phrase from one of the viewed pages
+  * Enter a word or phrase from the document, or its title or author
 
-    * Should show the page in the result set [How is it presented?]
+    * Should show the book in the result set
+    * Open it: it should load quickly, from what was kept, in a
+      book-oriented view
 
-      * Open that page [How?  Mouse click?  Is there keyboard
-        navigation?]
+* Open the REPL (S-s)
 
-        * Should load quickly (ie. from cache)
+  * List the books by an author, with a Knowledge Base query
 
-      * Close page [How?]
-
-        * S-x hotkey will close the focus window.
-
-  * Enter one of the tags associated earlier
-
-    * How is the tag distinguished from a keyword?  #tag?
-    * Should show page in the result set
-    * Open, as above
-
-* Open search
-
-  * Enter URL: https://leanpub.com/user_dashboard/library
-  * Navigate to view the PDF file for this book
-  * Perform _save_ action [How?]
-
-    * Enter meta-data values as prompted
-
-  * Close viewer
-
-* Open search
-
-  * Find book in history
-  * Open it {should show in book-oriented view]
-
-* Logout
-
+* Lock
 
 Third Edition
 ~~~~~~~~~~~~~
 
-Programming, to the point of becoming self-hosting.
+Programming, to the point of becoming self-hosting; and web browsing,
+moved from Second Edition.
 
 Infrastructure
 
@@ -524,6 +474,34 @@ System
   the storage system.
 
 Services
+
+* Credentials (moved from Second Edition)
+
+  * Secure storage of various secrets
+  * 2FA token generation
+  * Support for web browser, basically
+  * Part of Security service?
+
+* Metadata (moved from First Edition)
+
+  * Is it needed at all?  The Knowledge Base may do instead, with
+    statements such as *has tag* (see :doc:`entity-vs-item`), leaving
+    only what isn't knowledge, such as view positions, which could be
+    kept by each type implementation.
+  * Two-level key?
+
+    * item_id / item_key
+
+  * Typed data
+
+    * Numbers, strings
+    * Lists (?)
+
+  * Where to store?
+
+    * blob?
+    * sqlite?
+    * other?
 
 * Diff / Merge
 
@@ -542,6 +520,23 @@ Services
     * With plugin abilities to add bilateral capabilities
 
 Types
+
+* HTML (moved from Second Edition)
+
+  * Display-only
+  * HTML5/CSS3/ES7/SVG2/etc
+
+    * CEF / cefpython (https://github.com/cztomczak/cefpython)
+
+  * Use URL fetcher
+
+    * So we get history, metadata, caching and archiving control
+
+  * This might require some refactoring of the type/viewer design.
+
+    * ie. what's the right API for a HTML object?
+
+      * DOM?
 
 * Collection
 
@@ -603,6 +598,60 @@ Story
   * Integration with system search
     * Both for code and documenation
   * What events get added to history?
+
+Web Browsing (moved from Second Edition)
+
+* Boot
+* Login
+* Look up a web page
+
+  * Open Search (S-space)
+  * Type in URL and hit enter
+  * Web page appears in new window (search panel goes away)
+  * Clicking on links in the page works as usual [Keyboard nav: next
+    link, cf eBook, Red Book p47]
+  * The operator tags a specific page for future reference [How?  A
+    Knowledge Base statement, *has tag*?]
+  * Close the viewer [How?]
+
+* Open search
+
+  * Enter a word or phrase from one of the viewed pages
+
+    * Should show the page in the result set [How is it presented?]
+
+      * Open that page [How?  Mouse click?  Is there keyboard
+        navigation?]
+
+        * Should load quickly (ie. from cache)
+
+      * Close page [How?]
+
+        * S-x hotkey will close the focus window.
+
+  * Enter one of the tags associated earlier
+
+    * How is the tag distinguished from a keyword?  #tag?
+    * Should show page in the result set
+    * Open, as above
+
+* Open search
+
+  * Enter URL: https://leanpub.com/user_dashboard/library
+  * Log in, with Credentials
+  * Navigate to view the PDF file for this book
+  * Perform _save_ action [How?]
+
+    * Enter meta-data values as prompted
+
+  * Close viewer
+
+* Open search
+
+  * Find book in history
+  * Open it {should show in book-oriented view]
+
+* Logout
 
 
 Fourth Edition

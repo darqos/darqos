@@ -60,6 +60,7 @@ Items, Types, and Lenses
 
 .. include:: types.rst
 .. include:: item.rst
+.. include:: entity-vs-item.rst
 	     
 ************************************************************************
 Type Implementations

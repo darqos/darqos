@@ -1,6 +1,13 @@
 Metadata Service
 ================
 
+.. note::
+
+   Moved to Third Edition, if it's needed at all (see :doc:`roadmap`):
+   the Knowledge Base may do instead, with statements such as *has
+   tag* (see :doc:`entity-vs-item`), leaving only what isn't
+   knowledge, such as view positions.
+
 While the storage service persists information as blobs, the metadata
 service persists collections of name/type/value data.
 

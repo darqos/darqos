@@ -34,10 +34,13 @@
     - Test with Qt event loop
   - Asynchronous
     - Using asyncio
-- Implement/update Index service
-- Implement/update Metadata service
+- Implement/update Index service (First Edition)
+- Implement/update Metadata service: moved to Third Edition, if it's
+  needed at all: the KB may do instead (has tag, and the like), leaving
+  only what isn't knowledge, such as view positions.
 - Implement Factory (New/Do) HUD
-- Implement Search HUD
+- Implement Search HUD, with the clock (the time and date) on it
+- REPL (Sys-s): Second Edition (see doc/repl.rst)
 - Implement History/Events HUD
 - Implement Text type
   - Done: types/text, on the Text protocol (lib/didl/text.didl), kept
@@ -109,7 +112,8 @@
     - Kill ring, consecutive kills appending, C-t, paragraph movement.
     - The real Terminal's factory records "created", source "terminal"
       (devterm does, with source "devterm").
-    - Save cursor and window position in Metadata.
+    - Save cursor and window position: in Metadata, if there is one
+      (Third Edition), or in the item.
     - Use this to start figuring out strategy for help: a usage
       document, launched from the cheatsheet.
   - Don't implement printing support yet
@@ -227,7 +231,8 @@ Issues
       shell and the development Terminal; queries scoped to an item
       port, if lenses need them.
   - Next: the Item identifier datatype: designed (in the plan doc,
-    with its questions), waiting on decisions.
+    with its questions), waiting on whether every item should be an
+    entity (doc/entity-vs-item.rst), which decides if it's needed.
   - Sys-t in the Terminal starts the vCard import, for now: remove it
     once tools have a place in the Terminal (a Tools panel, or the
     Factory), as devterm has its Tools menu.
@@ -259,10 +264,11 @@ Issues
 - Implement URL handling
   - as a Type?
   - as an object identifier?
-- Implement HTML type
+- Implement HTML type (Third Edition, with credentials)
   - Using `cefpython3`, which is effectively Chrome
   - Redirect all external URL fetching via system URL handling
   - Start working out caching strategy for non-local objects
-- Implement PDF type
-- Implement BookRecord type
-- Implement eBook type
+- Implement PDF type (Second Edition)
+- Implement BookRecord type (Second Edition)
+- Implement eBook type (Second Edition)
+- Credentials: secrets, 2FA tokens (Third Edition)
