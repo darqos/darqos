@@ -37,10 +37,14 @@ from darq.protocols.text import (
 )
 from darq.protocols.text import Status as TextStatus
 from darq.protocols.type import (
+    CreateFromRequest,
+    CreateFromResponse,
     CreateRequest,
     CreateResponse,
     DestroyRequest,
     DestroyResponse,
+    ExportRequest,
+    ExportResponse,
     Implementation,
     OpenRequest,
     OpenResponse,
@@ -67,6 +71,9 @@ MAX_SAVE_DELAY = 30.0
 
 # Item specifier: the Storage key, as 32 lowercase hex digits.
 SPECIFIER = re.compile(r"[0-9a-f]{32}")
+
+# The type's MIME type, for Export.
+MIME_TYPE = "text/plain;charset=utf-8"
 
 
 class FormatError(ValueError):
@@ -230,20 +237,61 @@ class TextImplementation(Implementation.Handler):
     # Requests
 
     def create(self, request: CreateRequest, source: int) -> CreateResponse:
-        try:
-            if darq.canonical_type_id(request.type_id) != TYPE_ID:
-                return CreateResponse(status=Status.NOT_FOUND)
-        except darq.InvalidIdentifierError:
-            return CreateResponse(status=Status.INVALID_ID)
+        status = self.check_type(request.type_id)
+        if status != Status.OK:
+            return CreateResponse(status=status)
+        buffer = self.new("")
+        if buffer is None:
+            return CreateResponse(status=Status.FAILED)
+        return CreateResponse(item_id=item_id(buffer.key), item=self.attach(buffer), status=Status.OK)
 
-        response = self.storage.create(value=encode_blob(""))
+    def create_from(self, request: CreateFromRequest, source: int) -> CreateFromResponse:
+        """Create an item from UTF-8 text, without any byte order mark."""
+        status = self.check_type(request.type_id)
+        if status != Status.OK:
+            return CreateFromResponse(status=status)
+        try:
+            text = request.data.decode("utf-8").removeprefix("\ufeff")
+        except UnicodeDecodeError:
+            return CreateFromResponse(status=Status.INVALID_DATA)
+        buffer = self.new(text)
+        if buffer is None:
+            return CreateFromResponse(status=Status.FAILED)
+        return CreateFromResponse(item_id=item_id(buffer.key), item=self.attach(buffer), status=Status.OK)
+
+    def export(self, request: ExportRequest, source: int) -> ExportResponse:
+        try:
+            key = parse_item_id(request.item_id)
+        except darq.InvalidIdentifierError:
+            return ExportResponse(status=Status.INVALID_ID)
+        if key is None:
+            return ExportResponse(status=Status.NOT_FOUND)
+        try:
+            buffer = self.load(key)
+        except FormatError as e:
+            logging.error(f"Can't export {request.item_id}: {e}")
+            return ExportResponse(status=Status.FAILED)
+        if buffer is None:
+            return ExportResponse(status=Status.NOT_FOUND)
+        return ExportResponse(data=buffer.text.encode("utf-8"), mime_type=MIME_TYPE, status=Status.OK)
+
+    @staticmethod
+    def check_type(type_id: str) -> Status:
+        try:
+            return Status.OK if darq.canonical_type_id(type_id) == TYPE_ID else Status.NOT_FOUND
+        except darq.InvalidIdentifierError:
+            return Status.INVALID_ID
+
+    def new(self, text: str) -> Buffer | None:
+        """Create an item's blob, and return its buffer, or None if it
+        can't be."""
+        response = self.storage.create(value=encode_blob(text))
         if response.status != storage.Status.OK:
             logging.error(f"Can't create a text blob: {response.status.name}")
-            return CreateResponse(status=Status.FAILED)
-
-        buffer = Buffer(response.key, response.generation, "")
+            return None
+        buffer = Buffer(response.key, response.generation, text)
         logging.info(f"Created {item_id(buffer.key)}")
-        return CreateResponse(item_id=item_id(buffer.key), item=self.attach(buffer), status=Status.OK)
+        return buffer
 
     def open(self, request: OpenRequest, source: int) -> OpenResponse:
         try:

@@ -1,0 +1,130 @@
+{
+  "types": [
+    {
+      "id": "public.png",
+      "name": "PNG Image",
+      "description": "A PNG image.",
+      "conforms_to": [
+        "public.image"
+      ],
+      "mime_types": [
+        "image/png"
+      ],
+      "extensions": [
+        "png"
+      ],
+      "implemented": true
+    },
+    {
+      "id": "public.jpeg",
+      "name": "JPEG Image",
+      "description": "A JPEG image, such as a photo.",
+      "conforms_to": [
+        "public.image"
+      ],
+      "mime_types": [
+        "image/jpeg"
+      ],
+      "extensions": [
+        "jpeg",
+        "jpg",
+        "jpe"
+      ],
+      "implemented": true
+    },
+    {
+      "id": "com.compuserve.gif",
+      "name": "GIF Image",
+      "description": "A GIF image, which can be animated.",
+      "conforms_to": [
+        "public.image"
+      ],
+      "mime_types": [
+        "image/gif"
+      ],
+      "extensions": [
+        "gif"
+      ],
+      "implemented": true
+    },
+    {
+      "id": "org.webmproject.webp",
+      "name": "WebP Image",
+      "description": "A WebP image.",
+      "conforms_to": [
+        "public.image"
+      ],
+      "mime_types": [
+        "image/webp"
+      ],
+      "extensions": [
+        "webp"
+      ],
+      "implemented": true
+    },
+    {
+      "id": "public.tiff",
+      "name": "TIFF Image",
+      "description": "A TIFF image.",
+      "conforms_to": [
+        "public.image"
+      ],
+      "mime_types": [
+        "image/tiff"
+      ],
+      "extensions": [
+        "tiff",
+        "tif"
+      ],
+      "implemented": true
+    },
+    {
+      "id": "com.microsoft.bmp",
+      "name": "BMP Image",
+      "description": "A Windows bitmap image.",
+      "conforms_to": [
+        "public.image"
+      ],
+      "mime_types": [
+        "image/bmp",
+        "image/x-ms-bmp"
+      ],
+      "extensions": [
+        "bmp",
+        "dib"
+      ],
+      "implemented": true
+    },
+    {
+      "id": "public.heif",
+      "name": "HEIF Image",
+      "description": "A High Efficiency Image File Format image.",
+      "conforms_to": [
+        "public.image"
+      ],
+      "mime_types": [
+        "image/heif"
+      ],
+      "extensions": [
+        "heif",
+        "hif"
+      ],
+      "implemented": true
+    },
+    {
+      "id": "public.heic",
+      "name": "HEIC Image",
+      "description": "A HEIF image coded with HEVC, as phones take photos.",
+      "conforms_to": [
+        "public.heif"
+      ],
+      "mime_types": [
+        "image/heic"
+      ],
+      "extensions": [
+        "heic"
+      ],
+      "implemented": true
+    }
+  ]
+}

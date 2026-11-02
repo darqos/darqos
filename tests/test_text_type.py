@@ -17,7 +17,8 @@ from darq import dipc, system
 from darq.protocols import storage
 from darq.protocols.text import CloseRequest, GetRequest, ReplaceRequest, StatRequest
 from darq.protocols.text import Status as TextStatus
-from darq.protocols.type import CreateRequest, DestroyRequest, OpenRequest, Status
+from darq.protocols.type import (CreateFromRequest, CreateRequest, DestroyRequest, ExportRequest, OpenRequest,
+                                 Status)
 
 from test_pkernel import live_pkernel, pkernel, run_kernel_until, write_app  # noqa: F401
 from test_rpc import FakePorts
@@ -163,6 +164,36 @@ def create(call):
 def test_create_only_its_type(call):
     assert call(IMPLEMENTATION_PORT, CreateRequest(type_id="public.png")).status == Status.NOT_FOUND
     assert call(IMPLEMENTATION_PORT, CreateRequest(type_id="bad:id")).status == Status.INVALID_ID
+
+
+def test_create_from(call, blobs):
+    response = call(IMPLEMENTATION_PORT, CreateFromRequest(type_id=text_module.TYPE_ID,
+                                                           data="\ufeffHello, Zoë \U0001F600".encode("utf-8")))
+    assert response.status == Status.OK
+    # The byte order mark isn't text.
+    assert get(call, response.item) == ("Hello, Zoë \U0001F600", 1)
+    assert blobs.text(response.item_id) == ("Hello, Zoë \U0001F600", 0)
+
+    exported = call(IMPLEMENTATION_PORT, ExportRequest(item_id=response.item_id))
+    assert (exported.status, exported.data, exported.mime_type) == \
+        (Status.OK, "Hello, Zoë \U0001F600".encode("utf-8"), "text/plain;charset=utf-8")
+
+
+@pytest.mark.parametrize("type_id, data, status", [
+    (text_module.TYPE_ID, b"\xff\xfeH\x00i\x00", Status.INVALID_DATA),
+    ("public.png", b"Hi", Status.NOT_FOUND),
+    ("bad:id", b"Hi", Status.INVALID_ID),
+])
+def test_create_from_refused(call, blobs, type_id, data, status):
+    # Nothing is created.
+    assert call(IMPLEMENTATION_PORT, CreateFromRequest(type_id=type_id, data=data)).status == status
+    assert blobs.blobs == {}
+
+
+def test_export_not_found(call):
+    iid = f"{text_module.TYPE_ID}:{'0' * 31}9"
+    assert call(IMPLEMENTATION_PORT, ExportRequest(item_id=iid)).status == Status.NOT_FOUND
+    assert call(IMPLEMENTATION_PORT, ExportRequest(item_id="public.png:1")).status == Status.NOT_FOUND
 
 
 def replace(call, port, start, end, text, expected=0):

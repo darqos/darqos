@@ -20,6 +20,7 @@ Each record consists of:
   * Predefined values:
 
     * created
+    * imported (created from data, such as a file)
     * opened
     * edited
     * destroyed

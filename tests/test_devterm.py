@@ -97,6 +97,20 @@ class FakeLaunch:
         self.used.append((item_id, item))
         return 7
 
+    # Types by extension, for find_types, and those whose create_item_from
+    # refuses data.
+    extensions = {"txt": [TEXT], "jpg": ["public.jpeg"], "dat": ["public.png", "public.jpeg"]}
+    refuses: set[str] = {"public.png"}
+
+    def find_types(self, mime_type="", extension=""):
+        return self.extensions.get(extension, [])
+
+    def create_item_from(self, type_id, data):
+        if type_id in self.refuses:
+            raise LaunchError(f"Can't create a {type_id} item from data: INVALID_DATA")
+        self.created.append((type_id, data))
+        return DOC, 43
+
 
 class FakeServices:
     def __init__(self, types=None):
@@ -185,6 +199,24 @@ def test_create(terminal):
     assert services.history.added == [(DOC, "created", "devterm")]
     assert services.launch.used == [(DOC, 42)]
     assert window.status.text() == f"Using {DOC}"
+
+
+def test_import_file(terminal, tmp_path, monkeypatch):
+    window, services = terminal()
+    path = tmp_path / "notes.txt"
+    path.write_bytes(b"Hello")
+    monkeypatch.setattr(window.factory, "choose_file", lambda: str(path))
+    window.factory.import_button.click()
+    assert services.launch.created == [(TEXT, b"Hello")]
+    assert services.history.added == [(DOC, "imported", "devterm")]
+    assert services.launch.used == [(DOC, 43)]
+    assert window.status.text() == f"Using {DOC}"
+    assert window.factory.import_button.isEnabled()
+
+    # Cancelled: nothing's imported.
+    monkeypatch.setattr(window.factory, "choose_file", lambda: "")
+    window.factory.import_button.click()
+    assert len(services.launch.created) == 1
 
 
 def test_create_needs_a_usable_type(terminal):

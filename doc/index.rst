@@ -72,6 +72,7 @@ Type Implementations
 .. include:: calculation.rst
 .. include:: document-types.rst
 .. include:: text.rst
+.. include:: image-type.rst
 .. include:: email.rst
 .. include:: message-type.rst
 .. include:: audio.rst

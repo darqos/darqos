@@ -52,10 +52,14 @@ from darq.protocols.kb import (
     WatchEntityResponse,
 )
 from darq.protocols.type import (
+    CreateFromRequest,
+    CreateFromResponse,
     CreateRequest,
     CreateResponse,
     DestroyRequest,
     DestroyResponse,
+    ExportRequest,
+    ExportResponse,
     Implementation,
     OpenRequest,
     OpenResponse,
@@ -273,6 +277,14 @@ class EntityImplementation(Implementation.Handler):
         iid = model.item_id(entity.id, type_id)
         logging.info(f"Created {iid}")
         return CreateResponse(item_id=iid, item=self.attach(self.server, entity.id), status=Status.OK)
+
+    def create_from(self, request: CreateFromRequest, source: int) -> CreateFromResponse:
+        # An entity has no form as data: a vCard file, say, makes many,
+        # which is a tool's job.
+        return CreateFromResponse(status=Status.UNSUPPORTED)
+
+    def export(self, request: ExportRequest, source: int) -> ExportResponse:
+        return ExportResponse(status=Status.UNSUPPORTED)
 
     def open(self, request: OpenRequest, source: int) -> OpenResponse:
         try:

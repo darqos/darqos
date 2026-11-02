@@ -41,6 +41,8 @@ from darq.protocols.type import (
     Description,
     FindLensesRequest,
     FindLensesResponse,
+    FindTypesRequest,
+    FindTypesResponse,
     ListTypesRequest,
     ListTypesResponse,
     Ready,
@@ -113,6 +115,15 @@ class StorageCatalogue:
         if response.status != storage.Status.OK:
             raise RuntimeError(f"can't save catalogue blob: {response.status.name}")
         return
+
+
+def mime_forms(mime_type: str) -> list[str]:
+    """Return a MIME type's forms for matching, most specific first: with
+    its parameters, if it has any, and then without them.  Both are
+    lower-case, without spaces."""
+    full = "".join(mime_type.split()).lower()
+    base = full.split(";")[0]
+    return [full, base] if full != base else [full]
 
 
 class Starting:
@@ -303,6 +314,26 @@ class TypeService(Type.Handler):
             if lenses:
                 return FindLensesResponse(lenses=list(dict.fromkeys(lenses)), status=Status.OK)
         return FindLensesResponse(status=Status.NOT_FOUND)
+
+    def find_types(self, request: FindTypesRequest, source: int) -> FindTypesResponse:
+        matches: list[str] = []
+        forms = mime_forms(request.mime_type) if request.mime_type else []
+        for form in forms:
+            matches += sorted(t for t, d in self.descriptions.items()
+                              if any(mime_forms(m)[0] == form for m in d.mime_types if "*" not in m))
+        extension = request.extension.lower().removeprefix(".")
+        if extension:
+            matches += sorted(t for t, d in self.descriptions.items()
+                              if extension in (e.lower() for e in d.extensions))
+
+        found: list[str] = []
+        for t in matches:
+            if t in self.implementations:
+                found.append(t)
+            else:
+                found += sorted(i for i in self.implementations
+                                if any(t in level for level in self.conforming(i)))
+        return FindTypesResponse(type_ids=list(dict.fromkeys(found)), status=Status.OK)
 
     def activate(self, request: ActivateRequest, source: int) -> ActivateResponse | darq.Deferred:
         type_id = self.canonical(request.type_id)

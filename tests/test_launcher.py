@@ -130,6 +130,46 @@ def test_failures(fail_in, error):
     assert services.history.added == ([] if fail_in != "use_item" else [(DOC, "created", "test")])
 
 
+@pytest.mark.parametrize("name, created, error", [
+    ("notes.txt", [(TEXT, b"Hello")], None),
+    # The first type to take it.
+    ("photo.dat", [("public.jpeg", b"Hello")], None),
+    ("photo.png", [], "No type takes .png files"),
+    ("README", [], "No type for README"),
+])
+def test_create_from_file(tmp_path, name, created, error):
+    path = tmp_path / name
+    path.write_bytes(b"Hello")
+    services = FakeServices()
+    host = FakeHost(services)
+    done = []
+    Launcher(host, "test", inline, inline).create_from_file(str(path), context=3, done=lambda: done.append(True))
+
+    assert host.statuses == [f"Importing {name} ..."]
+    assert services.launch.created == created
+    assert done == [True]
+    if error is None:
+        assert host.results == [(3, DOC, None)]
+        assert services.history.added == [(DOC, "imported", "test")]
+        assert services.launch.used == [(DOC, 43)]
+    else:
+        assert host.results == [(3, None, error)]
+        assert services.history.added == []
+
+
+def test_create_from_file_refused_and_missing(tmp_path, monkeypatch):
+    services = FakeServices()
+    host = FakeHost(services)
+    monkeypatch.setattr(services.launch, "refuses", {"public.png", "public.jpeg"})
+    path = tmp_path / "photo.dat"
+    path.write_bytes(b"junk")
+    Launcher(host, "test", inline, inline).create_from_file(str(path))
+    assert host.results[-1][2] == "Can't import photo.dat: it isn't a public.png or public.jpeg"
+
+    Launcher(host, "test", inline, inline).create_from_file(str(tmp_path / "gone.txt"))
+    assert host.results[-1][2] == "Can't read gone.txt: No such file or directory"
+
+
 def test_closed_loop_and_failing_host():
     services = FakeServices()
     host = FakeHost(services)

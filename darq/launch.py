@@ -43,6 +43,41 @@ def create_item(type_id: str) -> tuple[str, int]:
     return response.item_id, response.item
 
 
+def create_item_from(type_id: str, data: bytes) -> tuple[str, int]:
+    """Create an item of a type from data in the type's format, such as a
+    PNG file's bytes.
+
+    :returns: Its identifier, and a port for it, as create_item does.
+    :raises LaunchError: if it couldn't be created: if the data isn't of
+                         the type, nothing is."""
+    response = _activate(type_id).create_from(type_id=type_id, data=data)
+    if response.status != type_protocol.Status.OK or response.item is None:
+        raise LaunchError(f"Can't create a {type_id} item from data: {response.status.name}")
+    return response.item_id, response.item
+
+
+def export_item(item_id: str) -> tuple[bytes, str]:
+    """Return an item's content as data in its type's format, and its
+    MIME type.
+
+    :raises LaunchError: if it couldn't be exported."""
+    type_id, _ = split_item_id(item_id)
+    response = _activate(type_id).export(item_id=item_id)
+    if response.status != type_protocol.Status.OK:
+        raise LaunchError(f"Can't export {item_id}: {response.status.name}")
+    return response.data, response.mime_type
+
+
+def find_types(mime_type: str = "", extension: str = "") -> list[str]:
+    """Return the implemented types for data with a MIME type, or a file
+    name extension, best first (see the Type protocol's FindTypes)."""
+    types = type_protocol.Type.Client(connect("darq.type"), timeout=TIMEOUT)
+    response = types.find_types(mime_type=mime_type, extension=extension)
+    if response.status != type_protocol.Status.OK:
+        raise LaunchError(f"Can't find types: {response.status.name}")
+    return response.type_ids
+
+
 def open_item(item_id: str) -> int:
     """Open an item.
 

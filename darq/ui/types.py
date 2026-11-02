@@ -5,13 +5,19 @@
 # its lens (with the host's Launcher).  Types with no Terminal lens are
 # shown greyed out.  While one's being created, another can't be: a
 # second Enter doesn't make a second item.
+#
+# Import File... creates an item from a file on the host, until there's
+# a filesystem type to bring files in.
 
+import os
+import pathlib
 import typing
 
 from PyQt6 import QtCore
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QFileDialog,
     QHBoxLayout,
     QLineEdit,
     QPushButton,
@@ -93,10 +99,13 @@ class TypeList(QWidget):
 
         self.create_button = QPushButton("Create")
         self.create_button.clicked.connect(self.create_item)
+        self.import_button = QPushButton("Import File...")
+        self.import_button.clicked.connect(self.import_file)
         refresh = QPushButton("Refresh")
         refresh.clicked.connect(self.refresh)
 
         buttons = QHBoxLayout()
+        buttons.addWidget(self.import_button)
         buttons.addStretch()
         buttons.addWidget(refresh)
         buttons.addWidget(self.create_button)
@@ -188,7 +197,29 @@ class TypeList(QWidget):
         self.create_button.setEnabled(False)
         self.host.launcher.create(entry.type_id, entry.name, context=self, done=self.created)
 
+    def import_file(self):
+        """Ask for a host file, and create an item from it, as create_item
+        does."""
+        if self.creating is not None:
+            self.host.show_status(f"Still starting a {self.creating} ...")
+            return
+        path = self.choose_file()
+        if not path:
+            return
+        self.creating = os.path.basename(path)
+        self.create_button.setEnabled(False)
+        self.import_button.setEnabled(False)
+        self.host.launcher.create_from_file(path, context=self, done=self.created)
+
+    def choose_file(self) -> str:
+        """Return the host file chosen, or empty if none was.  Tests
+        replace it."""
+        path, _ = QFileDialog.getOpenFileName(self, "Import File", str(pathlib.Path.home()),
+                                              options=QFileDialog.Option.DontUseNativeDialog)
+        return path
+
     def created(self):
         """The create has finished, whether or not it worked."""
         self.creating = None
         self.create_button.setEnabled(True)
+        self.import_button.setEnabled(True)

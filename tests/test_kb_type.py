@@ -28,7 +28,8 @@ from darq.protocols.kb import (
     SuggestPropertiesRequest,
     WatchEntityRequest,
 )
-from darq.protocols.type import CreateRequest, DestroyRequest, OpenRequest, Status
+from darq.protocols.type import (CreateFromRequest, CreateRequest, DestroyRequest, ExportRequest, OpenRequest,
+                                 Status)
 
 from test_kb_service import module as service_module
 from test_pkernel import live_pkernel, pkernel, run_kernel_until, write_app  # noqa: F401
@@ -129,6 +130,14 @@ def create(implementation, type_id):
     response = implementation.create(CreateRequest(type_id=type_id), 0)
     assert response.status == Status.OK
     return response.item_id, response.item
+
+
+def test_no_data_form(implementation):
+    # An entity has no form as data, to create from or export.
+    assert implementation.create_from(CreateFromRequest(type_id="darq.person", data=b"BEGIN:VCARD"), 0).status \
+        == Status.UNSUPPORTED
+    iid, _ = create(implementation, "darq.person")
+    assert implementation.export(ExportRequest(item_id=iid), 0).status == Status.UNSUPPORTED
 
 
 def open_item(implementation, item_id):

@@ -23,6 +23,7 @@ from darq.protocols.type import (
     DescribeRequest,
     Description,
     FindLensesRequest,
+    FindTypesRequest,
     ListTypesRequest,
     Ready,
     RegisterLensRequest,
@@ -178,6 +179,58 @@ def text_types(service):
     register(service, "public.plain-text", conforms_to=["public.text"])
     register(service, "public.utf8-plain-text", conforms_to=["public.plain-text"])
     return service
+
+
+def find_types(service, mime_type="", extension=""):
+    response = service.find_types(FindTypesRequest(mime_type=mime_type, extension=extension), 0)
+    assert response.status == Status.OK
+    return response.type_ids
+
+
+@pytest.fixture
+def image_types(text_types):
+    service = text_types
+    register(service, "public.utf8-plain-text", "/text", conforms_to=["public.plain-text"],
+             mime_types=["text/plain;charset=utf-8"])
+    register(service, "public.plain-text", conforms_to=["public.text"], mime_types=["text/plain"],
+             extensions=["txt", "text"])
+    register(service, "public.image", conforms_to=["public.data"], mime_types=["image/*"])
+    register(service, "public.png", "/image", conforms_to=["public.image"], mime_types=["image/png"],
+             extensions=["png"])
+    register(service, "public.jpeg", "/image", conforms_to=["public.image"], mime_types=["image/jpeg"],
+             extensions=["jpeg", "jpg"])
+    register(service, "public.heif", "/image", conforms_to=["public.image"], mime_types=["image/heif"],
+             extensions=["heif"])
+    register(service, "public.heic", "/image", conforms_to=["public.heif"], mime_types=["image/heic"],
+             extensions=["heic"])
+    register(service, "public.jpeg-2000", conforms_to=["public.image"], mime_types=["image/jp2"],
+             extensions=["jp2"])
+    return service
+
+
+@pytest.mark.parametrize("mime_type, extension, expected", [
+    ("image/png", "", ["public.png"]),
+    ("Image/JPEG", "", ["public.jpeg"]),
+    ("", "JPG", ["public.jpeg"]),
+    ("", ".png", ["public.png"]),
+    # A MIME type's match comes before an extension's.
+    ("image/png", "jpg", ["public.png", "public.jpeg"]),
+    # With parameters, or without.
+    ("text/plain; charset=UTF-8", "", ["public.utf8-plain-text"]),
+    # A type with no implementation finds those that conform to it.
+    ("text/plain", "", ["public.utf8-plain-text"]),
+    ("", "txt", ["public.utf8-plain-text"]),
+    # An implemented type is found itself, not those that conform to it.
+    ("image/heif", "", ["public.heif"]),
+    # Not implemented, and nothing conforms: nothing.
+    ("", "jp2", []),
+    # Wildcards aren't matched.
+    ("image/x-unknown", "", []),
+    ("image/*", "", []),
+    ("", "", []),
+])
+def test_find_types(image_types, mime_type, extension, expected):
+    assert find_types(image_types, mime_type, extension) == expected
 
 
 def add_lens(service, lens, type_id, context="terminal"):

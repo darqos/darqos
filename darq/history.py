@@ -6,6 +6,7 @@
 # The service gives them no meaning: any valid name can be recorded.
 
 CREATED = "created"
+IMPORTED = "imported"
 OPENED = "opened"
 EDITED = "edited"
 DESTROYED = "destroyed"

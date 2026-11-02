@@ -92,6 +92,16 @@ Its protocol, `Type` in `lib/didl/type.didl` (generated as
   Activation, below).
 * `ListTypes(implemented)` returns the identifiers of the catalogue's
   types, sorted: all of them, or only those with an implementation.
+* `FindTypes(mime_type, extension)` returns the implemented types for
+  data with a MIME type, or a file name extension: those whose
+  descriptions list it, and, for a type that isn't implemented, such
+  as `public.plain-text` for a `.txt` file, the implemented types that
+  conform to it.  Those matching the MIME type come first, and a MIME
+  type matches with its parameters (`text/plain;charset=utf-8`), or
+  without them; wildcards (`image/*`) aren't matched.  It's shared code
+  for whatever brings data in: the filesystem type, a web browser, or an
+  email client decides what its data is, by looking at it, too, and
+  this is where it looks up the types.
 
 Each method's result has a `Status`: `OK`, `NOT_FOUND`, `INVALID_ID`, or
 `FAILED` (an implementation couldn't be started).  Type identifiers in
@@ -224,6 +234,28 @@ Every implementation serves the `Implementation` protocol (also in
   must check that the identifier's type is its own: an item of another
   type, including a conforming subtype, is `NOT_FOUND`.
 * `Destroy(item_id)` marks it destroyed (see Item Destruction, below).
+* `CreateFrom(type_id, data)` creates an item of a type from data in the
+  type's own format, such as a PNG file's bytes, and returns its
+  identifier and a port, as `Create` does.  Data that isn't of the type
+  is `INVALID_DATA`, and nothing is created: it isn't converted.  This
+  is how items come in from outside: from a file, a web page, or an
+  email's attachment.
+* `Export(item_id)` returns an item's content as data in its type's
+  format, with its MIME type: for attaching it to an email, saving it
+  to a file, or uploading it.
+
+  A type whose items have no form as data, such as the Knowledge Base's
+  kinds (an address book's vCard file makes many entities, which is a
+  tool's job), answers both `UNSUPPORTED`.  Data is sent whole, in one
+  message, as Storage values are: large items, such as video, will want
+  ranged access, or a Storage key, instead.
+
+`darq.launch` has `create_item_from(type_id, data)`,
+`export_item(item_id)` and `find_types(mime_type, extension)` for
+clients.  Until there's a filesystem type, the Terminals' New panel
+has *Import File...*, which brings in a file from the host: its type is
+the first `FindTypes` finds for its extension whose `CreateFrom` takes
+it, and it's recorded in History as `imported`.
 
 Type Instances
 --------------

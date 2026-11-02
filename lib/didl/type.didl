@@ -21,6 +21,12 @@ enum Status : uint32 {
     // The implementation couldn't be started, or didn't report Ready
     // in time.
     FAILED = 3;
+
+    // Data given to CreateFrom isn't of its type.
+    INVALID_DATA = 4;
+
+    // The type's items have no form as data, for CreateFrom or Export.
+    UNSUPPORTED = 5;
 }
 
 // A type's catalogue entry: its stable, descriptive properties.  Its
@@ -70,6 +76,14 @@ protocol Type {
     // Return the identifiers of the types in the catalogue, sorted: all
     // of them, or only those with an implementation.
     8: ListTypes(bool implemented) -> (sequence<string> type_ids);
+
+    // Return the implemented types for data with a MIME type, or a file
+    // name extension (without the dot), either of which may be empty:
+    // those whose descriptions list it, or, for a type that isn't
+    // implemented, the implemented types that conform to it.  Those
+    // matching the MIME type come first.  Who has the data decides
+    // which it is, perhaps by looking at it too.
+    9: FindTypes(string mime_type, string extension) -> (sequence<string> type_ids, Status status);
 }
 
 // Spoken by a newly-started implementation on its bootstrap port (see
@@ -91,6 +105,16 @@ protocol Implementation {
 
     // Mark an item destroyed (see doc/types.rst).
     3: Destroy(string item_id) -> (Status status);
+
+    // Create an item of a type from data in the type's own format, such
+    // as a PNG file's bytes, returning its identifier and a port for
+    // it, as Create does.  Data that isn't of the type is INVALID_DATA,
+    // and nothing is created: it isn't converted.
+    4: CreateFrom(string type_id, opaque data) -> (string item_id, port item, Status status);
+
+    // Return an item's content as data in its type's format, with its
+    // MIME type.
+    5: Export(string item_id) -> (opaque data, string mime_type, Status status);
 }
 
 // The methods every item port serves.  Each type's own item protocol

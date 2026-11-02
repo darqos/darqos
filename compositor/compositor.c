@@ -33,6 +33,8 @@
 //   the keyboard's state, and "hostmods <depressed> <latched> <locked>"
 //   sets it, in the host's keymap.
 // - A clean exit on SIGTERM and SIGINT, removing its socket.
+// - Nested, its window on the host's desktop starts at the size
+//   DARQ_COMPOSITOR_SIZE gives, as WIDTHxHEIGHT, or 1920x1200.
 
 #include <assert.h>
 #include <errno.h>
@@ -49,6 +51,7 @@
 #include <unistd.h>
 #include <wayland-server-core.h>
 #include <wlr/backend.h>
+#include <wlr/backend/wayland.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/interfaces/wlr_pointer.h>
 #include <wlr/render/allocator.h>
@@ -90,6 +93,12 @@
 #define WINDOW_STEP 16
 #define REPEAT_DELAY 600
 #define REPEAT_INTERVAL 40
+
+/* The size of its window on the host's desktop, when it's nested, unless
+ * DARQ_COMPOSITOR_SIZE says otherwise, and the largest it can say. */
+#define NESTED_WIDTH 1920
+#define NESTED_HEIGHT 1200
+#define MAX_NESTED_SIZE 16384
 
 /* The layers, bottom to top. */
 enum darq_layer {
@@ -1138,6 +1147,27 @@ static void output_destroy(struct wl_listener *listener, void *data) {
 	free(output);
 }
 
+static void nested_size(int *width, int *height) {
+	/* The size of the window to open on the host's desktop: from
+	 * DARQ_COMPOSITOR_SIZE, as WIDTHxHEIGHT, if it's set and valid. */
+	*width = NESTED_WIDTH;
+	*height = NESTED_HEIGHT;
+	const char *size = getenv("DARQ_COMPOSITOR_SIZE");
+	if (size == NULL || *size == '\0') {
+		return;
+	}
+	int w, h;
+	char extra;
+	if (sscanf(size, "%dx%d%c", &w, &h, &extra) == 2 && w > 0 && h > 0 &&
+			w <= MAX_NESTED_SIZE && h <= MAX_NESTED_SIZE) {
+		*width = w;
+		*height = h;
+	} else {
+		wlr_log(WLR_ERROR, "DARQ_COMPOSITOR_SIZE \"%s\" isn't WIDTHxHEIGHT: using %dx%d",
+			size, NESTED_WIDTH, NESTED_HEIGHT);
+	}
+}
+
 static void server_new_output(struct wl_listener *listener, void *data) {
 	/* This event is raised by the backend when a new output (aka a display or
 	 * monitor) becomes available. */
@@ -1162,6 +1192,13 @@ static void server_new_output(struct wl_listener *listener, void *data) {
 	struct wlr_output_mode *mode = wlr_output_preferred_mode(wlr_output);
 	if (mode != NULL) {
 		wlr_output_state_set_mode(&state, mode);
+	} else if (wlr_output_is_wl(wlr_output)) {
+		/* Nested, a window on the host's desktop has no modes: wlroots
+		 * would make it 1280x720.  The host can resize it after (see
+		 * output_request_state). */
+		int width, height;
+		nested_size(&width, &height);
+		wlr_output_state_set_custom_mode(&state, width, height, 0);
 	}
 
 	/* Atomically applies the new output state. */

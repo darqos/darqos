@@ -72,7 +72,9 @@ It has:
 
 * New: the implemented types (`ListTypes`), greyed out if they have no
   Terminal lens.  Create makes an item, records `created` (source
-  `devterm`), and starts its lens (`darq.launch`).
+  `devterm`), and starts its lens (`darq.launch`).  Import File...
+  makes one from a host file, and records `imported` (see
+  :doc:`types`).
 * History: events between two times, filtered by type, event, and
   source, newest first, a page at a time.  Double-clicking one starts
   a lens for its item.
@@ -247,7 +249,9 @@ own).  It saves the host's ``WAYLAND_DISPLAY``, if any, as
 compositor, as its ``WAYLAND_DISPLAY`` (``Compositor.start`` does, by
 default).  With it set, wlroots uses its Wayland backend, and the
 whole display is a window on the host's desktop: that's how it's
-developed.  Without it, wlroots uses the display hardware (DRM and
+developed.  The window starts at the size ``DARQ_COMPOSITOR_SIZE``
+gives, as ``WIDTHxHEIGHT``, or 1920x1200, and the host can resize it
+after.  Without it, wlroots uses the display hardware (DRM and
 libinput).  Without the Terminal, the p-kernel leaves
 ``WAYLAND_DISPLAY`` alone.
 
@@ -418,7 +422,10 @@ types might be "image", "document", "movie", etc.
 It lists the implemented types, greying out those without a Terminal
 lens: typing filters them, by name or type, the arrow keys move
 through them, and Enter creates an item of the selected one, records
-`created` (source `terminal`), and starts its lens.
+`created` (source `terminal`), and starts its lens.  *Import File...*
+creates an item from a file on the host, of the type its extension
+finds, records `imported`, and starts its lens: it stands in for a
+filesystem type, until there is one.
 
 History
 ~~~~~~~

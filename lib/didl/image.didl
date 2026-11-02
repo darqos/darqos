@@ -1,0 +1,111 @@
+// darqos
+// Copyright (C) 2026 David Arnold
+//
+// Image item protocol: see doc/image-type.rst.
+//
+// An image item is its original data, as it was created from, and a
+// list of edits made to it: the image is the original with the edits
+// made, in order.  Coordinates and sizes are in pixels, of the image
+// as each edit finds it, after the original's EXIF orientation.
+
+library darq.image;
+
+enum Status : uint32 {
+    OK = 0;
+
+    // The image's version isn't the one expected.
+    CONFLICT = 1;
+
+    // An edit doesn't fit the image: a crop outside it, say, or a
+    // date that isn't one.
+    INVALID_EDIT = 2;
+
+    // The image has several frames (it's animated): it can't be edited.
+    ANIMATED = 3;
+
+    // The item has no image yet: it was created empty.
+    EMPTY = 4;
+
+    // The image can't be rendered: it's too large, or its data is
+    // corrupt.
+    FAILED = 5;
+}
+
+enum EditType : uint8 {
+    // Keep the rectangle x, y, width, height.
+    CROP = 0;
+
+    // Resize to width by height.
+    SCALE = 1;
+
+    // Turn clockwise by quarter turns (negative: anticlockwise).
+    ROTATE = 2;
+
+    // Mirror left to right, or, if vertical, top to bottom.
+    FLIP = 3;
+
+    // Set a metadata field to value, or remove it, if value is empty.
+    SET_FIELD = 4;
+
+    // Remove the location: EXIF's GPS tags, and XMP, which can't be
+    // edited, if it has any.
+    REMOVE_LOCATION = 5;
+}
+
+// The metadata fields that can be edited.
+enum Field : uint8 {
+    NONE = 0;
+    TITLE = 1;
+    ARTIST = 2;
+    COPYRIGHT = 3;
+
+    // As "YYYY-MM-DD HH:MM:SS", or a shorter part of it.
+    DATE_TAKEN = 4;
+    COMMENT = 5;
+}
+
+// An edit: only its type's fields are used.
+struct Edit {
+    EditType type;
+    uint32 x;
+    uint32 y;
+    uint32 width;
+    uint32 height;
+    int32 turns;
+    bool vertical;
+    Field field;
+    string value;
+}
+
+// A metadata entry, as text: its group (such as "EXIF", "GPS", "PNG",
+// or "XMP"), name, and value; and the field it is, if it can be
+// edited.
+struct Entry {
+    string group;
+    string name;
+    string value;
+    Field field;
+}
+
+// The item port of an image item, returned by its implementation's
+// Create, CreateFrom, and Open (see lib/didl/type.didl).
+//
+// Each change gives the image a new version, as for text items.
+protocol Image {
+    // As Item.Close.  The item is saved when its last client closes it.
+    1: Close() -> ();
+
+    // Return the image, in its type's format, with its size and number
+    // of frames, its edits, and its version.  An empty item has no data.
+    16: Get() -> (opaque data, uint32 width, uint32 height, uint32 frames, sequence<Edit> edits, uint64 version, Status status);
+
+    17: Stat() -> (uint32 width, uint32 height, uint32 frames, uint64 size, uint64 version, Status status);
+
+    // Replace the edits, if the image's version is the expected one, or
+    // expected is 0: with fewer, to undo, or none, to revert to the
+    // original.  Edits that don't fit are refused, all of them.
+    18: SetEdits(sequence<Edit> edits, uint64 expected) -> (uint64 version, Status status);
+
+    // Return the image's metadata, with its edits made.
+    19: GetMetadata() -> (sequence<Entry> entries, Status status);
+}

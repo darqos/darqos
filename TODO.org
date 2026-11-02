@@ -49,7 +49,7 @@
       lost now.
     - Exit when no items are open, to be started again on Activate.
     - Update the Index service when it changes.
-  - No need for file import/export in 1ed
+  - Done: CreateFrom and Export (UTF-8, a byte order mark dropped).
   - Don't bother yet with CRDT for concurrent editing
   - Think about granularity of history events
     - We could save every API call
@@ -59,6 +59,33 @@
       the doc?
     - Or timed autosave?
     - How much of this is in history vs. in the document storage itself?
+- Creating items from data: done, Implementation.CreateFrom and Export,
+  and Type.FindTypes (MIME types and extensions, from the catalogue),
+  with darq.launch's create_item_from, export_item and find_types; the
+  New panel's Import File..., from the host, records imported.
+  - Remaining: the filesystem type, web browser and email client, each
+    mapping its content to types (as file(1) does, by looking at it);
+    then drop Import File....  Ranged access, or a Storage key, for
+    data too large for a message.  Converting between types.
+- Implement Image type
+  - Done: types/image and lenses/image (see doc/image-type.rst):
+    PNG, JPEG, GIF, WebP, TIFF, BMP, HEIF and HEIC, as Apple's UTIs
+    conforming to public.image; the original kept, with a list of
+    edits (crop, scale, quarter turns, flips, metadata fields, remove
+    location), rendered with Pillow and pillow-heif; the lens at native
+    pixel size, zooming the view; undo, redo, revert; metadata shown,
+    and its common fields edited.
+  - Remaining:
+    - Try it on a real display: it's only been run offscreen.
+    - Animated images: play them, and edit them (now: the first frame,
+      not editable).
+    - Camera RAW (libraw), much later.
+    - Editing XMP, and other metadata; integrating it with the Metadata
+      service.
+    - vCard PHOTO as image items, linked to their people (with the
+      Item identifier datatype).
+    - Previewing edits in the lens, rather than waiting for the item's
+      rendering: a large HEIC takes a second or two to encode.
 - Async generated clients: a call with a callback or future, its reply
   posted to the app's event loop, so a GUI app doesn't block its loop
   on calls (or deadlock, when two loop-served apps call each other).
@@ -199,7 +226,8 @@ Issues
       comparison; optional patterns; best rank; a text syntax, for the
       shell and the development Terminal; queries scoped to an item
       port, if lenses need them.
-  - Next: the Item identifier datatype.
+  - Next: the Item identifier datatype: designed (in the plan doc,
+    with its questions), waiting on decisions.
   - Sys-t in the Terminal starts the vCard import, for now: remove it
     once tools have a place in the Terminal (a Tools panel, or the
     Factory), as devterm has its Tools menu.

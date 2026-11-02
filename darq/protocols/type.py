@@ -19,6 +19,8 @@ __all__ = [
     "Bootstrap",
     "CloseRequest",
     "CloseResponse",
+    "CreateFromRequest",
+    "CreateFromResponse",
     "CreateRequest",
     "CreateResponse",
     "DeregisterLensRequest",
@@ -30,8 +32,12 @@ __all__ = [
     "Description",
     "DestroyRequest",
     "DestroyResponse",
+    "ExportRequest",
+    "ExportResponse",
     "FindLensesRequest",
     "FindLensesResponse",
+    "FindTypesRequest",
+    "FindTypesResponse",
     "Implementation",
     "Item",
     "ListTypesRequest",
@@ -60,6 +66,8 @@ class Status(IntEnum):
     NOT_FOUND = 1
     INVALID_ID = 2
     FAILED = 3
+    INVALID_DATA = 4
+    UNSUPPORTED = 5
 
 
 ################################################################
@@ -662,6 +670,82 @@ class ListTypesRequest(Message):
         return
 
 
+class FindTypesResponse(Message):
+    """Type.FindTypes response."""
+
+    METHOD = 9
+    BODY_FORMAT = "<III"
+    BODY_START = 8
+    LENGTH = 20
+    DATA_START = 24
+    CODEC_0 = STRING_CODEC
+
+    def __init__(self,
+                 txid: int = 0,
+                 type_ids: list[str] | None = None,
+                 status: Status = Status.OK):
+        super().__init__(txid)
+        self.type_ids = [] if type_ids is None else type_ids
+        self.status = status
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.sequence(self.type_ids, self.CODEC_0),
+                           self.status)
+        buf += b'\0' * 4
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.type_ids = inp.sequence(self.CODEC_0, bits[0], bits[1])
+        self.status = self.decode_enum(Status, bits[2])
+        return
+
+
+class FindTypesRequest(Message):
+    """Type.FindTypes request."""
+
+    METHOD = 9
+    RESPONSE = FindTypesResponse
+    BODY_FORMAT = "<IIII"
+    BODY_START = 8
+    LENGTH = 24
+    DATA_START = 24
+
+    def __init__(self, txid: int = 0, mime_type: str = '', extension: str = ''):
+        super().__init__(txid)
+        self.mime_type = mime_type
+        self.extension = extension
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.mime_type),
+                           *out.string(self.extension))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.mime_type = inp.string(bits[0], bits[1])
+        self.extension = inp.string(bits[2], bits[3])
+        return
+
+
 class Ready(Message):
     """Bootstrap.Ready one-way message."""
 
@@ -890,6 +974,160 @@ class DestroyRequest(Message):
         return
 
 
+class CreateFromResponse(Message):
+    """Implementation.CreateFrom response."""
+
+    METHOD = 4
+    BODY_FORMAT = "<IIH2xI"
+    BODY_START = 8
+    LENGTH = 24
+    DATA_START = 24
+
+    def __init__(self,
+                 txid: int = 0,
+                 item_id: str = '',
+                 item: int | None = None,
+                 status: Status = Status.OK):
+        super().__init__(txid)
+        self.item_id = item_id
+        self.item = item
+        self.status = status
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.item_id),
+                           self.encode_port(handles, self.item),
+                           self.status)
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.item_id = inp.string(bits[0], bits[1])
+        self.item = self.decode_port(handles, bits[2])
+        self.status = self.decode_enum(Status, bits[3])
+        return
+
+
+class CreateFromRequest(Message):
+    """Implementation.CreateFrom request."""
+
+    METHOD = 4
+    RESPONSE = CreateFromResponse
+    BODY_FORMAT = "<IIII"
+    BODY_START = 8
+    LENGTH = 24
+    DATA_START = 24
+
+    def __init__(self, txid: int = 0, type_id: str = '', data: bytes = b''):
+        super().__init__(txid)
+        self.type_id = type_id
+        self.data = data
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.type_id),
+                           *out.opaque(self.data))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.type_id = inp.string(bits[0], bits[1])
+        self.data = inp.opaque(bits[2], bits[3])
+        return
+
+
+class ExportResponse(Message):
+    """Implementation.Export response."""
+
+    METHOD = 5
+    BODY_FORMAT = "<IIIII"
+    BODY_START = 8
+    LENGTH = 28
+    DATA_START = 32
+
+    def __init__(self,
+                 txid: int = 0,
+                 data: bytes = b'',
+                 mime_type: str = '',
+                 status: Status = Status.OK):
+        super().__init__(txid)
+        self.data = data
+        self.mime_type = mime_type
+        self.status = status
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.opaque(self.data),
+                           *out.string(self.mime_type),
+                           self.status)
+        buf += b'\0' * 4
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.data = inp.opaque(bits[0], bits[1])
+        self.mime_type = inp.string(bits[2], bits[3])
+        self.status = self.decode_enum(Status, bits[4])
+        return
+
+
+class ExportRequest(Message):
+    """Implementation.Export request."""
+
+    METHOD = 5
+    RESPONSE = ExportResponse
+    BODY_FORMAT = "<II"
+    BODY_START = 8
+    LENGTH = 16
+    DATA_START = 16
+
+    def __init__(self, txid: int = 0, item_id: str = ''):
+        super().__init__(txid)
+        self.item_id = item_id
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.item_id))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.item_id = inp.string(bits[0], bits[1])
+        return
+
+
 class CloseResponse(Message):
     """Item.Close response."""
 
@@ -944,6 +1182,7 @@ class Type:
         6: DeregisterLensRequest,
         7: FindLensesRequest,
         8: ListTypesRequest,
+        9: FindTypesRequest,
     }
 
     RESPONSES = {
@@ -955,6 +1194,7 @@ class Type:
         6: DeregisterLensResponse,
         7: FindLensesResponse,
         8: ListTypesResponse,
+        9: FindTypesResponse,
     }
 
     class Client(system.Client):
@@ -1007,6 +1247,11 @@ class Type:
             """Type.ListTypes."""
             return self.call(ListTypesRequest(implemented=implemented), ListTypesResponse)
 
+        def find_types(self, mime_type: str = '', extension: str = '') -> FindTypesResponse:
+            """Type.FindTypes."""
+            request = FindTypesRequest(mime_type=mime_type, extension=extension)
+            return self.call(request, FindTypesResponse)
+
     class Handler(system.Handler):
         """protocol Type: base class for a service's handler."""
 
@@ -1019,6 +1264,7 @@ class Type:
             6: (DeregisterLensRequest, "deregister_lens"),
             7: (FindLensesRequest, "find_lenses"),
             8: (ListTypesRequest, "list_types"),
+            9: (FindTypesRequest, "find_types"),
         }
 
         def register(self,
@@ -1069,6 +1315,12 @@ class Type:
             """Handle Type.ListTypes."""
             raise NotImplementedError
 
+        def find_types(self,
+                       request: FindTypesRequest,
+                       source: int) -> FindTypesResponse | system.Deferred:
+            """Handle Type.FindTypes."""
+            raise NotImplementedError
+
 
 class Bootstrap:
     """protocol Bootstrap: message classes by method number, and its Client and Handler."""
@@ -1105,12 +1357,16 @@ class Implementation:
         1: CreateRequest,
         2: OpenRequest,
         3: DestroyRequest,
+        4: CreateFromRequest,
+        5: ExportRequest,
     }
 
     RESPONSES = {
         1: CreateResponse,
         2: OpenResponse,
         3: DestroyResponse,
+        4: CreateFromResponse,
+        5: ExportResponse,
     }
 
     class Client(system.Client):
@@ -1128,6 +1384,14 @@ class Implementation:
             """Implementation.Destroy."""
             return self.call(DestroyRequest(item_id=item_id), DestroyResponse)
 
+        def create_from(self, type_id: str = '', data: bytes = b'') -> CreateFromResponse:
+            """Implementation.CreateFrom."""
+            return self.call(CreateFromRequest(type_id=type_id, data=data), CreateFromResponse)
+
+        def export(self, item_id: str = '') -> ExportResponse:
+            """Implementation.Export."""
+            return self.call(ExportRequest(item_id=item_id), ExportResponse)
+
     class Handler(system.Handler):
         """protocol Implementation: base class for a service's handler."""
 
@@ -1135,6 +1399,8 @@ class Implementation:
             1: (CreateRequest, "create"),
             2: (OpenRequest, "open"),
             3: (DestroyRequest, "destroy"),
+            4: (CreateFromRequest, "create_from"),
+            5: (ExportRequest, "export"),
         }
 
         def create(self, request: CreateRequest, source: int) -> CreateResponse | system.Deferred:
@@ -1149,6 +1415,16 @@ class Implementation:
                     request: DestroyRequest,
                     source: int) -> DestroyResponse | system.Deferred:
             """Handle Implementation.Destroy."""
+            raise NotImplementedError
+
+        def create_from(self,
+                        request: CreateFromRequest,
+                        source: int) -> CreateFromResponse | system.Deferred:
+            """Handle Implementation.CreateFrom."""
+            raise NotImplementedError
+
+        def export(self, request: ExportRequest, source: int) -> ExportResponse | system.Deferred:
+            """Handle Implementation.Export."""
             raise NotImplementedError
 
 

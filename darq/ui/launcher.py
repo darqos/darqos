@@ -10,6 +10,7 @@
 # port), and its result is posted back to the UI's thread, to the host.
 
 import logging
+import os
 import threading
 import typing
 
@@ -72,6 +73,49 @@ class Launcher:
             except darq.DarqError as e:
                 logging.warning(f"Can't record created for {item_id}: {e!r}")
             return item_id, self.use_item(item_id, item)
+
+        self.start(job, context, done)
+
+    def create_from_file(self, path: str, context: object = None,
+                         done: typing.Callable[[], None] | None = None):
+        """Create an item from a host file, record that it was imported,
+        and use it.
+
+        Its type is found from its name's extension: the first that
+        takes its data.  This stands in for the filesystem type, which
+        will map files to types itself.
+
+        :param done: As for create."""
+        name = os.path.basename(path)
+        self.host.show_status(f"Importing {name} ...")
+        services = self.host.services
+
+        def job() -> tuple[str | None, str | None]:
+            try:
+                with open(path, "rb") as f:
+                    data = f.read()
+            except OSError as e:
+                return None, f"Can't read {name}: {e.strerror}"
+            extension = os.path.splitext(name)[1].removeprefix(".")
+            try:
+                type_ids = services.launch.find_types(extension=extension)
+            except (darq.DarqError, TimeoutError) as e:
+                return None, f"Can't find a type for {name}: {e}"
+            if not type_ids:
+                return None, f"No type takes .{extension} files" if extension else f"No type for {name}"
+
+            for type_id in type_ids:
+                try:
+                    item_id, item = services.launch.create_item_from(type_id, data)
+                except (darq.DarqError, TimeoutError) as e:
+                    logging.info(f"{type_id} didn't take {name}: {e}")
+                    continue
+                try:
+                    services.history.add_event(item_id=item_id, event=darq.history.IMPORTED, source=self.source)
+                except darq.DarqError as e:
+                    logging.warning(f"Can't record imported for {item_id}: {e!r}")
+                return item_id, self.use_item(item_id, item)
+            return None, f"Can't import {name}: it isn't a {' or '.join(type_ids)}"
 
         self.start(job, context, done)
 

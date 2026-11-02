@@ -2,6 +2,7 @@ PyQt6
 
 ada-url
 pillow
+pillow-heif
 setproctitle
 vobject
 
