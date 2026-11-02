@@ -107,10 +107,20 @@ transaction as each change:
 * links, by property and target entity, from statements, qualifiers,
   and references, for following links backwards: everyone employed by
   an organisation, or living at an address, or the instances of a
-  class, and of its subclasses; and
-* string values, by property and value, for finding an entity by an
-  email address, phone number, or external identifier.  Values are
-  normalised: case is ignored, and a phone number is just its digits.
+  class, and of its subclasses;
+* string values, by property and value, from statements, qualifiers,
+  and references, for finding an entity by an email address, phone
+  number, or external identifier.  Values are normalised: case is
+  ignored, and a phone number is just its digits; and
+* snaks, every one, whatever its value, for finding statements that
+  have a qualifier, such as an end time, or not.
+
+Each row has its statement's identifier, the snak's role in it (its
+main snak, a qualifier, or in a reference), and the statement's rank,
+for queries (see Queries, below).  Version 1 of the schema had no
+snaks, ranks or roles: a version 1 database's index tables are
+rebuilt from the documents when it's opened, which takes a few seconds
+for about 4,000 entities.
 
 A change is written with the revision it was based on, and is refused,
 as a conflict, if the stored entity has a later one, so one client's
@@ -128,8 +138,18 @@ source states what another has already, the statement gains a
 reference, rather than being repeated (see ``darq.kb.restate``).
 Restating a source's statements replaces them, keeping the others; a
 statement the source no longer makes loses its reference, and goes if
-it has none left.  A statement with no references is the operator's,
-and is never changed by a source.
+it has none left.  A statement with no references is never changed by
+a source.
+
+The operator's own statements, made by hand, cite the tool they were
+made with: the entity lens's are stated in *Darq Entity Editor*.  Each
+tool that edits entities is an *editor* (``darq.kb.EDITORS``), and a
+statement whose references are all to editors, or that has none, is
+the operator's: any editor changes it in place.  A source stating the
+same as the operator adds its reference to the operator's statement,
+as for any other, and when it no longer does, the editor's keeps it.
+Editors say which tool made a statement, not who: when there are
+several people, the person can be added to the editor's reference.
 
 Statements are the same if they have the same value and qualifiers.  A
 source can say which qualifiers its statements always say all of
@@ -143,6 +163,20 @@ stays, with its dates.  Ranks aren't compared: a source's preferred
 rank is given to a statement it matches, but a rank's never lowered,
 since without knowing what the source said before, there's no telling
 whether a rank was set by hand.
+
+A statement can be changed by hand, by the entity lens (see Lenses,
+below), and still be the source's, by annotating it: giving it start
+and end times, or a point in time, or a reason for its rank, which no
+source states (``darq.kb.ANNOTATIONS``), or by setting its rank.  Any
+other change would only have a re-import state it again, as a new
+statement, so a source's statement isn't changed: it's deprecated,
+with a reason for deprecated rank (P2241) of *replaced by hand*, and
+the changed statement added beside it, as the operator's, stated in
+the editor.  Removing a
+source's statement deprecates it, in the same way, with *removed by
+hand*.  A re-import matches it, whatever its rank, so it isn't stated
+again; and once the source no longer states it, it's kept, being
+deprecated.
 
 This is one-way.  Keeping the KB in step with its sources both ways
 (vCard files, CardDAV, JSContact, JMAP) needs what was last synced, to
@@ -240,25 +274,74 @@ left out.
 Queries
 ~~~~~~~
 
-Anything else would be a ``Query(patterns, filters, max, cursor)``,
-which isn't in the protocol yet: a conjunction of graph patterns, each
-a subject, property, and object, any of which may be a numbered
-variable rather than a constant, such as
+Anything else is a query: ``Query(patterns, select, deprecated,
+languages, max, after)`` finds what matches all of some patterns.
+Each pattern is an entity, its *subject*, with a statement that has a
+snak of a property, in a role (main, qualifier, or reference), with a
+value, its *object*.  A subject is a numbered variable, or an entity;
+an object is a variable, an entity, a string value (matched
+normalised, as ``FindByValue`` matches), or any value at all.  The
+property is always given.  So
 
 .. code-block:: text
 
-    ?p employer ?o
-    ?o headquarters location ?a
-    ?a located in Q36074
+    ?p  employer               ?o
+    ?o  headquarters location  ?a
+    ?a  located in+            Q36074
 
-for the people employed by an organisation in Queensland.  The result
-is a table of the variables' bindings.  It's a small subset of SPARQL,
-sent as DIDL structures, rather than as text: the DIDL verifier checks
-every query, the service needs no parser, nothing can be injected into
-it, and every language with a DIDL generator can build queries.  DIDL
-has no recursive types, so a query is flat lists of patterns and
-filters.  A text syntax, for the shell or the development Terminal,
-can be a client library that builds these structures.
+finds the people employed by an organisation in Queensland: *located
+in* is repeated, from an address to its locality, and on to
+Queensland.  As in SPARQL, a pattern's property can be followed once,
+one or more times (``+``), or zero or more (``*``): a repeated
+pattern needs a constant at one end, so the search is bounded, and
+``?p instance of ?c, ?c subclass of* human`` finds every person, as
+``Instances`` does.
+
+Patterns can share a *statement variable*, to match the same
+statement, for its qualifiers and references; and a pattern can be
+*negated*, to match only if it doesn't.  So
+
+.. code-block:: text
+
+    ?p  residence  ?a      [statement ?s]
+    not ?p  end time  any  [statement ?s, qualifier]
+
+finds who lives where now: a residence with no end time.  A negated
+pattern's variables that no other pattern binds match anything.
+Deprecated statements match only with ``deprecated``, so statements
+replaced or removed by hand are left out.
+
+The result is rows of the selected variables' values (all of them, if
+``select`` is empty): entity identifiers, strings, as written, or
+statement identifiers.  They're sorted, without duplicates, and come
+in batches, as lookups' do: at most ``max``, after the row ``after``.
+With ``languages``, the reply has the labels of the rows' entities.
+As in lookups, destroyed and merged entities are left out, and a
+variable's entity is never one.
+
+A query is a small subset of SPARQL, sent as DIDL structures, rather
+than as text: the DIDL verifier checks every query, the service needs
+no parser, nothing can be injected into it, and every language with a
+DIDL generator can build queries.  ``darq.kb.Query`` builds them in
+Python.  DIDL has no recursive types, so a query is a flat list of
+patterns.  A text syntax, for the shell or the development Terminal,
+can be a client library that builds them.
+
+A query that can't be answered is ``INVALID_ARGUMENT``: one with no
+pattern to match, more than 16 patterns or variables, a property
+that doesn't exist, a variable for a value that isn't an entity or a
+string, a variable that's both, a selected variable that no pattern to
+match has, or a repeated pattern with no constant end.  One still
+running after two seconds is stopped, and is ``TOO_COSTLY``.
+
+Queries are answered on the KB service's own port, by tools and
+search, and not on item ports: a lens with a person's port can't query
+the whole graph.  Each is compiled into one SQL statement over the
+index tables: a join per pattern, a recursive common table expression
+per repeated one, and ``not exists`` for a negated one.  Later: label
+filters, time and quantity values indexed for comparing, optional
+patterns, and Wikidata's *best rank*, preferred statements only, if a
+property has any.
 
 Notifications
 ~~~~~~~~~~~~~
@@ -461,18 +544,25 @@ An item's port serves the ``EntityItem`` protocol, in
 ``lib/didl/kb.didl``: the ``Item`` protocol's ``Close``, and, from 16,
 
 * ``GetEntity(languages)``, with the entities it refers to, as
-  ``Linked``: their item identifiers, and labels in the chain of
-  languages;
+  ``Linked``: their item identifiers, labels and descriptions in the
+  chain of languages, and properties' datatypes;
 * ``PutEntity(entity)``, which writes it, as ``PutEntities`` does,
   keeping its DarqOS type;
 * ``GetLinks(property_id, role, languages, max, after)``, for the
   entities that link to it, as ``Linked``; and
 * ``WatchEntity(listener)``, which has the KB report the entity's
-  changes to the listener directly.
+  changes to the listener directly;
+* ``FindEntities(text, languages, kind, class_id, max, after)``, for
+  items or properties by the words of their labels and aliases, as
+  ``FindByLabel`` finds them, in any of the chain of languages, as
+  ``Linked``; and
+* ``SuggestProperties(languages, max)``, for the properties to offer
+  first for a new statement or qualifier: the annotations (start
+  time, end time, and the like), then those the entity has.
 
 So an item port is a capability for a single entity: a lens given a
-person's port can read and change that person, and see the entities
-it refers to, but no more.  To follow a link, it asks for the other
+person's port can read and change that person, see the entities it
+refers to, and find others to refer to, but no more.  To follow a link, it asks for the other
 item to be used, by its item identifier, as with any item.  Queries
 across the whole graph are made on the KB service's own port, by
 tools and search.
@@ -485,16 +575,17 @@ Lenses
 ~~~~~~
 
 The entity lens, ``lenses/entity``, a property sheet for
-``darq.entity``, shows any entity.  ``FindLenses`` falls back through
-conformance, so every kind has this lens from the start.  It's
-read-only, for now: editing comes next.
+``darq.entity``, shows and edits any entity.  ``FindLenses`` falls
+back through conformance, so every kind has this lens from the start.
 
 * It shows the entity's label, kind, and item identifier; its
   description and aliases; its statements, by property, with their
-  qualifiers and references, preferred ones starred and deprecated
-  ones struck through; and the items that link to it, up to 200.
-  Labels and text are in the locale's languages, falling back to
-  English.
+  qualifiers and references, preferred ones starred; and the items
+  that link to it, up to 200.  A property's statements are in order by
+  series ordinal (P1545), where they have one, as names are
+  (``darq.kb.in_order``), and then as they are.  Deprecated statements
+  are counted, and shown, struck through, with D.  Labels and text are in the locale's
+  languages, falling back to English.
 * A link to another entity's item follows it in the same window,
   like a web browser, with Back (Alt+Left, or Backspace) to return.
   Ctrl+click, or a link's context menu, opens it in a new window, with
@@ -508,6 +599,52 @@ Qt.  A link is an anchor numbered in the page's list of item
 identifiers, so nothing is parsed out of URLs.  Back opens the earlier
 item again, rather than keeping its port, so it shows it as it is
 now.
+
+E, or the Edit button, switches to edit mode, and back: the page is
+replaced by a form (``edit.py``), with the label, description and
+aliases, in the language the label's in, and the statements, by
+property, each with its value, rank, qualifiers and sources, and
+buttons to add a qualifier, add start and end times ("dates"), or
+remove it.  "+ statement", at the end, adds one.  The kind's
+statements, DarqOS type, aren't shown, as they can't be changed.
+
+* Each change is saved as it's made, as the Text lens saves, when a
+  field's finished with (Enter, or Tab, or leaving it), a rank's
+  chosen, or an item's chosen from a list.  Esc puts back a field
+  that's being typed in, or else leaves edit mode.  Ctrl+Z and
+  Ctrl+Shift+Z undo and redo the changes saved.
+* Items and properties are chosen with a picker, which searches as
+  it's typed in (``FindEntities``), listing the best matches first,
+  and the suggested properties before anything's typed.  Up, Down and
+  Enter choose from the list.
+* Times are typed as they're said: 2024, June 2024, 30 June 2024,
+  June 30, 2024, 30/6/2024 (day first), 1970s, or an ISO 8601 time,
+  with "about" for ± 1 of the unit, and BCE.  The precision is what's
+  given, and how it's read is shown as it's typed (``times.py``).
+* A change is made as edits (``darq.kb``, below), applied to the
+  entity as last read, and written whole with ``PutEntity``.  If the
+  entity's been changed since, it's read again and the edits made
+  again, as a rebase is, unless what they change has been changed too.
+  Then that's shown, marked, with Keep mine, to make them anyway, and
+  Take theirs, to drop them.
+* A source's statements are kept its own, as described in Storage,
+  above: changing one's value replaces it, removing it deprecates it,
+  and a note says so.
+* Changes from elsewhere are shown as they're made, once a field being
+  typed in is finished with.
+* The item's recorded in History as ``edited``, once each time edit
+  mode's entered.
+
+Edits are operations: setting a label, description, or aliases, in a
+language; adding or removing a statement; and setting a statement's
+value, rank, or a qualifier.  Each knows what it changes as it was,
+and as it's to be: it's made if that's as it was, does nothing if it's
+already as it's to be, and otherwise conflicts.  So the same edits can
+be made to a later revision, and are undone by their inverses.
+``change_value``, ``change_qualifier``, ``change_rank`` and
+``remove_statement`` make an operator's changes as edits, keeping a
+source's statements its own.  They're in ``darq.kb``, not the lens,
+for synchronisation to use too.
 
 Then, each kind can have its own lens:
 
@@ -578,7 +715,10 @@ under other names, and share what they have in common.
   kinds, with local properties, with fixed UUIDs, for the rest.
 * ``cards.py`` reads cards as *drafts*: people, organisations, groups,
   departments, given and family names, stub people for related names,
-  localities, and addresses, each with its natural key.
+  localities, and addresses, each with its natural key.  A person's
+  given names (P735), then additional names, and family names (P734),
+  are numbered in the card's order, with series ordinals (P1545), as
+  Wikidata orders names.
 * ``importer.py`` imports them, as a client of the KB service and the
   KB type implementation.
 
@@ -615,8 +755,9 @@ The import is:
 3. Each entity's statements from the address book are restated from
    its draft, keeping any others, in batches, with its label and
    description, if it hasn't one.  Its labels, contact types, services,
-   departments and job titles are the qualifiers it always says all of
-   (``Vocabulary.qualifiers``), so dates added by hand are kept.  An
+   departments, job titles and series ordinals are the qualifiers it
+   always says all of (``Vocabulary.qualifiers``), so dates added by
+   hand are kept, and a name moved on the card is restated.  An
    entity whose address, by property and label, was replaced with
    another is noted, as an *address changed*, for its old address's end
    time and the new one's start time to be added.
@@ -651,12 +792,17 @@ copied into ``services/kb``, to become the service:
   statements fit their properties.
 * ``services/kb/store.py`` keeps a ``KnowledgeBase`` in SQLite, as
   described in Storage, above.
+* ``services/kb/query.py`` checks queries, and answers them, with SQL
+  for a store, or by matching patterns one by one in memory; the
+  tests check that the two agree.
 * ``tools/vcard-import`` imports an address book (see vCard Import,
   below).
 
 The tests are in ``tests/test_kb_store.py``,
 ``tests/test_kb_service.py``, ``tests/test_kb_type.py``,
-``tests/test_entity_lens.py``, and ``tests/test_vcard_import.py``.
+``tests/test_kb_edits.py``, ``tests/test_kb_query.py``,
+``tests/test_entity_lens.py``, and
+``tests/test_vcard_import.py``.
 
 The service pages its lookups' results itself, from complete lists of
 the matching entities: the store's queries could page instead, when a

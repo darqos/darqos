@@ -139,6 +139,7 @@ class Vocabulary:
         self.birth_name = p("P1477", "birth name", Datatype.Text)
         self.given_name = p("P735", "given name", Datatype.Item)
         self.family_name = p("P734", "family name", Datatype.Item)
+        self.series_ordinal = p("P1545", "series ordinal", Datatype.String)
         self.parent_organization = p("P749", "parent organization or unit",
                                      Datatype.Item)
         self.has_parts = p("P527", "has part(s)", Datatype.Item)
@@ -191,7 +192,7 @@ class Vocabulary:
         # (see darq.kb.restate).
         self.qualifiers = frozenset({
             self.label, self.contact_type, self.service, self.department,
-            self.job_title})
+            self.job_title, self.series_ordinal})
 
         # Properties linking an entity to its addresses.
         self.addresses = (self.residence, self.work_location,

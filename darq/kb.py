@@ -8,7 +8,14 @@ per language, and statements: a property and value, with qualifiers,
 references and a rank, after Wikidata's model.  They're kept by the
 Knowledge Base service, darq.kb, described in doc/kb-service.rst, as
 JSON documents (see document()), and sent to and from it as the
-structs of its protocol (lib/didl/kb.didl).  KB is its client."""
+structs of its protocol (lib/didl/kb.didl).  KB is its client.
+
+Changes to an entity can be made as edits, which can be made again to
+a later revision (see Edit), and an operator's changes, by hand, keep a
+source's statements its own (see change_value).
+
+Questions across entities are asked as a Query: patterns of statements
+that must all match."""
 
 import json
 import re
@@ -18,7 +25,7 @@ import uuid
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import (AbstractSet, Any, Callable, Dict, Iterable, Iterator, List,
-                    Optional, Protocol, Set, Tuple, Union)
+                    NamedTuple, Optional, Protocol, Sequence, Set, Tuple, Union)
 
 from darq import identifier, system
 from darq.protocols import kb as wire
@@ -850,6 +857,19 @@ def entity_strings(entity: Entity) -> Iterator[Tuple[str, str, str]]:
             yield s.id, s.main_snak.property_id, normalise(value.value)
 
 
+def entity_snaks(entity: Entity) -> Iterator[Tuple[Statement, Snak, str]]:
+    """Return each of an entity's snaks, with its statement, and its role
+    there: the statement's "main" snak, a "qualifier", or in a
+    "reference"."""
+    for s in entity.statements:
+        yield s, s.main_snak, "main"
+        for q in s.qualifiers:
+            yield s, q, "qualifier"
+        for r in s.references:
+            for a in r.snaks:
+                yield s, a, "reference"
+
+
 class ConflictError(Exception):
     """An entity was changed by someone else since it was read, or one
     being created already exists."""
@@ -876,6 +896,51 @@ DARQOS_INSTANCE_TYPE = "eac9f098-d3da-4133-8fa1-e29ee5c0d9be"
 # DarqOS, as the source of its own statements, such as the default
 # instance types.
 DARQOS = "23333c92-3ca8-4a6f-8bd1-1d1cf24dc5c0"
+
+# Qualifiers for annotating statements by hand: Wikidata's start time,
+# end time, point in time, and reasons for deprecated and preferred
+# rank.  A source's statement can be given these, and stay the source's
+# (see edit_statement): no source states them.
+START_TIME = "P580"
+END_TIME = "P582"
+POINT_IN_TIME = "P585"
+REASON_FOR_DEPRECATED_RANK = "P2241"
+REASON_FOR_PREFERRED_RANK = "P7452"
+ANNOTATIONS = frozenset({START_TIME, END_TIME, POINT_IN_TIME,
+                         REASON_FOR_DEPRECATED_RANK,
+                         REASON_FOR_PREFERRED_RANK})
+
+# Series ordinal: a statement's place in order, among its property's,
+# such as a person's given names (a String, "1", "2" and so on).
+SERIES_ORDINAL = "P1545"
+
+
+def in_order(statements: Iterable[Statement]) -> List[Statement]:
+    """Return statements in order: by series ordinal, as a number, where
+    they have one, and then those without, as they are."""
+    def key(statement: Statement) -> Tuple[int, int]:
+        for q in statement.qualifiers:
+            if q.property_id == SERIES_ORDINAL and isinstance(q.value, StringValue):
+                try:
+                    return 0, int(q.value.value.strip())
+                except ValueError:
+                    pass
+        return 1, 0
+
+    return sorted(statements, key=key)
+
+
+# Editors: the sources of the operator's statements, by hand, one for
+# each tool that edits entities, such as the entity lens.  A statement
+# whose references are all to editors, or that has none, is the
+# operator's (see is_operators).
+ENTITY_EDITOR = "516eac85-1dc1-4f78-b9aa-441e431ecfc6"
+EDITORS = frozenset({ENTITY_EDITOR})
+
+# Reasons for deprecated rank, for a source's statement: replaced by one
+# of the operator's, or removed, by hand.
+REPLACED = "e49c7e56-ea4b-4b90-8d00-fe0510b0a7b3"
+REMOVED = "efc0fb84-3ef0-43d1-81c8-a1b40a0a12d8"
 
 
 # Kinds: the types of KB items (see doc/kb-service.rst).  An entity of
@@ -1000,6 +1065,18 @@ def _inverse(table: Dict[Any, Any]) -> Dict[Any, Any]:
 _FROM_RANKS = _inverse(_RANKS)
 _FROM_DATATYPES = _inverse(_DATATYPES)
 FROM_ROLES = _inverse(ROLES)
+
+
+def datatype_to_wire(entity: Entity) -> wire.Datatype:
+    """Return an entity's datatype as the protocol's: NONE for an item."""
+    if isinstance(entity, Property):
+        return _DATATYPES[entity.datatype]
+    return wire.Datatype.NONE
+
+
+def datatype_from_wire(datatype: wire.Datatype) -> Optional[Datatype]:
+    """Return the protocol's datatype, or None for NONE."""
+    return _FROM_DATATYPES.get(datatype)
 
 
 def _texts(table: Dict[str, str]) -> List[wire.Text]:
@@ -1175,9 +1252,11 @@ def restate(entity: Entity,
     entity has, with references, gains a reference to the source,
     rather than being added again; others are added, with one.  A
     statement the source no longer makes loses its reference, and is
-    removed if it has none left.  The entity's statements without any
-    references, its operator's, are kept as they are: a statement that's
-    the same as one of those isn't added.
+    removed if it has none left.  So a statement the operator has stated
+    with an editor (see EDITORS) gains the source's reference too, and
+    keeps the editor's once the source no longer makes it.  The entity's
+    statements without any references are kept as they are: a statement
+    that's the same as one of those isn't added.
 
     Statements are the same if they have the same value, and the same
     qualifiers: all of them, or, with qualifiers, those of its
@@ -1282,10 +1361,605 @@ def is_sourced(statement: Statement, source_id: str) -> bool:
     return any(_cites(r, source_id) for r in statement.references)
 
 
+def is_operators(statement: Statement) -> bool:
+    """Return whether a statement is the operator's: whether its
+    references, if any, are all to editors (see EDITORS)."""
+    return all(any(_cites(r, editor) for editor in EDITORS)
+               for r in statement.references)
+
+
 def unsource(statement: Statement, source_id: str):
     """Remove a statement's references to a source."""
     statement.references = [r for r in statement.references
                             if not _cites(r, source_id)]
+
+
+# Edits: changes to an entity, as operations, so that a change made to
+# one revision can be made again to a later one, as a rebase does,
+# unless what it changes has been changed there too.  Each knows what it
+# changes as it was, and as it's to be: it's made if it's as it was, and
+# does nothing if it's already as it's to be; otherwise it conflicts.
+#
+# The functions after them make an operator's changes as edits, by an
+# editor, keeping a source's statements its own (see change_value).
+
+class EditConflict(Exception):
+    """What an edit changes has been changed, since it was made."""
+
+    def __init__(self, edit: "Edit", message: str):
+        super().__init__(message)
+        self.edit = edit
+
+
+def _value_key(value: Value) -> str:
+    return json.dumps(encode_value(value), sort_keys=True)
+
+
+def _statement_key(statement: Statement) -> str:
+    return json.dumps(encode_statement(statement), sort_keys=True)
+
+
+def copy_statement(statement: Statement) -> Statement:
+    """Return a copy of a statement, with its identifier."""
+    return decode_statement(encode_statement(statement))
+
+
+def copy_entity(entity: Entity) -> Entity:
+    """Return a copy of an entity, at its revision."""
+    copy = decode_entity(encode_entity(entity))
+    copy.revision = entity.revision
+    return copy
+
+
+def find_statement(entity: Entity, statement_id: str) -> Optional[Statement]:
+    """Return an entity's statement with an identifier, or None."""
+    return next((s for s in entity.statements if s.id == statement_id), None)
+
+
+class Edit:
+    """A change to an entity."""
+
+    def apply(self, entity: Entity, force: bool = False):
+        """Make the change to an entity, or raise EditConflict.
+
+        :param force: Make it even if what it changes has been changed,
+                      if that's still there."""
+        raise NotImplementedError
+
+    def inverse(self) -> "Edit":
+        """Return the edit that undoes this one."""
+        raise NotImplementedError
+
+    def target(self) -> str:
+        """Return what it changes: "labels:en", say, or "statement:" and
+        the statement's identifier."""
+        raise NotImplementedError
+
+    def _statement(self, entity: Entity, statement_id: str) -> Statement:
+        statement = find_statement(entity, statement_id)
+        if statement is None:
+            raise EditConflict(self, f"statement {statement_id} has been removed")
+        return statement
+
+
+class SetText(Edit):
+    """Set, or remove (with None), a label or description in a language."""
+
+    def __init__(self, field: str, language: str,
+                 old: Optional[str], new: Optional[str]):
+        assert field in ("labels", "descriptions")
+        self.field = field
+        self.language = language
+        self.old = old
+        self.new = new
+
+    def apply(self, entity: Entity, force: bool = False):
+        table: Dict[str, str] = getattr(entity, self.field)
+        have = table.get(self.language)
+        if have == self.new:
+            return
+        if have != self.old and not force:
+            raise EditConflict(self, f"{self.target()} has been changed")
+        if self.new is None:
+            del table[self.language]
+        else:
+            table[self.language] = self.new
+
+    def inverse(self) -> Edit:
+        return SetText(self.field, self.language, self.new, self.old)
+
+    def target(self) -> str:
+        return f"{self.field}:{self.language}"
+
+
+class SetAliases(Edit):
+    """Set an entity's aliases in a language."""
+
+    def __init__(self, language: str, old: Iterable[str], new: Iterable[str]):
+        self.language = language
+        self.old = list(old)
+        self.new = list(new)
+
+    def apply(self, entity: Entity, force: bool = False):
+        have = entity.aliases.get(self.language, [])
+        if have == self.new:
+            return
+        if have != self.old and not force:
+            raise EditConflict(self, f"{self.target()} have been changed")
+        if self.new:
+            entity.aliases[self.language] = list(self.new)
+        else:
+            entity.aliases.pop(self.language, None)
+
+    def inverse(self) -> Edit:
+        return SetAliases(self.language, self.new, self.old)
+
+    def target(self) -> str:
+        return f"aliases:{self.language}"
+
+
+class AddStatement(Edit):
+    """Add a statement, at a position (or last)."""
+
+    def __init__(self, statement: Statement, index: Optional[int] = None):
+        self.statement = copy_statement(statement)
+        self.index = index
+
+    def apply(self, entity: Entity, force: bool = False):
+        have = find_statement(entity, self.statement.id)
+        if have is not None:
+            if _statement_key(have) == _statement_key(self.statement):
+                return
+            if not force:
+                raise EditConflict(self, f"statement {self.statement.id} exists")
+            entity.remove_statement(have)
+        statement = copy_statement(self.statement)
+        index = len(entity.statements) if self.index is None else min(self.index, len(entity.statements))
+        entity.statements.insert(index, statement)
+        statement.entity = entity
+
+    def inverse(self) -> Edit:
+        return RemoveStatement(self.statement, self.index)
+
+    def target(self) -> str:
+        return f"statement:{self.statement.id}"
+
+
+class RemoveStatement(Edit):
+    """Remove a statement, as it was."""
+
+    def __init__(self, statement: Statement, index: Optional[int] = None):
+        self.statement = copy_statement(statement)
+        self.index = index
+
+    def apply(self, entity: Entity, force: bool = False):
+        have = find_statement(entity, self.statement.id)
+        if have is None:
+            return
+        if _statement_key(have) != _statement_key(self.statement) and not force:
+            raise EditConflict(self, f"statement {self.statement.id} has been changed")
+        entity.remove_statement(have)
+
+    def inverse(self) -> Edit:
+        return AddStatement(self.statement, self.index)
+
+    def target(self) -> str:
+        return f"statement:{self.statement.id}"
+
+
+class SetValue(Edit):
+    """Set a statement's value."""
+
+    def __init__(self, statement_id: str, old: Value, new: Value):
+        self.statement_id = statement_id
+        self.old = old
+        self.new = new
+
+    def apply(self, entity: Entity, force: bool = False):
+        statement = self._statement(entity, self.statement_id)
+        have = _value_key(statement.get_value())
+        if have == _value_key(self.new):
+            return
+        if have != _value_key(self.old) and not force:
+            raise EditConflict(self, f"statement {self.statement_id}'s value has been changed")
+        statement.main_snak = Snak(statement.get_property_id(), self.new)
+
+    def inverse(self) -> Edit:
+        return SetValue(self.statement_id, self.new, self.old)
+
+    def target(self) -> str:
+        return f"statement:{self.statement_id}"
+
+
+class SetRank(Edit):
+    """Set a statement's rank."""
+
+    def __init__(self, statement_id: str, old: Rank, new: Rank):
+        self.statement_id = statement_id
+        self.old = old
+        self.new = new
+
+    def apply(self, entity: Entity, force: bool = False):
+        statement = self._statement(entity, self.statement_id)
+        if statement.rank == self.new:
+            return
+        if statement.rank != self.old and not force:
+            raise EditConflict(self, f"statement {self.statement_id}'s rank has been changed")
+        statement.rank = self.new
+
+    def inverse(self) -> Edit:
+        return SetRank(self.statement_id, self.new, self.old)
+
+    def target(self) -> str:
+        return f"statement:{self.statement_id}"
+
+
+class SetQualifier(Edit):
+    """Add a qualifier to a statement (old is None), remove one (new is
+    None), or change one."""
+
+    def __init__(self, statement_id: str, old: Optional[Snak], new: Optional[Snak]):
+        assert old is not None or new is not None
+        self.statement_id = statement_id
+        self.old = old
+        self.new = new
+
+    def apply(self, entity: Entity, force: bool = False):
+        self.change(self._statement(entity, self.statement_id), force)
+
+    def change(self, statement: Statement, force: bool = False):
+        """Make the change to a statement."""
+        keys = [_snak_key(q) for q in statement.qualifiers]
+        old = None if self.old is None else _snak_key(self.old)
+        new = None if self.new is None else _snak_key(self.new)
+        if old is not None and old in keys:
+            n = keys.index(old)
+            if self.new is None:
+                del statement.qualifiers[n]
+            else:
+                statement.qualifiers[n] = self.new
+        elif new is None or new in keys:
+            # It's been removed, or it's already as it's to be.
+            return
+        elif old is None or force:
+            assert self.new is not None
+            statement.qualifiers.append(self.new)
+        else:
+            raise EditConflict(self, f"statement {self.statement_id}'s qualifier has been changed")
+
+    def inverse(self) -> Edit:
+        return SetQualifier(self.statement_id, self.new, self.old)
+
+    def target(self) -> str:
+        return f"statement:{self.statement_id}"
+
+
+def apply_edits(entity: Entity, edits: Iterable[Edit], force: bool = False) -> Entity:
+    """Return a copy of an entity with edits made, all or none.
+
+    :raises EditConflict: if one can't be made."""
+    copy = copy_entity(entity)
+    for edit in edits:
+        edit.apply(copy, force)
+    return copy
+
+
+def invert(edits: Iterable[Edit]) -> List[Edit]:
+    """Return the edits that undo some edits."""
+    return [edit.inverse() for edit in reversed(list(edits))]
+
+
+def _get_statement(entity: Entity, statement_id: str) -> Statement:
+    statement = find_statement(entity, statement_id)
+    if statement is None:
+        raise LookupError(f"{entity.id} has no statement {statement_id}")
+    return statement
+
+
+def _hand_reasons(statement: Statement) -> List[Snak]:
+    """Return a statement's reasons for deprecated rank given by hand."""
+    return [q for q in statement.qualifiers
+            if q.property_id == REASON_FOR_DEPRECATED_RANK
+            and isinstance(q.value, EntityValue)
+            and q.value.entity_id in (REPLACED, REMOVED)]
+
+
+def _deprecate(statement: Statement, reason: str) -> List[Edit]:
+    """Return the edits that deprecate a source's statement, by hand."""
+    edits: List[Edit] = []
+    if statement.rank != Rank.Deprecated:
+        edits.append(SetRank(statement.id, statement.rank, Rank.Deprecated))
+    for q in _hand_reasons(statement):
+        edits.append(SetQualifier(statement.id, q, None))
+    edits.append(SetQualifier(statement.id, None, Snak(REASON_FOR_DEPRECATED_RANK, EntityValue(reason))))
+    return edits
+
+
+def _stated_by(editor: str) -> Reference:
+    return Reference().add(STATED_IN, EntityValue(editor))
+
+
+def _replace(entity: Entity, statement: Statement, changed: Statement, editor: str) -> List[Edit]:
+    """Return the edits that replace a source's statement with a changed
+    copy, the operator's, stated by an editor: it's deprecated, and the
+    copy added after it."""
+    copy = Statement(changed.main_snak,
+                     [q for q in changed.qualifiers if q not in _hand_reasons(changed)],
+                     [_stated_by(editor)],
+                     rank=Rank.Normal if changed.rank == Rank.Deprecated else changed.rank)
+    index = entity.statements.index(statement) + 1
+    return _deprecate(statement, REPLACED) + [AddStatement(copy, index)]
+
+
+def add_statement(entity: Entity, property_id: str, value: Value, editor: str) -> List[Edit]:
+    """Return the edits that add an operator's statement, stated by an
+    editor."""
+    return [AddStatement(Statement(Snak(property_id, value), references=[_stated_by(editor)]))]
+
+
+def change_value(entity: Entity, statement_id: str, value: Value, editor: str) -> List[Edit]:
+    """Return the edits that change a statement's value, by an editor.
+
+    An operator's statement (see is_operators) is changed.  A source's
+    is deprecated, with the reason that it's been replaced, and an
+    operator's statement with the new value, stated by the editor, added
+    after it: changing it would only have a re-import state it again, as
+    a new statement."""
+    statement = _get_statement(entity, statement_id)
+    if _value_key(statement.get_value()) == _value_key(value):
+        return []
+    if is_operators(statement):
+        return [SetValue(statement_id, statement.get_value(), value)]
+    changed = copy_statement(statement)
+    changed.main_snak = Snak(statement.get_property_id(), value)
+    return _replace(entity, statement, changed, editor)
+
+
+def change_qualifier(entity: Entity, statement_id: str,
+                     old: Optional[Snak], new: Optional[Snak], editor: str) -> List[Edit]:
+    """Return the edits that add, change or remove a statement's qualifier,
+    by an editor.
+
+    A source's statement is changed if it's an annotation (see
+    ANNOTATIONS), which a source doesn't state, so it stays the source's;
+    for any other, it's replaced, as change_value() does."""
+    statement = _get_statement(entity, statement_id)
+    properties = {s.property_id for s in (old, new) if s is not None}
+    if is_operators(statement) or properties <= ANNOTATIONS:
+        return [SetQualifier(statement_id, old, new)]
+    changed = copy_statement(statement)
+    SetQualifier(statement_id, old, new).change(changed)
+    return _replace(entity, statement, changed, editor)
+
+
+def change_rank(entity: Entity, statement_id: str, rank: Rank) -> List[Edit]:
+    """Return the edits that set a statement's rank: a source's too, as a
+    re-import keeps a rank set by hand.  Raising a statement deprecated by
+    hand removes the reason."""
+    statement = _get_statement(entity, statement_id)
+    if statement.rank == rank:
+        return []
+    edits: List[Edit] = [SetRank(statement_id, statement.rank, rank)]
+    if rank != Rank.Deprecated:
+        edits += [SetQualifier(statement_id, q, None) for q in _hand_reasons(statement)]
+    return edits
+
+
+def remove_statement(entity: Entity, statement_id: str) -> List[Edit]:
+    """Return the edits that remove a statement.
+
+    An operator's statement (see is_operators) is removed.  A source's,
+    even if an editor states it too, is deprecated, with
+    the reason that it's been removed: a re-import would only state it
+    again."""
+    statement = _get_statement(entity, statement_id)
+    if is_operators(statement):
+        return [RemoveStatement(statement, entity.statements.index(statement))]
+    if statement.rank == Rank.Deprecated and any(
+            isinstance(q.value, EntityValue) and q.value.entity_id == REMOVED
+            for q in _hand_reasons(statement)):
+        return []
+    return _deprecate(statement, REMOVED)
+
+
+# Queries
+
+class Variable(NamedTuple):
+    """A query's variable, by its number, from 1."""
+
+    number: int
+
+    def __repr__(self) -> str:
+        return f"?{self.number}"
+
+
+class AnyValue:
+    """Any value at all, as a pattern's object: see ANY."""
+
+    def __repr__(self) -> str:
+        return "ANY"
+
+
+ANY = AnyValue()
+
+
+class Repeat(Enum):
+    """How many times a pattern's property is followed, from its subject
+    to its object: as SPARQL's P, P+ and P*."""
+
+    Once = 0
+    OneOrMore = 1
+    ZeroOrMore = 2
+
+
+# A pattern's subject: a variable, or an entity's identifier.
+Subject = Union[Variable, str]
+
+# A pattern's object: a variable, an entity, a string value (matched
+# normalised), or ANY.
+Term = Union[Variable, EntityValue, StringValue, AnyValue]
+
+
+class Pattern(NamedTuple):
+    """A query's pattern: an entity, the subject, with a statement that
+    has a snak of a property, in a role ("main", "qualifier", or
+    "reference"), with a value, the object.
+
+    Patterns with the same statement variable match the same statement.
+    A repeated pattern follows its property from its subject to its
+    object, as subclass of (P279) leads from a class to its
+    superclasses; it needs a constant at one end.  A negated pattern
+    must not match: its variables that the query's other patterns don't
+    bind match anything."""
+
+    subject: Subject
+    property_id: str
+    object: Term
+    role: str = "main"
+    statement: Optional[Variable] = None
+    repeat: Repeat = Repeat.Once
+    negated: bool = False
+
+    def variables(self) -> List[Variable]:
+        """Return the pattern's variables."""
+        terms = [self.subject, self.object, self.statement]
+        return [t for t in terms if isinstance(t, Variable)]
+
+
+class Query:
+    """A query: patterns that must all match, and the variables whose
+    values are its results, as rows.
+
+    Built from patterns, such as, for the people employed by an
+    organisation located, perhaps indirectly, in Queensland,
+
+        q = Query()
+        p, o = q.variables(2)
+        q.match(p, "P108", o).match(o, "P131", "Q36074", repeat=Repeat.OneOrMore)
+        q.select(p)
+
+    and answered by the service (see KB.query).  An object given as a
+    string is an entity's identifier: a string value is a StringValue.
+    Deprecated statements match only if deprecated is set."""
+
+    def __init__(self, deprecated: bool = False):
+        self.patterns: List[Pattern] = []
+        self.selected: List[Variable] = []
+        self.deprecated = deprecated
+        self.count = 0
+
+    def variable(self) -> Variable:
+        """Return a new variable."""
+        self.count += 1
+        return Variable(self.count)
+
+    def variables(self, n: int) -> List[Variable]:
+        """Return n new variables."""
+        return [self.variable() for _ in range(n)]
+
+    def match(self,
+              subject: Subject,
+              property_id: str,
+              value: Union[Term, str],
+              role: str = "main",
+              statement: Optional[Variable] = None,
+              repeat: Repeat = Repeat.Once) -> "Query":
+        """Add a pattern that must match."""
+        return self.add(Pattern(subject, property_id, _term(value), role, statement, repeat))
+
+    def exclude(self,
+                subject: Subject,
+                property_id: str,
+                value: Union[Term, str],
+                role: str = "main",
+                statement: Optional[Variable] = None,
+                repeat: Repeat = Repeat.Once) -> "Query":
+        """Add a pattern that must not match."""
+        return self.add(Pattern(subject, property_id, _term(value), role, statement, repeat, True))
+
+    def add(self, pattern: Pattern) -> "Query":
+        if pattern.role not in ROLES:
+            raise ValueError(f"no such role: {pattern.role}")
+        self.patterns.append(pattern)
+        self.count = max([self.count, *(v.number for v in pattern.variables())])
+        return self
+
+    def select(self, *variables: Variable) -> "Query":
+        """Set the variables whose values are the results, in order: by
+        default, all those the patterns that must match have."""
+        self.selected = list(variables)
+        return self
+
+
+def _term(value: Union[Term, str]) -> Term:
+    return EntityValue(value) if isinstance(value, str) else value
+
+
+_REPEATS = {
+    Repeat.Once: wire.Repeat.ONCE,
+    Repeat.OneOrMore: wire.Repeat.ONE_OR_MORE,
+    Repeat.ZeroOrMore: wire.Repeat.ZERO_OR_MORE,
+}
+_FROM_REPEATS = _inverse(_REPEATS)
+
+
+def _term_to_wire(term: Union[Term, str]) -> wire.Term:
+    if isinstance(term, Variable):
+        return wire.Term(wire.TermType.VARIABLE, term.number)
+    if isinstance(term, str):
+        return wire.Term(wire.TermType.ENTITY, value=term)
+    if isinstance(term, EntityValue):
+        return wire.Term(wire.TermType.ENTITY, value=term.entity_id)
+    if isinstance(term, StringValue):
+        return wire.Term(wire.TermType.STRING, value=term.value)
+    return wire.Term(wire.TermType.ANY)
+
+
+def _term_from_wire(term: wire.Term) -> Term:
+    if term.type == wire.TermType.VARIABLE:
+        if term.variable == 0:
+            raise ValueError("variables are numbered from 1")
+        return Variable(term.variable)
+    if term.type == wire.TermType.ENTITY:
+        if not term.value:
+            raise ValueError("no entity identifier")
+        return EntityValue(term.value)
+    if term.type == wire.TermType.STRING:
+        return StringValue(term.value)
+    return ANY
+
+
+def query_to_wire(query: Query) -> Tuple[List[wire.Pattern], List[int]]:
+    """Return a query's patterns, and its selected variables' numbers,
+    as the protocol's."""
+    patterns = [wire.Pattern(_term_to_wire(p.subject), p.property_id, _term_to_wire(p.object),
+                             ROLES[p.role], p.statement.number if p.statement else 0,
+                             _REPEATS[p.repeat], p.negated)
+                for p in query.patterns]
+    return patterns, [v.number for v in query.selected]
+
+
+def query_from_wire(patterns: Iterable[wire.Pattern],
+                    select: Iterable[int],
+                    deprecated: bool) -> Query:
+    """Return a query from the protocol's patterns and selected
+    variables' numbers.
+
+    :raises ValueError: if a term isn't valid."""
+    query = Query(deprecated)
+    for p in patterns:
+        subject = _term_from_wire(p.subject)
+        if isinstance(subject, EntityValue):
+            subject = subject.entity_id
+        elif not isinstance(subject, Variable):
+            raise ValueError("a subject is a variable or an entity")
+        query.add(Pattern(subject, p.property_id, _term_from_wire(p.object), FROM_ROLES[p.role],
+                          Variable(p.statement) if p.statement else None, _FROM_REPEATS[p.repeat],
+                          p.negated))
+    if any(n == 0 for n in select):
+        raise ValueError("variables are numbered from 1")
+    query.select(*(Variable(n) for n in select))
+    return query
 
 
 class KB:
@@ -1311,6 +1985,8 @@ class KB:
             raise ConflictError(f"{what}: changed, or already exists")
         if status == wire.Status.NOT_FOUND:
             raise LookupError(f"{what}: not found")
+        if status == wire.Status.TOO_COSTLY:
+            raise TimeoutError(f"{what}: ran past the service's time limit")
         raise ValueError(f"{what}: {status.name.lower().replace('_', ' ')}")
 
     def get_entities(self,
@@ -1439,6 +2115,31 @@ class KB:
         """Find the instances of a class, or of any of its subclasses."""
         return self._all(lambda after: self.client.instances(
             class_id, 0, after), class_id)
+
+    def query(self,
+              query: Query,
+              languages: Iterable[str] = (),
+              labels: Optional[Dict[str, str]] = None) -> Iterator[Tuple[str, ...]]:
+        """Return the rows that answer a query, from every batch: the
+        values of its selected variables, sorted.
+
+        :param labels: Filled in, if given, with the labels, in a chain
+                       of languages, of the entities in the rows.
+        :raises ValueError: if the query isn't valid.
+        :raises TimeoutError: if it ran past the service's time limit."""
+        patterns, select = query_to_wire(query)
+        chain = list(languages)
+        after: Sequence[str] = []
+        while True:
+            response = self.client.query(patterns, select, query.deprecated, chain, 0, list(after))
+            self._check(response.status, "query")
+            if labels is not None:
+                labels.update((label.entity_id, label.text) for label in response.labels)
+            for row in response.rows:
+                yield tuple(row.values)
+            if not response.rows:
+                return
+            after = response.rows[-1].values
 
     def watch(self, ids: Iterable[str], listener: int) -> int:
         """Have changes to some entities, or all, reported to a port

@@ -38,6 +38,9 @@ from darq.protocols.kb import (
     MergeResponse,
     PutEntitiesRequest,
     PutEntitiesResponse,
+    QueryRequest,
+    QueryResponse,
+    Row,
     Status,
     UnwatchRequest,
     UnwatchResponse,
@@ -46,6 +49,7 @@ from darq.protocols.kb import (
 )
 
 from kb import KnowledgeBase
+from query import TooCostly
 from store import Store
 
 
@@ -112,20 +116,24 @@ class KBService(KB.Handler):
             return GetEntitiesResponse(status=Status.INVALID_ARGUMENT)
         entities = [e for e in (self.kb.get(i, request.follow) for i in request.ids) if e is not None]
 
+        ids = set().union(*(model.referenced(e) for e in entities))
+        return GetEntitiesResponse(entities=[model.entity_to_wire(e) for e in entities],
+                                   labels=self.labels(ids, request.languages), status=Status.OK)
+
+    def labels(self, ids: typing.Iterable[str], languages: typing.Sequence[str]) -> list[Label]:
+        """Return the labels of some entities, each in the first of a
+        chain of languages it has one in."""
         labels = []
-        if request.languages:
-            ids = set().union(*(model.referenced(e) for e in entities))
-            for entity_id in sorted(ids):
-                entity = self.kb.get(entity_id)
-                if entity is None:
-                    continue
-                for language in request.languages:
-                    text = entity.get_label(language)
-                    if text is not None:
-                        labels.append(Label(entity_id, language, text))
-                        break
-        return GetEntitiesResponse(entities=[model.entity_to_wire(e) for e in entities], labels=labels,
-                                   status=Status.OK)
+        for entity_id in sorted(ids) if languages else ():
+            entity = self.kb.get(entity_id)
+            if entity is None:
+                continue
+            for language in languages:
+                text = entity.get_label(language)
+                if text is not None:
+                    labels.append(Label(entity_id, language, text))
+                    break
+        return labels
 
     def put_entities(self, request: PutEntitiesRequest, source: int) -> PutEntitiesResponse:
         try:
@@ -233,6 +241,20 @@ class KBService(KB.Handler):
         found = self.kb.instances(request.class_id)
         return InstancesResponse(ids=page((e.id for e in found), request.max, request.after),
                                  status=Status.OK)
+
+    def query(self, request: QueryRequest, source: int) -> QueryResponse:
+        limit = MAX_IDS if request.max == 0 else min(request.max, MAX_IDS)
+        try:
+            query = model.query_from_wire(request.patterns, request.select, request.deprecated)
+            columns, rows = self.kb.query(query, request.after, limit)
+        except TooCostly:
+            return QueryResponse(status=Status.TOO_COSTLY)
+        except (KeyError, ValueError) as e:
+            logging.debug(f"query: {e}")
+            return QueryResponse(status=Status.INVALID_ARGUMENT)
+        ids = {v for row in rows for v, column in zip(row, columns) if column == "entity"}
+        return QueryResponse(rows=[Row(list(row)) for row in rows], labels=self.labels(ids, request.languages),
+                             status=Status.OK)
 
     # Notifications
 

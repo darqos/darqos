@@ -27,6 +27,9 @@ enum Status : uint32 {
     // or the value hasn't its datatype, refers to an unknown entity, or
     // is out of its bounds.
     INVALID_STATEMENT = 4;
+
+    // A query ran past the service's time limit.
+    TOO_COSTLY = 5;
 }
 
 enum Kind : uint8 {
@@ -175,6 +178,53 @@ struct Label {
     string text;
 }
 
+// A query's term: a variable, by its number, from 1, or a constant: an
+// entity's identifier, a string value, or, as an object, any value.
+enum TermType : uint8 {
+    VARIABLE = 0;
+    ENTITY = 1;
+    STRING = 2;
+    ANY = 3;
+}
+
+struct Term {
+    TermType type;
+
+    // VARIABLE.
+    uint8 variable;
+
+    // ENTITY: the entity's identifier.  STRING: the value.
+    string value;
+}
+
+// How many times a pattern's property is followed, from its subject to
+// its object.
+enum Repeat : uint8 {
+    ONCE = 0;
+    ONE_OR_MORE = 1;
+    ZERO_OR_MORE = 2;
+}
+
+// A query's pattern: an entity, the subject, with a statement that has
+// a snak of a property, in a role, with a value, the object.  Patterns
+// with the same statement variable (0 for none) match the same
+// statement.  A negated pattern must not match.
+struct Pattern {
+    Term subject;
+    string property_id;
+    Term object;
+    Role role;
+    uint8 statement;
+    Repeat repeat;
+    bool negated;
+}
+
+// A query's result: the values of its selected variables, in order:
+// entity identifiers, string values, or statement identifiers.
+struct Row {
+    sequence<string> values;
+}
+
 // The Knowledge Base service, registered as "darq.kb".
 //
 // Lookups return identifiers sorted, in batches: at most max (0 for the
@@ -225,6 +275,15 @@ protocol KB {
     // its port is destroyed.
     9: Watch(sequence<string> ids, port listener) -> (uint32 watch_id, Status status);
     10: Unwatch(uint32 watch_id) -> (Status status);
+
+    // Find what matches all of a query's patterns: a row of the values
+    // of the selected variables (or of all, if select is empty) for
+    // each, without duplicates.  Deprecated statements match only with
+    // deprecated.  Rows are sorted, and returned in batches, as
+    // lookups are: at most max, after the row after (empty for the
+    // first batch).  If languages isn't empty, labels has the labels of
+    // the entities in the rows, in that chain of languages.
+    11: Query(sequence<Pattern> patterns, sequence<uint8> select, bool deprecated, sequence<string> languages, uint32 max, sequence<string> after) -> (sequence<Row> rows, sequence<Label> labels, Status status);
 }
 
 // Served by a watcher, on the port it gives Watch.
@@ -234,14 +293,18 @@ protocol Listener {
     1: Changed(string entity_id, uint64 revision);
 }
 
-// An entity an item refers to, or that refers to it, as an item: its
-// item identifier (empty for a property, which isn't an item), and its
-// label in the first language of a chain that it has one in.
+// An entity an item refers to, that refers to it, or that's found, as
+// an item: its item identifier (empty for a property, which isn't an
+// item), its label and description in the first language of a chain
+// that it has a label in (empty for none), and a property's datatype
+// (NONE for an item).
 struct Linked {
     string entity_id;
     string item_id;
     string language;
     string label;
+    string description;
+    Datatype datatype;
 }
 
 // Served by the KB type implementation (types/kb) on an item's port:
@@ -265,4 +328,15 @@ protocol EntityItem {
     // Have changes to the entity reported to a listener, which serves
     // Listener, until its port is destroyed.
     19: WatchEntity(port listener) -> (Status status);
+
+    // Find entities of a kind, items or properties, by the words of
+    // their labels and aliases, in a chain of languages, as FindByLabel
+    // does: in batches, sorted by identifier.  If class_id isn't empty,
+    // only instances of the class, or of its subclasses, are found.
+    20: FindEntities(string text, sequence<string> languages, Kind kind, string class_id, uint32 max, string after) -> (sequence<Linked> found, Status status);
+
+    // Return the properties to offer first, for a new statement or
+    // qualifier on this entity: the qualifiers for annotating statements
+    // by hand (start and end time, and the like), then those it has.
+    21: SuggestProperties(sequence<string> languages, uint32 max) -> (sequence<Linked> found, Status status);
 }

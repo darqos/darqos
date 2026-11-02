@@ -19,10 +19,13 @@ from darq.protocols import kb as wire
 from darq.protocols.kb import (
     Changed,
     CloseRequest,
+    FindEntitiesRequest,
     GetEntityRequest,
     GetLinksRequest,
+    Kind,
     PutEntityRequest,
     Role,
+    SuggestPropertiesRequest,
     WatchEntityRequest,
 )
 from darq.protocols.type import CreateRequest, DestroyRequest, OpenRequest, Status
@@ -286,6 +289,52 @@ def test_get_entity(ada):
         (model.STATED_IN, "", "en", "stated in"),
         (model.DARQOS, f"darq.entity:{model.DARQOS}", "en", "DarqOS"),
     }
+
+
+def test_linked_have_descriptions_and_datatypes(kb, ada):
+    acme = kb.get("acme")
+    acme.set_description("a company")
+    kb.put(acme)
+    response = ada.get_entity(GetEntityRequest(languages=["en"]), 0)
+    linked = {link.entity_id: link for link in response.linked}
+    assert (linked["acme"].description, linked["acme"].datatype) == ("a company", wire.Datatype.NONE)
+    assert linked["P108"].datatype == wire.Datatype.ITEM
+    assert linked[model.DARQOS_TYPE].datatype == wire.Datatype.STRING
+
+
+def test_find_entities(kb, implementation, ada):
+    kb.put(entity("acme2", "Acme Anvils", "Q43229"), entity("other", "Acme", "Q5"))
+    local = model.Property(model.Datatype.String, "acme-code")
+    local.set_label("Acme code", "fr")
+    kb.put(local)
+
+    def find(text, kind=Kind.ITEM, languages=("en",), class_id="", max=0, after=""):
+        response = ada.find_entities(FindEntitiesRequest(text=text, languages=list(languages), kind=kind,
+                                                         class_id=class_id, max=max, after=after), 0)
+        assert response.status == wire.Status.OK
+        return [link.entity_id for link in response.found]
+
+    assert find("acme") == ["acme", "acme2", "other"]
+    assert find("acme", class_id="Q43229") == ["acme", "acme2"]
+    assert find("acme", max=2) == ["acme", "acme2"] and find("acme", after="acme2") == ["other"]
+    assert find("") == [] and find("nothing") == []
+
+    # Properties, in any of a chain of languages.
+    assert find("acme", Kind.PROPERTY) == []
+    assert find("acme", Kind.PROPERTY, ["fr", "en"]) == ["acme-code"]
+    assert find("employ", Kind.PROPERTY) == ["P108"]
+    [found] = ada.find_entities(FindEntitiesRequest(text="time", languages=["en"], kind=Kind.PROPERTY), 0).found[:1]
+    assert found.datatype == wire.Datatype.TIME and found.item_id == ""
+
+
+def test_suggest_properties(ada):
+    response = ada.suggest_properties(SuggestPropertiesRequest(languages=["en"]), 0)
+    assert response.status == wire.Status.OK
+    assert [link.entity_id for link in response.found] == [
+        model.START_TIME, model.END_TIME, model.POINT_IN_TIME, model.REASON_FOR_DEPRECATED_RANK,
+        model.REASON_FOR_PREFERRED_RANK, model.INSTANCE_OF, "P108"]
+    assert response.found[0].label == "start time"
+    assert len(ada.suggest_properties(SuggestPropertiesRequest(languages=["en"], max=2), 0).found) == 2
 
 
 def test_put_entity(kb, ada):

@@ -167,8 +167,39 @@ Issues
     kept, as are dropped statements that have them, and entities still
     linked to; a changed address is another address, not the old one
     rewritten; addresses changed are listed for review, for dating.
-  - Next: editing in the entity lens; Query (graph patterns); the Item
-    identifier datatype.
+  - Done: editing in the entity lens: an edit mode, a form, each change
+    saved as it's made, as edits (darq.kb) made again to a later
+    revision, with conflicts shown to keep mine or take theirs; undo
+    and redo; a source's statements annotated in place, or else
+    deprecated and replaced with the operator's; a picker searching
+    through the item port (FindEntities, SuggestProperties); times
+    typed as they're said.
+    - Remaining: creating an item from the picker ("New..."), with
+      Create; quantities' units and bounds; editing references; other
+      languages' labels, descriptions and text; properties most used on
+      entities of the same kind, among the suggestions; reverting to a
+      revision.
+    - Try it on a real display: it's only been run offscreen.
+    - Done: names in order: the vCard import numbers given and family
+      names with series ordinals (P1545), and the lens shows a
+      property's statements in that order.  Telling middle names from
+      given names (Wikidata doesn't) is left.
+    - Done: the operator's statements cite the editor they were made
+      with (Darq Entity Editor, for the entity lens: darq.kb.EDITORS),
+      and a source agreeing adds its reference.  Add the person to the
+      editor's reference, once there are several.
+  - Done: queries (KB.Query, darq.kb.Query): patterns of statements
+    that must all match, with variables, statement variables for
+    qualifiers and references, repeated properties (P131+, P279*), and
+    negation; deprecated statements left out unless asked for; rows in
+    batches, with labels.  Answered by SQL over the index tables
+    (services/kb/query.py), or in memory; schema version 2 adds ranks,
+    roles and a snaks table.
+    - Remaining: label filters; time and quantity values, indexed for
+      comparison; optional patterns; best rank; a text syntax, for the
+      shell and the development Terminal; queries scoped to an item
+      port, if lenses need them.
+  - Next: the Item identifier datatype.
   - Sys-t in the Terminal starts the vCard import, for now: remove it
     once tools have a place in the Terminal (a Tools panel, or the
     Factory), as devterm has its Tools menu.

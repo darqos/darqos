@@ -241,15 +241,17 @@ class Importer:
 
         n = card.get("N")
         if n is not None:
+            # Names are numbered in order, with series ordinals: given
+            # names, then additional ones, as Wikidata has them.
             family, given, additional = n.components(3)[:3]
-            for name in given.split(",") + additional.split(","):
-                if name.strip():
-                    item = self.name(wd.given_name_class, name.strip())
-                    person.claim(wd.given_name, EntityValue(item.get_id()))
-            for name in family.split(","):
-                if name.strip():
-                    item = self.name(wd.family_name_class, name.strip())
-                    person.claim(wd.family_name, EntityValue(item.get_id()))
+            for property_id, cls, names in [
+                    (wd.given_name, wd.given_name_class, given.split(",") + additional.split(",")),
+                    (wd.family_name, wd.family_name_class, family.split(","))]:
+                names = [name.strip() for name in names if name.strip()]
+                for ordinal, name in enumerate(names, 1):
+                    item = self.name(cls, name)
+                    person.claim(property_id, EntityValue(item.get_id())).add_qualifier(
+                        wd.series_ordinal, StringValue(str(ordinal)))
 
         for p in card.all("NICKNAME"):
             for name in p.values():

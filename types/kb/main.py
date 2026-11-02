@@ -19,7 +19,12 @@
 # starts, and kept up to date in the KB, so a preferred-rank statement
 # of the operator's overrides them.  The classes it reads are cached,
 # and the cache kept current by watching the KB.
+#
+# Clients, such as the entity lens, have only an item's port, so it's
+# there that they search the KB too, for entities to refer to.
 
+import heapq
+import itertools
 import logging
 import typing
 
@@ -31,6 +36,8 @@ from darq.protocols.kb import (
     CloseRequest,
     CloseResponse,
     EntityItem,
+    FindEntitiesRequest,
+    FindEntitiesResponse,
     GetEntityRequest,
     GetEntityResponse,
     GetLinksRequest,
@@ -39,6 +46,8 @@ from darq.protocols.kb import (
     Listener,
     PutEntityRequest,
     PutEntityResponse,
+    SuggestPropertiesRequest,
+    SuggestPropertiesResponse,
     WatchEntityRequest,
     WatchEntityResponse,
 )
@@ -57,6 +66,17 @@ from darq.protocols.type import (
 
 # Errors talking to the KB service.
 KB_ERRORS = (darq.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError)
+
+# Most entities found by FindEntities, and suggested by
+# SuggestProperties: and how many are read at a time, to see if they're
+# of the kind wanted.
+MAX_FOUND = 200
+FIND_BATCH = 100
+
+# The qualifiers for annotating statements by hand, in the order they're
+# suggested.
+ANNOTATIONS = [model.START_TIME, model.END_TIME, model.POINT_IN_TIME, model.REASON_FOR_DEPRECATED_RANK,
+               model.REASON_FOR_PREFERRED_RANK]
 
 
 def vocabulary() -> list[model.Entity]:
@@ -81,7 +101,15 @@ def vocabulary() -> list[model.Entity]:
              "Type of an entity's item, recorded when it was created"),
         prop(model.DARQOS_INSTANCE_TYPE, "DarqOS instance type", model.Datatype.String,
              "Type of the items of a class's instances"),
+        prop(model.START_TIME, "start time", model.Datatype.Time),
+        prop(model.END_TIME, "end time", model.Datatype.Time),
+        prop(model.POINT_IN_TIME, "point in time", model.Datatype.Time),
+        prop(model.REASON_FOR_DEPRECATED_RANK, "reason for deprecated rank", model.Datatype.Item),
+        prop(model.REASON_FOR_PREFERRED_RANK, "reason for preferred rank", model.Datatype.Item),
         item(model.DARQOS, "DarqOS"),
+        item(model.REPLACED, "replaced by hand"),
+        item(model.REMOVED, "removed by hand"),
+        item(model.ENTITY_EDITOR, "Darq Entity Editor"),
         *(item(class_id, label) for class_id, label, _ in model.DEFAULT_INSTANCE_TYPES),
     ]
 
@@ -132,14 +160,50 @@ class EntityImplementation(Implementation.Handler):
         return model.item_id(entity.id, self.kind_of(entity))
 
     def linked(self, ids: typing.Iterable[str], languages: list[str]) -> list[Linked]:
-        """Return entities as Linked, with labels in a chain of languages."""
+        """Return entities, by identifier, as Linked, with labels in a
+        chain of languages."""
         entities, _ = self.kb.get_entities(sorted(set(ids)))
+        return self.as_linked(entities, languages)
+
+    def as_linked(self, entities: typing.Iterable[model.Entity], languages: list[str]) -> list[Linked]:
         result = []
         for entity in entities:
             language, label = next(((lang, entity.labels[lang]) for lang in languages if lang in entity.labels),
                                    ("", ""))
-            result.append(Linked(entity.id, self.item_id(entity), language, label))
+            description = entity.descriptions.get(language, "") if language else ""
+            result.append(Linked(entity.id, self.item_id(entity), language, label, description,
+                                 model.datatype_to_wire(entity)))
         return result
+
+    def labelled(self, text: str, language: str, class_id: str, after: str) -> typing.Iterator[str]:
+        """Return the entities with words of a label or alias in a language
+        starting with each of the text's, after an identifier, in order."""
+        while True:
+            response = self.kb.client.find_by_label(text, language, wire.Match.WORDS, class_id, 0, after)
+            if response.status != wire.Status.OK:
+                raise LookupError(f"Can't find {text!r}: {response.status.name}")
+            yield from response.ids
+            if not response.ids:
+                return
+            after = response.ids[-1]
+
+    def search(self, text: str, languages: list[str], kind: wire.Kind, class_id: str, limit: int,
+               after: str) -> list[Linked]:
+        """Return the entities of a kind found by the words of their labels,
+        in any of a chain of languages, in order of identifier."""
+        if not text.strip():
+            return []
+        wanted = model.Property if kind == wire.Kind.PROPERTY else model.Item
+        streams = [self.labelled(text, language, class_id, after) for language in languages or ["en"]]
+        ids = (entity_id for entity_id, _ in itertools.groupby(heapq.merge(*streams)))
+        found: list[model.Entity] = []
+        while len(found) < limit:
+            batch = list(itertools.islice(ids, FIND_BATCH))
+            if not batch:
+                break
+            entities, _ = self.kb.get_entities(batch)
+            found.extend(e for e in entities if isinstance(e, wanted) and not e.destroyed)
+        return self.as_linked(found[:limit], languages)
 
     def attach(self, server: darq.Server, entity_id: str) -> int:
         """Return a new port for an entity's item."""
@@ -310,6 +374,34 @@ class EntityItemHandler(EntityItem.Handler):
             logging.error(f"Can't find links to {self.entity_id}: {e}")
             return GetLinksResponse(status=wire.Status.NOT_FOUND)
         return GetLinksResponse(linked=linked, status=wire.Status.OK)
+
+    def find_entities(self, request: FindEntitiesRequest, source: int) -> FindEntitiesResponse:
+        limit = min(request.max or MAX_FOUND, MAX_FOUND)
+        try:
+            found = self.implementation.search(request.text, request.languages, request.kind, request.class_id,
+                                               limit, request.after)
+        except KB_ERRORS as e:
+            logging.error(f"Can't find {request.text!r}: {e}")
+            return FindEntitiesResponse(status=wire.Status.NOT_FOUND)
+        return FindEntitiesResponse(found=found, status=wire.Status.OK)
+
+    def suggest_properties(self, request: SuggestPropertiesRequest, source: int) -> SuggestPropertiesResponse:
+        try:
+            entity = self.kb.get(self.entity_id)
+            if entity is None:
+                return SuggestPropertiesResponse(status=wire.Status.NOT_FOUND)
+            ids = list(ANNOTATIONS)
+            for s in entity.statements:
+                if s.get_property_id() not in ids and s.get_property_id() != model.DARQOS_TYPE:
+                    ids.append(s.get_property_id())
+            ids = ids[:min(request.max or MAX_FOUND, MAX_FOUND)]
+            entities, _ = self.kb.get_entities(ids)
+            properties = [e for e in entities if isinstance(e, model.Property)]
+        except KB_ERRORS as e:
+            logging.error(f"Can't suggest properties for {self.entity_id}: {e}")
+            return SuggestPropertiesResponse(status=wire.Status.NOT_FOUND)
+        return SuggestPropertiesResponse(found=self.implementation.as_linked(properties, request.languages),
+                                         status=wire.Status.OK)
 
     def watch_entity(self, request: WatchEntityRequest, source: int) -> WatchEntityResponse:
         if request.listener is None:

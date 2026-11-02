@@ -8,15 +8,18 @@ is darq.kb's."""
 
 import contextlib
 import re
+import time
 
 from typing import (TYPE_CHECKING, Dict, Iterable, Iterator, List, Optional,
-                    Set, Tuple)
+                    Sequence, Set, Tuple)
 
 from darq.kb import (INSTANCE_OF, SUBCLASS_OF, VALUE_TYPES, ConflictError,
-                     Datatype, Entity, EntityValue, Item, Property,
+                     Datatype, Entity, EntityValue, Item, Property, Query,
                      QuantityValue, Rank, Reference, Snak, Statement,
                      StringValue, TextValue, TimeValue, document,
                      entity_links, entity_strings, fold, normalise)
+
+from query import TIME_LIMIT, QueryError, check, evaluate
 
 if TYPE_CHECKING:
     from store import Store
@@ -428,6 +431,41 @@ class KnowledgeBase:
                 break
             classes |= more
         return [e for e in entities if targets(e, INSTANCE_OF) & classes]
+
+    def query(self,
+              query: Query,
+              after: Sequence[str] = (),
+              limit: Optional[int] = None,
+              time_limit: float = TIME_LIMIT) \
+            -> Tuple[List[str], List[Tuple[str, ...]]]:
+        """Answer a query (see darq.kb.Query).
+
+        :param after: Return the rows after this one, if it isn't empty.
+        :param limit: Return at most this many rows, if given.
+        :param time_limit: Seconds it can run.
+        :returns: What each row's values are, "entity", "string" or
+                  "statement", and the rows, sorted.
+        :raises QueryError: if it can't be answered.
+        :raises TooCostly: if it runs past its time limit."""
+        def datatype(property_id: str) -> Optional[Datatype]:
+            prop = self.get_property(property_id)
+            return None if prop is None else prop.datatype
+
+        plan = check(query, datatype)
+        if after and len(after) != len(plan.select):
+            raise QueryError(f"after has {len(after)} values, "
+                             f"not {len(plan.select)}")
+        deadline = time.monotonic() + time_limit
+        if self.store is not None:
+            self.flush()
+            rows = self.store.query(plan, after, limit, deadline)
+        else:
+            rows = evaluate(self, plan, deadline)
+            if after:
+                rows = [r for r in rows if r > tuple(after)]
+            if limit is not None:
+                rows = rows[:limit]
+        return plan.columns(), rows
 
     def check(self, statement: Statement):
         """Check a statement against this KnowledgeBase.

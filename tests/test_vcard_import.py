@@ -151,6 +151,24 @@ def test_drafts():
     assert reader.drafts[department.parent].label == "Acme Widgets"
 
 
+def test_names_are_in_order():
+    wd = vocabulary.Vocabulary()
+    reader = cards.Importer(wd)
+    reader.read(vcard.parse("BEGIN:VCARD\nVERSION:3.0\nUID:u1\nFN:Ann Marie Jo Smith-Jones\n"
+                            "N:Smith,Jones;Ann;Marie,Jo;;\nEND:VCARD\n"))
+    labels = {d.entity.id: d.label for d in reader.drafts.values()}
+    [person] = [d.entity for d in reader.drafts.values() if d.category == "card"]
+
+    def names(property_id):
+        return [(labels[s.get_value().get_id()], [q.value.value for q in s.qualifiers
+                                                  if q.property_id == wd.series_ordinal])
+                for s in person.get_statements(property_id)]
+
+    assert names(wd.given_name) == [("Ann", ["1"]), ("Marie", ["2"]), ("Jo", ["3"])]
+    assert names(wd.family_name) == [("Smith", ["1"]), ("Jones", ["2"])]
+    assert wd.series_ordinal in wd.qualifiers
+
+
 def sources(entity) -> dict[str, list[str]]:
     """An entity's string values, with the sources each is stated in."""
     result = {}
@@ -390,6 +408,38 @@ def test_dated_addresses(target):
     assert not address.destroyed and address.get_statements("P6375")
     assert not any(s.references for s in address.get_statements("P6375"))
     assert not client.get(brisbane).destroyed
+
+
+def test_lens_edits_survive(target):
+    client, _, _ = target
+    people = book(("u1", "Ann", "Example"))
+    run(target, people)
+    [ann] = find(client, "Ann Example")
+
+    # As the entity lens makes them: a residence dated, a work phone
+    # changed, and a related person removed.
+    related = vocabulary.Vocabulary().related_person
+    person = client.get(ann)
+    home = person.get_statements("P551")[0].id
+    phone = next(s.id for s in person.get_statements("P1329") if "3000 1234" in s.get_value().value)
+    [relation] = person.get_statements(related)
+    start = model.Snak(model.START_TIME, model.TimeValue(2019, 3, precision=model.TimePrecision.Months))
+    edits = (model.change_qualifier(person, home, None, start, model.ENTITY_EDITOR)
+             + model.change_value(person, phone, model.StringValue("+61 7 3000 9999"), model.ENTITY_EDITOR)
+             + model.remove_statement(person, relation.id))
+    edited = model.apply_edits(person, edits)
+    client.put(edited)
+    before = model.document(client.get(ann))
+
+    result = run(target, people)
+    assert result.updated == 0 and model.document(client.get(ann)) == before
+    person = client.get(ann)
+    assert [q.property_id for q in residence(client, ann).qualifiers][-1] == model.START_TIME
+    numbers = {s.get_value().value: s for s in person.get_statements("P1329")}
+    assert numbers["+61 7 3000 1234"].rank == model.Rank.Deprecated
+    assert model.is_operators(numbers["+61 7 3000 9999"])
+    [relation] = person.get_statements(related)
+    assert relation.rank == model.Rank.Deprecated and relation.references
 
 
 def test_moving_from_a_shared_address(target):

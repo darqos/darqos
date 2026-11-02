@@ -17,9 +17,13 @@ import darq.kb as model
 from darq.protocols import kb as wire
 from darq.protocols.kb import (
     Changed,
+    FindEntitiesResponse,
     GetEntityResponse,
     GetLinksResponse,
+    Kind,
     Linked,
+    PutEntityResponse,
+    SuggestPropertiesResponse,
     WatchEntityResponse,
 )
 from darq.protocols.lens import Status, UseRequest
@@ -44,6 +48,8 @@ def load():
 
 lens = load()
 render = lens.render
+edit = lens.edit
+times = edit.times
 
 ADA = "darq.person:ada"
 ACME = "darq.organisation:acme"
@@ -107,7 +113,7 @@ def test_render():
     assert "&lt;script&gt;" in html and "<script>" not in html
     assert "Also known as: Augusta" in html
     assert 'Acme &amp; Co</a> ★' in html
-    assert '<s><a href="#2">old</a></s>' in html
+    assert '<s class="deprecated"><a href="#2">old</a></s>' in html
     assert "start time" not in html and "P580: 1843" in html
     assert "source: P248: " in html and "Address book</a>" in html
     assert "1.65 ± 0.05 " in html and "metre</a>" in html
@@ -126,6 +132,83 @@ def test_render_empty():
     assert "No statements." in html and "Linked from" not in html
 
 
+def test_render_names_in_order():
+    ada = model.Item("ada")
+    for name, ordinal in [("Byron", "2"), ("Augusta", "1")]:
+        ada.claim("P735", model.StringValue(name)).add_qualifier(model.SERIES_ORDINAL, model.StringValue(ordinal))
+    _, html = page_for(ada)
+    assert html.index("Augusta") < html.index("Byron")
+
+
+def test_render_hides_deprecated():
+    ada = model.Item("ada")
+    ada.claim("P1329", model.StringValue("old"), model.Rank.Deprecated)
+    ada.claim("P1329", model.StringValue("new"))
+    html = render.Page(["en"], {}).render(ada, [], deprecated=False)
+    assert "old" not in html and "new" in html and "1 deprecated statement hidden" in html
+    ada.statements.pop()
+    html = render.Page(["en"], {}).render(ada, [], deprecated=False)
+    assert "No statements." not in html and "1 deprecated statement hidden" in html
+
+
+################################################################
+# Times, as typed
+################################################################
+
+P = model.TimePrecision
+
+
+@pytest.mark.parametrize("text, year, month, day, precision", [
+    ("2024", 2024, None, None, P.Years),
+    ("June 2024", 2024, 6, None, P.Months),
+    ("jun. 2024", 2024, 6, None, P.Months),
+    ("6/2024", 2024, 6, None, P.Months),
+    ("2024-06", 2024, 6, None, P.Months),
+    ("30 June 2024", 2024, 6, 30, P.Days),
+    ("30th Jun 2024", 2024, 6, 30, P.Days),
+    ("June 30, 2024", 2024, 6, 30, P.Days),
+    ("30/6/2024", 2024, 6, 30, P.Days),
+    ("2024-06-30", 2024, 6, 30, P.Days),
+    ("  1970s ", 1970, None, None, P.TenYears),
+    ("15 March 44 BCE", -44, 3, 15, P.Days),
+    ("-0044-03-15", -44, 3, 15, P.Days),
+])
+def test_parse_times(text, year, month, day, precision):
+    t = times.parse(text)
+    assert (t.year, t.month, t.day, t.precision, t.before, t.after) == (year, month, day, precision, 0, 0)
+
+
+def test_approximate_times():
+    t = times.parse("about 1974")
+    assert (t.year, t.precision, t.before, t.after) == (1974, P.Years, 1, 1)
+    assert times.parse("c. March 1974").before == 1 and times.parse("~1974").after == 1
+    assert times.text(t) == "about 1974"
+
+
+@pytest.mark.parametrize("text, why", [
+    ("", "no time"), ("31 June 2024", "no day 31"), ("13/2024", "no month 13"), ("Smarch 2024", "isn't a month"),
+    ("1975s", "isn't a decade"), ("next week", "can't read"), ("0 BCE", "from 1"),
+])
+def test_bad_times(text, why):
+    with pytest.raises(ValueError, match=why):
+        times.parse(text)
+
+
+@pytest.mark.parametrize("time", [
+    model.TimeValue.parse("1974"), model.TimeValue.parse("1974-03"), model.TimeValue.parse("1815-12-10"),
+    model.TimeValue.parse("-0044-03-15"), model.TimeValue(1970, precision=P.TenYears),
+    model.TimeValue(1974, precision=P.Years, before=1, after=1),
+])
+def test_times_read_back(time):
+    again = times.parse(times.text(time))
+    assert model.encode_value(again) == model.encode_value(time)
+
+
+def test_rank_found():
+    found = [Linked("a", "", "en", "Brisbane City"), Linked("b", "", "en", "Bris"), Linked("c", "", "en", "Old Bris")]
+    assert [link.entity_id for link in edit.rank(found, "bris")] == ["b", "a", "c"]
+
+
 ################################################################
 # Window and navigation, offscreen
 ################################################################
@@ -141,6 +224,18 @@ class World:
         self.closed_items: list[str] = []
         self.watched: list[tuple[str, int]] = []
         self.failing: set[str] = set()
+        self.puts: list[model.Entity] = []
+
+        # Properties, by identifier: their labels and datatypes.
+        self.properties: dict[str, tuple[str, model.Datatype]] = {
+            "P108": ("employer", model.Datatype.Item),
+            "P1329": ("phone number", model.Datatype.String),
+            "P551": ("residence", model.Datatype.Item),
+            "P248": ("stated in", model.Datatype.Item),
+            model.START_TIME: ("start time", model.Datatype.Time),
+            model.END_TIME: ("end time", model.Datatype.Time),
+            model.REASON_FOR_DEPRECATED_RANK: ("reason for deprecated rank", model.Datatype.Item),
+        }
 
     def add(self, item_id, label, *refs):
         _, entity_id = darq.split_item_id(item_id)
@@ -148,8 +243,24 @@ class World:
         e.set_label(label)
         for ref in refs:
             e.claim("P108", model.EntityValue(darq.split_item_id(ref)[1]))
+        e.revision = 1
         self.entities[item_id] = e
         return e
+
+    def change(self, item_id, change):
+        """Change an item's entity elsewhere."""
+        e = self.entities[item_id]
+        change(e)
+        e.revision += 1
+
+    def linked(self, entity_id) -> Linked:
+        item_id = next((i for i, e in self.entities.items() if e.id == entity_id), None)
+        if item_id is not None:
+            return Linked(entity_id, item_id, "en", self.entities[item_id].get_label() or "", "",
+                          wire.Datatype.NONE)
+        label, datatype = self.properties.get(entity_id, ("", model.Datatype.String))
+        prop = model.Property(datatype, entity_id)
+        return Linked(entity_id, "", "en", label, "", model.datatype_to_wire(prop))
 
     def open(self, item_id):
         if item_id not in self.entities:
@@ -170,15 +281,36 @@ class FakeItem:
         if self.item_id in self.world.failing:
             raise darq.DeadPortError("gone")
         entity = self.world.entities[self.item_id]
-        linked = []
-        for s in entity.statements:
-            value = s.get_value()
-            assert isinstance(value, model.EntityValue)
-            target = value.get_id()
-            item_id = next(i for i, e in self.world.entities.items() if e.id == target)
-            linked.append(Linked(target, item_id, "en", self.world.entities[item_id].get_label() or ""))
-        linked.append(Linked("P108", "", "en", "employer"))
+        linked = [self.world.linked(i) for i in sorted(model.referenced(entity))]
         return GetEntityResponse(entity=model.entity_to_wire(entity), linked=linked, status=wire.Status.OK)
+
+    def put_entity(self, entity):
+        current = self.world.entities[self.item_id]
+        if entity.revision != current.revision:
+            return PutEntityResponse(status=wire.Status.CONFLICT)
+        written = model.entity_from_wire(entity)
+        written.revision = current.revision + 1
+        self.world.entities[self.item_id] = written
+        self.world.puts.append(written)
+        return PutEntityResponse(revision=written.revision, status=wire.Status.OK)
+
+    def find_entities(self, text, languages, kind, class_id, max, after):
+        words = text.lower().split()
+
+        def matches(label):
+            return all(any(w.startswith(word) for w in label.lower().split()) for word in words)
+
+        if kind == Kind.PROPERTY:
+            ids = [p for p, (label, _) in self.world.properties.items() if matches(label)]
+        else:
+            ids = [e.id for e in self.world.entities.values() if matches(e.get_label() or "")]
+        return FindEntitiesResponse(found=[self.world.linked(i) for i in sorted(ids)], status=wire.Status.OK)
+
+    def suggest_properties(self, languages, max):
+        entity = self.world.entities[self.item_id]
+        ids = [model.START_TIME, model.END_TIME]
+        ids += [p for p in dict.fromkeys(s.get_property_id() for s in entity.statements) if p not in ids]
+        return SuggestPropertiesResponse(found=[self.world.linked(i) for i in ids], status=wire.Status.OK)
 
     def get_links(self, property_id, role, languages, max, after):
         return GetLinksResponse(linked=self.world.links.get(self.item_id, []), status=wire.Status.OK)
@@ -351,6 +483,259 @@ def test_merged_note(entity_lens, world):
     world.entities["darq.person:old"] = world.entities[ADA]
     use(entity_lens, world, "darq.person:old")
     assert "old was merged into this." in entity_lens.window.browser.toPlainText()
+
+
+################################################################
+# Editing, offscreen
+################################################################
+
+BOOK = "book"
+
+
+@pytest.fixture
+def editing(entity_lens, world, qt_app):
+    """Ada, with a residence and a phone number from an address book,
+    shown in edit mode."""
+    world.add("darq.place:home", "1 Example St")
+    world.add("darq.place:new", "2 New St")
+    world.add(f"darq.entity:{BOOK}", "Address book")
+    ada = world.entities[ADA]
+    for property_id, value in [("P551", model.EntityValue("home")), ("P1329", model.StringValue("+61 7 3000 1234"))]:
+        ada.claim(property_id, value).add_reference(model.Reference().add("P248", model.EntityValue(BOOK)))
+    use(entity_lens, world)
+    window = entity_lens.window
+    window.start_editing()
+    settle(qt_app)
+    return window
+
+
+def settle(qt_app):
+    """Let the form build itself again."""
+    for _ in range(3):
+        qt_app.processEvents()
+
+
+def statement(world, property_id, n=0):
+    return world.entities[ADA].get_statements(property_id)[n]
+
+
+def test_edit_mode(editing, entity_lens, world, qt_app):
+    window = editing
+    assert window.editing and window.stack.currentWidget() is window.form_area
+    assert window.language == "en" and window.edit_button.text() == "Done"
+    assert {"labels:en", "descriptions:en", "aliases:en"} <= set(window.form.editors)
+    assert f"value:{statement(world, 'P551').id}" in window.form.editors
+
+    window.finish_editing()
+    assert not window.editing and window.stack.currentWidget() is window.browser
+    assert entity_lens.history.events == [(ADA, "opened", "entity-lens")]
+
+
+def test_each_change_is_saved(editing, entity_lens, world, qt_app):
+    window = editing
+    label = window.form.editors["labels:en"]
+    label.setText("Ada Lovelace")
+    label.finish()
+    settle(qt_app)
+    assert world.entities[ADA].get_label() == "Ada Lovelace" and window.title.text() == "Ada Lovelace"
+    assert window.status.text() == "Saved"
+
+    aliases = window.form.editors["aliases:en"]
+    aliases.setText("Augusta,  Countess of Lovelace ,")
+    aliases.finish()
+    settle(qt_app)
+    assert world.entities[ADA].aliases == {"en": ["Augusta", "Countess of Lovelace"]}
+
+    # It's recorded as edited once, each time edit mode's entered.
+    assert entity_lens.history.events == [(ADA, "opened", "entity-lens"), (ADA, "edited", "entity-lens")]
+
+    # Undo and redo.
+    window.undo()
+    settle(qt_app)
+    assert world.entities[ADA].aliases == {}
+    window.redo()
+    assert world.entities[ADA].aliases == {"en": ["Augusta", "Countess of Lovelace"]}
+    window.undo()
+    window.undo()
+    assert world.entities[ADA].get_label() == "Ada" and not window.undo_stack
+
+
+def test_dating_an_address(editing, world, qt_app):
+    window = editing
+    sid = statement(world, "P551").id
+    window.form.add_dates(sid)
+    settle(qt_app)
+    start = window.form.editors[f"new-qualifier:{sid}:0"]
+    start.line.setText("Smarch 2019")
+    start.typed("Smarch 2019")
+    start.finish()
+    assert "isn't a month" in start.hint.text() and not world.puts
+
+    start.line.setText("March 2019")
+    start.typed("March 2019")
+    assert start.hint.text() == "= March 2019"
+    start.finish()
+    settle(qt_app)
+
+    # The address book's statement is annotated, and stays its own.
+    s = statement(world, "P551")
+    assert s.id == sid and s.references and [q.property_id for q in s.qualifiers] == [model.START_TIME]
+    assert window.form.new_qualifiers[sid] == [model.END_TIME]
+    end = window.form.editors[f"new-qualifier:{sid}:0"]
+    end.line.setText("30 June 2024")
+    end.finish()
+    settle(qt_app)
+    assert [q.property_id for q in statement(world, "P551").qualifiers] == [model.START_TIME, model.END_TIME]
+
+
+def test_changing_a_sources_statement(editing, world, qt_app):
+    window = editing
+    sid = statement(world, "P1329").id
+    phone = window.form.editors[f"value:{sid}"]
+    phone.line.setText("+61 7 3000 9999")
+    phone.finish()
+    settle(qt_app)
+    old, new = world.entities[ADA].get_statements("P1329")
+    assert old.id == sid and old.rank == model.Rank.Deprecated and old.references
+    assert new.get_value().value == "+61 7 3000 9999" and model.is_sourced(new, model.ENTITY_EDITOR)
+    assert window.status.text() == "Stated in Address book: kept, deprecated, and replaced with yours"
+
+    # Removed, it's deprecated; undone, it's back.
+    window.form.remove(statement(world, "P551").id)
+    settle(qt_app)
+    assert statement(world, "P551").rank == model.Rank.Deprecated
+    assert "hidden" in window.status.text()
+    window.undo()
+    assert statement(world, "P551").rank == model.Rank.Normal
+
+
+def test_choosing_an_item(editing, world, qt_app):
+    window = editing
+    sid = statement(world, "P551").id
+    residence = window.form.editors[f"value:{sid}"]
+    assert residence.line.text() == "1 Example St"
+    residence.picker.line.setText("new")
+    residence.picker.search()
+    assert [link.entity_id for link in residence.picker.found] == ["new"]
+    assert residence.picker.accept()
+    settle(qt_app)
+
+    # It's the address book's: replaced, by the operator's.
+    old, new = world.entities[ADA].get_statements("P551")
+    assert old.rank == model.Rank.Deprecated and new.get_value().get_id() == "new"
+
+    # Nothing chosen, it's put back.
+    residence = window.form.editors[f"value:{new.id}"]
+    residence.picker.line.setText("nothing like it")
+    residence.picker.search()
+    assert not residence.picker.accept() and residence.picker.hint.text() == "Choose one from the list"
+    residence.left()
+    assert residence.line.text() == "2 New St"
+
+
+def test_adding_a_statement(editing, world, qt_app):
+    window = editing
+    window.form.pick_statement()
+    settle(qt_app)
+    picker = window.form.start_picker
+    assert picker is not None
+    assert model.START_TIME not in [link.entity_id for link in picker.found]
+    picker.line.setText("phone")
+    picker.search()
+    assert picker.accept()
+    settle(qt_app)
+    assert window.form.new_statements == ["P1329"]
+    new = window.form.editors["new-statement:0"]
+    new.line.setText("+61 400 000 000")
+    new.finish()
+    settle(qt_app)
+    phones = world.entities[ADA].get_statements("P1329")
+    assert [s.get_value().value for s in phones] == ["+61 7 3000 1234", "+61 400 000 000"]
+    assert model.is_sourced(phones[1], model.ENTITY_EDITOR) and window.form.new_statements == []
+
+
+def test_changes_elsewhere_are_rebased(editing, world, qt_app):
+    window = editing
+    world.change(ADA, lambda e: e.set_description("mathematician"))
+    label = window.form.editors["labels:en"]
+    label.setText("Ada Lovelace")
+    label.finish()
+    settle(qt_app)
+    ada = world.entities[ADA]
+    assert (ada.get_label(), ada.get_description()) == ("Ada Lovelace", "mathematician")
+    assert window.form.conflict is None
+
+
+def conflict(window):
+    """Return the conflict the form shows."""
+    assert window.form.conflict is not None
+    return window.form.conflict
+
+
+def test_conflicts_are_shown(editing, world, qt_app):
+    window = editing
+    world.change(ADA, lambda e: e.set_label("Augusta"))
+    label = window.form.editors["labels:en"]
+    label.setText("Ada Lovelace")
+    label.finish()
+    settle(qt_app)
+    assert world.entities[ADA].get_label() == "Augusta"
+    message, target, keep_mine = conflict(window)
+    assert target == "labels:en" and "The label has been changed elsewhere" in message
+
+    keep_mine()
+    settle(qt_app)
+    assert world.entities[ADA].get_label() == "Ada Lovelace" and window.form.conflict is None
+
+    # A statement removed elsewhere can only be given up on.
+    sid = statement(world, "P1329").id
+    phone = window.form.editors[f"value:{sid}"]
+    world.change(ADA, lambda e: e.remove_statement(e.get_statements("P1329")[0]))
+    phone.line.setText("+61 7 3000 9999")
+    phone.finish()
+    settle(qt_app)
+    message, target, keep_mine = conflict(window)
+    assert target == f"statement:{sid}" and keep_mine is not None
+    keep_mine()
+    settle(qt_app)
+    message, target, keep_mine = conflict(window)
+    assert "removed elsewhere" in message and keep_mine is None
+    window.form.take_theirs()
+    assert window.form.conflict is None
+
+
+def test_changes_elsewhere_wait_for_a_field(editing, entity_lens, world, qt_app):
+    window = editing
+    description = window.form.editors["descriptions:en"]
+    description.setText("mathem")
+    world.change(ADA, lambda e: e.set_label("Augusta"))
+    listener = entity_lens.server._handlers[900]
+    listener.changed(Changed(entity_id="ada", revision=world.entities[ADA].revision), 0)
+    assert "Changed elsewhere" in window.status.text()
+    assert window.form.editors["descriptions:en"] is description
+
+    # The label's as it is now, so the description's saved over it.
+    description.setText("mathematician")
+    description.finish()
+    settle(qt_app)
+    ada = world.entities[ADA]
+    assert (ada.get_label(), ada.get_description()) == ("Augusta", "mathematician")
+    assert window.form.editors["labels:en"].text() == "Augusta"
+
+
+def test_keys(editing, qt_app):
+    from PyQt6.QtGui import QKeyEvent
+    window = editing
+
+    def press(key, mods=lens.Modifier.NoModifier):
+        window.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, key, mods))
+
+    press(lens.Key.Key_Escape)
+    assert not window.editing
+    press(lens.Key.Key_D)
+    assert window.show_deprecated
+    press(lens.Key.Key_E)
+    assert window.editing
 
 
 ################################################################

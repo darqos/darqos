@@ -34,6 +34,7 @@ a { color: #8ab4f8; text-decoration: none; }
 .aliases { color: #9a9a9a; }
 .property { color: #9a9a9a; padding-right: 24px; }
 .detail { color: #9a9a9a; font-size: 13px; }
+.deprecated { color: #808080; }
 h3 { color: #c0c0c0; font-size: 15px; margin-top: 18px; }
 """
 
@@ -168,7 +169,7 @@ class Page:
         if s.rank == model.Rank.Preferred:
             value += " ★"
         elif s.rank == model.Rank.Deprecated:
-            value = f"<s>{value}</s>"
+            value = f'<s class="deprecated">{value}</s>'
         prop = self.name(s.main_snak.property_id) if first else ""
         rows = [f'<tr><td class="property">{prop}</td><td>{value}</td></tr>']
         for q in s.qualifiers:
@@ -182,12 +183,15 @@ class Page:
                entity: model.Entity,
                linked_from: list[Link],
                more: int = 0,
-               note: str | None = None) -> str:
+               note: str | None = None,
+               deprecated: bool = True) -> str:
         """Return an entity's page.
 
         :param linked_from: The items that link to it.
         :param more: How many more link to it, not listed.
-        :param note: A note, such as that it was merged, shown first."""
+        :param note: A note, such as that it was merged, shown first.
+        :param deprecated: Whether deprecated statements are shown, or
+                           just counted."""
         parts = [f"<html><head><style>{STYLE}</style></head><body>"]
         if note:
             parts.append(f'<p class="detail">{html.escape(note)}</p>')
@@ -199,18 +203,23 @@ class Page:
             parts.append(f'<p class="aliases">Also known as: {html.escape(", ".join(aliases))}</p>')
 
         # Statements, by property, in the order each first appears.
+        statements = [s for s in entity.statements if deprecated or s.rank != model.Rank.Deprecated]
+        hidden = len(entity.statements) - len(statements)
         order: list[str] = []
-        for s in entity.statements:
+        for s in statements:
             if s.get_property_id() not in order:
                 order.append(s.get_property_id())
         if order:
             parts.append("<table>")
             for property_id in order:
-                for n, s in enumerate(entity.get_statements(property_id)):
+                for n, s in enumerate(model.in_order(s for s in statements if s.get_property_id() == property_id)):
                     parts.append(self.statement(s, n == 0))
             parts.append("</table>")
-        else:
+        elif not hidden:
             parts.append('<p class="detail">No statements.</p>')
+        if hidden:
+            plural = "s" if hidden > 1 else ""
+            parts.append(f'<p class="detail">{hidden} deprecated statement{plural} hidden: D shows them.</p>')
 
         if linked_from:
             parts.append("<h3>Linked from</h3><p>")

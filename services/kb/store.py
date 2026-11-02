@@ -4,9 +4,10 @@
 """A knowledge base's entities, kept in an SQLite database.
 
 Each entity is a row holding its JSON document (see darq.kb.document) and
-revision, and every revision is kept.  Index tables of labels, links
-and string values are derived from the documents, and updated in the
-same transaction as each change.  The design is in doc/kb-service.rst.
+revision, and every revision is kept.  Index tables of labels, links,
+string values and snaks are derived from the documents, and updated in
+the same transaction as each change; queries are answered from them
+(see query.py).  The design is in doc/kb-service.rst.
 
 A Store is used by a KnowledgeBase:
 
@@ -20,16 +21,21 @@ import json
 import os
 import re
 import sqlite3
+import time
 
-from typing import List, Optional, Set
+from typing import List, Optional, Sequence, Set, Tuple
 
 from darq.kb import (INSTANCE_OF, SUBCLASS_OF, ConflictError, Entity,
-                     Property, decode_entity, entity_links, entity_strings,
-                     fold)
+                     EntityValue, Property, StringValue, decode_entity,
+                     entity_snaks, fold, normalise)
+
+from query import Plan, TooCostly, compile
 
 
-# Version of the schema, kept as the database's user_version.
-VERSION = 1
+# Version of the schema, kept as the database's user_version.  Version
+# 1 had no snaks table, and no ranks or roles for links and strings:
+# its index tables are rebuilt.
+VERSION = 2
 
 SCHEMA = """
 create table if not exists entities (
@@ -68,21 +74,41 @@ create table if not exists links (
     statement_id text not null,
     property_id text not null,
     target_id text not null,
-    role text not null);
+    role text not null,
+    rank text not null);
 create index if not exists links_by_target on links (target_id, property_id);
+create index if not exists links_by_property on links (property_id, target_id);
 create index if not exists links_by_entity on links (entity_id);
+create index if not exists links_by_statement on links (statement_id);
 
 create table if not exists strings (
     entity_id text not null,
     statement_id text not null,
     property_id text not null,
-    value text not null);
+    value text not null,
+    text text not null,
+    role text not null,
+    rank text not null);
 create index if not exists strings_by_value on strings (property_id, value);
 create index if not exists strings_by_entity on strings (entity_id);
+create index if not exists strings_by_statement on strings (statement_id);
+
+create table if not exists snaks (
+    entity_id text not null,
+    statement_id text not null,
+    property_id text not null,
+    role text not null,
+    rank text not null);
+create index if not exists snaks_by_statement on snaks (statement_id, property_id);
+create index if not exists snaks_by_property on snaks (property_id);
+create index if not exists snaks_by_entity on snaks (entity_id);
 """
 
 # Index tables, each with an entity_id column.
-INDEXES = ("labels", "labels_fts", "links", "strings")
+INDEXES = ("labels", "labels_fts", "links", "strings", "snaks")
+
+# The index tables version 1 had, which have changed.
+CHANGED = ("links", "strings")
 
 # Condition for an entity, e, that isn't destroyed or merged.
 LIVE = "e.destroyed = 0 and e.redirect is null"
@@ -111,8 +137,11 @@ class Store:
             self.db.close()
             raise ValueError(f"{path}: schema version {version} is newer "
                              f"than {VERSION}")
-        self.db.executescript(SCHEMA)
-        self.db.execute(f"pragma user_version = {VERSION}")
+        if version == 1:
+            self._upgrade()
+        else:
+            self.db.executescript(SCHEMA)
+            self.db.execute(f"pragma user_version = {VERSION}")
 
         # Entities written in the current transaction, if there is one.
         self.active = False
@@ -123,6 +152,23 @@ class Store:
 
     def close(self):
         self.db.close()
+
+    def _upgrade(self):
+        """Upgrade the schema from version 1, rebuilding the index tables
+        from the documents, all or none."""
+        drops = "".join(f"drop table {table}; " for table in CHANGED)
+        self.db.executescript(f"begin immediate; {drops}{SCHEMA}")
+        try:
+            for table in INDEXES:
+                self.db.execute(f"delete from {table}")
+            rows = self.db.execute("select document from entities").fetchall()
+            for (text,) in rows:
+                self._index(decode_entity(json.loads(text)))
+            self.db.execute(f"pragma user_version = {VERSION}")
+            self.db.execute("commit")
+        except BaseException:
+            self.db.execute("rollback")
+            raise
 
     def begin(self):
         """Begin a transaction, unless one's begun."""
@@ -224,12 +270,22 @@ class Store:
         self.db.executemany("insert into labels_fts values (?, ?, ?)",
                             [(entity.id, language, text)
                              for language, _, text in names])
-        self.db.executemany("insert into links values (?, ?, ?, ?, ?)",
-                            [(entity.id, *link)
-                             for link in entity_links(entity)])
-        self.db.executemany("insert into strings values (?, ?, ?, ?)",
-                            [(entity.id, *value)
-                             for value in entity_strings(entity)])
+        links, strings, snaks = [], [], []
+        for s, snak, role in entity_snaks(entity):
+            row = (entity.id, s.id, snak.property_id)
+            rank = s.rank.name.lower()
+            if isinstance(snak.value, EntityValue):
+                links.append((*row, snak.value.entity_id, role, rank))
+            elif isinstance(snak.value, StringValue):
+                strings.append((*row, normalise(snak.value.value),
+                                snak.value.value, role, rank))
+            snaks.append((*row, role, rank))
+        self.db.executemany("insert into links values (?, ?, ?, ?, ?, ?)",
+                            links)
+        self.db.executemany("insert into strings values "
+                            "(?, ?, ?, ?, ?, ?, ?)", strings)
+        self.db.executemany("insert into snaks values (?, ?, ?, ?, ?)",
+                            snaks)
 
     def _ids(self, sql: str, *args) -> List[str]:
         return [row[0] for row in self.db.execute(sql, args)]
@@ -265,7 +321,7 @@ class Store:
         return self._ids("select distinct s.entity_id from strings s "
                          "join entities e on e.id = s.entity_id "
                          "where s.property_id = ? and s.value = ? "
-                         f"and {LIVE} order by 1",
+                         f"and s.role = 'main' and {LIVE} order by 1",
                          property_id, value)
 
     def find_links(self,
@@ -295,3 +351,25 @@ class Store:
                          "where l.property_id = ? and l.role = 'main' "
                          f"and {LIVE} order by 1",
                          class_id, SUBCLASS_OF, INSTANCE_OF)
+
+    def query(self,
+              plan: Plan,
+              after: Sequence[str],
+              limit: Optional[int],
+              deadline: float) -> List[Tuple[str, ...]]:
+        """Return a query's rows, sorted: those after the row after, if
+        it isn't empty, and at most limit, if given.
+
+        :param deadline: When it's stopped, as a time.monotonic() time.
+        :raises TooCostly: if it's stopped."""
+        sql, args = compile(plan, after, limit)
+        self.db.set_progress_handler(lambda: time.monotonic() > deadline,
+                                     1000)
+        try:
+            return [tuple(row) for row in self.db.execute(sql, args)]
+        except sqlite3.OperationalError as e:
+            if "interrupted" in str(e):
+                raise TooCostly() from None
+            raise
+        finally:
+            self.db.set_progress_handler(None, 0)

@@ -24,6 +24,7 @@ from darq.protocols.kb import (
     Match,
     MergeRequest,
     PutEntitiesRequest,
+    QueryRequest,
     Role,
     Status,
     UnwatchRequest,
@@ -341,6 +342,48 @@ def test_paging(people, monkeypatch):
     assert len(service.instances(InstancesRequest(class_id="Q5", max=10), 0).ids) == 3
 
 
+def test_query(people, monkeypatch):
+    service = people
+
+    # The people employed by an organisation, of a subclass.
+    q = model.Query()
+    p, o, c = q.variables(3)
+    q.match(p, "P108", o).match(o, "P31", c).match(c, "P279", "Q43229", repeat=model.Repeat.ZeroOrMore)
+    q.select(p, o)
+    patterns, select = model.query_to_wire(q)
+
+    def ask(max=0, after=(), languages=(), patterns=patterns, select=select):
+        return service.query(QueryRequest(patterns=patterns, select=select, languages=list(languages), max=max,
+                                          after=list(after)), 0)
+
+    response = ask(languages=["en"])
+    assert response.status == Status.OK
+    assert [r.values for r in response.rows] == [[f"person{n}", "acme"] for n in range(5)]
+    assert {label.entity_id: label.text for label in response.labels} == \
+        {"acme": "Acme Widgets", **{f"person{n}": f"Person {n}" for n in range(5)}}
+
+    # In batches.
+    first = ask(max=2)
+    assert [r.values for r in first.rows] == [["person0", "acme"], ["person1", "acme"]]
+    assert [r.values for r in ask(max=2, after=first.rows[-1].values).rows] == \
+        [["person2", "acme"], ["person3", "acme"]]
+    monkeypatch.setattr(module, "MAX_IDS", 3)
+    assert len(ask(max=10).rows) == 3
+
+    # Malformed: no such property, an unnumbered variable, or the wrong
+    # number of values after.
+    bad = model.query_to_wire(model.Query().match(model.Variable(1), "P999", "Q5"))[0]
+    assert ask(patterns=bad, select=[]).status == Status.INVALID_ARGUMENT
+    assert ask(select=[0]).status == Status.INVALID_ARGUMENT
+    assert ask(after=["person0"]).status == Status.INVALID_ARGUMENT
+
+    def costly(*args):
+        raise module.TooCostly()
+
+    monkeypatch.setattr(service.kb, "query", costly)
+    assert ask().status == Status.TOO_COSTLY
+
+
 ################################################################
 # Notifications
 ################################################################
@@ -424,6 +467,11 @@ def test_kb_service(live_pkernel, tmp_path):  # noqa: F811
                 return "not found by label"
             if list(kb.instances("Q5")) != [ada.id]:
                 return "not found as a human"
+            q = model.Query()
+            q.match(q.variable(), "P31", "Q5")
+            labels = {}
+            if list(kb.query(q, ["en"], labels)) != [(ada.id,)] or labels != {ada.id: "Ada Lovelace"}:
+                return "not found by a query"
 
             # Four changes: three entities, then Ada again.
             changed = []

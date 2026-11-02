@@ -37,6 +37,8 @@ __all__ = [
     "FindByLabelResponse",
     "FindByValueRequest",
     "FindByValueResponse",
+    "FindEntitiesRequest",
+    "FindEntitiesResponse",
     "FindLinksRequest",
     "FindLinksResponse",
     "GetEntitiesRequest",
@@ -55,16 +57,25 @@ __all__ = [
     "Match",
     "MergeRequest",
     "MergeResponse",
+    "Pattern",
     "PutEntitiesRequest",
     "PutEntitiesResponse",
     "PutEntityRequest",
     "PutEntityResponse",
+    "QueryRequest",
+    "QueryResponse",
     "Rank",
     "Reference",
+    "Repeat",
     "Role",
+    "Row",
     "Snak",
     "Statement",
     "Status",
+    "SuggestPropertiesRequest",
+    "SuggestPropertiesResponse",
+    "Term",
+    "TermType",
     "Text",
     "UnwatchRequest",
     "UnwatchResponse",
@@ -90,6 +101,7 @@ class Status(IntEnum):
     INVALID_ARGUMENT = 2
     CONFLICT = 3
     INVALID_STATEMENT = 4
+    TOO_COSTLY = 5
 
 
 class Kind(IntEnum):
@@ -144,6 +156,23 @@ class Match(IntEnum):
 
     EXACT = 0
     WORDS = 1
+
+
+class TermType(IntEnum):
+    """enum TermType: uint8."""
+
+    VARIABLE = 0
+    ENTITY = 1
+    STRING = 2
+    ANY = 3
+
+
+class Repeat(IntEnum):
+    """enum Repeat: uint8."""
+
+    ONCE = 0
+    ONE_OR_MORE = 1
+    ZERO_OR_MORE = 2
 
 
 ################################################################
@@ -267,14 +296,58 @@ class Label(Record):
         self.text = text
 
 
-class Linked(Record):
-    """struct Linked: 32 bytes, 4-byte aligned."""
+class Term(Record):
+    """struct Term: 12 bytes, 4-byte aligned."""
 
-    def __init__(self, entity_id: str = '', item_id: str = '', language: str = '', label: str = ''):
+    def __init__(self, type: TermType = TermType.VARIABLE, variable: int = 0, value: str = ''):
+        self.type = type
+        self.variable = variable
+        self.value = value
+
+
+class Pattern(Record):
+    """struct Pattern: 36 bytes, 4-byte aligned."""
+
+    def __init__(self,
+                 subject: Term | None = None,
+                 property_id: str = '',
+                 object: Term | None = None,
+                 role: Role = Role.MAIN,
+                 statement: int = 0,
+                 repeat: Repeat = Repeat.ONCE,
+                 negated: bool = False):
+        self.subject = Term() if subject is None else subject
+        self.property_id = property_id
+        self.object = Term() if object is None else object
+        self.role = role
+        self.statement = statement
+        self.repeat = repeat
+        self.negated = negated
+
+
+class Row(Record):
+    """struct Row: 8 bytes, 4-byte aligned."""
+
+    def __init__(self, values: list[str] | None = None):
+        self.values = [] if values is None else values
+
+
+class Linked(Record):
+    """struct Linked: 44 bytes, 4-byte aligned."""
+
+    def __init__(self,
+                 entity_id: str = '',
+                 item_id: str = '',
+                 language: str = '',
+                 label: str = '',
+                 description: str = '',
+                 datatype: Datatype = Datatype.NONE):
         self.entity_id = entity_id
         self.item_id = item_id
         self.language = language
         self.label = label
+        self.description = description
+        self.datatype = datatype
 
 
 Text.CODEC = StructCodec(Text, 16, [
@@ -346,11 +419,36 @@ Label.CODEC = StructCodec(Label, 24, [
 ])
 
 
-Linked.CODEC = StructCodec(Linked, 32, [
+Row.CODEC = StructCodec(Row, 8, [
+    ("values", 0, SequenceCodec(STRING_CODEC)),
+])
+
+
+Term.CODEC = StructCodec(Term, 12, [
+    ("type", 0, EnumCodec(TermType, "B")),
+    ("variable", 1, Codec("B")),
+    ("value", 4, STRING_CODEC),
+])
+
+
+Pattern.CODEC = StructCodec(Pattern, 36, [
+    ("subject", 0, Term.CODEC),
+    ("property_id", 12, STRING_CODEC),
+    ("object", 20, Term.CODEC),
+    ("role", 32, EnumCodec(Role, "B")),
+    ("statement", 33, Codec("B")),
+    ("repeat", 34, EnumCodec(Repeat, "B")),
+    ("negated", 35, BOOL_CODEC),
+])
+
+
+Linked.CODEC = StructCodec(Linked, 44, [
     ("entity_id", 0, STRING_CODEC),
     ("item_id", 8, STRING_CODEC),
     ("language", 16, STRING_CODEC),
     ("label", 24, STRING_CODEC),
+    ("description", 32, STRING_CODEC),
+    ("datatype", 40, EnumCodec(Datatype, "B")),
 ])
 
 
@@ -1121,6 +1219,110 @@ class UnwatchRequest(Message):
         return
 
 
+class QueryResponse(Message):
+    """KB.Query response."""
+
+    METHOD = 11
+    BODY_FORMAT = "<IIIII"
+    BODY_START = 8
+    LENGTH = 28
+    DATA_START = 32
+    CODEC_0 = Row.CODEC
+    CODEC_1 = Label.CODEC
+
+    def __init__(self,
+                 txid: int = 0,
+                 rows: list[Row] | None = None,
+                 labels: list[Label] | None = None,
+                 status: Status = Status.OK):
+        super().__init__(txid)
+        self.rows = [] if rows is None else rows
+        self.labels = [] if labels is None else labels
+        self.status = status
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.sequence(self.rows, self.CODEC_0),
+                           *out.sequence(self.labels, self.CODEC_1),
+                           self.status)
+        buf += b'\0' * 4
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.rows = inp.sequence(self.CODEC_0, bits[0], bits[1])
+        self.labels = inp.sequence(self.CODEC_1, bits[2], bits[3])
+        self.status = self.decode_enum(Status, bits[4])
+        return
+
+
+class QueryRequest(Message):
+    """KB.Query request."""
+
+    METHOD = 11
+    RESPONSE = QueryResponse
+    BODY_FORMAT = "<IIIIB3xIIIII"
+    BODY_START = 8
+    LENGTH = 48
+    DATA_START = 48
+    CODEC_0 = Pattern.CODEC
+    CODEC_1 = Codec("B")
+    CODEC_2 = STRING_CODEC
+    CODEC_3 = STRING_CODEC
+
+    def __init__(self,
+                 txid: int = 0,
+                 patterns: list[Pattern] | None = None,
+                 select: list[int] | None = None,
+                 deprecated: bool = False,
+                 languages: list[str] | None = None,
+                 max: int = 0,
+                 after: list[str] | None = None):
+        super().__init__(txid)
+        self.patterns = [] if patterns is None else patterns
+        self.select = [] if select is None else select
+        self.deprecated = deprecated
+        self.languages = [] if languages is None else languages
+        self.max = max
+        self.after = [] if after is None else after
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.sequence(self.patterns, self.CODEC_0),
+                           *out.sequence(self.select, self.CODEC_1),
+                           self.deprecated,
+                           *out.sequence(self.languages, self.CODEC_2),
+                           self.max,
+                           *out.sequence(self.after, self.CODEC_3))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.patterns = inp.sequence(self.CODEC_0, bits[0], bits[1])
+        self.select = inp.sequence(self.CODEC_1, bits[2], bits[3])
+        self.deprecated = self.decode_bool(bits[4])
+        self.languages = inp.sequence(self.CODEC_2, bits[5], bits[6])
+        self.max = bits[7]
+        self.after = inp.sequence(self.CODEC_3, bits[8], bits[9])
+        return
+
+
 class Changed(Message):
     """Listener.Changed one-way message."""
 
@@ -1529,6 +1731,180 @@ class WatchEntityRequest(Message):
         return
 
 
+class FindEntitiesResponse(Message):
+    """EntityItem.FindEntities response."""
+
+    METHOD = 20
+    BODY_FORMAT = "<III"
+    BODY_START = 8
+    LENGTH = 20
+    DATA_START = 24
+    CODEC_0 = Linked.CODEC
+
+    def __init__(self,
+                 txid: int = 0,
+                 found: list[Linked] | None = None,
+                 status: Status = Status.OK):
+        super().__init__(txid)
+        self.found = [] if found is None else found
+        self.status = status
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.sequence(self.found, self.CODEC_0),
+                           self.status)
+        buf += b'\0' * 4
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.found = inp.sequence(self.CODEC_0, bits[0], bits[1])
+        self.status = self.decode_enum(Status, bits[2])
+        return
+
+
+class FindEntitiesRequest(Message):
+    """EntityItem.FindEntities request."""
+
+    METHOD = 20
+    RESPONSE = FindEntitiesResponse
+    BODY_FORMAT = "<IIIIB3xIIIII"
+    BODY_START = 8
+    LENGTH = 48
+    DATA_START = 48
+    CODEC_0 = STRING_CODEC
+
+    def __init__(self,
+                 txid: int = 0,
+                 text: str = '',
+                 languages: list[str] | None = None,
+                 kind: Kind = Kind.ITEM,
+                 class_id: str = '',
+                 max: int = 0,
+                 after: str = ''):
+        super().__init__(txid)
+        self.text = text
+        self.languages = [] if languages is None else languages
+        self.kind = kind
+        self.class_id = class_id
+        self.max = max
+        self.after = after
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.text),
+                           *out.sequence(self.languages, self.CODEC_0),
+                           self.kind,
+                           *out.string(self.class_id),
+                           self.max,
+                           *out.string(self.after))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.text = inp.string(bits[0], bits[1])
+        self.languages = inp.sequence(self.CODEC_0, bits[2], bits[3])
+        self.kind = self.decode_enum(Kind, bits[4])
+        self.class_id = inp.string(bits[5], bits[6])
+        self.max = bits[7]
+        self.after = inp.string(bits[8], bits[9])
+        return
+
+
+class SuggestPropertiesResponse(Message):
+    """EntityItem.SuggestProperties response."""
+
+    METHOD = 21
+    BODY_FORMAT = "<III"
+    BODY_START = 8
+    LENGTH = 20
+    DATA_START = 24
+    CODEC_0 = Linked.CODEC
+
+    def __init__(self,
+                 txid: int = 0,
+                 found: list[Linked] | None = None,
+                 status: Status = Status.OK):
+        super().__init__(txid)
+        self.found = [] if found is None else found
+        self.status = status
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.sequence(self.found, self.CODEC_0),
+                           self.status)
+        buf += b'\0' * 4
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.found = inp.sequence(self.CODEC_0, bits[0], bits[1])
+        self.status = self.decode_enum(Status, bits[2])
+        return
+
+
+class SuggestPropertiesRequest(Message):
+    """EntityItem.SuggestProperties request."""
+
+    METHOD = 21
+    RESPONSE = SuggestPropertiesResponse
+    BODY_FORMAT = "<III"
+    BODY_START = 8
+    LENGTH = 20
+    DATA_START = 24
+    CODEC_0 = STRING_CODEC
+
+    def __init__(self, txid: int = 0, languages: list[str] | None = None, max: int = 0):
+        super().__init__(txid)
+        self.languages = [] if languages is None else languages
+        self.max = max
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.sequence(self.languages, self.CODEC_0),
+                           self.max)
+        buf += b'\0' * 4
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.languages = inp.sequence(self.CODEC_0, bits[0], bits[1])
+        self.max = bits[2]
+        return
+
+
 ################################################################
 # Protocols
 ################################################################
@@ -1548,6 +1924,7 @@ class KB:
         8: InstancesRequest,
         9: WatchRequest,
         10: UnwatchRequest,
+        11: QueryRequest,
     }
 
     RESPONSES = {
@@ -1561,6 +1938,7 @@ class KB:
         8: InstancesResponse,
         9: WatchResponse,
         10: UnwatchResponse,
+        11: QueryResponse,
     }
 
     class Client(system.Client):
@@ -1638,6 +2016,22 @@ class KB:
             """KB.Unwatch."""
             return self.call(UnwatchRequest(watch_id=watch_id), UnwatchResponse)
 
+        def query(self,
+                  patterns: list[Pattern] | None = None,
+                  select: list[int] | None = None,
+                  deprecated: bool = False,
+                  languages: list[str] | None = None,
+                  max: int = 0,
+                  after: list[str] | None = None) -> QueryResponse:
+            """KB.Query."""
+            request = QueryRequest(patterns=patterns,
+                                   select=select,
+                                   deprecated=deprecated,
+                                   languages=languages,
+                                   max=max,
+                                   after=after)
+            return self.call(request, QueryResponse)
+
     class Handler(system.Handler):
         """protocol KB: base class for a service's handler."""
 
@@ -1652,6 +2046,7 @@ class KB:
             8: (InstancesRequest, "instances"),
             9: (WatchRequest, "watch"),
             10: (UnwatchRequest, "unwatch"),
+            11: (QueryRequest, "query"),
         }
 
         def get_entities(self,
@@ -1710,6 +2105,10 @@ class KB:
             """Handle KB.Unwatch."""
             raise NotImplementedError
 
+        def query(self, request: QueryRequest, source: int) -> QueryResponse | system.Deferred:
+            """Handle KB.Query."""
+            raise NotImplementedError
+
 
 class Listener:
     """protocol Listener: message classes by method number, and its Client and Handler."""
@@ -1748,6 +2147,8 @@ class EntityItem:
         17: PutEntityRequest,
         18: GetLinksRequest,
         19: WatchEntityRequest,
+        20: FindEntitiesRequest,
+        21: SuggestPropertiesRequest,
     }
 
     RESPONSES = {
@@ -1756,6 +2157,8 @@ class EntityItem:
         17: PutEntityResponse,
         18: GetLinksResponse,
         19: WatchEntityResponse,
+        20: FindEntitiesResponse,
+        21: SuggestPropertiesResponse,
     }
 
     class Client(system.Client):
@@ -1791,6 +2194,29 @@ class EntityItem:
             """EntityItem.WatchEntity."""
             return self.call(WatchEntityRequest(listener=listener), WatchEntityResponse)
 
+        def find_entities(self,
+                          text: str = '',
+                          languages: list[str] | None = None,
+                          kind: Kind = Kind.ITEM,
+                          class_id: str = '',
+                          max: int = 0,
+                          after: str = '') -> FindEntitiesResponse:
+            """EntityItem.FindEntities."""
+            request = FindEntitiesRequest(text=text,
+                                          languages=languages,
+                                          kind=kind,
+                                          class_id=class_id,
+                                          max=max,
+                                          after=after)
+            return self.call(request, FindEntitiesResponse)
+
+        def suggest_properties(self,
+                               languages: list[str] | None = None,
+                               max: int = 0) -> SuggestPropertiesResponse:
+            """EntityItem.SuggestProperties."""
+            request = SuggestPropertiesRequest(languages=languages, max=max)
+            return self.call(request, SuggestPropertiesResponse)
+
     class Handler(system.Handler):
         """protocol EntityItem: base class for a service's handler."""
 
@@ -1800,6 +2226,8 @@ class EntityItem:
             17: (PutEntityRequest, "put_entity"),
             18: (GetLinksRequest, "get_links"),
             19: (WatchEntityRequest, "watch_entity"),
+            20: (FindEntitiesRequest, "find_entities"),
+            21: (SuggestPropertiesRequest, "suggest_properties"),
         }
 
         def close(self, request: CloseRequest, source: int) -> CloseResponse | system.Deferred:
@@ -1828,4 +2256,16 @@ class EntityItem:
                          request: WatchEntityRequest,
                          source: int) -> WatchEntityResponse | system.Deferred:
             """Handle EntityItem.WatchEntity."""
+            raise NotImplementedError
+
+        def find_entities(self,
+                          request: FindEntitiesRequest,
+                          source: int) -> FindEntitiesResponse | system.Deferred:
+            """Handle EntityItem.FindEntities."""
+            raise NotImplementedError
+
+        def suggest_properties(self,
+                               request: SuggestPropertiesRequest,
+                               source: int) -> SuggestPropertiesResponse | system.Deferred:
+            """Handle EntityItem.SuggestProperties."""
             raise NotImplementedError
