@@ -45,7 +45,7 @@ Development Terminal
 creating items, browsing History, starting tools, and shutting down or
 rebooting.  It was written to try types and lenses before the
 compositor existed, and is kept alongside the real Terminal, sharing
-its New and History parts (``darq.ui``).  It's started at boot, last,
+its New, History and Search parts (``darq.ui``).  It's started at boot, last,
 when `DARQ_DEV_TERMINAL=1` is set.  Its Tools menu lists the
 installed tools, those under `tools/` with a `tool.json` manifest,
 `{"name": ...}`, such as the vCard import (see :doc:`kb-service`),
@@ -78,6 +78,8 @@ It has:
 * History: events between two times, filtered by type, event, and
   source, newest first, a page at a time.  Double-clicking one starts
   a lens for its item.
+* Search: items found by the Index, as the Terminal's Search panel
+  finds them (below), but without the clock.
 * System: Shutdown and Reboot (it's a system process, so it may), and
   Quit, which closes just this window.
 
@@ -403,10 +405,9 @@ Functions
 
 The Terminal Service is responsible for providing several crucial
 functions of the user interface, each invoked by a hotkey (see
-:doc:`ux`).  In 1st Edition, *Sys-space* (Search), *Sys-e* (Events),
-and *Sys-i* (Item info) show a "TBD" panel, for now: Search needs the
-Index service, which is in First Edition, and Events an events source.
-The Search panel will show the time and date, too: there's no clock
+:doc:`ux`).  In 1st Edition, *Sys-e* (Events) and *Sys-i* (Item info)
+show a "TBD" panel, for now: Events needs an events source.  The
+Search panel (*Sys-space*) shows the time and date: there's no clock
 elsewhere, and no status bar.  Item info needed the Metadata service,
 which is deferred to Third Edition, and may not be needed (see
 :doc:`roadmap`); the REPL (*Sys-s*) is in Second Edition.
@@ -450,6 +451,19 @@ The search panel is invoked with *Sys-space*.
 
 Searching is driven via a seach-box style input field with slash
 commands.
+
+In First Edition, it searches the Index (see :doc:`search-service`):
+the items whose text has words starting with each of the words typed,
+searched for as they're typed, a moment after typing stops.  Each
+result shows its item's type, a snippet of its text around what
+matched, and when it was last updated: the time, if it was today, or
+else the date.  The arrow keys move through the results, from the
+search field, and Enter, or a double-click, starts a lens for the
+selected one's item, recording `opened`, and closes the panel.  It
+opens empty, with nothing found until something's typed.  Above it is
+the clock: the time, and the date, updated each second while it's
+shown.  Slash commands, Internet search, and the History of recent
+items are for later.
 
 Events
 ~~~~~~

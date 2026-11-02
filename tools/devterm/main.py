@@ -14,6 +14,8 @@
 # - History: events from the History service, between two times, and
 #   filtered by type, event and source.  Double-click one to use its
 #   item.
+# - Search: items found by the Index service, by the words of their
+#   text, as they're typed.  Enter, or double-click, uses one.
 # - Tools: the installed tools, those under tools/ with a tool.json
 #   manifest, such as the vCard import, to start.
 # - System: Shutdown, Reboot, and Quit (just this window).
@@ -34,6 +36,7 @@ from darq.loop import QtEventLoop
 from darq.ui import Services, wait_for_display
 from darq.ui.history import HistoryView
 from darq.ui.launcher import Launcher
+from darq.ui.search import SearchView
 from darq.ui.types import TypeList
 
 
@@ -63,7 +66,7 @@ def find_tools(root: pathlib.Path) -> list[tuple[str, str]]:
 
 
 class DevTerminal(QMainWindow):
-    """The window: New and History tabs, and a System menu."""
+    """The window: New, History and Search tabs, and a System menu."""
 
     def __init__(self, services: Services):
         super().__init__()
@@ -75,9 +78,11 @@ class DevTerminal(QMainWindow):
 
         self.factory = TypeList(self)
         self.history = HistoryView(self)
+        self.search = SearchView(self)
         tabs = QTabWidget()
         tabs.addTab(self.factory, "New")
         tabs.addTab(self.history, "History")
+        tabs.addTab(self.search, "Search")
         self.setCentralWidget(tabs)
 
         menu_bar = self.menuBar()

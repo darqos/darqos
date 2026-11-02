@@ -21,7 +21,7 @@ import darq
 import darq.kb as model
 from darq.protocols.type import CreateRequest, DestroyRequest
 
-from test_kb_type import implementation, kb, kb_service, ports  # noqa: F401
+from test_kb_type import Writer, implementation, kb, kb_service, ports  # noqa: F401
 from test_pkernel import live_pkernel, pkernel, run_kernel_until, write_app  # noqa: F401
 
 
@@ -122,7 +122,8 @@ def run(target, people, name="Address book"):
     wd = vocabulary.Vocabulary()
     reader = cards.Importer(wd)
     reader.read(people)
-    return importer.Import(client, adapter, history, wd, name).run(reader.drafts)
+    items = model.KB(client.client, Writer(adapter.handler))
+    return importer.Import(client, items, adapter, history, wd, name).run(reader.drafts)
 
 
 def find(client, label, class_id=""):
@@ -284,6 +285,44 @@ def test_first_import(target):
     # Create's statement, stated in DarqOS, is the import's too.
     [instance_of] = person.get_statements(model.INSTANCE_OF)
     assert model.is_sourced(instance_of, model.DARQOS) and model.is_sourced(instance_of, source)
+
+
+def test_items_written_through_their_implementation(target, monkeypatch):
+    # The drafts' entities go through EntityWriter, and Create; only the
+    # vocabulary is written to the KB service directly.
+    client, adapter, _ = target
+    through, direct = [], []
+    inside = []
+
+    def wrap(cls, name, record):
+        original = getattr(cls, name)
+
+        def wrapper(self, *args, **kwargs):
+            inside.append(True)
+            try:
+                result = original(self, *args, **kwargs)
+            finally:
+                inside.pop()
+            record(args)
+            return result
+        monkeypatch.setattr(cls, name, wrapper)
+
+    wrap(Writer, "write_entities", lambda args: through.extend(e.id for e in args[0]))
+    wrap(Implementation, "create", lambda args: None)
+    wrap(Implementation, "destroy", lambda args: None)
+    put = client.client.put_entities
+
+    def put_entities(entities):
+        if not inside:
+            direct.extend(e.id for e in entities)
+        return put(entities)
+    monkeypatch.setattr(client.client, "put_entities", put_entities)
+    run(target, book(("u1", "Ann", "Example")))
+
+    [ann] = find(client, "Ann Example")
+    assert ann in through and ann not in direct
+    assert model.key_id("address book:Address book") in direct
+    assert not set(through) & set(direct)
 
 
 def test_reimport_changes_nothing(target, kb_service):  # noqa: F811

@@ -181,6 +181,18 @@ and activating any of its types returns the same port.  The Knowledge
 Base's implementation, `types/kb`, serves all its kinds this way (see
 :doc:`kb-service`).
 
+An item's content is changed only through its type implementation:
+other programs read it, if its store allows, but write it with the
+implementation's protocols.  So the implementation sees every change
+to its items, and can act on each one, as by publishing it to the
+Index.  A text item's blob is written only by ``types/text``, and an
+entity of one of the Knowledge Base's kinds only by ``types/kb``, with
+its ``EntityWriter`` protocol (see :doc:`kb-service`).  Other
+entities, such as properties, classes, and plain ``darq.entity``
+entities, can be written to the KB directly.  For now this is a
+convention: Storage and the KB service will enforce it, once DIPC
+tells them who sent a message.
+
 Note that a Type Implementation may use multiple processes in its
 implementation of the type's behaviour.  The constraint is just that
 there is a single port and process that acts as the reference point,

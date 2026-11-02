@@ -75,16 +75,14 @@ Not Yet
   `CONFLICT`, or by asking for the version.
 * Once started, the implementation keeps running.  It could exit once
   it has no open items, to be started again by the next `Activate`.
-* If it's killed, changes not yet saved, up to 2 seconds' worth, are
-  lost: it isn't told it's being killed.
-* When the text is altered, the Index service should be updated:
-
-  * Does the index service just give a yes/no answer for a particular
-    item, and leave the finer details up to the item/lens?  Or does it
-    track every instance within the item?
-  * Does the Type Implementation need to reference-count the tokens,
-    so when a run of text is deleted, it can know that the only
-    instance of a token is now removed?
+* If it's killed, changes not yet saved, up to 30 seconds' worth
+  while typing goes on, are lost: it isn't told it's being killed.
+* Each time an item's saved, and when it's created, its whole text is
+  published to the Index as its body, replacing what was indexed for
+  it; it's withdrawn when it's destroyed (see :doc:`search-service`).
+  The Index finds the words itself, and where they are, so the
+  implementation doesn't track them, and a lost publish is put right
+  by the next save.
 
 * History events are recorded by the lens, not the implementation,
   which can't tell who caused a change (see :doc:`history`).  The

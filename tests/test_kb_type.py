@@ -265,6 +265,66 @@ def test_merged_and_destroyed(kb, implementation):
     assert implementation.destroy(DestroyRequest(item_id=new_id), 0).status == Status.NOT_FOUND
 
 
+class Writer(wire.EntityWriter.Client):
+    """An EntityWriter client that calls the implementation's handler, in
+    this process."""
+
+    def __init__(self, handler):
+        super().__init__(0)
+        self.handler = handler
+
+    def call(self, request, response_class):
+        _, name = self.handler.METHODS[request.METHOD]
+        return getattr(self.handler, name)(request, 0)
+
+
+def test_serves_entity_writer(implementation):
+    # On its Implementation port, beside Implementation.
+    assert {1, 2, 3, 4, 5, 16, 17, 18} <= set(implementation.METHODS)
+
+
+def test_write_entities_keeps_kinds(kb, implementation):
+    items = model.KB(kb.client, Writer(implementation))
+    item_id, _ = create(implementation, "darq.person")
+    person = kb.get(darq.split_item_id(item_id)[1])
+    stale = kb.get(person.id)
+    person.set_label("Ada")
+    for s in person.get_statements(model.DARQOS_TYPE):
+        person.remove_statement(s)
+    person.claim(model.DARQOS_TYPE, model.StringValue("darq.place"))
+
+    # A new entity can't be given a kind.
+    new = entity("acme", "Acme", "Q43229")
+    new.claim(model.DARQOS_TYPE, model.StringValue("darq.person"))
+    items.put(person, new)
+
+    stored = kb.get(person.id)
+    assert stored.get_label() == "Ada"
+    assert [s.get_value().value for s in stored.get_statements(model.DARQOS_TYPE)] == ["darq.person"]
+    assert kb.get("acme").get_statements(model.DARQOS_TYPE) == []
+    assert implementation.kind_of(kb.get("acme")) == "darq.organisation"
+
+    # All or none, as PutEntities.
+    stale.set_label("Lovelace")
+    with pytest.raises(model.ConflictError):
+        items.put(stale, entity("other", "Other"))
+    assert kb.get("other") is None
+
+
+def test_merge_and_destroy_through_writer(kb, implementation):
+    items = model.KB(kb.client, Writer(implementation))
+    old_id, _ = create(implementation, "darq.person")
+    new_id, _ = create(implementation, "darq.person")
+    old, new = darq.split_item_id(old_id)[1], darq.split_item_id(new_id)[1]
+    items.merge(old, new)
+    assert kb.get(old).id == new
+
+    items.destroy(new)
+    assert open_item(implementation, new_id) == Status.NOT_FOUND
+    with pytest.raises(LookupError):
+        items.destroy("missing")
+
+
 ################################################################
 # Item ports
 ################################################################

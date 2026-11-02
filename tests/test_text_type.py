@@ -112,9 +112,27 @@ def blobs():
     return FakeStorage()
 
 
+class FakePublisher:
+    """Stands in for darq.index.Publisher, recording what's published."""
+
+    def __init__(self):
+        self.sent: list[tuple] = []
+
+    def publish(self, item_id, names=(), body=""):
+        self.sent.append(("publish", item_id, body))
+
+    def withdraw(self, item_id):
+        self.sent.append(("withdraw", item_id))
+
+
 @pytest.fixture
-def implementation(blobs):
-    return text_module.TextImplementation(blobs)
+def index():
+    return FakePublisher()
+
+
+@pytest.fixture
+def implementation(blobs, index):
+    return text_module.TextImplementation(blobs, index)
 
 
 @pytest.fixture
@@ -424,17 +442,65 @@ def test_save_conflict(call, implementation, blobs, caplog):
 
 
 ################################################################
+# The Index
+################################################################
+
+def test_saves_are_published(call, server, index, monkeypatch):
+    monkeypatch.setattr(text_module, "SAVE_DELAY", 0.01)
+    iid, port = create(call)
+    assert index.sent == [("publish", iid, "")]
+
+    replace(call, port, 0, 0, "coffee shop")
+    assert len(index.sent) == 1
+    server.run_once(timeout=0.05)
+    assert index.sent[-1] == ("publish", iid, "coffee shop")
+
+    replace(call, port, 0, 0, "the ")
+    call(port, CloseRequest())
+    assert index.sent[-1] == ("publish", iid, "the coffee shop")
+
+
+def test_created_from_data_is_published(call, index):
+    response = call(IMPLEMENTATION_PORT, CreateFromRequest(type_id=text_module.TYPE_ID, data=b"imported words"))
+    assert index.sent == [("publish", response.item_id, "imported words")]
+
+
+def test_destroyed_is_withdrawn(call, index):
+    iid, port = create(call)
+    assert call(IMPLEMENTATION_PORT, DestroyRequest(item_id=iid)).status == Status.OK
+    assert index.sent[-1] == ("withdraw", iid)
+
+    # Saved by its client after, it stays withdrawn.
+    replace(call, port, 0, 0, "last words")
+    call(port, CloseRequest())
+    assert index.sent[-1] == ("withdraw", iid)
+    assert not any(e == ("publish", iid, "last words") for e in index.sent)
+
+
+def test_failed_save_is_not_published(call, blobs, index, caplog):
+    iid, port = create(call)
+    replace(call, port, 0, 0, "mine")
+    key = text_module.parse_item_id(iid)
+    blobs.put(key, 0, text_module.encode_blob("theirs"))
+    with caplog.at_level(logging.ERROR):
+        call(port, CloseRequest())
+    assert index.sent == [("publish", iid, "")]
+
+
+################################################################
 # End to end
 ################################################################
 
 def test_text_type(live_pkernel, tmp_path):  # noqa: F811
     kernel = live_pkernel
 
-    # A client that creates an item, edits it, closes it, and opens it again.
+    # A client that creates an item, edits it, closes it, opens it again,
+    # finds it in the Index, and destroys it.
     client_path = write_app(tmp_path / "client", """
         import struct
         import time
         import darq
+        import darq.index
         from darq.protocols import storage
         from darq.protocols.text import Status as TextStatus, Text
         from darq.protocols.type import Implementation, Status, Type
@@ -480,6 +546,24 @@ def test_text_type(live_pkernel, tmp_path):  # noqa: F811
             blob = storage.Storage.Client(darq.connect("darq.storage"), timeout=10).get(key=key)
             if blob.value[8:].decode("utf-8") != text or struct.unpack(">4sHH", blob.value[:8])[0] != b"DTXT":
                 return f"saved blob is {blob.value!r}"
+
+            # It was published to the Index as it was saved, and is
+            # withdrawn when it's destroyed: from another process, so
+            # it's looked for until it's there.
+            def found():
+                return [r.item_id for r in darq.index.search("darq hel")] == [created.item_id]
+
+            deadline = time.monotonic() + 10
+            while not found():
+                if time.monotonic() > deadline:
+                    return "never found in the Index"
+                time.sleep(0.05)
+            if implementation.destroy(item_id=created.item_id).status != Status.OK:
+                return "destroy failed"
+            while found():
+                if time.monotonic() > deadline:
+                    return "never withdrawn from the Index"
+                time.sleep(0.05)
             return 0
         """)
 

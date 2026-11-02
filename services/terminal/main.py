@@ -12,8 +12,9 @@
 #   with the password, which the Security service checks; on the first
 #   boot, it asks for one, to set.
 # - Sys-n New, Sys-h History, Sys-Tab the switcher, Sys-b shut down or
-#   reboot, Sys-x close the focused window, Sys-l lock; Sys-space,
-#   Sys-e and Sys-i show a TBD panel (panels.py); and, for now, Sys-t
+#   reboot, Sys-x close the focused window, Sys-l lock, Sys-space
+#   Search, with the clock; Sys-e and Sys-i show a TBD panel
+#   (panels.py); and, for now, Sys-t
 #   starts the vCard import (tools/vcard-import).  While it's locked,
 #   only Sys-b works, on the lock screen.
 #
@@ -57,7 +58,7 @@ from darq.protocols.compositor import (
 from darq.ui import Services
 from darq.ui.launcher import Launcher
 
-from panels import HistoryPanel, NewPanel, NoticePanel, Panel, PowerPanel, SwitcherPanel, TbdPanel
+from panels import HistoryPanel, NewPanel, NoticePanel, Panel, PowerPanel, SearchPanel, SwitcherPanel, TbdPanel
 from screens import CHOOSE, ENTER, UNAVAILABLE, WAITING, Screens
 
 
@@ -131,12 +132,13 @@ class Terminal:
         self.screens = Screens(app, self.submit_password, self.power)
         self.new = NewPanel(self)
         self.history = HistoryPanel(self, self.type_ids)
+        self.search = SearchPanel(self)
         self.switcher = SwitcherPanel()
         self.power_panel = PowerPanel(self.power)
         self.tbd = TbdPanel()
         self.notice = NoticePanel()
-        self.panels: list[Panel] = [self.new, self.history, self.switcher, self.power_panel, self.tbd,
-                                    self.notice]
+        self.panels: list[Panel] = [self.new, self.history, self.search, self.switcher, self.power_panel,
+                                    self.tbd, self.notice]
 
         self.notifier = QtCore.QSocketNotifier(voidptr(channel.fileno()), QtCore.QSocketNotifier.Type.Read)
         self.notifier.activated.connect(self.read_channel)
@@ -215,9 +217,11 @@ class Terminal:
                 panel.set_status(message)
 
     def launched(self, context: object, item_id: str | None, error: str | None):
-        """A launch from New or History has finished: close its panel, or
-        show what went wrong, in the panel, or, if it's closed, a notice."""
-        panel = {self.new.types: self.new, self.history.view: self.history}.get(context)
+        """A launch from New, History or Search has finished: close its
+        panel, or show what went wrong, in the panel, or, if it's closed, a
+        notice."""
+        panel = {self.new.types: self.new, self.history.view: self.history,
+                 self.search.view: self.search}.get(context)
         if error is None:
             logging.info(f"Using {item_id}")
             if panel is not None:
@@ -308,8 +312,7 @@ class Terminal:
         self.show_panel(self.power_panel)
 
     def show_search(self):
-        self.hide_panels(but=self.tbd)
-        self.tbd.show_for("Search")
+        self.show_panel(self.search)
 
     def show_events(self):
         self.hide_panels(but=self.tbd)

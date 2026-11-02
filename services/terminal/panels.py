@@ -6,20 +6,30 @@
 # Escape closes it, and so does losing the focus (but the switcher's,
 # which closes when System is released).
 
+import datetime
 import typing
 
 from PyQt6 import QtCore
-from PyQt6.QtGui import QKeyEvent
-from PyQt6.QtWidgets import QLabel, QListWidget, QVBoxLayout, QWidget
+from PyQt6.QtGui import QHideEvent, QKeyEvent
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QVBoxLayout, QWidget
 
 from darq.ui import Host
 from darq.ui.history import HistoryView
+from darq.ui.search import SearchView
 from darq.ui.types import TypeList
 
 from screens import is_modifier, power_choice
 
 
 Key = QtCore.Qt.Key
+
+# Milliseconds between updates of the Search panel's clock.
+CLOCK_INTERVAL = 1000
+
+
+def clock_text(now: datetime.datetime) -> tuple[str, str]:
+    """Return the time and the date, as the Search panel shows them."""
+    return now.strftime("%H:%M"), now.strftime("%A %-d %B %Y")
 
 
 class Panel(QWidget):
@@ -107,6 +117,43 @@ class HistoryPanel(Panel):
         self.view.table.setFocus()
 
 
+class SearchPanel(Panel):
+    """Sys-space: search for items, with the clock: the time and date."""
+
+    def __init__(self, host: Host):
+        super().__init__("Search", 900, 560)
+        self.time = QLabel()
+        self.time.setStyleSheet("font-size: 28px; font-weight: bold")
+        self.date = QLabel()
+        clock = QHBoxLayout()
+        clock.addWidget(self.time)
+        clock.addWidget(self.date)
+        clock.addStretch()
+        self.contents.addLayout(clock)
+
+        self.view = SearchView(host)
+        self.contents.addWidget(self.view)
+
+        self.clock = QtCore.QTimer(self)
+        self.clock.setInterval(CLOCK_INTERVAL)
+        self.clock.timeout.connect(self.tick)
+
+    def refresh(self):
+        self.tick()
+        self.clock.start()
+        self.view.clear()
+        self.view.field.setFocus()
+
+    def hideEvent(self, a0: QHideEvent | None):
+        self.clock.stop()
+        super().hideEvent(a0)
+
+    def tick(self):
+        time_text, date_text = clock_text(datetime.datetime.now())
+        self.time.setText(time_text)
+        self.date.setText(date_text)
+
+
 class SwitcherPanel(Panel):
     """Sys-Tab: the windows, most recently focused first, with the one
     that'll be chosen when System is released selected."""
@@ -160,7 +207,7 @@ class NoticePanel(Panel):
 
 
 class TbdPanel(Panel):
-    """Sys-space, Sys-e and Sys-i, for now: any key closes it."""
+    """Sys-e and Sys-i, for now: any key closes it."""
 
     def __init__(self):
         super().__init__("", 400, 120)

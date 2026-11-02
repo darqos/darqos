@@ -9,7 +9,9 @@
 # (see doc/types.rst), once for all of these types.  It serves the
 # Implementation protocol (lib/didl/type.didl) on its own port, and the
 # EntityItem protocol (lib/didl/kb.didl) on a port for each client of an
-# item.  It's a client of the Knowledge Base service, darq.kb, and keeps
+# item.  Entities of its kinds are written through it, not to the KB
+# directly, so it also serves EntityWriter, on its Implementation port.
+# It's a client of the Knowledge Base service, darq.kb, and keeps
 # nothing itself: each request is answered from the KB.
 #
 # An item's identifier is its kind's type and its entity's identifier,
@@ -35,7 +37,10 @@ from darq.protocols.kb import (
     Changed,
     CloseRequest,
     CloseResponse,
+    DestroyEntityRequest,
+    DestroyEntityResponse,
     EntityItem,
+    EntityWriter,
     FindEntitiesRequest,
     FindEntitiesResponse,
     GetEntityRequest,
@@ -44,12 +49,16 @@ from darq.protocols.kb import (
     GetLinksResponse,
     Linked,
     Listener,
+    MergeEntityRequest,
+    MergeEntityResponse,
     PutEntityRequest,
     PutEntityResponse,
     SuggestPropertiesRequest,
     SuggestPropertiesResponse,
     WatchEntityRequest,
     WatchEntityResponse,
+    WriteEntitiesRequest,
+    WriteEntitiesResponse,
 )
 from darq.protocols.type import (
     CreateFromRequest,
@@ -118,8 +127,10 @@ def vocabulary() -> list[model.Entity]:
     ]
 
 
-class EntityImplementation(Implementation.Handler):
-    """Creates, opens and destroys KB items."""
+class EntityImplementation(Implementation.Handler, EntityWriter.Handler):
+    """Creates, opens, writes and destroys KB items."""
+
+    METHODS = {**Implementation.Handler.METHODS, **EntityWriter.Handler.METHODS}
 
     def __init__(self, kb: model.KB):
         self.kb = kb
@@ -308,6 +319,47 @@ class EntityImplementation(Implementation.Handler):
             return DestroyResponse(status=Status.FAILED)
         logging.info(f"Destroyed {request.item_id}")
         return DestroyResponse(status=Status.OK)
+
+
+    def write_entities(self, request: WriteEntitiesRequest, source: int) -> WriteEntitiesResponse:
+        try:
+            entities = [model.entity_from_wire(e) for e in request.entities]
+        except (KeyError, ValueError):
+            return WriteEntitiesResponse(status=wire.Status.INVALID_ARGUMENT)
+
+        try:
+            current, _ = self.kb.get_entities([e.id for e in entities if e.id], follow=False)
+
+            # Kinds stay as they were: a new entity has none.
+            kinds = {e.id: e.get_statements(model.DARQOS_TYPE) for e in current}
+            for entity in entities:
+                for s in entity.get_statements(model.DARQOS_TYPE):
+                    entity.remove_statement(s)
+                for s in kinds.get(entity.id, []):
+                    entity.add_statement(s)
+
+            response = self.kb.client.put_entities([model.entity_to_wire(e) for e in entities])
+        except KB_ERRORS as e:
+            logging.error(f"Can't write {len(entities)} entities: {e}")
+            return WriteEntitiesResponse(status=wire.Status.NOT_FOUND)
+        return WriteEntitiesResponse(entities=response.entities, failed_id=response.failed_id,
+                                     status=response.status)
+
+    def merge_entity(self, request: MergeEntityRequest, source: int) -> MergeEntityResponse:
+        try:
+            response = self.kb.client.merge(request.old_id, request.new_id)
+        except KB_ERRORS as e:
+            logging.error(f"Can't merge {request.old_id} into {request.new_id}: {e}")
+            return MergeEntityResponse(status=wire.Status.NOT_FOUND)
+        return MergeEntityResponse(status=response.status)
+
+    def destroy_entity(self, request: DestroyEntityRequest, source: int) -> DestroyEntityResponse:
+        try:
+            response = self.kb.client.destroy(request.entity_id)
+        except KB_ERRORS as e:
+            logging.error(f"Can't destroy {request.entity_id}: {e}")
+            return DestroyEntityResponse(status=wire.Status.NOT_FOUND)
+        return DestroyEntityResponse(status=response.status)
 
 
 class ClassListener(Listener.Handler):

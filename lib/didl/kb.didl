@@ -286,6 +286,23 @@ protocol KB {
     11: Query(sequence<Pattern> patterns, sequence<uint8> select, bool deprecated, sequence<string> languages, uint32 max, sequence<string> after) -> (sequence<Row> rows, sequence<Label> labels, Status status);
 }
 
+// Served by the KB type implementation (types/kb) on its Implementation
+// port, beside the Implementation protocol, from 16.  An entity of one of
+// its kinds is written through it, not to the KB service directly (see
+// doc/types.rst), so it sees every change to its items.
+protocol EntityWriter {
+    // Write entities, as the KB's PutEntities, all or none.  An existing
+    // entity's kind, its DarqOS type statements, stays as it was, and a
+    // new one can't have one: an item of a kind is made by Create.
+    16: WriteEntities(sequence<Entity> entities) -> (sequence<Entity> entities, string failed_id, Status status);
+
+    // Merge one entity into another, as the KB's Merge.
+    17: MergeEntity(string old_id, string new_id) -> (Status status);
+
+    // Mark an entity destroyed, as the KB's Destroy.
+    18: DestroyEntity(string entity_id) -> (Status status);
+}
+
 // Served by a watcher, on the port it gives Watch.
 protocol Listener {
     // An entity was changed, to a revision.  Sent after the change is

@@ -541,6 +541,23 @@ the default instance types (see ``darq.kb.KB.state``).
 * ``Destroy(item_id)`` marks an entity destroyed, keeping its
   statements and the links to it.
 
+Entities of its kinds are written only through it, not to the KB
+service directly (see :doc:`types`), so it sees every change to its
+items.  Its Implementation port serves the ``EntityWriter`` protocol
+too, from 16, for clients that write many at once, such as an import:
+
+* ``WriteEntities(entities)`` writes entities, as ``PutEntities``
+  does, all or none, keeping an existing entity's DarqOS type; a new
+  one can't have one, since an item of a kind is made by ``Create``;
+* ``MergeEntity(old_id, new_id)`` and ``DestroyEntity(entity_id)``
+  are the KB's ``Merge`` and ``Destroy``.
+
+Given an ``EntityWriter`` client, ``darq.kb.KB`` writes through it:
+``put``, ``ensure``, ``state``, ``merge`` and ``destroy`` go to the
+type implementation, while lookups still go to the KB service.
+Properties, classes, and other entities that aren't of a kind with its
+own implementation can still be written to the KB service directly.
+
 An item's port serves the ``EntityItem`` protocol, in
 ``lib/didl/kb.didl``: the ``Item`` protocol's ``Close``, and, from 16,
 
@@ -722,8 +739,10 @@ under other names, and share what they have in common.
   given names (P735), then additional names, and family names (P734),
   are numbered in the card's order, with series ordinals (P1545), as
   Wikidata orders names.
-* ``importer.py`` imports them, as a client of the KB service and the
-  KB type implementation.
+* ``importer.py`` imports them, as a client of the KB service, which
+  it reads, and writes the vocabulary to, and of the KB type
+  implementation, which creates the drafts' entities, and through
+  whose ``EntityWriter`` they're written.
 
 The import is:
 
@@ -756,8 +775,9 @@ The import is:
      ``darq.entity``.
 
 3. Each entity's statements from the address book are restated from
-   its draft, keeping any others, in batches, with its label and
-   description, if it hasn't one.  Its labels, contact types, services,
+   its draft, keeping any others, in batches written through the type
+   implementation's ``WriteEntities``, with its label and description,
+   if it hasn't one.  Its labels, contact types, services,
    departments, job titles and series ordinals are the qualifiers it
    always says all of (``Vocabulary.qualifiers``), so dates added by
    hand are kept, and a name moved on the card is restated.  An

@@ -1,0 +1,56 @@
+// darqos
+// Copyright (C) 2026 David Arnold
+//
+// Index service protocol: see doc/search-service.rst.
+//
+// Type implementations publish what's in their items, each time they
+// save one, and withdraw them when they're destroyed; anything can
+// search.
+
+library darq.index;
+
+enum Status : uint32 {
+    OK = 0;
+
+    // A type identifier isn't valid.
+    INVALID_ARGUMENT = 1;
+}
+
+// What a field's text is: an item's names, such as a person's labels
+// and aliases, weighted above its body, its content.
+enum FieldKind : uint8 {
+    NAMES = 0;
+    BODY = 1;
+}
+
+struct Field {
+    FieldKind kind;
+    string text;
+}
+
+// An item found: a snippet of its text, around what matched, and when
+// it was last published, in UTC microseconds since the epoch.
+struct Result {
+    string item_id;
+    string snippet;
+    int64 updated;
+}
+
+// The Index service, registered as "darq.index".
+protocol Index {
+    // Replace what's indexed for an item with its fields.  It's one-way,
+    // so a publisher never waits for it: an invalid item identifier is
+    // logged and dropped.
+    1: Publish(string item_id, sequence<Field> fields);
+
+    // Forget an item.  One-way, as Publish.
+    2: Withdraw(string item_id);
+
+    // Find the items with words starting with each of the text's
+    // words, ignoring case and accents, best first: ranked by how well
+    // they match, names above body, then by when they were updated.  If
+    // type_ids isn't empty, only items of those types, exactly, are
+    // found.  At most max are returned (0 for the service's limit),
+    // after skipping offset.
+    3: Search(string text, sequence<string> type_ids, uint32 max, uint32 offset) -> (sequence<Result> results, Status status);
+}

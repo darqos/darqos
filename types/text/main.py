@@ -16,6 +16,9 @@
 # Changes are saved a little after the last one (SAVE_DELAY), or at
 # most MAX_SAVE_DELAY after the first unsaved one, and when the last
 # client closes it.
+#
+# Each time an item's saved, its text is published to the Index (see
+# doc/search-service.rst), and it's withdrawn when it's destroyed.
 
 import logging
 import re
@@ -23,6 +26,7 @@ import struct
 import time
 
 import darq
+import darq.index
 from darq.protocols import storage
 from darq.protocols.text import (
     CloseRequest,
@@ -144,8 +148,9 @@ class Buffer:
 class TextImplementation(Implementation.Handler):
     """Answers the Implementation protocol, and keeps the open items."""
 
-    def __init__(self, client: storage.Storage.Client):
+    def __init__(self, client: storage.Storage.Client, index: darq.index.Publisher):
         self.storage = client
+        self.index = index
         self.buffers: dict[tuple[int, int], Buffer] = {}
 
     # Items
@@ -232,7 +237,16 @@ class TextImplementation(Implementation.Handler):
 
         buffer.generation = response.generation
         buffer.dirty_since = None
+        self.publish(buffer)
         return True
+
+    def publish(self, buffer: Buffer):
+        """Publish an item's text to the Index, as saved, or withdraw it
+        if it's destroyed."""
+        if buffer.flags & DESTROYED:
+            self.index.withdraw(item_id(buffer.key))
+        else:
+            self.index.publish(item_id(buffer.key), body=buffer.text)
 
     # Requests
 
@@ -291,6 +305,7 @@ class TextImplementation(Implementation.Handler):
             return None
         buffer = Buffer(response.key, response.generation, text)
         logging.info(f"Created {item_id(buffer.key)}")
+        self.publish(buffer)
         return buffer
 
     def open(self, request: OpenRequest, source: int) -> OpenResponse:
@@ -373,7 +388,8 @@ def darq_main():
         logging.error("No bootstrap port: the Type service starts this, with Activate")
         return 1
 
-    implementation = TextImplementation(storage.Storage.Client(darq.connect("darq.storage"), timeout=10))
+    implementation = TextImplementation(storage.Storage.Client(darq.connect("darq.storage"), timeout=10),
+                                        darq.index.Publisher())
 
     port = darq.open_port()
     server = darq.Server()

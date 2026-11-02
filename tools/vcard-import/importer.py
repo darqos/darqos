@@ -3,8 +3,9 @@
 
 """Importing an address book's drafts (see cards.py) into the KB.
 
-It's a client of the Knowledge Base service, and of the KB type
-implementation, which creates its items:
+It's a client of the Knowledge Base service, which it reads, and writes
+the vocabulary to; and of the KB type implementation, which creates its
+items, and through which they're written (see doc/types.rst):
 
 1. The vocabulary's entities are found, or created, with their ids, and
    their statements stated in Wikidata, as is the address book's own
@@ -154,6 +155,7 @@ class Import:
 
     def __init__(self,
                  kb: model.KB,
+                 items: model.KB,
                  implementation: Implementation.Client,
                  history: History | None,
                  wd: vocabulary.Vocabulary,
@@ -161,10 +163,13 @@ class Import:
                  progress: typing.Callable[[str, int, int], None] = lambda step, done, total: None):
         """Constructor.
 
+        :param items: The KB, written through the KB type
+                      implementation, for the drafts' entities.
         :param implementation: The KB type implementation.
         :param name: The address book's name.
         :param progress: Told of each step, and how far it's got."""
         self.kb = kb
+        self.items = items
         self.implementation = implementation
         self.history = history
         self.wd = wd
@@ -498,14 +503,14 @@ class Import:
         if not changed:
             return
         try:
-            self.kb.put(*(e for _, e in changed))
+            self.items.put(*(e for _, e in changed))
             self.result.updated += len(changed)
             return
         except (darq.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError):
             pass
         for draft, entity in changed:
             try:
-                self.kb.put(entity)
+                self.items.put(entity)
                 self.result.updated += 1
             except (darq.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError) as e:
                 self.fail(draft, f"writing: {e}")
@@ -530,10 +535,10 @@ class Import:
             self.result.removed += 1
             if entity.id in linked:
                 self.result.kept += 1
-                self.kb.put(entity)
+                self.items.put(entity)
                 continue
             if any(s.get_property_id() not in (model.DARQOS_TYPE, model.INSTANCE_OF) for s in entity.statements):
-                self.kb.put(entity)
+                self.items.put(entity)
                 continue
             item_id = self.item_id(entity)
             response = self.implementation.destroy(item_id=item_id)

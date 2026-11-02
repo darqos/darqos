@@ -232,7 +232,7 @@ Services
     * Universal inbox
     * History timeline
 
-  * Clock
+  * Clock (DONE)
 
     * The time and date, on the Search (Sys-space) panel, for now
     * Almost certainly not a status bar

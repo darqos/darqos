@@ -167,6 +167,12 @@ What Decides It
   fast.
 * **Whether an item's identity should outlive its format,** so that
   converting a JPEG to a PNG keeps the same item.
+* **Who writes an item.**  An item's content is changed only through
+  its type implementation (see :doc:`types`), which is what lets it
+  publish each change to the Index.  Under A and C, the KB is one
+  store among others, written for each kind by its implementation;
+  under B, it would be every type's store, and every implementation
+  would have to write its items' entities through the KB.
 * **Where names live.**  Under B and C, an item's name is its entity's
   label, in any language; under A, it's metadata, or nothing.
 

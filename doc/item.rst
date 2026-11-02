@@ -94,6 +94,11 @@ The *iid*'s type identifier provides the link between code that uses an
 item and its stored state.  The system itself knows nothing about how
 the item is stored.
 
+Whatever the store, an item's state is changed only through its type
+implementation, never by writing the store directly (see
+:doc:`types`): so the implementation sees every change, to index it,
+say.
+
 Using Items
 -----------
 

@@ -29,10 +29,13 @@ __all__ = [
     "CloseRequest",
     "CloseResponse",
     "Datatype",
+    "DestroyEntityRequest",
+    "DestroyEntityResponse",
     "DestroyRequest",
     "DestroyResponse",
     "Entity",
     "EntityItem",
+    "EntityWriter",
     "FindByLabelRequest",
     "FindByLabelResponse",
     "FindByValueRequest",
@@ -55,6 +58,8 @@ __all__ = [
     "Linked",
     "Listener",
     "Match",
+    "MergeEntityRequest",
+    "MergeEntityResponse",
     "MergeRequest",
     "MergeResponse",
     "Pattern",
@@ -85,6 +90,8 @@ __all__ = [
     "WatchEntityResponse",
     "WatchRequest",
     "WatchResponse",
+    "WriteEntitiesRequest",
+    "WriteEntitiesResponse",
 ]
 
 
@@ -1323,6 +1330,209 @@ class QueryRequest(Message):
         return
 
 
+class WriteEntitiesResponse(Message):
+    """EntityWriter.WriteEntities response."""
+
+    METHOD = 16
+    BODY_FORMAT = "<IIIII"
+    BODY_START = 8
+    LENGTH = 28
+    DATA_START = 32
+    CODEC_0 = Entity.CODEC
+
+    def __init__(self,
+                 txid: int = 0,
+                 entities: list[Entity] | None = None,
+                 failed_id: str = '',
+                 status: Status = Status.OK):
+        super().__init__(txid)
+        self.entities = [] if entities is None else entities
+        self.failed_id = failed_id
+        self.status = status
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.sequence(self.entities, self.CODEC_0),
+                           *out.string(self.failed_id),
+                           self.status)
+        buf += b'\0' * 4
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.entities = inp.sequence(self.CODEC_0, bits[0], bits[1])
+        self.failed_id = inp.string(bits[2], bits[3])
+        self.status = self.decode_enum(Status, bits[4])
+        return
+
+
+class WriteEntitiesRequest(Message):
+    """EntityWriter.WriteEntities request."""
+
+    METHOD = 16
+    RESPONSE = WriteEntitiesResponse
+    BODY_FORMAT = "<II"
+    BODY_START = 8
+    LENGTH = 16
+    DATA_START = 16
+    CODEC_0 = Entity.CODEC
+
+    def __init__(self, txid: int = 0, entities: list[Entity] | None = None):
+        super().__init__(txid)
+        self.entities = [] if entities is None else entities
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.sequence(self.entities, self.CODEC_0))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.entities = inp.sequence(self.CODEC_0, bits[0], bits[1])
+        return
+
+
+class MergeEntityResponse(Message):
+    """EntityWriter.MergeEntity response."""
+
+    METHOD = 17
+    BODY_FORMAT = "<I"
+    BODY_START = 8
+    LENGTH = 12
+
+    def __init__(self, txid: int = 0, status: Status = Status.OK):
+        super().__init__(txid)
+        self.status = status
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        buf += struct.pack(self.BODY_FORMAT,
+                           self.status)
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        self.status = self.decode_enum(Status, bits[0])
+        return
+
+
+class MergeEntityRequest(Message):
+    """EntityWriter.MergeEntity request."""
+
+    METHOD = 17
+    RESPONSE = MergeEntityResponse
+    BODY_FORMAT = "<IIII"
+    BODY_START = 8
+    LENGTH = 24
+    DATA_START = 24
+
+    def __init__(self, txid: int = 0, old_id: str = '', new_id: str = ''):
+        super().__init__(txid)
+        self.old_id = old_id
+        self.new_id = new_id
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.old_id),
+                           *out.string(self.new_id))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.old_id = inp.string(bits[0], bits[1])
+        self.new_id = inp.string(bits[2], bits[3])
+        return
+
+
+class DestroyEntityResponse(Message):
+    """EntityWriter.DestroyEntity response."""
+
+    METHOD = 18
+    BODY_FORMAT = "<I"
+    BODY_START = 8
+    LENGTH = 12
+
+    def __init__(self, txid: int = 0, status: Status = Status.OK):
+        super().__init__(txid)
+        self.status = status
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        buf += struct.pack(self.BODY_FORMAT,
+                           self.status)
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        self.status = self.decode_enum(Status, bits[0])
+        return
+
+
+class DestroyEntityRequest(Message):
+    """EntityWriter.DestroyEntity request."""
+
+    METHOD = 18
+    RESPONSE = DestroyEntityResponse
+    BODY_FORMAT = "<II"
+    BODY_START = 8
+    LENGTH = 16
+    DATA_START = 16
+
+    def __init__(self, txid: int = 0, entity_id: str = ''):
+        super().__init__(txid)
+        self.entity_id = entity_id
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.entity_id))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.entity_id = inp.string(bits[0], bits[1])
+        return
+
+
 class Changed(Message):
     """Listener.Changed one-way message."""
 
@@ -2107,6 +2317,64 @@ class KB:
 
         def query(self, request: QueryRequest, source: int) -> QueryResponse | system.Deferred:
             """Handle KB.Query."""
+            raise NotImplementedError
+
+
+class EntityWriter:
+    """protocol EntityWriter: message classes by method number, and its Client and Handler."""
+
+    REQUESTS = {
+        16: WriteEntitiesRequest,
+        17: MergeEntityRequest,
+        18: DestroyEntityRequest,
+    }
+
+    RESPONSES = {
+        16: WriteEntitiesResponse,
+        17: MergeEntityResponse,
+        18: DestroyEntityResponse,
+    }
+
+    class Client(system.Client):
+        """protocol EntityWriter: client, for a handle to a service."""
+
+        def write_entities(self, entities: list[Entity] | None = None) -> WriteEntitiesResponse:
+            """EntityWriter.WriteEntities."""
+            return self.call(WriteEntitiesRequest(entities=entities), WriteEntitiesResponse)
+
+        def merge_entity(self, old_id: str = '', new_id: str = '') -> MergeEntityResponse:
+            """EntityWriter.MergeEntity."""
+            return self.call(MergeEntityRequest(old_id=old_id, new_id=new_id), MergeEntityResponse)
+
+        def destroy_entity(self, entity_id: str = '') -> DestroyEntityResponse:
+            """EntityWriter.DestroyEntity."""
+            return self.call(DestroyEntityRequest(entity_id=entity_id), DestroyEntityResponse)
+
+    class Handler(system.Handler):
+        """protocol EntityWriter: base class for a service's handler."""
+
+        METHODS = {
+            16: (WriteEntitiesRequest, "write_entities"),
+            17: (MergeEntityRequest, "merge_entity"),
+            18: (DestroyEntityRequest, "destroy_entity"),
+        }
+
+        def write_entities(self,
+                           request: WriteEntitiesRequest,
+                           source: int) -> WriteEntitiesResponse | system.Deferred:
+            """Handle EntityWriter.WriteEntities."""
+            raise NotImplementedError
+
+        def merge_entity(self,
+                         request: MergeEntityRequest,
+                         source: int) -> MergeEntityResponse | system.Deferred:
+            """Handle EntityWriter.MergeEntity."""
+            raise NotImplementedError
+
+        def destroy_entity(self,
+                           request: DestroyEntityRequest,
+                           source: int) -> DestroyEntityResponse | system.Deferred:
+            """Handle EntityWriter.DestroyEntity."""
             raise NotImplementedError
 
 

@@ -1966,15 +1966,22 @@ class KB:
     """Client of the Knowledge Base service.
 
     Entities are returned as Items and Properties, which can be changed,
-    and put back.  A lookup returns identifiers, getting every batch."""
+    and put back.  A lookup returns identifiers, getting every batch.
 
-    def __init__(self, client: wire.KB.Client):
+    Entities of a kind are written through the kind's type
+    implementation (see doc/types.rst): given its writer, put, merge
+    and destroy go through it, and the KB service is only read."""
+
+    def __init__(self, client: wire.KB.Client,
+                 writer: Optional[wire.EntityWriter.Client] = None):
         self.client = client
+        self.writer = writer
 
     @classmethod
-    def connect(cls, timeout: Optional[float] = None) -> "KB":
+    def connect(cls, timeout: Optional[float] = None,
+                writer: Optional[wire.EntityWriter.Client] = None) -> "KB":
         """Connect to the service, darq.kb."""
-        return cls(wire.KB.Client(system.connect("darq.kb"), timeout))
+        return cls(wire.KB.Client(system.connect("darq.kb"), timeout), writer)
 
     @staticmethod
     def _check(status: wire.Status, what: str):
@@ -2013,8 +2020,11 @@ class KB:
         Raises ConflictError if one's changed since it was read, or is
         new and exists; ValueError if a statement doesn't fit its
         property."""
-        response = self.client.put_entities(
-            [entity_to_wire(e) for e in entities])
+        wired = [entity_to_wire(e) for e in entities]
+        if self.writer is not None:
+            response = self.writer.write_entities(wired)
+        else:
+            response = self.client.put_entities(wired)
         self._check(response.status, response.failed_id or "put")
         for entity, written in zip(entities, response.entities):
             entity.revision = written.revision
@@ -2069,12 +2079,19 @@ class KB:
 
     def merge(self, old_id: str, new_id: str):
         """Merge one entity into another."""
-        self._check(self.client.merge(old_id, new_id).status,
-                    f"merge {old_id} into {new_id}")
+        if self.writer is not None:
+            status = self.writer.merge_entity(old_id, new_id).status
+        else:
+            status = self.client.merge(old_id, new_id).status
+        self._check(status, f"merge {old_id} into {new_id}")
 
     def destroy(self, entity_id: str):
         """Mark an entity destroyed."""
-        self._check(self.client.destroy(entity_id).status, entity_id)
+        if self.writer is not None:
+            status = self.writer.destroy_entity(entity_id).status
+        else:
+            status = self.client.destroy(entity_id).status
+        self._check(status, entity_id)
 
     def _all(self, lookup, what: str) -> Iterator[str]:
         """Return the identifiers from every batch of a lookup."""

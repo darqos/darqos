@@ -3,8 +3,9 @@
 
 # User interface parts shared by the Terminal (services/terminal) and the
 # development Terminal (tools/devterm): New's type list (darq.ui.types),
-# History's event browser (darq.ui.history), and the launcher that
-# creates and uses items without blocking them (darq.ui.launcher).
+# History's event browser (darq.ui.history), Search (darq.ui.search),
+# and the launcher that creates and uses items without blocking them
+# (darq.ui.launcher).
 #
 # Their widgets talk to the window holding them through a Host: the
 # services it uses, its status line, and its launcher.
@@ -15,6 +16,7 @@ import time
 import typing
 
 import darq
+import darq.index
 import darq.launch
 from darq.protocols.history import History
 from darq.protocols.security import Security
@@ -40,12 +42,14 @@ SECURITY_TIMEOUT = 60.0
 
 class Services:
     """What the Terminals use: the Type, History and Security services,
-    darq.launch, and shutting down and rebooting.  Tests replace them."""
+    darq.index's search, darq.launch, and shutting down and rebooting.
+    Tests replace them."""
 
     def __init__(self):
         self.types = Type.Client(darq.connect("darq.type"), timeout=TIMEOUT)
         self.history = History.Client(darq.connect("darq.history"), timeout=TIMEOUT)
         self.security = Security.Client(darq.connect("darq.security"), timeout=SECURITY_TIMEOUT)
+        self.index = darq.index
         self.launch = darq.launch
 
     def shutdown(self):

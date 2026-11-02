@@ -5,14 +5,17 @@
 # offscreen, with faked services; and then started at boot through a
 # real p-kernel (see test_pkernel.py for the fixtures).
 
+import datetime
 import importlib.util
 import pathlib
 import time
 
 import pytest
 
-from darq.errors import LaunchError
+from darq.errors import DarqError, LaunchError
 from darq.ui import history as ui_history
+from darq.ui import search as ui_search
+from darq.protocols.index import Result
 from darq.protocols.history import Event, GetEventsResponse
 from darq.protocols.history import Status as HistoryStatus
 from darq.protocols.type import (
@@ -112,10 +115,31 @@ class FakeLaunch:
         return DOC, 43
 
 
+class FakeIndex:
+    """Stands in for darq.index: finds the items whose text has every
+    word of what's searched for."""
+
+    def __init__(self):
+        # Item identifier to text.
+        self.items: dict[str, str] = {}
+        self.searches = []
+        self.fail = False
+
+    def search(self, text, type_ids=(), max=0, offset=0):
+        self.searches.append(text)
+        if self.fail:
+            raise DarqError("the Index isn't running")
+        words = text.lower().split()
+        found = [Result(item_id, body, 1_800_000_000_000_000) for item_id, body in self.items.items()
+                 if all(w in body.lower() for w in words)]
+        return found[offset:offset + max] if max else found[offset:]
+
+
 class FakeServices:
     def __init__(self, types=None):
         self.types = FakeTypes(types)
         self.history = FakeHistory()
+        self.index = FakeIndex()
         self.launch = FakeLaunch()
         self.calls = []
 
@@ -322,6 +346,93 @@ def test_open_from_history(terminal):
     services.launch.fail = True
     window.history.use(0)
     assert window.status.text() == f"No lens for {DOC}"
+
+
+################################################################
+# Search
+################################################################
+
+OTHER = f"{TEXT}:fedcba9876543210fedcba9876543210"
+
+
+def test_format_updated():
+    now = datetime.datetime(2027, 1, 15, 18, 30).astimezone()
+    today = int(now.replace(hour=9, minute=5).timestamp() * 1_000_000)
+    assert ui_search.format_updated(today, now) == "09:05"
+    earlier = int(datetime.datetime(2026, 12, 25, 9, 5).astimezone().timestamp() * 1_000_000)
+    assert ui_search.format_updated(earlier, now) == "2026-12-25"
+
+
+def test_search_as_typed(terminal):
+    window, services = terminal()
+    services.index.items = {DOC: "Meet at the coffee\nshop", OTHER: "Buy coffee beans"}
+    view = window.search
+    view.field.setText("coffee")
+    assert view.timer.isActive() and services.index.searches == []
+    view.search()
+    assert services.index.searches == ["coffee"]
+    assert [r.item_id for r in view.shown] == [DOC, OTHER]
+    assert [view.table.item(0, c).text() for c in range(3)][:2] == ["UTF-8 Text", "Meet at the coffee shop"]
+    assert view.table.item(0, 1).toolTip() == DOC
+    assert view.table.currentRow() == 0
+    assert window.status.text() == "2 found"
+
+    view.field.setText("coffee shop")
+    view.search()
+    assert [r.item_id for r in view.shown] == [DOC]
+
+    view.field.setText("tea")
+    view.search()
+    assert view.shown == [] and window.status.text() == "Nothing found"
+
+
+def test_empty_search_finds_nothing(terminal):
+    window, services = terminal()
+    services.index.items = {DOC: "coffee"}
+    window.search.field.setText("   ")
+    window.search.search()
+    assert window.search.shown == [] and services.index.searches == []
+
+
+def test_search_keys(terminal):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QKeyEvent
+    from PyQt6.QtCore import QEvent
+
+    def press(code):
+        window.search.field.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, code, Qt.KeyboardModifier.NoModifier))
+
+    window, services = terminal()
+    services.index.items = {DOC: "coffee", OTHER: "coffee"}
+    window.search.field.setText("coffee")
+    window.search.search()
+    press(Qt.Key.Key_Down)
+    assert window.search.table.currentRow() == 1
+    press(Qt.Key.Key_Down)
+    assert window.search.table.currentRow() == 1
+    press(Qt.Key.Key_Return)
+    assert services.launch.used == [(OTHER, None)]
+    press(Qt.Key.Key_Up)
+    press(Qt.Key.Key_Up)
+    assert window.search.table.currentRow() == 0
+
+
+def test_search_without_the_index(terminal):
+    window, services = terminal()
+    services.index.fail = True
+    window.search.field.setText("coffee")
+    window.search.search()
+    assert window.status.text() == "Can't search: the Index isn't running"
+
+
+def test_type_names_are_looked_up_once(terminal, monkeypatch):
+    window, services = terminal()
+    described = []
+    describe = services.types.describe
+    monkeypatch.setattr(services.types, "describe", lambda type_id: described.append(type_id) or describe(type_id))
+    assert window.search.type_name(TEXT) == "UTF-8 Text"
+    assert window.search.type_name(TEXT) == "UTF-8 Text"
+    assert described == [TEXT]
 
 
 ################################################################

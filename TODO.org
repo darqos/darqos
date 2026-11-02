@@ -35,11 +35,38 @@
   - Asynchronous
     - Using asyncio
 - Implement/update Index service (First Edition)
+  - Designed: in the plan doc (Design: the Index service).  Type
+    implementations publish their items, replacing each item's entry,
+    with every save; the KB service doesn't index; types/kb publishes
+    people, organisations, organisational units, places and groups.
+  - Done: the rule it rests on: an item's content is changed only
+    through its type implementation (doc/types.rst).  types/kb serves
+    EntityWriter (WriteEntities, MergeEntity, DestroyEntity) on its
+    Implementation port, darq.kb.KB writes through one if given it,
+    and the vCard import writes its items that way, and only its
+    vocabulary to the KB service.
+  - Done: the service (services/index, lib/didl/index.didl), started
+    at boot after History: Publish and Withdraw, one-way, replacing an
+    item's entry; Search, by word prefixes, ranked by bm25 (names ten
+    times body) then recency, with snippets; index.sqlite (FTS5, 0600)
+    in the run directory.  darq.index has a best-effort Publisher, and
+    search (doc/search-service.rst).
+  - Done: the text type publishes each save, and creation, and
+    withdraws on destroy; the Search panel (Sys-space, darq.ui.search),
+    with the clock, and devterm's Search tab.
+  - Remaining: the image and types/kb publishers; IndexEntry and
+    tools/reindex.
+  - Remaining: enforce the rule, in Storage and the KB service (writes
+    to an entity whose kind, before or after, has its own
+    implementation, only from that implementation), once DIPC tells a
+    service who sent a message.
 - Implement/update Metadata service: moved to Third Edition, if it's
   needed at all: the KB may do instead (has tag, and the like), leaving
   only what isn't knowledge, such as view positions.
 - Implement Factory (New/Do) HUD
 - Implement Search HUD, with the clock (the time and date) on it
+  - Done: the Search panel (see doc/terminal.rst); slash commands,
+    Internet search and recent items are for later.
 - REPL (Sys-s): Second Edition (see doc/repl.rst)
 - Implement History/Events HUD
 - Implement Text type
@@ -48,10 +75,12 @@
   - Remaining:
     - Tell clients of others' changes, rather than leaving them to
       find out from a CONFLICT.
-    - Save before exit when killed: up to 2 seconds of changes are
-      lost now.
+    - Save before exit when killed: up to 30 seconds of changes are
+      lost now (the p-kernel kills every process at once, Storage too,
+      and pyloader's I/O thread is blocked while the app exits).
+    - Retry a save that fails: now it's only logged, and the text kept
+      in memory (or dropped, at the last close) until the next change.
     - Exit when no items are open, to be started again on Activate.
-    - Update the Index service when it changes.
   - Done: CreateFrom and Export (UTF-8, a byte order mark dropped).
   - Don't bother yet with CRDT for concurrent editing
   - Think about granularity of history events

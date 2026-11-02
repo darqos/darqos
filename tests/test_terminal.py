@@ -64,6 +64,7 @@ def load():
 
 
 main = load()
+panels = sys.modules["panels"]
 
 
 class Compositor:
@@ -512,8 +513,7 @@ def test_power_panel(terminal):
     assert terminal.fake_services.calls == ["reboot"]
 
 
-@pytest.mark.parametrize("keysym, name", [(main.XK_space, "Search"), (main.XK_e, "Events"),
-                                          (main.XK_i, "Item info")])
+@pytest.mark.parametrize("keysym, name", [(main.XK_e, "Events"), (main.XK_i, "Item info")])
 def test_tbd(terminal, keysym, name):
     from PyQt6.QtCore import Qt
     unlock(terminal)
@@ -524,6 +524,42 @@ def test_tbd(terminal, keysym, name):
     assert terminal.tbd.isVisible()
     terminal.tbd.keyPressEvent(key(Qt.Key.Key_Space, " "))
     assert visible(terminal) == []
+
+
+def test_search_panel(terminal):
+    from PyQt6.QtCore import Qt
+    unlock(terminal)
+    services = terminal.fake_services
+    services.index.items = {DOC: "coffee shop"}
+    hotkey(terminal, main.XK_space)
+    assert visible(terminal) == [terminal.search]
+    assert terminal.search.clock.isActive()
+    assert terminal.search.time.text() and terminal.search.date.text()
+
+    view = terminal.search.view
+    view.field.setText("coffee")
+    view.search()
+    assert terminal.search.status.text() == "1 found"
+    view.use(0)
+    assert services.launch.used == [(DOC, None)]
+    assert visible(terminal) == [] and not terminal.search.clock.isActive()
+
+    # Opened again, it starts afresh; a failure is shown in it.
+    hotkey(terminal, main.XK_space)
+    assert view.field.text() == "" and view.shown == []
+    view.field.setText("coffee")
+    view.search()
+    services.launch.fail = True
+    view.use(0)
+    assert visible(terminal) == [terminal.search]
+    assert terminal.search.status.text() == f"No lens for {DOC}"
+    terminal.search.keyPressEvent(key(Qt.Key.Key_Escape))
+    assert visible(terminal) == []
+
+
+def test_clock_text():
+    import datetime
+    assert panels.clock_text(datetime.datetime(2026, 11, 2, 9, 5)) == ("09:05", "Monday 2 November 2026")
 
 
 def test_vcard_import(terminal, monkeypatch):

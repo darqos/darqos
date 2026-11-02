@@ -8,8 +8,8 @@
 # Tools menu.  Choose a file, and the address book's name, which its
 # statements are stated in, so it can be imported again, updating what
 # it imported before.  The cards are read (cards.py), and imported
-# (importer.py) on another thread, through the KB service, with new items
-# created by the KB type implementation, and recorded in History.
+# (importer.py) on another thread: read from the KB service, and created
+# and written through the KB type implementation, and recorded in History.
 #
 # Its summary is counts, and what's to be reviewed: the matches by
 # natural key, to be checked, and the addresses that changed, to be
@@ -28,6 +28,7 @@ import darq
 import darq.kb as model
 from darq.loop import QtEventLoop
 from darq.protocols.history import History
+from darq.protocols.kb import EntityWriter
 from darq.protocols.type import Implementation, Status, Type
 from darq.ui.launcher import start_thread
 
@@ -58,18 +59,19 @@ def run_import(path: str, name: str, progress: typing.Callable[[str, int, int], 
     reader = cards.Importer(wd)
     reader.read(vcard.read(path))
 
-    kb = model.KB.connect(timeout=TIMEOUT)
     types = Type.Client(darq.connect("darq.type"), timeout=TIMEOUT)
     activated = types.activate(type_id=ENTITY_TYPE)
     if activated.status != Status.OK or activated.implementation is None:
         raise darq.DarqError(f"Can't activate {ENTITY_TYPE}: {activated.status.name}")
     implementation = Implementation.Client(activated.implementation, timeout=TIMEOUT)
+    kb = model.KB.connect(timeout=TIMEOUT)
+    items = model.KB(kb.client, EntityWriter.Client(activated.implementation, timeout=TIMEOUT))
 
     # History is best effort: the import works without it.
     handle = darq.lookup_name("darq.history", blocking=False)
     history = History.Client(handle, timeout=TIMEOUT) if handle is not None else None
 
-    result = importer.Import(kb, implementation, history, wd, name, progress).run(reader.drafts)
+    result = importer.Import(kb, items, implementation, history, wd, name, progress).run(reader.drafts)
     return cards.summary(reader), result
 
 
