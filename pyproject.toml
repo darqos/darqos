@@ -45,6 +45,7 @@ include = [
     "types/kb/main.py",
     "types/text/main.py",
     "tools/devterm/main.py",
+    "tools/reindex/main.py",
     "tools/type-sync/main.py",
     "tools/vcard-import/*.py",
 ]
@@ -92,6 +93,7 @@ include = [
     "types/kb/main.py",
     "types/text/main.py",
     "tools/devterm/main.py",
+    "tools/reindex/main.py",
     "tools/type-sync/main.py",
     "tools/vcard-import/*.py",
     "tests",

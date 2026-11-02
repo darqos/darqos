@@ -25,7 +25,8 @@ enum Status : uint32 {
     // Data given to CreateFrom isn't of its type.
     INVALID_DATA = 4;
 
-    // The type's items have no form as data, for CreateFrom or Export.
+    // The type's items have no form as data, for CreateFrom or Export,
+    // or aren't indexed, for IndexEntry.
     UNSUPPORTED = 5;
 }
 
@@ -115,6 +116,12 @@ protocol Implementation {
     // Return an item's content as data in its type's format, with its
     // MIME type.
     5: Export(string item_id) -> (opaque data, string mime_type, Status status);
+
+    // Return what's indexed for an item, as it's published to the
+    // Index (see doc/search-service.rst): its names, such as labels and
+    // aliases, and its body.  A destroyed item is NOT_FOUND, and one
+    // whose type isn't indexed UNSUPPORTED.
+    6: IndexEntry(string item_id) -> (sequence<string> names, string body, Status status);
 }
 
 // The methods every item port serves.  Each type's own item protocol

@@ -24,6 +24,12 @@
 #
 # Clients, such as the entity lens, have only an item's port, so it's
 # there that they search the KB too, for entities to refer to.
+#
+# Each entity of a kind it writes is published to the Index (see
+# doc/search-service.rst): its labels and aliases, in every language, as
+# names, and its descriptions as its body.  Entities of darq.entity, and
+# properties, aren't indexed.  One that's destroyed, merged into
+# another, or no longer of its kind is withdrawn.
 
 import heapq
 import itertools
@@ -31,6 +37,7 @@ import logging
 import typing
 
 import darq
+import darq.index
 import darq.kb as model
 from darq.protocols import kb as wire
 from darq.protocols.kb import (
@@ -69,6 +76,8 @@ from darq.protocols.type import (
     DestroyResponse,
     ExportRequest,
     ExportResponse,
+    IndexEntryRequest,
+    IndexEntryResponse,
     Implementation,
     OpenRequest,
     OpenResponse,
@@ -132,8 +141,9 @@ class EntityImplementation(Implementation.Handler, EntityWriter.Handler):
 
     METHODS = {**Implementation.Handler.METHODS, **EntityWriter.Handler.METHODS}
 
-    def __init__(self, kb: model.KB):
+    def __init__(self, kb: model.KB, index: darq.index.Publisher):
         self.kb = kb
+        self.index = index
 
         # Classes read to find entities' kinds, by identifier, or None
         # for one that doesn't exist.  An entity's dropped when the KB
@@ -166,6 +176,23 @@ class EntityImplementation(Implementation.Handler, EntityWriter.Handler):
 
     def kind_of(self, entity: model.Entity) -> str:
         return model.kind_of(entity, self.get_class)
+
+    def indexed_kind(self, entity: model.Entity) -> str | None:
+        """Return an entity's kind, if it's indexed, or None."""
+        if isinstance(entity, model.Property) or entity.destroyed or entity.redirect is not None:
+            return None
+        kind = self.kind_of(entity)
+        return kind if kind != model.ENTITY_TYPE else None
+
+    def publish(self, entity: model.Entity, was: str | None = None):
+        """Publish an entity to the Index, if it's of an indexed kind, and
+        withdraw it as the kind it was, if that's changed."""
+        kind = self.indexed_kind(entity)
+        if was is not None and was != kind:
+            self.index.withdraw(model.item_id(entity.id, was))
+        if kind is not None:
+            names, body = index_entry(entity)
+            self.index.publish(model.item_id(entity.id, kind), names, body)
 
     def item_id(self, entity: model.Entity) -> str:
         """Return an entity's item identifier, or empty for a property,
@@ -284,6 +311,10 @@ class EntityImplementation(Implementation.Handler, EntityWriter.Handler):
             logging.error(f"Can't create a {type_id}: {e}")
             return CreateResponse(status=Status.FAILED)
 
+        try:
+            self.publish(entity)
+        except KB_ERRORS as e:
+            logging.error(f"Can't index the new {type_id}: {e}")
         assert self.server is not None
         iid = model.item_id(entity.id, type_id)
         logging.info(f"Created {iid}")
@@ -296,6 +327,23 @@ class EntityImplementation(Implementation.Handler, EntityWriter.Handler):
 
     def export(self, request: ExportRequest, source: int) -> ExportResponse:
         return ExportResponse(status=Status.UNSUPPORTED)
+
+    def index_entry(self, request: IndexEntryRequest, source: int) -> IndexEntryResponse:
+        try:
+            entity, status = self.find(request.item_id)
+        except KB_ERRORS as e:
+            logging.error(f"Can't index {request.item_id}: {e}")
+            return IndexEntryResponse(status=Status.FAILED)
+        if entity is None:
+            return IndexEntryResponse(status=status)
+
+        # A merged entity's item is the one it was merged into's now.
+        if entity.id != darq.split_item_id(request.item_id)[1]:
+            return IndexEntryResponse(status=Status.NOT_FOUND)
+        if self.indexed_kind(entity) is None:
+            return IndexEntryResponse(status=Status.UNSUPPORTED)
+        names, body = index_entry(entity)
+        return IndexEntryResponse(names=names, body=body, status=Status.OK)
 
     def open(self, request: OpenRequest, source: int) -> OpenResponse:
         try:
@@ -313,13 +361,15 @@ class EntityImplementation(Implementation.Handler, EntityWriter.Handler):
             entity, status = self.find(request.item_id)
             if entity is None:
                 return DestroyResponse(status=status)
+            kind = self.indexed_kind(entity)
             self.kb.destroy(entity.id)
         except KB_ERRORS as e:
             logging.error(f"Can't destroy {request.item_id}: {e}")
             return DestroyResponse(status=Status.FAILED)
+        if kind is not None:
+            self.index.withdraw(model.item_id(entity.id, kind))
         logging.info(f"Destroyed {request.item_id}")
         return DestroyResponse(status=Status.OK)
-
 
     def write_entities(self, request: WriteEntitiesRequest, source: int) -> WriteEntitiesResponse:
         try:
@@ -332,6 +382,7 @@ class EntityImplementation(Implementation.Handler, EntityWriter.Handler):
 
             # Kinds stay as they were: a new entity has none.
             kinds = {e.id: e.get_statements(model.DARQOS_TYPE) for e in current}
+            was = {e.id: self.indexed_kind(e) for e in current}
             for entity in entities:
                 for s in entity.get_statements(model.DARQOS_TYPE):
                     entity.remove_statement(s)
@@ -342,24 +393,54 @@ class EntityImplementation(Implementation.Handler, EntityWriter.Handler):
         except KB_ERRORS as e:
             logging.error(f"Can't write {len(entities)} entities: {e}")
             return WriteEntitiesResponse(status=wire.Status.NOT_FOUND)
+        if response.status == wire.Status.OK:
+            try:
+                for written in response.entities:
+                    entity = model.entity_from_wire(written)
+                    self.publish(entity, was.get(entity.id))
+            except KB_ERRORS as e:
+                logging.error(f"Can't index the entities written: {e}")
         return WriteEntitiesResponse(entities=response.entities, failed_id=response.failed_id,
                                      status=response.status)
 
     def merge_entity(self, request: MergeEntityRequest, source: int) -> MergeEntityResponse:
         try:
+            old = self.kb.get(request.old_id, follow=False)
+            was = self.indexed_kind(old) if old is not None else None
             response = self.kb.client.merge(request.old_id, request.new_id)
         except KB_ERRORS as e:
             logging.error(f"Can't merge {request.old_id} into {request.new_id}: {e}")
             return MergeEntityResponse(status=wire.Status.NOT_FOUND)
+        if response.status == wire.Status.OK:
+            if was is not None:
+                self.index.withdraw(model.item_id(request.old_id, was))
+            try:
+                new = self.kb.get(request.new_id)
+                if new is not None:
+                    self.publish(new)
+            except KB_ERRORS as e:
+                logging.error(f"Can't index {request.new_id}: {e}")
         return MergeEntityResponse(status=response.status)
 
     def destroy_entity(self, request: DestroyEntityRequest, source: int) -> DestroyEntityResponse:
         try:
+            entity = self.kb.get(request.entity_id, follow=False)
+            was = self.indexed_kind(entity) if entity is not None else None
             response = self.kb.client.destroy(request.entity_id)
         except KB_ERRORS as e:
             logging.error(f"Can't destroy {request.entity_id}: {e}")
             return DestroyEntityResponse(status=wire.Status.NOT_FOUND)
+        if response.status == wire.Status.OK and was is not None:
+            self.index.withdraw(model.item_id(request.entity_id, was))
         return DestroyEntityResponse(status=response.status)
+
+
+def index_entry(entity: model.Entity) -> tuple[list[str], str]:
+    """Return an entity's names and body, for the Index: its labels and
+    aliases, and its descriptions, in every language, each once."""
+    names = list(dict.fromkeys([*entity.labels.values(),
+                                *(a for aliases in entity.aliases.values() for a in aliases)]))
+    return names, "\n".join(dict.fromkeys(entity.descriptions.values()))
 
 
 class ClassListener(Listener.Handler):
@@ -412,6 +493,7 @@ class EntityItemHandler(EntityItem.Handler):
             current = self.kb.get(self.entity_id, follow=False)
             if current is None:
                 return PutEntityResponse(status=wire.Status.NOT_FOUND)
+            was = self.implementation.indexed_kind(current)
 
             # Its kind stays as it was.
             for s in entity.get_statements(model.DARQOS_TYPE):
@@ -425,6 +507,10 @@ class EntityItemHandler(EntityItem.Handler):
             return PutEntityResponse(status=wire.Status.NOT_FOUND)
         if response.status != wire.Status.OK:
             return PutEntityResponse(status=response.status)
+        try:
+            self.implementation.publish(model.entity_from_wire(response.entities[0]), was)
+        except KB_ERRORS as e:
+            logging.error(f"Can't index {self.entity_id}: {e}")
         return PutEntityResponse(revision=response.entities[0].revision, status=wire.Status.OK)
 
     def get_links(self, request: GetLinksRequest, source: int) -> GetLinksResponse:
@@ -489,7 +575,7 @@ def darq_main():
         logging.error("No bootstrap port: the Type service starts this, with Activate")
         return 1
 
-    implementation = EntityImplementation(model.KB.connect(timeout=10))
+    implementation = EntityImplementation(model.KB.connect(timeout=10), darq.index.Publisher())
     port = darq.open_port()
     server = darq.Server()
     implementation.add(server, port)

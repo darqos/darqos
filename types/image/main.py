@@ -18,6 +18,11 @@
 # An open item is shared by its clients' ports.  Changes are saved a
 # little after the last one, as text items' are, and when the last
 # client closes it.
+#
+# Each time an item's saved, and when it's created, its metadata fields
+# are published to the Index (see doc/search-service.rst), and it's
+# withdrawn when it's destroyed: its title, artist and copyright as
+# names, and its comment, date taken, and format as its body.
 
 import json
 import logging
@@ -26,6 +31,7 @@ import struct
 import time
 
 import darq
+import darq.index
 from darq.protocols import image as wire
 from darq.protocols import storage
 from darq.protocols.image import (
@@ -51,6 +57,8 @@ from darq.protocols.type import (
     DestroyResponse,
     ExportRequest,
     ExportResponse,
+    IndexEntryRequest,
+    IndexEntryResponse,
     Implementation,
     OpenRequest,
     OpenResponse,
@@ -148,6 +156,17 @@ def edit_from_wire(e: wire.Edit) -> imaging.Edit:
                         FIELDS.get(e.field, ""), e.value)
 
 
+def index_entry(picture: "Picture") -> tuple[list[str], str]:
+    """Return an item's names and body, for the Index.
+
+    :raises imaging.ImageError: if its original can't be read."""
+    values = imaging.field_values(picture.type_id, picture.original, picture.edits)
+    names = [values[f] for f in (imaging.TITLE, imaging.ARTIST, imaging.COPYRIGHT) if values.get(f)]
+    subtype = imaging.FORMATS[picture.type_id].mime_type.partition("/")[2]
+    body = [values[f] for f in (imaging.COMMENT, imaging.DATE_TAKEN) if values.get(f)]
+    return names, "\n".join(body + [f"{subtype.upper()} image"])
+
+
 class Picture:
     """An open item: its original, edits, and rendering, shared by its
     clients' ports."""
@@ -205,8 +224,9 @@ class Picture:
 class ImageImplementation(Implementation.Handler):
     """Answers the Implementation protocol, and keeps the open items."""
 
-    def __init__(self, client: storage.Storage.Client):
+    def __init__(self, client: storage.Storage.Client, index: darq.index.Publisher):
         self.storage = client
+        self.index = index
         self.pictures: dict[tuple[int, int], Picture] = {}
 
     # Items
@@ -302,7 +322,25 @@ class ImageImplementation(Implementation.Handler):
             return False
         picture.generation = response.generation
         picture.dirty_since = None
+        self.publish(picture)
         return True
+
+    def publish(self, picture: Picture):
+        """Publish an item's entry to the Index, as saved, or withdraw it
+        if it's destroyed."""
+        if picture.flags & DESTROYED:
+            self.index.withdraw(picture.iid)
+            return
+        if not picture.original:
+            # Empty: there's nothing to find it by.
+            self.index.publish(picture.iid)
+            return
+        try:
+            names, body = index_entry(picture)
+        except imaging.ImageError as e:
+            logging.error(f"Can't index {picture.iid}: {e}")
+            return
+        self.index.publish(picture.iid, names, body)
 
     def new(self, type_id: str, original: bytes) -> Picture | None:
         """Create an item's blob, and return it, or None if it can't be."""
@@ -312,6 +350,7 @@ class ImageImplementation(Implementation.Handler):
             return None
         picture = Picture(type_id, response.key, response.generation, original, [])
         logging.info(f"Created {picture.iid}")
+        self.publish(picture)
         return picture
 
     @staticmethod
@@ -354,6 +393,19 @@ class ImageImplementation(Implementation.Handler):
         if picture is None:
             return OpenResponse(status=status)
         return OpenResponse(item=self.attach(picture), status=Status.OK)
+
+    def index_entry(self, request: IndexEntryRequest, source: int) -> IndexEntryResponse:
+        picture, status = self.find(request.item_id)
+        if picture is None:
+            return IndexEntryResponse(status=status)
+        if not picture.original:
+            return IndexEntryResponse(status=Status.OK)
+        try:
+            names, body = index_entry(picture)
+        except imaging.ImageError as e:
+            logging.error(f"Can't index {request.item_id}: {e}")
+            return IndexEntryResponse(status=Status.FAILED)
+        return IndexEntryResponse(names=names, body=body, status=Status.OK)
 
     def export(self, request: ExportRequest, source: int) -> ExportResponse:
         picture, status = self.find(request.item_id)
@@ -469,7 +521,8 @@ def darq_main():
         logging.error("No bootstrap port: the Type service starts this, with Activate")
         return 1
 
-    implementation = ImageImplementation(storage.Storage.Client(darq.connect("darq.storage"), timeout=10))
+    implementation = ImageImplementation(storage.Storage.Client(darq.connect("darq.storage"), timeout=10),
+                                         darq.index.Publisher())
 
     port = darq.open_port()
     server = darq.Server()

@@ -261,6 +261,12 @@ Every implementation serves the `Implementation` protocol (also in
   tool's job), answers both `UNSUPPORTED`.  Data is sent whole, in one
   message, as Storage values are: large items, such as video, will want
   ranged access, or a Storage key, instead.
+* `IndexEntry(item_id)` returns what's indexed for an item, as it's
+  published to the Index: its names, such as labels and aliases, and
+  its body (see :doc:`search-service`).  The implementation publishes
+  each item as it saves it; this is for a reindex.  A destroyed item is
+  `NOT_FOUND`, and a type that isn't indexed answers `UNSUPPORTED`,
+  as `darq.entity` does.
 
 `darq.launch` has `create_item_from(type_id, data)`,
 `export_item(item_id)` and `find_types(mime_type, extension)` for

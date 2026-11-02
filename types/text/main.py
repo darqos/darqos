@@ -18,7 +18,8 @@
 # client closes it.
 #
 # Each time an item's saved, its text is published to the Index (see
-# doc/search-service.rst), and it's withdrawn when it's destroyed.
+# doc/search-service.rst), and it's withdrawn when it's destroyed; its
+# entry's also given by IndexEntry, for a reindex.
 
 import logging
 import re
@@ -49,6 +50,8 @@ from darq.protocols.type import (
     DestroyResponse,
     ExportRequest,
     ExportResponse,
+    IndexEntryRequest,
+    IndexEntryResponse,
     Implementation,
     OpenRequest,
     OpenResponse,
@@ -288,6 +291,22 @@ class TextImplementation(Implementation.Handler):
         if buffer is None:
             return ExportResponse(status=Status.NOT_FOUND)
         return ExportResponse(data=buffer.text.encode("utf-8"), mime_type=MIME_TYPE, status=Status.OK)
+
+    def index_entry(self, request: IndexEntryRequest, source: int) -> IndexEntryResponse:
+        try:
+            key = parse_item_id(request.item_id)
+        except darq.InvalidIdentifierError:
+            return IndexEntryResponse(status=Status.INVALID_ID)
+        if key is None:
+            return IndexEntryResponse(status=Status.NOT_FOUND)
+        try:
+            buffer = self.load(key)
+        except FormatError as e:
+            logging.error(f"Can't index {request.item_id}: {e}")
+            return IndexEntryResponse(status=Status.FAILED)
+        if buffer is None:
+            return IndexEntryResponse(status=Status.NOT_FOUND)
+        return IndexEntryResponse(body=buffer.text, status=Status.OK)
 
     @staticmethod
     def check_type(type_id: str) -> Status:

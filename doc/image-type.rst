@@ -168,6 +168,18 @@ the fields, to edit, *Remove Location*, if it has one, and every
 entry, as plain text.  The lens records `opened`, and `edited` once,
 when it's first edited.
 
+Searching
+---------
+
+Each time an item's saved, and when it's created, it's published to
+the Index (see :doc:`search-service`): its title, artist and
+copyright as names, and its comment, date taken, and format (*JPEG
+image*) as its body.  They're read from the original's metadata, with
+the field edits made, without decoding its pixels, so publishing
+doesn't render the image.  An empty item is published with nothing,
+and a destroyed one is withdrawn.  `IndexEntry` gives the same, for a
+reindex.
+
 Implementation
 --------------
 

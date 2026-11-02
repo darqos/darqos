@@ -492,6 +492,25 @@ _FIELD_NAMES = {TITLE: "Title", ARTIST: "Artist", COPYRIGHT: "Copyright", DATE_T
                 COMMENT: "Comment"}
 
 
+def field_values(type_id: str, original: bytes, edits: list[Edit]) -> dict[str, str]:
+    """Return an image's fields, as its edits leave them, without
+    decoding its pixels: for indexing it.
+
+    :raises ImageError: if it can't be read."""
+    try:
+        image = Image.open(io.BytesIO(original))
+        meta = Metadata(image)
+    except Exception as e:
+        # Pillow raises many kinds, for many kinds of bad data.
+        raise InvalidData(f"not an image: {e}") from None
+    writer = FORMATS[type_id].writer
+    values = {field: field_value(writer, meta, field) for field in fields(type_id)}
+    for e in edits:
+        if e.type == SET_FIELD and e.field in values:
+            values[e.field] = e.value
+    return values
+
+
 def field_value(writer: str, meta: Metadata, field: str) -> str:
     """Return a field's value, as it's edited, or empty if it has none."""
     if writer == "GIF":

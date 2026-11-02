@@ -35,12 +35,21 @@ cheap: replacing a 1 MiB entry takes about 10 ms.
 Items have no titles yet: they'll be published as names once items
 have them, from metadata or a KB property.
 
-The publishers are type implementations only: the Knowledge Base
-service doesn't index, but ``types/kb`` publishes the entities of its
-kinds (people, organisations, organisational units, places and
-groups), with their labels and aliases as names.  Entities that aren't
-of a kind with its own implementation, such as properties and classes,
-aren't indexed.
+The publishers are type implementations only:
+
+* the text type publishes an item's text as its body (see
+  :doc:`text`);
+* the image type, its title, artist and copyright as names, and its
+  comment, date taken and format as its body (see :doc:`image-type`);
+  and
+* ``types/kb``, the entities of its kinds (people, organisations,
+  organisational units, places and groups), with their labels and
+  aliases, in every language, as names, and their descriptions as
+  body, each time it writes one: an entity destroyed, merged into
+  another, or no longer of its kind is withdrawn.  The Knowledge Base
+  service doesn't index, and entities that aren't of a kind with its
+  own implementation, such as properties, classes and ``darq.entity``
+  items, aren't indexed.
 
 Any process can publish, for now: the Index can't yet tell whether a
 publisher is the item's implementation, since DIPC doesn't say who
@@ -81,15 +90,30 @@ KB's labels are (``unicode61``, removing diacritics).  It holds the
 text of every item, so only its owner can read it.  An entry's names
 and body are indexed up to 1 MiB, together: the rest is left out.
 
-Still to do:
+Rebuilding
+----------
 
-* Rebuilding: an ``IndexEntry(item_id)`` method on the
-  ``Implementation`` protocol, and ``tools/reindex``, which asks each
-  item's implementation for its entry, from History's ``created`` and
-  ``imported`` events, and ``types/kb``'s instances; for an index
-  that's lost, or publishes dropped while the Index wasn't running.
-* The publishers: the image type, and ``types/kb``.  The text type
-  publishes now (see :doc:`text`).
+An index can be lost, or miss publishes sent while the Index wasn't
+running.  ``tools/reindex`` publishes every item's entry again:
+
+* the items are those History says were created or imported (History
+  keeps every event), and the Knowledge Base's entities of its kinds,
+  which an import writes without recording them: those with a recorded
+  kind, or an instance of a class with a kind as its instance type,
+  each once;
+* each is asked for its entry by its type's implementation, with the
+  ``Implementation`` protocol's ``IndexEntry(item_id)``, which gives
+  what the implementation publishes when it saves the item, and it's
+  published;
+* one that's been destroyed, ``NOT_FOUND``, is withdrawn; and
+* one whose type isn't indexed (``UNSUPPORTED``), or whose
+  implementation can't be started or doesn't answer, is skipped.
+
+It logs how many it published, withdrew and skipped, and exits.  It's
+a tool, in the development Terminal's Tools menu, and the Index starts
+it itself when it starts with a new database (on its own thread, which
+collects it when it's finished): so deleting ``index.sqlite`` and
+rebooting rebuilds the index.
 
 The Terminal's Search panel, on *Sys-space*, searches it (see
 :doc:`terminal`).

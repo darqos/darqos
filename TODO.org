@@ -54,8 +54,20 @@
   - Done: the text type publishes each save, and creation, and
     withdraws on destroy; the Search panel (Sys-space, darq.ui.search),
     with the clock, and devterm's Search tab.
-  - Remaining: the image and types/kb publishers; IndexEntry and
-    tools/reindex.
+  - Done: rebuilding: Implementation.IndexEntry (the text type answers
+    it; image and types/kb UNSUPPORTED, for now), and tools/reindex,
+    from History's created and imported events, run from devterm's
+    Tools menu, or by the Index when it starts with a new database.
+  - Done: the image type publishes its fields (title, artist and
+    copyright as names; comment, date taken and format as body), and
+    types/kb its entities of a kind (labels and aliases as names,
+    descriptions as body), withdrawing destroyed, merged, and re-kinded
+    ones; both answer IndexEntry.  The reindex lists the KB's entities
+    of a kind, as well as History's items.
+  - Remaining: a change to a class (its instance type, or its
+    superclasses) can change its instances' kinds without their being
+    written, so they're not republished until a reindex.  Try the
+    Search panel on a real display.
   - Remaining: enforce the rule, in Storage and the KB service (writes
     to an entity whose kind, before or after, has its own
     implementation, only from that implementation), once DIPC tells a

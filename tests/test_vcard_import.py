@@ -21,7 +21,7 @@ import darq
 import darq.kb as model
 from darq.protocols.type import CreateRequest, DestroyRequest
 
-from test_kb_type import Writer, implementation, kb, kb_service, ports  # noqa: F401
+from test_kb_type import Writer, implementation, index, kb, kb_service, ports  # noqa: F401
 from test_pkernel import live_pkernel, pkernel, run_kernel_until, write_app  # noqa: F401
 
 
@@ -323,6 +323,18 @@ def test_items_written_through_their_implementation(target, monkeypatch):
     assert ann in through and ann not in direct
     assert model.key_id("address book:Address book") in direct
     assert not set(through) & set(direct)
+
+
+def test_imported_items_are_published(target, index):  # noqa: F811
+    client, _, _ = target
+    run(target, book(("u1", "Ann", "Example")))
+    [ann] = find(client, "Ann Example")
+    published = {item_id: names for (what, item_id, _), names in zip(index.sent, index.names) if what == "publish"}
+    assert "Ann Example" in published[f"darq.person:{ann}"]
+    assert any(i.startswith("darq.organisation:") and "Acme Widgets" in n for i, n in published.items())
+
+    # Its vocabulary isn't.
+    assert not any(i.startswith("darq.entity:") for i in published)
 
 
 def test_reimport_changes_nothing(target, kb_service):  # noqa: F811

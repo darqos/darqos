@@ -24,12 +24,13 @@ from darq.protocols.type import (
     CreateRequest,
     DestroyRequest,
     ExportRequest,
+    IndexEntryRequest,
     OpenRequest,
     Status,
 )
 
 from test_pkernel import live_pkernel, pkernel, run_kernel_until, write_app  # noqa: F401
-from test_text_type import CLIENT, Caller, FakeHandles, FakeStorage, fake_ports, handles  # noqa: F401
+from test_text_type import CLIENT, Caller, FakeHandles, FakePublisher, FakeStorage, fake_ports, handles  # noqa: F401
 
 
 IMAGE_PATH = pathlib.Path(__file__).parent.parent / "types" / "image"
@@ -359,8 +360,13 @@ def blobs():
 
 
 @pytest.fixture
-def implementation(blobs):
-    return image_module.ImageImplementation(blobs)
+def index():
+    return FakePublisher()
+
+
+@pytest.fixture
+def implementation(blobs, index):
+    return image_module.ImageImplementation(blobs, index)
 
 
 @pytest.fixture
@@ -385,6 +391,63 @@ def saved(blobs, iid):
     """An item's saved original, edits and flags."""
     _, key = image_module.parse_item_id(iid)
     return image_module.decode_blob(blobs.blobs[(key.high, key.low)][0])
+
+
+@pytest.mark.parametrize("type_id", sorted(SAMPLES))
+def test_field_values(type_id):
+    # From the original, as its edits leave them, without rendering.
+    data = imaging.render(type_id, SAMPLES[type_id](), set_fields(type_id))
+    values = imaging.field_values(type_id, data, [Edit("flip")])
+    assert set(values) == set(imaging.fields(type_id))
+    assert all(v.endswith("Zoë") or v.startswith("2024-06-30") for v in values.values())
+    if imaging.COMMENT in values:
+        edited = imaging.field_values(type_id, data, [Edit("set_field", field="comment", value="New"),
+                                                      Edit("set_field", field="mood", value="happy")])
+        assert edited[imaging.COMMENT] == "New" and "mood" not in edited
+
+
+def test_field_values_of_bad_data():
+    with pytest.raises(imaging.InvalidData):
+        imaging.field_values("public.png", b"not a png", [])
+
+
+def test_index_entry(call):
+    data = imaging.render("public.jpeg", make("JPEG"), [
+        Edit("set_field", field="title", value="Brisbane"), Edit("set_field", field="artist", value="Zoë"),
+        Edit("set_field", field="comment", value="From the river")])
+    iid, port = create_from(call, data, "public.jpeg")
+    copyright = wire.Edit(wire.EditType.SET_FIELD, field=wire.Field.COPYRIGHT, value="CC BY")
+    assert call(port, SetEditsRequest(edits=[copyright])).status == wire.Status.OK
+    response = call(IMPLEMENTATION_PORT, IndexEntryRequest(item_id=iid))
+    assert (response.status, response.names, response.body) == \
+        (Status.OK, ["Brisbane", "Zoë", "CC BY"], "From the river\nJPEG image")
+
+    # A GIF has only a comment; an empty item, nothing.
+    gif, _ = create_from(call, make("GIF", mode="P"), "com.compuserve.gif")
+    assert call(IMPLEMENTATION_PORT, IndexEntryRequest(item_id=gif)).body == "GIF image"
+    empty = call(IMPLEMENTATION_PORT, CreateRequest(type_id="public.png")).item_id
+    response = call(IMPLEMENTATION_PORT, IndexEntryRequest(item_id=empty))
+    assert (response.status, response.names, response.body) == (Status.OK, [], "")
+
+    assert call(IMPLEMENTATION_PORT, DestroyRequest(item_id=iid)).status == Status.OK
+    assert call(IMPLEMENTATION_PORT, IndexEntryRequest(item_id=iid)).status == Status.NOT_FOUND
+    assert call(IMPLEMENTATION_PORT, IndexEntryRequest(item_id="bad id")).status == Status.INVALID_ID
+
+
+def test_published_as_saved(call, index):
+    iid, port = create_from(call, make("PNG"))
+    assert index.sent == [("publish", iid, "PNG image")]
+    title = wire.Edit(wire.EditType.SET_FIELD, field=wire.Field.TITLE, value="Sunset")
+    call(port, SetEditsRequest(edits=[title]))
+    call(port, CloseRequest())
+    assert index.sent[-1] == ("publish", iid, "PNG image")
+    assert index.names[-1] == ["Sunset"]
+
+    assert call(IMPLEMENTATION_PORT, DestroyRequest(item_id=iid)).status == Status.OK
+    assert index.sent[-1] == ("withdraw", iid)
+
+    empty = call(IMPLEMENTATION_PORT, CreateRequest(type_id="public.png")).item_id
+    assert index.sent[-1] == ("publish", empty, "")
 
 
 def test_create_from(call, blobs):

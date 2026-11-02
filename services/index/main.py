@@ -9,11 +9,16 @@
 # and withdraw them when they're destroyed; anything can search.  The
 # entries are kept in a SQLite FTS5 table, in the run directory, which
 # only its owner can read: it holds the text of every item.
+#
+# With a new database, it starts the reindex (tools/reindex), which has
+# the items' implementations publish them all again.
 
 import logging
 import os
+import pathlib
 import re
 import sqlite3
+import threading
 import time
 import typing
 
@@ -36,6 +41,12 @@ DATABASE = "index.sqlite"
 
 # Run directory, if the p-kernel didn't say (see doc/distribution.rst).
 DEFAULT_RUN_DIR = "/darq/run"
+
+# Where the tools are, under DARQ_ROOT, as devterm finds them.
+DEFAULT_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+
+# The reindex, under the root.
+REINDEX = "tools/reindex"
 
 # Most bytes of an item's text indexed, in UTF-8: the rest is left out.
 MAX_TEXT = 1024 * 1024
@@ -178,7 +189,32 @@ class IndexService(Index.Handler):
         return SearchResponse(results=[Result(*row) for row in rows], status=Status.OK)
 
 
+def reindex():
+    """Run the reindex, and collect it when it's finished: on a thread
+    of its own, as it waits."""
+    path = str(pathlib.Path(os.environ.get("DARQ_ROOT", DEFAULT_ROOT)) / REINDEX)
+    try:
+        dpid = darq.spawn_process(path)
+        logging.info(f"Started the reindex, dpid {dpid}")
+        darq.wait(dpid)
+    except darq.DarqError as e:
+        logging.error(f"Can't reindex: {e!r}")
+    finally:
+        darq.release_reply_port()
+
+
 def darq_main():
     run_dir = os.environ.get("DARQ_RUN", DEFAULT_RUN_DIR)
     os.makedirs(run_dir, exist_ok=True)
-    darq.serve("darq.index", IndexService(os.path.join(run_dir, DATABASE)))
+    path = os.path.join(run_dir, DATABASE)
+    new = not os.path.exists(path)
+    service = IndexService(path)
+
+    port = darq.open_port()
+    darq.register_name("darq.index", port)
+    server = darq.Server()
+    server.add(port, service)
+    logging.info(f"Serving darq.index on port {port}")
+    if new:
+        threading.Thread(target=reindex, name="reindex", daemon=True).start()
+    server.run()

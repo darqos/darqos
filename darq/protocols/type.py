@@ -39,6 +39,8 @@ __all__ = [
     "FindTypesRequest",
     "FindTypesResponse",
     "Implementation",
+    "IndexEntryRequest",
+    "IndexEntryResponse",
     "Item",
     "ListTypesRequest",
     "ListTypesResponse",
@@ -1128,6 +1130,83 @@ class ExportRequest(Message):
         return
 
 
+class IndexEntryResponse(Message):
+    """Implementation.IndexEntry response."""
+
+    METHOD = 6
+    BODY_FORMAT = "<IIIII"
+    BODY_START = 8
+    LENGTH = 28
+    DATA_START = 32
+    CODEC_0 = STRING_CODEC
+
+    def __init__(self,
+                 txid: int = 0,
+                 names: list[str] | None = None,
+                 body: str = '',
+                 status: Status = Status.OK):
+        super().__init__(txid)
+        self.names = [] if names is None else names
+        self.body = body
+        self.status = status
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.sequence(self.names, self.CODEC_0),
+                           *out.string(self.body),
+                           self.status)
+        buf += b'\0' * 4
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.names = inp.sequence(self.CODEC_0, bits[0], bits[1])
+        self.body = inp.string(bits[2], bits[3])
+        self.status = self.decode_enum(Status, bits[4])
+        return
+
+
+class IndexEntryRequest(Message):
+    """Implementation.IndexEntry request."""
+
+    METHOD = 6
+    RESPONSE = IndexEntryResponse
+    BODY_FORMAT = "<II"
+    BODY_START = 8
+    LENGTH = 16
+    DATA_START = 16
+
+    def __init__(self, txid: int = 0, item_id: str = ''):
+        super().__init__(txid)
+        self.item_id = item_id
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.item_id))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.item_id = inp.string(bits[0], bits[1])
+        return
+
+
 class CloseResponse(Message):
     """Item.Close response."""
 
@@ -1359,6 +1438,7 @@ class Implementation:
         3: DestroyRequest,
         4: CreateFromRequest,
         5: ExportRequest,
+        6: IndexEntryRequest,
     }
 
     RESPONSES = {
@@ -1367,6 +1447,7 @@ class Implementation:
         3: DestroyResponse,
         4: CreateFromResponse,
         5: ExportResponse,
+        6: IndexEntryResponse,
     }
 
     class Client(system.Client):
@@ -1392,6 +1473,10 @@ class Implementation:
             """Implementation.Export."""
             return self.call(ExportRequest(item_id=item_id), ExportResponse)
 
+        def index_entry(self, item_id: str = '') -> IndexEntryResponse:
+            """Implementation.IndexEntry."""
+            return self.call(IndexEntryRequest(item_id=item_id), IndexEntryResponse)
+
     class Handler(system.Handler):
         """protocol Implementation: base class for a service's handler."""
 
@@ -1401,6 +1486,7 @@ class Implementation:
             3: (DestroyRequest, "destroy"),
             4: (CreateFromRequest, "create_from"),
             5: (ExportRequest, "export"),
+            6: (IndexEntryRequest, "index_entry"),
         }
 
         def create(self, request: CreateRequest, source: int) -> CreateResponse | system.Deferred:
@@ -1425,6 +1511,12 @@ class Implementation:
 
         def export(self, request: ExportRequest, source: int) -> ExportResponse | system.Deferred:
             """Handle Implementation.Export."""
+            raise NotImplementedError
+
+        def index_entry(self,
+                        request: IndexEntryRequest,
+                        source: int) -> IndexEntryResponse | system.Deferred:
+            """Handle Implementation.IndexEntry."""
             raise NotImplementedError
 
 

@@ -17,8 +17,8 @@ from darq import dipc, system
 from darq.protocols import storage
 from darq.protocols.text import CloseRequest, GetRequest, ReplaceRequest, StatRequest
 from darq.protocols.text import Status as TextStatus
-from darq.protocols.type import (CreateFromRequest, CreateRequest, DestroyRequest, ExportRequest, OpenRequest,
-                                 Status)
+from darq.protocols.type import (CreateFromRequest, CreateRequest, DestroyRequest, ExportRequest,
+                                 IndexEntryRequest, OpenRequest, Status)
 
 from test_pkernel import live_pkernel, pkernel, run_kernel_until, write_app  # noqa: F401
 from test_rpc import FakePorts
@@ -117,9 +117,11 @@ class FakePublisher:
 
     def __init__(self):
         self.sent: list[tuple] = []
+        self.names: list[list[str]] = []
 
     def publish(self, item_id, names=(), body=""):
         self.sent.append(("publish", item_id, body))
+        self.names.append(list(names))
 
     def withdraw(self, item_id):
         self.sent.append(("withdraw", item_id))
@@ -475,6 +477,22 @@ def test_destroyed_is_withdrawn(call, index):
     call(port, CloseRequest())
     assert index.sent[-1] == ("withdraw", iid)
     assert not any(e == ("publish", iid, "last words") for e in index.sent)
+
+
+def test_index_entry(call):
+    iid, port = create(call)
+    replace(call, port, 0, 0, "unsaved, but the latest")
+    response = call(IMPLEMENTATION_PORT, IndexEntryRequest(item_id=iid))
+    assert (response.status, response.names, response.body) == (Status.OK, [], "unsaved, but the latest")
+
+    # Closed, it's read from Storage.
+    call(port, CloseRequest())
+    assert call(IMPLEMENTATION_PORT, IndexEntryRequest(item_id=iid)).body == "unsaved, but the latest"
+
+    assert call(IMPLEMENTATION_PORT, DestroyRequest(item_id=iid)).status == Status.OK
+    assert call(IMPLEMENTATION_PORT, IndexEntryRequest(item_id=iid)).status == Status.NOT_FOUND
+    assert call(IMPLEMENTATION_PORT, IndexEntryRequest(item_id="public.png:x")).status == Status.NOT_FOUND
+    assert call(IMPLEMENTATION_PORT, IndexEntryRequest(item_id="bad id")).status == Status.INVALID_ID
 
 
 def test_failed_save_is_not_published(call, blobs, index, caplog):

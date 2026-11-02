@@ -28,11 +28,12 @@ from darq.protocols.kb import (
     SuggestPropertiesRequest,
     WatchEntityRequest,
 )
-from darq.protocols.type import (CreateFromRequest, CreateRequest, DestroyRequest, ExportRequest, OpenRequest,
-                                 Status)
+from darq.protocols.type import (CreateFromRequest, CreateRequest, DestroyRequest, ExportRequest,
+                                 IndexEntryRequest, OpenRequest, Status)
 
 from test_kb_service import module as service_module
 from test_pkernel import live_pkernel, pkernel, run_kernel_until, write_app  # noqa: F401
+from test_text_type import FakePublisher
 
 
 TYPE_PATH = pathlib.Path(__file__).parent.parent / "types" / "kb"
@@ -117,8 +118,13 @@ def kb(kb_service):
 
 
 @pytest.fixture
-def implementation(kb, ports):
-    implementation = module.EntityImplementation(kb)
+def index():
+    return FakePublisher()
+
+
+@pytest.fixture
+def implementation(kb, ports, index):
+    implementation = module.EntityImplementation(kb, index)
     server = darq.Server()
     ports.server = server
     implementation.add(server, IMPLEMENTATION_PORT)
@@ -138,6 +144,89 @@ def test_no_data_form(implementation):
         == Status.UNSUPPORTED
     iid, _ = create(implementation, "darq.person")
     assert implementation.export(ExportRequest(item_id=iid), 0).status == Status.UNSUPPORTED
+
+
+def index_entry(implementation, item_id):
+    response = implementation.index_entry(IndexEntryRequest(item_id=item_id), 0)
+    return (response.names, response.body) if response.status == Status.OK else response.status
+
+
+def test_index_entry(kb, implementation):
+    iid, _ = create(implementation, "darq.person")
+    person = kb.get(darq.split_item_id(iid)[1])
+    person.set_label("Ada Lovelace")
+    person.set_label("Ada Lovelace", "fr")
+    person.set_label("Ada", "de")
+    person.add_alias("Augusta Ada King")
+    person.set_description("mathematician")
+    person.set_description("mathématicienne", "fr")
+    kb.put(person)
+    assert index_entry(implementation, iid) == (["Ada Lovelace", "Ada", "Augusta Ada King"],
+                                                "mathematician\nmathématicienne")
+
+    # Items of darq.entity aren't indexed.
+    thing, _ = create(implementation, "darq.entity")
+    assert index_entry(implementation, thing) == Status.UNSUPPORTED
+
+    # A merged entity's item is the other's now; a destroyed one's gone.
+    other, _ = create(implementation, "darq.person")
+    kb.merge(person.id, darq.split_item_id(other)[1])
+    assert index_entry(implementation, iid) == Status.NOT_FOUND
+    kb.destroy(darq.split_item_id(other)[1])
+    assert index_entry(implementation, other) == Status.NOT_FOUND
+    assert index_entry(implementation, "public.png:x") == Status.NOT_FOUND
+    assert index_entry(implementation, "bad id") == Status.INVALID_ID
+
+
+def test_published_as_written(kb, implementation, index):
+    items = model.KB(kb.client, Writer(implementation))
+    iid, port = create(implementation, "darq.person")
+    entity_id = darq.split_item_id(iid)[1]
+    assert index.sent == [("publish", iid, "")]
+    create(implementation, "darq.entity")
+    assert len(index.sent) == 1
+
+    person = kb.get(entity_id)
+    person.set_label("Ada")
+    person.set_description("mathematician")
+    items.put(person)
+    assert (index.sent[-1], index.names[-1]) == (("publish", iid, "mathematician"), ["Ada"])
+
+    handler = item(implementation, port)
+    current = kb.get(entity_id)
+    current.add_alias("Augusta")
+    assert handler.put_entity(PutEntityRequest(entity=model.entity_to_wire(current)), 0).status == wire.Status.OK
+    assert index.names[-1] == ["Ada", "Augusta"]
+
+    other, _ = create(implementation, "darq.person")
+    items.merge(entity_id, darq.split_item_id(other)[1])
+    assert index.sent[-2:] == [("withdraw", iid), ("publish", other, "mathematician")]
+    assert index.names[-1] == ["Ada", "Augusta"]
+
+    items.destroy(darq.split_item_id(other)[1])
+    assert index.sent[-1] == ("withdraw", other)
+    third, _ = create(implementation, "darq.place")
+    assert implementation.destroy(DestroyRequest(item_id=third), 0).status == Status.OK
+    assert index.sent[-1] == ("withdraw", third)
+
+
+def test_kind_changed_is_withdrawn(kb, implementation, index):
+    # An imported entity's kind is its classes': written with another
+    # class, it's another kind of item.
+    items = model.KB(kb.client, Writer(implementation))
+    items.put(entity("Q7259", "Ada", "Q5"))
+    assert index.sent[-1] == ("publish", "darq.person:Q7259", "")
+    ada = kb.get("Q7259")
+    for s in ada.get_statements(model.INSTANCE_OF):
+        ada.remove_statement(s)
+    ada.claim(model.INSTANCE_OF, model.EntityValue("Q43229"))
+    items.put(ada)
+    assert index.sent[-2:] == [("withdraw", "darq.person:Q7259"), ("publish", "darq.organisation:Q7259", "")]
+
+    # Vocabulary, such as classes and properties, isn't indexed.
+    sent = len(index.sent)
+    items.put(entity("Q123", "a class"), model.Property(model.Datatype.String, "P999"))
+    assert len(index.sent) == sent
 
 
 def open_item(implementation, item_id):

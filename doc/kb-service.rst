@@ -558,6 +558,16 @@ type implementation, while lookups still go to the KB service.
 Properties, classes, and other entities that aren't of a kind with its
 own implementation can still be written to the KB service directly.
 
+Each entity of a kind other than ``darq.entity`` that it creates or
+writes, with ``Create``, ``PutEntity`` or ``WriteEntities``, is
+published to the Index (see :doc:`search-service`): its labels and
+aliases, in every language, as names, and its descriptions as its
+body, so the Terminal's Search finds people, organisations and places
+by name.  One that's destroyed, or merged into another, is withdrawn,
+as is one whose kind has changed, under the kind it was; the one it's
+merged into is published again.  ``IndexEntry`` gives the same entry,
+for a reindex, and is ``UNSUPPORTED`` for ``darq.entity``.
+
 An item's port serves the ``EntityItem`` protocol, in
 ``lib/didl/kb.didl``: the ``Item`` protocol's ``Close``, and, from 16,
 
