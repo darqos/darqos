@@ -1,252 +1,195 @@
 Book Type
 =========
 
-There are several types of books supported by the book type, but they
-generally fall into the categories of paper book or e-book.
+Books are one of the fundamental Types in DarqOS.  But the type
+modelling is not entirely simple.  It is based on the Library
+Reference Model (LRM) (formerly known as the Functional Requirements
+for Biliographic Records (FRBR), and BIBFRAME which is an RDF-based
+implementation of LRM from the US Library of Congress.  The LRM
+standard specifies four fundamental types:
 
-Paper books are reflected essentially as a catalog record, and use the
-metadata service to store their data.  This should include the usual
-bibliographic data, plus eg. shelving data for the physical volume, and
-a cover image.
+* *Work* (the conceptual creation)
 
-e-Books, on the other hand, have an additional property: a reference for
-the actual content.  I'd like to support PDF, epub, and perhaps mobi-
-formatted content.  Perhaps using an existing library to parse those
-formats?
+  This is the most abstract type, representing a single dictinct
+  artistic or intellectual creation.
 
-* Lector is a PyQT5-based e-book reader.  It's not great, but it's
-  likely to be a good start.
-* PyMuPDF is a Python/C++ PDF renderer (which Lector uses).  It might
-  be a better basis, given how flakey Lector is?
+  eg. George Orwell's "1984".
 
-The metadata should include:
+  It doesn't matter if it's in English, Spanish, a paperback, or an
+  audiobook, the "Work" remains 1984.
 
-* Title
-* Author(s)
-* Editor
-* Publisher
-* Date published
-* Date purchased
-* Cover photograph
-* ISBN
-* URL (for ebooks)
-* Location (for paper books)
+* *Expression* (the realization of the Work)
 
-  * Is this a good place to use an encapsulated volumes model for
-    physical locations?
-  * It'd be good to have some sort of structure here, not just free
-    form text
+  The specific form that the Work takes.  This is where translations,
+  revisions, and abridgements live.
 
-* Notes
-* Type
+  eg. the Spanish translation of 1984 by Rafael Vázquez.
 
-  * Is there a hierarchy here?  Book, with sub-types for electronic
-    and physical?
+  If the text changes (like a translation), it is a new Expression of
+  the same Work.
 
-Creating a new book should be a process that's launched in the usual
-way from the factory menu, but the type implementation should support
-lookup (eg. Amazon, LOC, NLA, BL, whatever; and the Dublin Core from
-epub, etc) so you can populate all the metadata without needing to type
-it all in manually.
+* *Manifestation* (the physical or digital embodiment)
 
-The functioning of the book editor suggests to me that the ebook type
-should be separate, because the _data_ is entirely different, and so
-I think it makes sense to have it implemented separately, even if in
-the same executable ultimately.
+  eg. the 1950 Signet Classics paperback edition of 1984.
 
-Also, similarly to music, there's an argument to be made that you want
-a specialised browser for the collection of books.  A CoverFlow-style
-UI would be nice, sorted by author, etc.
+  If it has a different layout, publisher, or cover, it's a different
+  manifestation.
 
-I wonder if this can be made general, such that it's the object
-selector that provides the browsing experience, but if you constrain
-your search to a specific type, perhaps the type implementation could
-provide some specialisation to the UI?
+* *Item* (a single exemplary instance)
 
-Alternatively, there could be a collection type for books, which does
-the presentation and links to the actual books?  Not sure that's a
-great UX though ... but certainly music, video and books should all be
-similarly implemented here.
+  This represents a single, physical or digital object.  It usually
+  has a different asset tag, unique coffee stains, etc.
 
-Book-like objects
------------------
+There's a useful site that has all the entity-relationship model for
+the LRM available.
 
-An eBook reader, ignoring for a moment the collection interface, is
-really quite similar to a PDF viewer.  Books have structure (volumes,
-chapters, and thus a table of contents, perhaps a table of
-illustrations, index, etc) and then words and (possibly) images.
-Which is basically identical to a PDF document.  Some eBooks even have
-hyperlinks, just as some PDFs do.
+   https://www.iflastandards.info/lrm/lrmer.html
 
-And, for *some* PDF documents, the reading process is quite similar
-too.  That's not necessarily the case for, eg. a semi-conductor
-datasheet, or a glossy trade brochure, but for research papers, or
-manuals, the reading process is quite similar.
+   
+Within this framework, there are (at least) three relevant Darq Item
+types that will be needed:
 
-I *think* it would make sense to combine these into a single viewer
-application, with (consequent) consistency of interaction.
+* For e-books, an actual blob containing the PDF, AZW, Mobi, ePub,
+  etc, data.  These will be *LRM Items* in the WEMI hierarchy, and will
+  have specific *Manifestation*, *Expression*, and *Work* parent
+  relationships.
+* For paper books, an *LRM Item*'s Darq Item will be a record
+  representing the existence of a particular real paper book.  It will
+  combine the links to the WEMI hierarchy with details about its
+  physical location.
+* Citations, from papers and bibliographies, will likely be KB links
+  to an *LRM Manifestation*, *LRM Expression*, or *LRM Work*,
+  depending on the specificity of the reference.  Page numbers imply a
+  *Manifestation*, whereas an author and title might just be a *Work*.
 
-Types of Book-like Objects
---------------------------
+So, an e-book or audio book LRM item will be a Darq Item, with the
+implementation using a Storage blob to maintain the content.
 
-Well, in particular, book-like objects.
+A paper book's catalog record will probably implemented using the KB
+(or perhaps, Metadata?) backend to store information about where it is
+(or should be).
 
-* Start with "document"?
+Works, Expressions, and Manifestations should probably be implemented
+using the KB backend, because it's ideal for keeping track of their
+interrelationships with other entities, and maps well to the RDF
+triples of the BIBFRAME implementation.
 
-  * From there, there could reasonably a tree of descendants, both
-    "plain" and "rich", with PDF amongst them.
-  * But .. no-one actually _writes_ PDF documents: they're an output
-    format.  Ideally, I'd have the source form somehow associated with
-    the PDF output, where that's possible.
-  * Word docs, for instance, are edited and rendered in the same
-    tool.  LaTeX documents, as an example, have a very different
-    process.
+Types
+-----
 
-    * Is this distinction to be reflected in the type system?
+LRM Work
+~~~~~~~~
 
-      * It's similar to an interpreter/compiler split in programming?
+* The LRM Work type, as a Darq Item and KB Kind.
+* UTI: ???
+  
+  * `lrmer:E2`
+    
+* Attributes
+  
+  * Category of Work
+  * Note
+    
+* Relationships
+  
+  * isRealizedThrough -> Expression (lrmer:R2)
+  * wasCreatedBy -> Agent (lrmer:R6)
+  * hasAppelation -> Nomen (lrmer:R13)
+  * hasAsSubject -> Res (lrmer:R12)
 
-* Examples that I care about:
+    
+LRM Expression
+~~~~~~~~~~~~~~
 
-  * Plain text
-  * Markdown
-  * Restructured Text
-  * ASCIIdoc
-  * \*roff
-  * LaTeX / TeX
-  * PDF
-  * Word
+* The LRM Expression type, as a Darq Item and KB Kind.
+* UTI: ???
+* Attributes
+* Relationships
+  
+  * realizes -> Work (lrmer:R2)
+  * isEmbodiedIn -> Manifestation (lrmer:R4)
+  * wasCreatedBy -> Agent (lrmer:R7)
+  * hasAppelation -> Nomen (lrmer:R14)
+  * isPartOf -> Expression (lrmer:R18)
+  * accompanies/complements -> Expression (lrmer:R20)
+  * isTranslationOf -> Expression (lrmer:R21)
+  * isDerivationOf -> Expression (lrmer:R24)
+    
 
-    * .doc
-    * .docx
+LRM Manifestation
+~~~~~~~~~~~~~~~~~
 
-  * _maybe_ ODF?
-  * RTF
-  * mobi
-  * epub
-  * azw (? Whatever the Kindle format is)
-  * HTML (? eek ?)
+* The LRM Manifestation type, as a Darq Item and KB Kind.
+* UTI: ???
+* Attributes
+* Relationships
+  
+  * embodies -> Expression (lrmer:R4)
+  * isExemplifiedBy -> Item (lrmer:R5)
+  * wasProductionOf -> Agent (lrmer:R8)
+  * hasAppelation -> Nomen (lrmer:R15)
 
-* But there are different axes here:
+    * This is where the ISBN lives
+      
+  * isPartOf -> Manifestation (lrmer:R26)
+  * accompanies/complements -> Manifestation (lrmer:R28)
+  * isReproductionOf -> Manifestation (lrmer:R30)
+  *
 
-  * PDF vs. DOC vs. ROFF vs epub
-  * Brochure vs. datasheet vs. research paper vs. book
-  * Can UTI deal with this?
 
-    * I think so
+Item
+~~~~
+* Relationships
 
-  * But, given an object whose metadata says "It's a paper, in markdown
-    format", can I chose a type implementation using the multiple axes?
+  * exemplifies -> Manifestation (lrmer:R5)
+  * wasModifiedBy -> Agent (lrmer:R9)
+    * Custom binding, restoration, or preservation
+  * hasOwner/Custodian -> Agent (lrmer:R11)
+  * hasAppellation -> Nomen (lrmer:R16)
+    * barcodes, RFIDs, custom inventory control numbers, etc
+  * isPartOf -> Item (lrmer:R27)
+  * accompanies/complements -> Item (lrmer:R16)
 
-Implementation
---------------
+    
+E-Book
+~~~~~~
 
-I think books end up being a useful example of how objects work.
+* An item for various e-book format data (.mobi, .epub, .azw, etc)
+* Show allow PDF also
+* Conforms to LRM Item
+* Attributes
+* Should be implemented as a combination of a KB entity with
+  associated relationships, and a Storage element to maintain the
+  e-book content.
+  
+Book Record
+~~~~~~~~~~~
 
-Take an e-book, let's say in ePub format.
+* A "catalog card" item for a real physical book instance.
+* Conforms to LRM Item
+* Attributes
+* Should be implemented using the KB service for persistence, and for
+  simple relationships with the related entities, like people,
+  organisational authors, publishers, places of publishing, etc.
 
-* A sequence of bytes
-* KB entities, for the paper, the authors, institutions, etc.
-* Metadata describing it's type(s), and maybe other stuff.
+  * All content should reasonably go in the KB service.
 
-How does this _actually_ work?
+* Creating a new book record should be a process that's launched in
+  the usual way from the factory menu, but the type implementation
+  should support lookup (eg. Amazon, LOC, NLA, BL, whatever; and the
+  Dublin Core from epub, etc) so you can populate all the metadata
+  without needing to type it all in manually.
 
-* Metadata has:
 
-  * Object identifier
+Lenses
+------
 
-    * This is probably the primary key?
+The base UI is essentially a table of name:value pairs.  Some
+sensitivity in laying out authors, title, etc, will give a decent
+result.
 
-  * BLOB storage identifier
-  * KB entity identifier
-
-I _think_ this is probably a decent view of how _everything_ should
-work?  The metadata service is basically the object name service,
-linking object identity with its other properties, and doing away with
-a name service on the side.
-
-Roadmap
--------
-
-The Book type is a useful example of a category of types where it's
-necessary to have sub-type implementations.  On that basis, and given
-the ready availability of a Python/Qt e-reader codebase, I think it
-makes sense to advance the Book type in the roadmap to explore how
-sub-typing and specialized collections can work.
-
-* Implement the basic physical book type
-
-  * A simple collection of (meta)data about a specific book
-  * Presentation like a card catalog, but with a cover picture?
-  * Type constraints in the selector UI
-
-* Implement a specialized collection type for books.
-
-  * Figure out how these will actually work
-  * Come up with a nice UI
-
-    * Incorporating cover art is probably the right approach here.
-      Books can be quite distinctive, and it can be a searching
-      strategy in itself.
-    * Coverflow (Apple-style) really replicates albums more than
-      books, but ... it would like work ok?
-    * A 2D grid of covers, able to be zoomed in/out, might also be
-      good?
-
-      * And perhaps better than coverflow for rapid scanning?
-      * Is it possible to sort images by colour (surely, yes)?  How
-        about by shape or object?  Maybe some ML involved there?
-
-* Add an e-book type
-
-  * Basically the same data in type instance, but with the addition
-    of a reference to the actual content in the storage server
-  * Figure out how to model adding a new e-book to the system vs.
-    actually creating the e-book content
-
-    * Since this is a bunch of UI work I don't want to get into yet
-    * And I don't have a good handle on how it should be modelled
-      either.
-
-      * It's possibly the same model as songs and videos, where
-        you create a record for the physical object, but don't
-        create the object itself?
-      * So perhaps the type should be called BookCatalog, not Book?
-
-        * BookRecord?  BookDetails?  CatalogedBook?  BookInfo?
-
-UI
---
-
-Fields:
-
-* Cover image
-
-  * Spine image?
-  * Rear cover image?
-  * Whatever the internal fancy front page thing is called?
-
-* Title
-* Series Title
-* Series Number
-* Author(s)
-* Publisher
-* Place Published
-* Date Published
-* ISBN
-* Format
-* Edition
-* Pages
-* Dimensions
-* Language
-* Date Purchased
-* Genre
-* Dewey
-* LCC
-* Summary
-* Location
-
-Notes:
+UI Fields
+~~~~~~~~~
 
 * Not every book will populate every field.
 * Title and Author should use a larger font, especially title.
@@ -263,3 +206,244 @@ Notes:
   * Clearview (macOS)
   * Kindle (macOS, iOS)
   * Lector (macOS, Windows, Linux)
+    
+
+Work
+~~~~
+
+I think this can fall back to the generic KB entity lens.
+
+Expression
+~~~~~~~~~~
+
+I think this can fall back to the generic KB entity lens.
+
+Manifestation
+~~~~~~~~~~~~~
+
+I think this can fall back to the generic KB Entity lens.
+
+Item
+~~~~
+
+I think this can fall back to the generic KB Entity lens.  Note that
+most LRM Items will in fact be E-Book or Book Record instances, and
+this will be left for things like an Audio Book which doesn't have a
+specialization.
+
+
+E-Book
+~~~~~~
+
+The e-book lens (lenses/ebook) facilitates reading an e-book.
+
+* It should have a distraction-free UI with hotkeys for turning the
+  pages.
+
+  * Page-forward
+
+    * Space
+    * Page Down
+    * C-f
+
+  * Page-back
+
+    * Backspace
+    * Page Up
+    * C-b
+
+  * Home / End should go to front and rear covers
+
+* The text size should be able to be increased or decreased for
+  reflowable formats (ie. not PDF).
+* PDF should zoom to fit in the window.
+* It should remember the last page being read for each book, and
+  default to starting from there when opened again
+* In a future edition, it should support annotations, but not yet.
+* It should offer a dark-mode, sepia-mode, and light-mode choices for
+  rendering the pages.
+
+It should support:
+
+* PDF
+* ePub
+* Mobi
+* Whatever is possible with Amazon's azw formats
+
+Note
+
+   The E-Book lens does not, currently, implement editing of its
+   content, other than that of the WEMI properties: you cannot alter
+   the actual content of the book with this (yet).
+
+   In a future edition, it might support full e-book editing.
+
+Implementation:
+
+* Lector is a PyQT5-based e-book reader.  It's not great, but it's
+  likely to be a good start.
+* PyMuPDF is a Python/C++ PDF renderer (which Lector uses).  It might
+  be a better basis, given how flakey Lector is?
+
+
+Book Record
+~~~~~~~~~~~
+
+This is essentially a card catalog entry for a physical paper book.
+It describes the Item properties of that book, collected from the
+Item, Manifestation, Expression, and Work.
+
+This lens should support both viewing and editing.
+
+When creating a book record, it would be great to allow a photo/video
+of the ISBN bar code to automatically pre-populate the other properies
+of the record.
+
+It should also be possible to add front/back cover images to the book
+record.
+
+The complete data should include:
+
+* Title
+  
+  * Title sort
+
+* Subtitle
+* Original title
+
+  * for translations
+* Alternative/variant titles
+* Uniform title
+
+  * consensus indexing title
+
+* Series Name
+* Volume number
+    
+* Author
+  
+  * Role
+    
+    * Afterword
+    * Author
+    * Composer
+    * Contributor
+    * Cover Artist
+    * Cover Designer
+    * Designer
+    * Director
+    * Editor
+    * Foreword
+    * Illustration
+    * Introduction
+    * Narrator
+    * Photographer
+    * Preface
+    * Translator
+    * Other
+* Tags / keywords
+* Collection
+
+  * Which collection within the library is this a part of?  In my case, fiction, non-fiction, science-fiction, space, politics, roman, computer
+
+* Your rating
+* Your review
+* Media
+
+  * Book
+
+    * Paper book
+
+      * Paper back
+      * Hard cover
+
+    * Audio Book
+      
+      * Digital file
+      * CD
+      * Tape
+	
+* Publisher
+* Imprint
+
+  * sub-brand or division of publisher
+
+* Date published
+* Place published
+* Edition
+* Printing year
+* Printing run
+* Date purchased
+* Place purchased
+* Price purchased
+* MSRP (per country)
+* Copyright year
+* Rights/distribution restrictions
+* Availability status
+
+  * In print, Out of print, Forthcoming, Pre-order, Remaindered
+
+* File format
+
+  * For e-books
+
+* file size
+* DRM status/type
+* Audio bit/sample rate
+* Pages
+* Extent
+
+  * duration for audio books
+
+* Font / typography details
+* Dimensions
+* Weight
+* Volumes
+* Primary Language
+* Original Language
+* Script / notation
+* Dewey decimal
+* LCCN
+* OCLC Worldcat
+* ASIN
+* DOI
+* BISAC / Subject headings
+* Front Cover photograph
+* Rear cover photograph
+* ISBN-10
+* ISBN-13
+* EAN
+* UPC
+* ISSN
+* Location (for paper books)
+
+  * Is this a good place to use an encapsulated volumes model for
+    physical locations?
+  * It'd be good to have some sort of structure here, not just free
+    form text
+
+* Notes
+* Cataloging date
+* Summary / description
+* Table of Contents
+* Target audience / age group
+* Lexile measures / reading age
+* Content warning / maturity ratings
+
+Notes
+-----
+
+Also, similarly to music, there's an argument to be made that you want
+a specialised browser for the collection of books.  A CoverFlow-style
+UI would be nice, sorted by author, etc.
+
+I wonder if this can be made general, such that it's the object
+selector that provides the browsing experience, but if you constrain
+your search to a specific type, perhaps the type implementation could
+provide some specialisation to the UI?
+
+Alternatively, there could be a collection type for books, which does
+the presentation and links to the actual books?  Not sure that's a
+great UX though ... but certainly music, video and books should all be
+similarly implemented here.
+
