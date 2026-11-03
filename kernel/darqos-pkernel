@@ -5,10 +5,12 @@
 # Run the installed p-kernel, from its systemd unit: with the venv's
 # Python, first on PATH too, as when it's activated, and the darq
 # package from the installation root (installed as source, not a
-# wheel).
+# wheel).  What it writes in /darq/run is darq's alone: the umask is set
+# here, since the login session's pam_umask overrides the unit's.
 
 DARQ=/darq
 
+umask 077
 cd "$DARQ" || exit 1
 export PYTHONPATH="$DARQ"
 export PATH="$DARQ/env/bin:$PATH"

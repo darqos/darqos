@@ -166,9 +166,10 @@ if step venv; then
     echo "Ok: updated the Python environment"
 fi
 
-# The run directory: only darq may read it.
+# The run directory, and its files, whatever umask made them: only
+# darq may read them.
 mkdir -p "$DARQ/run"
-chmod 0700 "$DARQ/run"
+chmod -R go-rwx "$DARQ/run"
 if step owner; then
     chown -R "$DARQ_USER:$DARQ_USER" "$DARQ/run"
 fi

@@ -148,8 +148,11 @@ def test_update(dist, tmp_path):
     (root / "compositor" / "build" / "darq-compositor").write_text("built\n")
     (root / "run" / "kb.sqlite").write_text("data\n")
     (root / "man" / "man8" / "gone.8").write_text("gone\n")
+    # Made with a looser umask, as a login session's can be.
+    (root / "run" / "kb.sqlite").chmod(0o664)
 
     install(dist, root)
+    assert stat.S_IMODE((root / "run" / "kb.sqlite").stat().st_mode) == 0o600
     assert not (root / "services" / "old").exists()
     assert not (root / "man" / "man8" / "gone.8").exists()
     assert (root / "compositor" / "build" / "darq-compositor").read_text() == "built\n"

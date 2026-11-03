@@ -29,8 +29,6 @@ StandardError=journal
 UtmpIdentifier=tty1
 UtmpMode=user
 Environment=XDG_SESSION_TYPE=wayland XDG_SESSION_CLASS=user DARQ_MACHINE=1
-# What it writes in /darq/run is darq's alone.
-UMask=0077
 ExecStart=/darq/kernel/darqos-pkernel
 # A clean exit (shutdown) is final: only restart after a failure.
 Restart=on-failure

@@ -371,8 +371,10 @@ Switching only changes units and groups, not code.
 
 The unit runs the p-kernel through its launcher,
 ``kernel/darqos-pkernel``, with the venv's Python, which the launcher
-also puts first on ``PATH``, as activating it does; and with
-``UMask=0077``, so what it writes in ``/darq/run`` is ``darq``'s alone.
+also puts first on ``PATH``, as activating it does; and with umask
+077, so what it writes in ``/darq/run`` is ``darq``'s alone.  The
+launcher sets it, not the unit: the login session's ``pam_umask``
+overrides a unit's ``UMask=``.
 
 The unit restarts the p-kernel if it fails, five times a minute at
 most: after that, it's left stopped, and the way in is SSH.  Stopping
