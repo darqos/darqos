@@ -52,6 +52,7 @@ from darq.loop import QtEventLoop
 from darq.protocols import image as wire
 from darq.protocols.history import History
 from darq.protocols.lens import Close, Lens, Ready, Status, UseRequest, UseResponse
+from darq.ui.lens import MESSAGE_SHOWN, SCROLL_BARS, overlay, show_over
 
 pillow_heif.register_heif_opener()
 
@@ -66,9 +67,9 @@ TIMEOUT = 30.0
 # Seconds after starting to wait for a Use, before giving up and exiting.
 USE_TIMEOUT = 60.0
 
-# Milliseconds a new zoom, and a message, are shown over the image.
+# Milliseconds a new zoom is shown over the image (and a message, for
+# MESSAGE_SHOWN).
 ZOOM_SHOWN = 1500
-MESSAGE_SHOWN = 3000
 
 # The lens's dark colours, as the other lenses': the image on #2b2b2b,
 # the information panel, menus and dialogs on #323232, and slim
@@ -84,23 +85,11 @@ QTableWidget { color: #e0e0e0; background-color: #323232; gridline-color: #40404
                selection-background-color: #4a5f73; selection-color: #ffffff; }
 QHeaderView::section { color: #c0c0c0; background-color: #3a3a3a; border: none; padding: 4px; }
 QTableCornerButton::section { background-color: #3a3a3a; border: none; }
-QScrollBar:vertical { background: #2b2b2b; width: 12px; margin: 0; }
-QScrollBar:horizontal { background: #2b2b2b; height: 12px; margin: 0; }
-QScrollBar::handle:vertical { background: #555555; min-height: 24px; border-radius: 4px; margin: 2px; }
-QScrollBar::handle:horizontal { background: #555555; min-width: 24px; border-radius: 4px; margin: 2px; }
-QScrollBar::handle:hover { background: #6a6a6a; }
-QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
-QScrollBar::add-page, QScrollBar::sub-page { background: none; }
-QAbstractScrollArea::corner { background: #2b2b2b; }
 QMenu { color: #e0e0e0; background-color: #3a3a3a; border: 1px solid #505050; }
 QMenu::item:selected { background-color: #4a5f73; }
 QMenu::separator { height: 1px; background: #505050; margin: 4px 8px; }
 QToolTip { color: #e0e0e0; background-color: #404040; border: 1px solid #505050; }
-"""
-
-# How what's shown over the image looks.
-OVERLAY_STYLE = ("QLabel { background-color: rgba(0, 0, 0, 160); color: #e0e0e0; padding: 8px 16px;"
-                 " border-radius: 8px; font-size: %dpx; }")
+""" + SCROLL_BARS
 
 # Zoom factors, in device pixels per image pixel.
 ZOOMS = [1 / 16, 1 / 12, 1 / 8, 1 / 6, 1 / 4, 1 / 3, 1 / 2, 2 / 3, 1, 1.5, 2, 3, 4, 6, 8, 12, 16, 24, 32]
@@ -588,8 +577,8 @@ class ImageWindow(QWidget):
 
         # A new zoom, in its middle, and messages, at its foot, shown over
         # the image for a moment: there's no status line.
-        self.zoom_label, self.zoom_timer = self.overlay(28)
-        self.notice, self.notice_timer = self.overlay(16)
+        self.zoom_label, self.zoom_timer = overlay(self, 28)
+        self.notice, self.notice_timer = overlay(self, 16)
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
@@ -607,30 +596,11 @@ class ImageWindow(QWidget):
 
     # Showing
 
-    def overlay(self, size: int) -> tuple[QLabel, QtCore.QTimer]:
-        """Return a label to show over the image, and the timer that hides
-        it."""
-        label = QLabel(self)
-        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        label.setStyleSheet(OVERLAY_STYLE % size)
-        label.hide()
-        timer = QtCore.QTimer(self)
-        timer.setSingleShot(True)
-        timer.timeout.connect(label.hide)
-        return label, timer
-
     def show_over(self, label: QLabel, timer: QtCore.QTimer, text: str, shown: int, middle: bool):
         """Show text over the image, in its middle or at its foot, for a
         while (in milliseconds)."""
-        label.setText(text)
-        label.adjustSize()
         area = self.scroll_area.geometry() if self.scroll_area.isVisible() else self.empty.geometry()
-        label.setMaximumWidth(max(1, area.width() - 32))
-        y = area.y() + ((area.height() - label.height()) // 2 if middle else area.height() - label.height() - 16)
-        label.move(area.x() + (area.width() - label.width()) // 2, y)
-        label.show()
-        label.raise_()
-        timer.start(shown)
+        show_over(label, timer, text, area, shown, middle)
 
     def show_status(self, message: str):
         """Show a message over the image for a moment, or hide the one

@@ -14,6 +14,9 @@
 # darq.Server.attach), and its calls to the item and History are
 # synchronous, on queued reply ports.
 #
+# Its look is the image lens's (darq.ui.lens): slim dark scroll bars,
+# and messages shown over the text for a moment, with no status line.
+#
 # Editing keys follow Emacs (see BINDINGS, and F1 for help).
 
 import logging
@@ -30,6 +33,7 @@ from darq.protocols.history import History
 from darq.protocols.lens import Close, Lens, Ready, Status, UseRequest, UseResponse
 from darq.protocols.text import Status as TextStatus
 from darq.protocols.text import Text
+from darq.ui.lens import MESSAGE_SHOWN, SCROLL_BARS, overlay, show_over
 
 
 # History source for the events it records.
@@ -222,7 +226,7 @@ class LensEdit(QPlainTextEdit):
                            " color: #7bbbec;"
                            " border-style: none;"
                            " font-size: 18px;"
-                           "}")
+                           "}" + SCROLL_BARS)
 
         # Movement extends the selection from the mark, while it's set.
         self.mark_active = False
@@ -451,7 +455,8 @@ def help_text() -> str:
 
 
 class TextWindow(QWidget):
-    """A frameless window showing an item's text, with a status line.
+    """A frameless window showing an item's text, with messages shown
+    over it for a moment, and a badge while it's read only.
 
     Drag its margin to move it."""
 
@@ -469,13 +474,18 @@ class TextWindow(QWidget):
         self.resize(1024, 768)
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(50, 50, 50, 20)
+        layout.setContentsMargins(50, 50, 50, 50)
         self.edit = LensEdit(self)
         layout.addWidget(self.edit)
-        self.status = QLabel(self)
-        self.status.setStyleSheet("QLabel { color: #9a9a9a; font-size: 14px; }")
-        layout.addWidget(self.status)
         self.setLayout(layout)
+
+        # Messages, at the foot of the text, for a moment: there's no
+        # status line.  Being read only is a state, so it's a badge in
+        # the corner, for as long as it lasts.
+        self.notice, self.notice_timer = overlay(self, 16)
+        self.badge = QLabel("Read only", self)
+        self.badge.setStyleSheet("QLabel { color: #9a9a9a; font-size: 13px; }")
+        self.badge.hide()
 
         self.help = QLabel(help_text(), self)
         self.help.setStyleSheet("QLabel { background-color: rgba(20, 20, 20, 230); color: #e0e0e0;"
@@ -532,10 +542,29 @@ class TextWindow(QWidget):
             self.show_status("Read only: the item isn't answering")
             return
         self.edit.setReadOnly(read_only)
+        self.badge.setVisible(read_only)
+        self.place_badge()
         self.show_status(why or ("Read only" if read_only else ""))
 
     def show_status(self, message: str):
-        self.status.setText(message)
+        """Show a message over the text for a moment, or hide the one
+        shown, if it's empty."""
+        if not message:
+            self.notice.hide()
+            self.notice_timer.stop()
+            return
+        show_over(self.notice, self.notice_timer, message, self.edit.geometry(), MESSAGE_SHOWN, middle=False)
+
+    def place_badge(self):
+        """Put the read-only badge in the margin, below the text's
+        bottom right corner."""
+        self.badge.adjustSize()
+        area = self.edit.geometry()
+        self.badge.move(area.x() + area.width() - self.badge.width(), area.y() + area.height() + 16)
+
+    def resizeEvent(self, a0):
+        super().resizeEvent(a0)
+        self.place_badge()
 
     def toggle_help(self):
         if self.help.isVisible():

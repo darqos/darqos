@@ -364,7 +364,7 @@ def test_word_case_read_only(window):
     w.set_read_only(True)
     key(w, Qt.Key.Key_U, alt=True)
     assert (w.edit.toPlainText(), position(w)) == ("one", 0)
-    assert w.status.text() == "Read only"
+    assert w.notice.text() == "Read only"
 
 
 def test_undo(window):
@@ -387,7 +387,7 @@ def test_read_only(window):
     key(w, K.Key_K, ctrl=True)
     key(w, K.Key_Y, ctrl=True)
     assert client.replaces == []
-    assert w.status.text() == "Read only"
+    assert w.notice.text() == "Read only"
 
     # Movement still works.
     key(w, K.Key_E, ctrl=True)
@@ -400,12 +400,55 @@ def test_read_only(window):
     assert client.text == "abcx"
 
 
+def test_read_only_badge(window):
+    from PyQt6.QtCore import Qt
+    w, _, _ = window("abc")
+    assert not w.badge.isVisible()
+    key(w, Qt.Key.Key_X, ctrl=True)
+    key(w, Qt.Key.Key_Q, ctrl=True)
+    assert w.badge.isVisible() and w.badge.text() == "Read only"
+
+    # Below the text's bottom right corner, in the margin, wherever the
+    # window's resized to.
+    w.resize(800, 600)
+    area = w.edit.geometry()
+    assert w.badge.geometry().right() == area.right() and w.badge.y() > area.bottom()
+
+    key(w, Qt.Key.Key_X, ctrl=True)
+    key(w, Qt.Key.Key_Q, ctrl=True)
+    assert not w.badge.isVisible()
+
+
+def test_messages_pop_over(window):
+    from PyQt6.QtCore import Qt
+    w, _, _ = window("abc")
+    assert not w.notice.isVisible()
+    key(w, Qt.Key.Key_Space, ctrl=True)
+    assert w.notice.isVisible() and w.notice.text() == "Mark set"
+    assert w.notice_timer.isActive() and w.notice_timer.interval() == lens.MESSAGE_SHOWN
+
+    # Over the foot of the text, until its time's up, or it's cleared.
+    area = w.edit.geometry()
+    assert area.contains(w.notice.geometry())
+    w.notice_timer.timeout.emit()
+    assert not w.notice.isVisible()
+    w.show_status("Mark set")
+    w.show_status("")
+    assert not w.notice.isVisible() and not w.notice_timer.isActive()
+
+
+def test_dark_scroll_bars(window):
+    w, _, _ = window("abc")
+    assert "QScrollBar:vertical { background: #2b2b2b" in w.edit.styleSheet()
+    assert not hasattr(w, "status")
+
+
 def test_unknown_prefixed_key(window):
     from PyQt6.QtCore import Qt
     w, client, _ = window("abc")
     key(w, Qt.Key.Key_X, ctrl=True)
     key(w, Qt.Key.Key_Z, ctrl=True)
-    assert w.status.text() == "C-x: not a command"
+    assert w.notice.text() == "C-x: not a command"
     type_text(w, "x")
     assert client.text == "xabc"
 
@@ -415,7 +458,7 @@ def test_conflict_reloads(window):
     client.conflict_with = "other text"
     type_text(w, "x")
     assert w.document_text() == "other text"
-    assert w.status.text() == "Changed elsewhere: reloaded"
+    assert w.notice.text() == "Changed elsewhere: reloaded"
     assert client.replaces == []
 
     # And editing carries on from the reloaded text.
@@ -428,7 +471,7 @@ def test_failure_makes_it_read_only(window):
     client.dead = True
     type_text(w, "x")
     assert w.edit.isReadOnly()
-    assert w.status.text() == "Read only: the item isn't answering"
+    assert w.notice.text() == "Read only: the item isn't answering"
     w.set_read_only(False)
     assert w.edit.isReadOnly()
 
@@ -436,7 +479,7 @@ def test_failure_makes_it_read_only(window):
 def test_text_it_cannot_hold_is_read_only(window):
     w, _, _ = window("a b")
     assert w.edit.isReadOnly()
-    assert "can't edit" in w.status.text()
+    assert "can't edit" in w.notice.text()
 
 
 def test_non_breaking_space_is_kept(window):

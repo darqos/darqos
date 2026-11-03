@@ -5,7 +5,8 @@
 # development Terminal (tools/devterm): New's type list (darq.ui.types),
 # History's event browser (darq.ui.history), Search (darq.ui.search),
 # and the launcher that creates and uses items without blocking them
-# (darq.ui.launcher).
+# (darq.ui.launcher); and, for the lenses, their shared look
+# (darq.ui.lens).
 #
 # Their widgets talk to the window holding them through a Host: the
 # services it uses, its status line, and its launcher.

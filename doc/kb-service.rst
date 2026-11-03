@@ -12,8 +12,8 @@ else that's better described as assertions and relationships than as
 a blob (see :doc:`item`).
 
 The service, in ``services/kb``, is the start of an implementation of
-this design (see Implementation, below, and the Second Edition in
-``TODO.org``): it has the data model, storage, and protocol, but not
+this design (see Implementation, below, and the Second Edition plan,
+https://claude.ai/artifact/3KSAPtyZ54Ngq9j2whyRQp): it has the data model, storage, and protocol, but not
 yet queries.
 
 Data Model
@@ -181,8 +181,8 @@ deprecated.
 
 This is one-way.  Keeping the KB in step with its sources both ways
 (vCard files, CardDAV, JSContact, JMAP) needs what was last synced, to
-merge against, with conflicts kept for a person to resolve: see
-``TODO.org``.
+merge against, with conflicts kept for a person to resolve: see PIM
+synchronisation in the Second Edition plan (https://claude.ai/artifact/3KSAPtyZ54Ngq9j2whyRQp).
 
 An import must be repeatable, and share what's already in the KB: a
 re-import updates the entities it created before, rather than adding

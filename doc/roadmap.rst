@@ -124,7 +124,7 @@ System
   * Written in Python
   * Communicating using the system IPC
 
-* GUI
+* GUI  (DONE)
 
   * Wayland-based
 
@@ -165,10 +165,12 @@ Services
 
   * Key-value blob store
 
-* Metadata (moved to Third Edition, if it's needed at all: the
-  Knowledge Base may do instead, with statements such as *has tag*)
+* Metadata
 
-* Index
+  * Moved to Third Edition, if it's needed at all: the Knowledge Base
+    may do instead, with statements such as *has tag*)
+
+* Index  (DONE)
 
   * Submit text to for indexing
   * Storage in storage service?
@@ -192,7 +194,7 @@ Services
   * In-memory registry of type implementations
   * In-memory registry of type lenses
 
-* Terminal
+* Terminal (DONE)
 
   * Puts windows onto screen
   * Delivers keystrokes and mouse movements to window applications
@@ -222,7 +224,7 @@ Services
 
     * Create instances of installed types
 
-  * Search
+  * Search  (DONE)
 
     * Index
     * History
@@ -231,6 +233,7 @@ Services
 
     * Universal inbox
     * History timeline
+    * Moved to Second Edition
 
   * Clock (DONE)
 
@@ -250,7 +253,7 @@ Types
 
 * Type base class
 
-  * Installation operation
+  * Installation operation  (DONE)
 
     * Implementation stored on disc
     * Register with type service
@@ -277,22 +280,22 @@ Story
 * Boot device.
 * See login window.
 
-  * No need to deal with initial account creation, etc, yet.
-
-    * But, could do this via a firstboot script?
+  * First login will create a password.
 
 * Log in with password.
 
   * No need for user -- there's only one
   * Should allow shutdown / reboot from login screen
 
-    * That should be a function of the Terminal service, I think?
+    * That should be a function of the Terminal service.
+    * Implemented via hotkey Sys-b
 
 * Get initial UI
 
   * Blank screen(s)
 
     * Do we need some *firstrun* content?
+    * Not in this edition
 
   * System hotkeys:
 
@@ -327,6 +330,7 @@ Story
   * Ultimately, has to be a kernel function (syscall)
 
     * Yes.  Reboot and shutdown are both p-kernel syscalls.
+    * Screen lock is a Terminal service function.
 
 * Keyboard
 
@@ -343,45 +347,86 @@ Story
 Second Edition
 ~~~~~~~~~~~~~~
 
-Documents and books: fetch them by URL, catalogue them in the
-Knowledge Base, find them again with search, and read them; and a
-REPL.  Web browsing, with the HTML type and credentials, moved to Third
-Edition.
+First Edition allowed basic work on text documents, PIM entities, and
+images, with import from the host file system but no export ability.
+
+Key features of Second Edition are:
+
+* Consider and potentially prototype making the Knowledge Base the
+  univeral basis of the system.  Items will be specific KB entities
+  that have a Type Implementation, but their identity will be embedded
+  in the KB, and their properties and relationships defined there.
+
+* The first draft of the system's Events facility.  This is distinct
+  from History, and analogous to notifications in other operating
+  systems, but extended to support all asynchronous events as a
+  univeral inbox.
+
+* An initial prototype of the system REPL functionality.
+
+* The beginnings of interaction outside Darq, with Filesystem and URL
+  fetching support.
+
+Documents and books: fetch them by
+URL, catalogue them in the Knowledge Base, find them again with
+search, and read them; and a REPL.  Web browsing, with the HTML type
+and credentials, moved to Third Edition.
 
 Infrastructure
 
-* Nothing new
-
+* Manual trigger CI build of distribution file
+* Add a build number; expose it via p-kernel syscall
+  
 System
 
-* Host Platform
+* Test (and fix) integration points:
 
-  * Consider adding PinePhone?
+  * systemd units
+  * Logging
+  * logind session
+
+* DarqOS shutdown coordination
+
+  * Preparation notification
+  * Acceptance check
+  * Dependency ordering
 
 Services
 
-* Knowledge Base (largely done, ahead of time: see :doc:`kb-service`)
+* Knowledge Base
 
-  * Wikidata-like
-  * Key underlying service for a lot of the value-add types
+  * Added in First Edition largely to support PIM types
+  * Wikidata-style data model
+  * Potentially becoming the Key underlying service for all types
 
 * URL fetcher
 
   * HTTP, HTTPS, FTP, SFTP, FTPS, etc
-  * Not involved in WebSockets or WebRTC
+    * Does not do WebSockets or WebRTC
   * Caching / archiving
-  * Runtime object loader plugin
-  * Use curl?  Or CEF?
+  * Use curl?  Or CEF?  Or ... something else?
+  * Should have a route (at least) to HTTP/2 and HTTP/3 support, if
+    not already implemented
 
-* Indexer
+* Filesystem
 
-  * Building on First Edition's Index service
-  * Fetched documents, and the Knowledge Base's labels
-  * Searching and completions
+  * It's possible that supporting external file systems might be best
+    implemented as a service rather than, or in addition to, a type.
 
-Terminal
+* Terminal
 
-* REPL (moved from First Edition: see :doc:`repl`)
+  * Event inbox
+  * REPL
+
+* PIM Sync
+
+  * CalDAV / CardDAV sync with entities in Darq KB
+
+* Text
+
+  * Add search (and replace) functionality
+  * Lens should remember size and screen position between invocations
+
 
 Types
 
@@ -394,12 +439,14 @@ Types
     * https://github.com/Zain-Bin-Arshad/PDF-Viewer
     * https://github.com/pymupdf/PyMuPDF
 
-  * This might require some refactoring of the type/viewer design.
+* AsciiDoc
 
-    * ie. what's the right API for a PDF object?
-
-      * See discussion under Book object type
-
+  * View
+  * Edit
+  * This is likely to be the platform for all system documentation:
+    papers, books, man pages, online help.  This type should
+    facilitate self-hosting of the documentation chain.
+    
 * BookRecord
 
   * Could be for an eBook or a physical book
@@ -426,39 +473,65 @@ Types
       facets of the same thing, with a bunch of underlying converters
       to port the content over?
 
-Story
+* File
 
-This is provisional: Second Edition's story was web browsing, which
-moved to Third Edition with the HTML type (see Web Browsing, under
-Third Edition).
+  * Maybe?  As a part of the Filesystem support?
+
+* Internet Host
+
+  * Possible mechanism for supporting an SSH client, which is a
+    necessary part of the daily driver goal.
+  * This will likely be a prototype exploration exercise, rather than
+    a solid design implementation (or moreso than usual).
+
+
+Story
 
 * Boot
 * Login
-* Fetch a document
+* Fetch items
 
   * Open Search (S-space)
-  * Type in a PDF's URL and hit enter: it's fetched, kept, and shown
-    in the PDF viewer
-  * Save it as a book [How?]
+  * Type in a PDF's URL and hit enter: it's fetched, stored,
+    Item-ised, Historied, Indexed, and shown in the PDF viewer
+  * Close the viewer (S-x)
+
+  * Open Search (S-space)
+  * Type in a PDF's URL and hit enter: it's fetched, stored,
+    Item-ised, Historied, Indexed, and shown in the e-book viewer
 
     * Enter its metadata as prompted: a BookRecord, in the Knowledge
       Base, with its author and title
+    * How is the distinction made in the ingestion process between a
+      document and an ebook when they're both PDF?
 
-  * Close the viewer (S-x)
+* Search by content across types
 
-* Open search
+  * Open search (S-space)
 
-  * Enter a word or phrase from the document, or its title or author
+    * Enter a word or phrase from the document, or its title or author
+    * Should show in the result set
+    * Open it: it should load quickly, from what was cached, in the
+      PDF viewer
 
-    * Should show the book in the result set
-    * Open it: it should load quickly, from what was kept, in a
-      book-oriented view
+  * Open search (S-space)
 
+    * Enter a word or phrase from the e-book, or its title or author
+    * Should show in the result set
+    * Open it: it should load quickly, from what was cached, in the
+      e-book viewer
+      
 * Open the REPL (S-s)
 
   * List the books by an author, with a Knowledge Base query
+  * Open the one with the highest word count
 
+* Filesystem
+* SSH
+  
 * Lock
+
+  
 
 Third Edition
 ~~~~~~~~~~~~~

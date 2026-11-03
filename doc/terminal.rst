@@ -603,7 +603,8 @@ make a second item.  If it fails, the error is shown in the panel, or,
 if it's been closed, in a notice, which any key closes.
 
 Asynchronous generated clients, with replies posted to the event loop,
-would do without the threads: see ``TODO.org``.
+would do without the threads: see the Second Edition plan
+(https://claude.ai/artifact/3KSAPtyZ54Ngq9j2whyRQp).
 
 It communicates using the system IPC with the p-kernel and the other
 services, to populate the New and History panels, and to check the

@@ -158,8 +158,13 @@ its window is closed, or it's asked to `Close`.
 
 * The window is frameless, with a 50 pixel margin: dragging the margin
   moves it (the compositor does the move), and its context menu has
-  Full screen, Read only, Help, and Close.  A status line under the
-  text says why it's read only, and the like.
+  Full screen, Read only, Help, and Close.  There's no status line:
+  messages, such as why it's become read only, *Mark set*, or that
+  the text was changed elsewhere, show over the foot of the text for
+  three seconds, as the image lens's do (``darq.ui.lens``).  While it's
+  read only, a dim *Read only* badge sits in the margin, below the
+  text's bottom right corner.  Its scroll bars are slim and dark, as
+  the image lens's are.
 * Its widget is a `QPlainTextEdit`.  Each change is sent to the item
   as it's made, as one `Replace` of the part that differs from the
   item's text, which the lens keeps a copy of, so positions are in
@@ -190,7 +195,7 @@ its window is closed, or it's asked to `Close`.
 Not yet:
 
 * A kill ring, and consecutive kills appending to the last.
-* Paragraph movement, and a subtle scrollbar.
+* Paragraph movement.
 * A rectangular, graphical selection, and copying the item identifier.
 * A usage document, from the help.
 * Saving the cursor and window position, in the Metadata service.
