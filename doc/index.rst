@@ -15,6 +15,7 @@ Introduction
 ************************************************************************
      
 .. include:: overview.rst
+.. include:: guide.rst
 .. include:: distribution.rst
 .. include:: bootstrap.rst
 .. include:: logging.rst

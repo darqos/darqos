@@ -10,7 +10,7 @@
 Description=DarqOS p-Kernel
 After=systemd-user-sessions.service plymouth-quit-wait.service getty@tty1.service
 Conflicts=getty@tty1.service
-# A broken install stops restarting, leaving tty1 to its getty.
+# A broken install stops restarting: the way in is then SSH.
 StartLimitIntervalSec=60
 StartLimitBurst=5
 

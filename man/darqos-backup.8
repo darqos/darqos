@@ -28,8 +28,12 @@ are removed, and, if
 is set, they're copied there with
 .BR "rsync \-a \-\-delete" .
 .PP
-To restore one, stop DarqOS, and copy its files into the run
-directory, owned by
+To restore one, stop DarqOS, remove the run directory's
+.I *.sqlite-wal
+and
+.I *.sqlite-shm
+files (or they'd be replayed over the restored databases), and copy
+the snapshot's files into it, owned by
 .BR darq .
 .SH CONFIGURATION
 .I /etc/darqos/backup.conf

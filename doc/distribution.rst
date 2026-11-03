@@ -79,7 +79,9 @@ directory, or ``host:directory`` over SSH, with root's key), and how
 many to keep, ``KEEP``.
 
 Restoring is copying a snapshot's files back into ``/darq/run``, with
-DarqOS stopped, owned by ``darq``.
+DarqOS stopped, owned by ``darq``, having removed the databases'
+write-ahead logs (``*.sqlite-wal`` and ``*.sqlite-shm``): see
+:doc:`guide`.
 
 Image Layout
 ------------

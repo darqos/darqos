@@ -368,7 +368,8 @@ unit would create the runtime directory itself (``RuntimeDirectory=``).
 Switching only changes units and groups, not code.
 
 The unit restarts the p-kernel if it fails, five times a minute at
-most: after that, tty1 is left to its getty.  Stopping the unit shuts
+most: after that, it's left stopped, and the way in is SSH.  Stopping
+the unit shuts
 DarqOS down, as Ctrl-C does: systemd sends ``SIGTERM`` to the p-kernel
 alone (``KillMode=mixed``), which shuts its processes down.
 

@@ -44,8 +44,10 @@ Infrastructure
 * Repository (DONE)
 * Project structure (DONE)
 * CI (DONE)
-* Manual stack
+* Manual stack  (DONE)
 
+  * reStructuredText, built with Sphinx, and roff manual pages for
+    the Unix-level programs
   * All system documentation:
     
     * Long-form guide and reference documents
@@ -68,13 +70,18 @@ Infrastructure
     * Texinfo?
     * mdoc/mm/mom (roff) ?
 
-* Release process
+* Release process  (DONE)
 
   * Distribution formats
 
     * tarball and/or git clone?
+    * A tarball, made by ``mkdist``, and installed by ``dui`` and
+      ``install`` (see :doc:`distribution`)
 
   * Testing
+
+    * pytest, for the code, and an acceptance test: the Story, from
+      the golden distribution on a fresh OS install
 
 System
 
@@ -145,11 +152,15 @@ System
 
         * It appears to support Wayland and PyQt, so ... tentatively, yes.
 
-* Bootstrap
+* Bootstrap  (DONE)
 
   * Untar / clone source into `/darq/dist`
   * Run install script, copying stuff into place
   * Run boot script, starting up Unix processes
+
+    * The p-kernel's systemd unit, the ``darq`` user's login session
+      on tty1, with ``darqos.target`` the default boot (see
+      :doc:`bootstrap`)
 
     * It'd be good to have a clean shutdown, so processes should
       register themselves with the runtime once they're up, so they
