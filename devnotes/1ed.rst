@@ -189,3 +189,43 @@ replace the initial note, but be added to its description.
   request port with the Terminal?
 
   (2026-10-29)
+
+* The text editor scroll bar should be dark, like the image viewer
+  one.
+
+  (2026-11-03)
+
+* The text editor status bar thing should be converted to a pop-over
+  panel like the zoom report in the image viewer.
+
+  (2026-11-03)
+
+* The text editor could really use a C-s to search for a string.  No
+  need for regex or anything yet.
+
+  (2026-11-03)
+
+* It'd be really nice if windows (well, items?) remembered their
+  lens' screen position when re-opened.
+
+  (2026-11-03)
+
+* The lockscreen font ... well, I'd like it a little thinner, I think.
+  I like AsciidocFX's HTML rendering.  It's using OpenSans 300 weight
+  with -0.1em spacing, which looks nice.  I assume this is just CSS?
+
+  I think this applies to all the layer windows?
+
+  (2026-11-04)
+
+* Should shutdown, reboot, and lock all be on one pop-over and hotkey,
+  rather then split between S-b and S-l?
+
+  (2025-11-04)
+
+* Do I want a confirmation for shutdown and reboot?  Maybe just repeat
+  the same key again?
+
+  (2026-11-04)
+
+* 
