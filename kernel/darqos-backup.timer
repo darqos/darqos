@@ -1,0 +1,16 @@
+# DarqOS
+# Copyright (C) 2026, David Arnold
+
+# Back up DarqOS daily (see darqos-backup(8)): a run missed while the
+# machine was off is made at the next boot.
+
+[Unit]
+Description=Daily DarqOS backup
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

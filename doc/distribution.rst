@@ -1,29 +1,85 @@
 Installation
 ============
 
-DarqOS supports two methods of distribution:
+DarqOS is distributed as a tarball, made by ``mkdist``, and installed
+on a Debian 13 *trixie* AMD64 machine (from the netinst image,
+https://www.debian.org/download), with no desktop: DarqOS is the
+machine's session.
 
-* tarball
-* git clone
+1st Edition uses the Debian 13 packages: Python 3.13, and wlroots 0.18
+for the compositor.
 
-In either case, the host OS filesystem will contain the distributed image,
-a typical Unix-style tree of files.
+Making a Distribution
+---------------------
 
-The host OS should be Debian 13 *trixie* AMD64 netinst
-(https://www.debian.org/download).
+``mkdist``, at the top of the tree, makes
+``dist/darqos-1ed-snapYYYYMMDD.tar.gz`` (or in the directory given):
+the files git tracks in the directories that are installed (``bin``,
+``darq``, ``kernel``, ``lib``, ``services``, ``types``, ``lenses``,
+``tools``, ``compositor``, ``man``, and ``requirements.txt``), as they
+are in the working tree, under ``darq/``, owned by root.  Its
+``VERSION`` file names the commit, and the date.
 
-1st Edition requires the Debian 13 packages: Python 3.13, and wlroots
-0.18 for the compositor.
+Files git doesn't track are left out, with a warning, and uncommitted
+changes to what's distributed make a ``-dirty`` version: a release is
+made from a commit.
 
-In all cases, the Darq distribution should be unpacked (or cloned)
-into `/darq/dist`.  The `/darq/dist/darq/bin/install` script should then
-be run (as `root`) to install or update the local installation.  This will
-install any required host OS packages, configure the system to run
-Darq, and then reboot.
+Installing
+----------
 
-Following the initial reboot, the *firstboot* tool will run, allowing
-the system owner to configure the system ready for ongoing use.
-Subsequent updates will boot directly into Darq.
+As root, ``dui`` (see ``dui(8)``) installs from a tarball, given as a
+path, or downloaded:
+
+.. code-block:: sh
+
+   bin/dui darqos-1ed-snap20261103.tar.gz
+
+It unpacks it into ``/darq/dist``, runs its ``bin/install`` (see
+``install(8)``), and removes it.  The same command installs and
+updates.  Install:
+
+1. stops DarqOS, if it's running;
+2. installs the Debian packages it needs: to build the compositor, the
+   libraries Qt needs, ``sqlite3`` and ``rsync``;
+3. creates the ``darq`` user;
+4. copies the code into ``/darq``, as source, owned by root, with
+   ``rsync --delete``, so what's gone from the distribution goes; and
+   the manual pages, by section;
+5. builds the compositor, in ``/darq/compositor/build``;
+6. makes, or updates, the Python environment, ``/darq/env``, from
+   ``requirements.txt`` (PyQt6 included);
+7. creates the run directory, ``/darq/run``, owned by ``darq``, mode
+   0700;
+8. installs the systemd units, and the backup configuration, if there
+   isn't one;
+9. enables the daily backup; and
+10. starts DarqOS again, if it was running.
+
+It logs to ``/var/log/darqos``.
+
+Installing doesn't make DarqOS start at boot: once it's been tried
+(``systemctl start darqos-pkernel``), ``dui --boot`` (or ``install
+--boot``) enables its unit and makes ``darqos.target`` the default
+boot target.  The p-kernel's unit is the ``darq`` user's login
+session on tty1 (see :doc:`terminal`, "Session and Login").
+
+Backups
+-------
+
+``darqos-backup.timer`` runs ``/darq/bin/darqos-backup`` daily (see
+``darqos-backup(8)``), and at the next boot after a missed run.  It
+takes a snapshot of the run directory into ``/var/backups/darqos``,
+named by its time: the databases with SQLite's online backup, so
+DarqOS can go on running, and the other files as they are.  It keeps
+the last seven, and then copies them, with ``rsync --delete``, to the
+backup destination, if there is one.
+
+``/etc/darqos/backup.conf`` sets the destination, ``BACKUP_DEST`` (a
+directory, or ``host:directory`` over SSH, with root's key), and how
+many to keep, ``KEEP``.
+
+Restoring is copying a snapshot's files back into ``/darq/run``, with
+DarqOS stopped, owned by ``darq``.
 
 Image Layout
 ------------
@@ -38,18 +94,26 @@ Image Layout
 
 * `/darq/dist`
 
-  * Directory containing the distributed files.  This can be either a
-    snapshot from a tarball, or a `git clone` of the source
-    repository.  This area is not used at runtime, but instead must be
-    explicitly *installed* to copy any updated components to their
-    runtime locations.
+  * The unpacked distribution, while it's being installed.  It isn't
+    used at runtime: it's *installed*, which copies its files to their
+    runtime locations, and then removed.
+
+* `/darq/VERSION`
+
+  * The installed distribution's commit and date.
+
+* `/darq/darq`
+
+  * The DarqOS Python package, as source: the p-kernel's launcher puts
+    `/darq` on `PYTHONPATH`.
 
 * `/darq/kernel`
 
-  * The p-kernel server implementation, and the Python loader
-    (`pyloader`) it runs for each process
-  * The p-kernel's systemd units, linked into systemd by the install
-    script
+  * The p-kernel server implementation, its launcher
+    (`darqos-pkernel`), and the Python loader (`pyloader`) it runs for
+    each process
+  * The systemd units, which install copies into
+    `/etc/systemd/system`
 
 * `/darq/services`
 
@@ -71,14 +135,18 @@ Image Layout
 
   * User applications
 
+* `/darq/compositor`
+
+  * The compositor's source, and its build, in `build/`: the Terminal
+    service starts it as a Linux child process.
+
 * `/darq/bin`
 
   * System scripts, or other Unix programs needed to support the
     operation of the system.  These items should be largely, if not
     totally, invisible from within Darq itself.
-  * Includes the DIDL tools (`didlc` and `didlpygen`), and the
-    compositor, which the Terminal service starts as a Linux child
-    process.
+  * Includes the DIDL tools (`didlc` and `didlpygen`), `dui`,
+    `install`, and the backup, `darqos-backup`.
 
 * `/darq/lib/didl`
 
@@ -94,9 +162,8 @@ Image Layout
 * `/darq/env`
 
   * Python virtual environment
-  * Includes all installed dependencies
-  * Install process will update this using the requirements
-    file from the distribution.
+  * Includes all installed dependencies, from the distribution's
+    `requirements.txt`
 
 * `/darq/local`
 
@@ -108,23 +175,27 @@ Image Layout
   * Home for files that are modified at runtime by the installation.
     This will notably include the SQLite databases used by the various
     services, kernel configuration, the p-kernel's boot vector, etc.
+  * Owned by the `darq` user, and only it may read it.
   * In a development tree, the `DARQ_RUN` environment variable points
     the p-kernel at `./run` instead; spawned processes find it in
     `DARQ_RUN` too.
-  * This directory will *not* be simply overwritten during an upgrade,
-    but instead, will be processed by the install script to update all
-    storage as required by the new version.
+  * This directory isn't changed by an update.  Later, the install
+    script will migrate its storage as required by the new version.
 
 * Some items will be installed into the Linux environment:
 
-  * The `darq` user, created by `dui`
-  * systemd unit files, for the p-kernel only: it spawns the services.
-    Its unit is also the `darq` user's login session on tty1, so the
-    compositor gets its seat from logind, and it replaces the getty
-    there.
-  * PAM configuration for that session, if it uses its own PAM
+  * The `darq` user, created by install
+  * systemd unit files, in `/etc/systemd/system`: the p-kernel's,
+    `darqos-pkernel.service`, which spawns the services, and
+    `darqos.target`; and the backup's, `darqos-backup.service` and
+    `darqos-backup.timer`.  The p-kernel's unit is also the `darq`
+    user's login session on tty1, so the compositor gets its seat from
+    logind, and it replaces the getty there.
+  * Later, PAM configuration for that session, if it uses its own PAM
     service rather than `login`
-  * `/etc` configuration files (as altered by Darq)
+  * The backup configuration, `/etc/darqos/backup.conf`
+  * The backups, in `/var/backups/darqos`, and install's logs, in
+    `/var/log/darqos`
 
 * Some items are created by the host OS at runtime, not installed:
 

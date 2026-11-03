@@ -344,8 +344,9 @@ provided by logind (``systemd-logind``), through libseat, which
 wlroots uses.
 
 logind gives devices to processes in an active login session, so the
-p-kernel's systemd unit is a login session: it runs as the ``darq``
-user, with ``PAMName=``, ``TTYPath=/dev/tty1``, and
+p-kernel's systemd unit, ``kernel/darqos-pkernel.service``, is a login
+session: it runs as the ``darq`` user, with ``PAMName=login`` (the
+stock PAM stack), ``TTYPath=/dev/tty1``, and
 ``Conflicts=getty@tty1.service``.  The p-kernel, the Terminal it
 spawns, and the compositor the Terminal starts, all inherit that
 session.  logind also provides:
@@ -366,8 +367,30 @@ seatd is the fallback, if a PAM session turns out to be awkward: the
 unit would create the runtime directory itself (``RuntimeDirectory=``).
 Switching only changes units and groups, not code.
 
-Until the session is set up, the p-kernel runs as root, and so does
-the compositor, using libseat's built-in backend.
+The unit restarts the p-kernel if it fails, five times a minute at
+most: after that, tty1 is left to its getty.  Stopping the unit shuts
+DarqOS down, as Ctrl-C does: systemd sends ``SIGTERM`` to the p-kernel
+alone (``KillMode=mixed``), which shuts its processes down.
+
+The unit sets ``DARQ_MACHINE=1``: the p-kernel is the machine's
+session, so a shutdown asked for in DarqOS (*Sys-b*, or the
+development Terminal's) powers the machine off, and a reboot reboots
+it, once every process has exited.  It asks systemd
+(``systemctl poweroff`` or ``reboot``), through logind, which polkit
+allows the active local session.  If that's refused, it's logged, and
+the p-kernel exits, or restarts itself, as it does without
+``DARQ_MACHINE``, in a development tree.  Its own reboot after the
+Terminal fails stays a restart of the p-kernel, and being stopped
+doesn't power the machine off.
+
+``install --boot`` makes ``darqos.target`` the default boot target (see
+:doc:`distribution`): no other desktop is installed.  There's no
+virtual terminal switching: SSH, or booting to single-user mode, are
+the ways in if DarqOS doesn't start.
+
+Not yet: a PAM service of DarqOS's own (``/etc/pam.d/darqos``, with
+only ``pam_systemd`` and ``pam_env``), which would leave out ``login``'s
+motd and lastlog.
 
 Keyboard
 ~~~~~~~~

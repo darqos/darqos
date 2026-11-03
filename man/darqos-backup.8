@@ -1,0 +1,82 @@
+.\" darqos
+.\" Copyright (C) 2026 David Arnold
+.TH DARQOS-BACKUP 8 2026-11-03 DarqOS "DarqOS System Manager's Manual"
+.SH NAME
+darqos-backup \- back up DarqOS's run directory
+.SH SYNOPSIS
+.B /darq/bin/darqos-backup
+.SH DESCRIPTION
+.B darqos-backup
+takes a snapshot of DarqOS's run directory, keeps the last few, and
+copies them to the backup destination, if there's one.
+It's run daily, as root, by
+.IR darqos-backup.timer ,
+and at the next boot after a run that was missed.
+.PP
+A snapshot is a directory in
+.BR $SNAPSHOTS ,
+named by its time
+.RI ( YYYYMMDD-HHMMSS ):
+each database copied with SQLite's online backup
+.RB ( sqlite3 " .backup" ),
+so a running DarqOS can go on writing to it, and the other files as
+they are, without the databases' write-ahead logs.
+Then all but the last
+.B $KEEP
+are removed, and, if
+.B $BACKUP_DEST
+is set, they're copied there with
+.BR "rsync \-a \-\-delete" .
+.PP
+To restore one, stop DarqOS, and copy its files into the run
+directory, owned by
+.BR darq .
+.SH CONFIGURATION
+.I /etc/darqos/backup.conf
+is read as shell assignments.
+.BR install (8)
+creates it, and leaves it alone after.
+.TP
+.B BACKUP_DEST
+Where snapshots are copied: a directory, or
+.IB host : directory
+over SSH, with root's key.
+Empty, the default, they're only kept locally.
+.TP
+.B KEEP
+How many snapshots to keep.
+Default: 7.
+.TP
+.B SNAPSHOTS
+Where they're kept.
+Default:
+.IR /var/backups/darqos .
+.TP
+.B RUN_DIR
+What's backed up.
+Default:
+.IR /darq/run .
+.SH ENVIRONMENT
+.TP
+.B DARQOS_BACKUP_CONF
+The configuration file, if not
+.IR /etc/darqos/backup.conf .
+.SH FILES
+.TP
+.I /var/backups/darqos
+The snapshots, mode 0700.
+.TP
+.I /darq/kernel/darqos-backup.service
+.TQ
+.I /darq/kernel/darqos-backup.timer
+Its
+.BR systemd (1)
+units, installed into
+.IR /etc/systemd/system .
+.SH EXIT STATUS
+0 if the snapshot was taken and copied; otherwise non-zero, with the
+partial snapshot removed at the next run.
+.SH SEE ALSO
+.BR install (8),
+.BR rsync (1),
+.BR sqlite3 (1)

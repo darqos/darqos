@@ -43,11 +43,13 @@ Bootstrap
       `/darq/dist/darq/bin/install` script to copy into `/darq` and
       activate
     * Clean `/darq/dist` once installed
-    * Consider using eg. `rsync` to optimise this process later.
+    * The install copies with `rsync`, removing what's gone
 
 * Startup
 
-  * Standard Linux systemd boot to multi-user target
+  * Standard Linux systemd boot, to `darqos.target` (the default
+    target, once installed with `install --boot`), which requires the
+    multi-user target
   * p-Kernel
 
     * p-kernel systemd unit is automatically started, as the `darq`
@@ -58,7 +60,8 @@ Bootstrap
       which registers the installed types and lenses and exits.  They're
       started at once: each waits, with a blocking name lookup, for the
       services it uses.
-    * Until the session is set up, the p-kernel runs as root
+    * As the machine's session (`DARQ_MACHINE`), a shutdown or reboot
+      asked for in DarqOS powers off or reboots the machine
 
   * Storage
 

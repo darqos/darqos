@@ -122,6 +122,45 @@ def terminal_enabled() -> bool:
     return enabled("DARQ_TERMINAL", default=True)
 
 
+# Set (to anything but 0) when the p-kernel is the machine's session, as
+# its systemd unit does: then a shutdown or reboot that's asked for
+# powers off or reboots the machine, once every process has exited.
+# Otherwise, as in a development tree, the p-kernel just exits, or
+# restarts itself.
+MACHINE = "DARQ_MACHINE"
+
+# Powering off or rebooting the machine, through logind (which polkit
+# allows the active local session), without asking for a password.
+POWER_COMMAND = ("systemctl", "--no-ask-password")
+
+
+def power(action: str, run=subprocess.run) -> bool:
+    """Power off ("poweroff") or reboot ("reboot") the machine.  Return
+    True if systemd accepted it, or log why not and return False."""
+    logging.info(f"Asking systemd to {action} the machine.")
+    try:
+        result = run([*POWER_COMMAND, action], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as e:
+        logging.error(f"Can't {action} the machine: {e!r}")
+        return False
+    if result.returncode != 0:
+        logging.error(f"Can't {action} the machine: {result.stderr.strip() or result.returncode}")
+        return False
+    return True
+
+
+def finish(service: "PseudoKernel", power=power) -> int:
+    """After the event loop ends: power off or reboot the machine, if
+    that was asked for; or restart the p-kernel, for a reboot; or return
+    the exit status."""
+    action = service.power_action()
+    if action is not None and power(action):
+        return 0
+    if service.reboot_requested():
+        service.restart()
+    return 1 if service.failed() else 0
+
+
 class KernelProcessStatus(IntEnum):
     """Process statuses."""
 
@@ -677,6 +716,11 @@ class PseudoKernel(SocketListener, TimerListener):
         self._stopping: bool = False
         self._reboot: bool = False
 
+        # What the machine should do afterwards, if a process asked for
+        # the shutdown ("poweroff") or reboot ("reboot"): not when the
+        # p-kernel shuts down or reboots itself, or is stopped.
+        self._requested: str | None = None
+
         # The Terminal, while it's running, and when it was started; and
         # whether the p-kernel is shutting down because it's broken.
         self._terminal: KernelProcessState | None = None
@@ -1034,10 +1078,14 @@ class PseudoKernel(SocketListener, TimerListener):
 
     def handle_reboot(self, process: KernelProcessState, message: pk.Reboot):
         if self.may_shut_down(process, "reboot"):
+            if not self._stopping:
+                self._requested = "reboot"
             self.begin_shutdown(reboot=True)
 
     def handle_shutdown(self, process: KernelProcessState, message: pk.Shutdown):
         if self.may_shut_down(process, "shutdown"):
+            if not self._stopping:
+                self._requested = "poweroff"
             self.begin_shutdown(reboot=False)
 
     @staticmethod
@@ -1125,6 +1173,13 @@ class PseudoKernel(SocketListener, TimerListener):
     def reboot_requested(self) -> bool:
         """Return True if the p-kernel should restart after its event loop ends."""
         return self._reboot
+
+    def power_action(self) -> str | None:
+        """Return what the machine should do after the event loop ends:
+        "poweroff" or "reboot", if a process asked for a shutdown or
+        reboot and the p-kernel is the machine's session (DARQ_MACHINE);
+        otherwise None."""
+        return self._requested if enabled(MACHINE) else None
 
     def restart(self):
         """Replace this process with a new p-kernel.
@@ -2167,6 +2222,10 @@ if __name__ == "__main__":
 
     logging.info("Starting p-kernel.")
 
+    # Stopping it, as systemd does (with SIGTERM), shuts it down, as
+    # Ctrl-C does.
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
+
     # Create p-Kernel.
     service = PseudoKernel()
 
@@ -2176,8 +2235,6 @@ if __name__ == "__main__":
     # Run the event loop, until shutdown.
     service.run()
 
-    if service.reboot_requested():
-        service.restart()
-
+    status = finish(service)
     logging.info("Exiting p-Kernel.")
-    sys.exit(1 if service.failed() else 0)
+    sys.exit(status)

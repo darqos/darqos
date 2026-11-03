@@ -1,16 +1,20 @@
 .\" darqos
 .\" Copyright (C) 2026 David Arnold
-.TH DUI 8 2026-10-25 DarqOS "DarqOS System Manager's Manual"
+.TH DUI 8 2026-11-03 DarqOS "DarqOS System Manager's Manual"
 .SH NAME
-dui \- download and install or update DarqOS
+dui \- install or update DarqOS from a distribution tarball
 .SH SYNOPSIS
 .B dui
+.RB [ \-\-boot ]
+.RI [ tarball ]
 .SH DESCRIPTION
 .B dui
-(DarqOS Updater/Installer) fetches a DarqOS distribution tarball and
-runs the
-.BR install (8)
-script it contains.
+(DarqOS Updater/Installer) installs DarqOS from a distribution tarball
+made by
+.BR mkdist :
+the
+.I tarball
+given, or the latest, downloaded.
 It is used both for the first install on a host and for later
 updates.
 It must be run as root.
@@ -18,38 +22,31 @@ It must be run as root.
 .B dui
 performs these steps, stopping with an error if any fails:
 .IP 1. 4
-Create the
-.B $DARQ_USER
-account, if it doesn't exist.
-.IP 2.
-Create
-.BR $DARQ ,
-if it doesn't exist.
-.IP 3.
-Remove any existing
-.BR $DIST ,
-and create it again, empty, owned by
-.BR $DARQ_USER .
-.IP 4.
-Download
+Without a
+.IR tarball ,
+download
 .B $DIST_BASE/$DIST_FILE
 into
 .I /tmp
 with
 .BR wget (1).
-.IP 5.
-Unpack the tarball into
+.IP 2.
+Remove any existing
 .BR $DIST ,
-and give
-.B $DARQ_USER
-ownership of everything under
-.BR $DARQ .
-.IP 6.
+and unpack the tarball into it, owned by root.
+.IP 3.
 Run
-.BR $DIST/darq/bin/install .
+.BR $DIST/darq/bin/install ,
+passing it
+.BR \-\-boot .
+.IP 4.
+Remove
+.BR $DIST .
 .SH OPTIONS
-None.
-Settings are taken from the environment.
+.TP
+.B \-\-boot
+Make DarqOS the machine's default boot: see
+.BR install (8).
 .SH ENVIRONMENT
 .TP
 .B DARQ
@@ -71,11 +68,6 @@ Default:
 URL of the directory to download it from.
 Default:
 .IR https://www.0x1.org/d/darq .
-.TP
-.B DARQ_USER
-Account that owns the installed files.
-Default:
-.IR darq .
 .SH FILES
 .TP
 .BI /tmp/ DIST_FILE
@@ -83,25 +75,15 @@ The downloaded tarball.
 It is not removed afterwards.
 .TP
 .I $DIST/darq/bin/install
-The install script run in the last step.
+The install script run.
 .SH EXIT STATUS
-0 if the install script completed; 1 if an earlier step failed.
+0 if it installed; 1 if a step, or the install, failed; 2 for a bad
+option.
 .SH DIAGNOSTICS
 Progress is written to standard output as lines starting
 .RB \(lq Ok: \(rq,
 and errors to standard error as lines starting
 .RB \(lq Error: \(rq.
-.SH BUGS
-Any existing
-.B $DIST
-is deleted before the download is attempted.
-.PP
-The exit status of the install script is not checked.
-.PP
-Only tarballs built with the current
-.B mkdist
-can be installed: older ones keep the install script under
-.IR darq/sys .
 .SH SEE ALSO
 .BR install (8),
 .BR wget (1)

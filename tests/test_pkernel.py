@@ -2315,6 +2315,113 @@ def test_reboot_requested(pkernel):
     assert pkernel.reboot_requested()
 
 
+################################################################
+# Powering off and rebooting the machine (DARQ_MACHINE)
+################################################################
+
+@pytest.mark.parametrize("message, action", [(pk.Shutdown(), "poweroff"), (pk.Reboot(), "reboot")])
+def test_requested_power_action(pkernel, monkeypatch, message, action):
+    process, _ = add_running_process(pkernel, 1)
+    send_to_kernel(pkernel, process, message)
+    pkernel.handle_disconnect(process)
+
+    # Only as the machine's session.
+    monkeypatch.delenv("DARQ_MACHINE", raising=False)
+    assert pkernel.power_action() is None
+    monkeypatch.setenv("DARQ_MACHINE", "1")
+    assert pkernel.power_action() == action
+
+
+@pytest.mark.parametrize("quickly, reboot", [(False, True), (True, False)])
+def test_own_shutdowns_dont_power_off(pkernel, monkeypatch, quickly, reboot):
+    # The p-kernel's reboot after the Terminal fails, or its shutdown
+    # once it keeps failing, aren't the machine's; nor is being stopped.
+    monkeypatch.setenv("DARQ_MACHINE", "1")
+    monkeypatch.setenv(pkernel.module.TERMINAL_FAILURES, str(pkernel.module.MAX_TERMINAL_FAILURES))
+    pkernel.terminal_failed(quickly=quickly)
+    assert pkernel.reboot_requested() == reboot
+    assert pkernel.power_action() is None
+
+
+def test_stopping_doesnt_power_off(pkernel, monkeypatch):
+    monkeypatch.setenv("DARQ_MACHINE", "1")
+    pkernel.begin_shutdown(reboot=False)
+    process, _ = add_running_process(pkernel, 1)
+    send_to_kernel(pkernel, process, pk.Shutdown())
+    assert pkernel.power_action() is None
+
+
+class Finished:
+    """A p-kernel whose event loop has ended."""
+
+    def __init__(self, action=None, reboot=False, failed=False):
+        self.action, self.reboot, self.has_failed = action, reboot, failed
+        self.restarted = False
+
+    def power_action(self):
+        return self.action
+
+    def reboot_requested(self):
+        return self.reboot
+
+    def failed(self):
+        return self.has_failed
+
+    def restart(self):
+        self.restarted = True
+
+
+def test_finish(pkernel):
+    finish = pkernel.module.finish
+    powered = []
+
+    def power(action):
+        powered.append(action)
+        return True
+
+    # As the machine's session, it powers off or reboots the machine.
+    assert finish(Finished("poweroff"), power) == 0
+    service = Finished("reboot", reboot=True)
+    assert finish(service, power) == 0
+    assert powered == ["poweroff", "reboot"] and not service.restarted
+
+    # If that's refused, it does what it'd do otherwise.
+    service = Finished("reboot", reboot=True)
+    assert finish(service, lambda action: False) == 0
+    assert service.restarted
+
+    # Otherwise, it restarts itself, or exits.
+    service = Finished(reboot=True)
+    finish(service, power)
+    assert service.restarted
+    assert finish(Finished(failed=True), power) == 1
+    assert finish(Finished(), power) == 0
+    assert powered == ["poweroff", "reboot"]
+
+
+def test_power(pkernel, caplog):
+    power = pkernel.module.power
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    assert power("poweroff", run)
+    assert commands == [["systemctl", "--no-ask-password", "poweroff"]]
+
+    def refused(command, **kwargs):
+        return subprocess.CompletedProcess(command, 1, "", "Access denied")
+
+    assert not power("reboot", refused)
+    assert "Can't reboot the machine: Access denied" in caplog.text
+
+    def missing(command, **kwargs):
+        raise FileNotFoundError("systemctl")
+
+    assert not power("poweroff", missing)
+
+
 def test_restart_replaces_process(pkernel, monkeypatch):
     calls = []
     monkeypatch.setattr(pkernel.module.os, "execv", lambda path, argv: calls.append((path, argv)))

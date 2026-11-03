@@ -1,0 +1,16 @@
+# DarqOS
+# Copyright (C) 2026, David Arnold
+
+# A snapshot of the run directory, copied to the backup destination (see
+# darqos-backup(8)): started daily by darqos-backup.timer.
+
+[Unit]
+Description=DarqOS backup
+After=local-fs.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/darq/bin/darqos-backup
+Nice=10
+IOSchedulingClass=idle

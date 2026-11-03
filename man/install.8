@@ -1,110 +1,166 @@
 .\" darqos
 .\" Copyright (C) 2026 David Arnold
-.TH INSTALL 8 2026-10-25 DarqOS "DarqOS System Manager's Manual"
+.TH INSTALL 8 2026-11-03 DarqOS "DarqOS System Manager's Manual"
 .SH NAME
-install \- install an unpacked DarqOS distribution
+install \- install or update DarqOS from an unpacked distribution
 .SH SYNOPSIS
 .B /darq/dist/darq/bin/install
+.RB [ \-\-boot ]
 .SH DESCRIPTION
 .B install
-copies an unpacked DarqOS distribution from the staging directory,
-.IR /darq/dist ,
+installs DarqOS from the unpacked distribution it's in, normally
+.IR /darq/dist/darq ,
 into the installation root,
 .IR /darq ,
 and prepares the host to run it.
 It is normally run by
 .BR dui (8),
-as root.
+as root, on Debian 13 (trixie).
+The same command installs and updates.
 .PP
-It performs these steps:
+It performs these steps, stopping if any fails:
 .IP 1. 4
-Update the host's Debian packages
-.RB ( "apt-get update" ,
-.BR "apt-get dist-upgrade" ,
-.BR "apt-get autoremove" ).
+Stop DarqOS
+.RI ( darqos-pkernel.service ),
+if it's running.
 .IP 2.
-Install the Debian packages DarqOS needs, including
-.BR foot ,
-.BR wayfire ,
-Python 3.13 and PyQt6.
-.IP 3.
-Create the Python virtual environment
-.IR /darq/env ,
-if it doesn't exist, with access to system site packages.
-.IP 4.
-Install or upgrade the Python modules DarqOS depends on, then
-reinstall the DarqOS runtime wheel from the distribution.
-.IP 5.
-Copy the p-kernel into
-.IR /darq/kernel ,
-and link its
-.BR systemd (1)
-units.
-.IP 6.
-Copy the DIDL tools,
-.BR didlc (1)
+Install the Debian packages DarqOS needs: to build the compositor
+(wlroots 0.18 and its build tools), the libraries Qt needs, Python
+3.13's
+.BR venv ,
+.BR sqlite3 (1)
 and
-.BR didlpygen (1),
-into
-.IR /darq/bin ,
-and the DIDL protocol sources into
-.IR /darq/lib/didl .
+.BR rsync (1).
+.IP 3.
+Create the
+.B darq
+user, if it doesn't exist.
+.IP 4.
+Copy the code into
+.IR /darq ,
+as source, owned by root, with
+.BR "rsync \-\-delete" ,
+so what's gone from the distribution goes; and the manual pages, by
+section.
+.IP 5.
+Build the compositor, in
+.IR /darq/compositor/build .
+.IP 6.
+Make or update the Python environment,
+.IR /darq/env ,
+from the distribution's
+.IR requirements.txt ,
+and compile the code.
+An environment using the system's site packages, as earlier installs
+made, is made again.
 .IP 7.
-Copy the manual pages into
-.IR /darq/man ,
-by section.
-.PP
-The host is expected to start from a Debian 13 (trixie) netinst
-image.
+Create the run directory,
+.IR /darq/run ,
+owned by
+.BR darq ,
+mode 0700.
+.IP 8.
+Copy the
+.BR systemd (1)
+units into
+.IR /etc/systemd/system ,
+and create
+.I /etc/darqos/backup.conf
+if it doesn't exist.
+.IP 9.
+Enable the daily backup,
+.IR darqos-backup.timer .
+.IP 10.
+With
+.BR \-\-boot ,
+enable the p-kernel's unit, and make
+.I darqos.target
+the default boot target.
+.IP 11.
+Start DarqOS again, if it was running.
 .SH OPTIONS
-None.
+.TP
+.B \-\-boot
+Make DarqOS the machine's default boot.
+Without it, DarqOS starts only when asked
+.RB ( "systemctl start darqos-pkernel" ).
+.SH ENVIRONMENT
+.TP
+.B DARQ
+Installation root.
+Default:
+.IR /darq .
+.TP
+.B LOG_DIR
+Where the install is logged.
+Default:
+.IR /var/log/darqos .
+.TP
+.B DARQOS_INSTALL_SKIP
+For tests: the steps to skip, separated by spaces: any of
+.BR root " (the check for it),"
+.BR stop ,
+.BR packages ,
+.BR user ,
+.BR owner " (of the run directory),"
+.BR compositor ,
+.BR venv ,
+.BR units ,
+.BR backup ,
+.B boot
+and
+.BR start .
 .SH FILES
 .TP
 .I /darq/dist/darq
 The unpacked distribution.
 .TP
-.I /darq/dist/darq/lib/darq-0.1-py3-none-any.whl
-The DarqOS Python runtime.
+.I /darq/VERSION
+The installed distribution's commit and date.
 .TP
 .I /darq/env
 Python virtual environment.
 .TP
+.I /darq/run
+The run directory: databases, and the boot vector.
+It isn't changed by an update.
+.TP
 .I /darq/kernel
-Installed p-kernel
+The p-kernel
 .RI ( pkernel ),
 Python loader
 .RI ( pyloader ),
 launcher script
 .RI ( darqos-pkernel ),
-and its
+and the
 .B systemd
-units,
-.I darqos-pkernel.service
+units:
+.IR darqos-pkernel.service ,
+.IR darqos.target ,
+.I darqos-backup.service
 and
-.IR darqos.target .
+.IR darqos-backup.timer .
 .TP
-.I /darq/bin
-Installed DIDL tools.
+.I /etc/darqos/backup.conf
+Backup configuration: see
+.BR darqos-backup (8).
 .TP
 .I /darq/man
 Installed manual pages; read them with
 .BR "man \-M /darq/man" .
+.TP
+.I /var/log/darqos/install-*.log
+Each install's output.
+.SH EXIT STATUS
+0 if it installed; 1 if a step failed; 2 for a bad option.
 .SH DIAGNOSTICS
-Progress is written to standard output as lines starting
-.RB \(lq Ok: \(rq.
+Progress is written to standard output, and the log, as lines starting
+.RB \(lq Ok: \(rq,
+and errors as lines starting
+.RB \(lq Error: \(rq.
 .SH BUGS
-This is an early draft of the installer.
-It does not stop a running system before updating it, configure the
-host (locale, auto-login, the
-.B darq
-account), or restart DarqOS afterwards.
-It doesn't distinguish a first install from an update.
-.PP
-Commands' failures are not checked.
-.PP
-It does not install services, types, lenses, or tools.
+Storage in the run directory isn't yet migrated to a new version.
 .SH SEE ALSO
-.BR didlc (1),
-.BR didlpygen (1),
+.BR darqos-backup (8),
 .BR dui (8),
 .BR pkernel (8)

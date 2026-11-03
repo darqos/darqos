@@ -1,129 +1,68 @@
 #! /bin/bash
 # DarqOS
-# Copyright (C) 2023-2024 David Arnold
+# Copyright (C) 2023-2026 David Arnold
 
-# DarqOS Updater/Installer
-
-# This script is used for either the initial install or subsequent
-# update of a DarqOS image on a Debian 13 machine.
+# DarqOS Updater/Installer (see dui(8))
 #
-# It will attempt to download the latest available image (or
-# optionally, a specified image) from the repository, unpack it,
-# and launch the included install script.
+#     dui [--boot] [TARBALL]
 #
-# This whole process is kinda jank, but ... it's an easy way to start,
-# and can easily be refined later.  It cooperates with the `mkdist`
-# script that can be used to prepare images.
+# Installs, or updates, DarqOS from a distribution tarball, made by
+# mkdist: a local file, or by default the latest, downloaded.  It
+# unpacks it into /darq/dist, and runs the install(8) script it holds,
+# passing it --boot.
 
-# All events are logged to a file (for now), named with the datetime of
-# the install attempt.  This should be useful for debugging failed
-# executions.
+set -euo pipefail
 
-# Base variables.
+DARQ=${DARQ:-/darq}
+DIST=${DIST:-$DARQ/dist}
+DIST_FILE=${DIST_FILE:-darqos-latest.tar.gz}
+DIST_BASE=${DIST_BASE:-https://www.0x1.org/d/darq}
 
-if [ "x$DARQ" = x ]; then
-    DARQ=/darq
-fi
+options=()
+tarball=
+for arg in "$@"; do
+    case "$arg" in
+        --boot) options+=(--boot) ;;
+        -*) echo "Usage: dui [--boot] [TARBALL]" >&2; exit 2 ;;
+        *) tarball=$(realpath "$arg") ;;
+    esac
+done
 
-if [ "x$DIST" = x ]; then
-    DIST=$DARQ/dist
-fi
-
-if [ "x$DIST_FILE" = x ]; then
-    DIST_FILE=darqos-latest.tar.gz
-fi
-
-if [ "x$DIST_BASE" = x ]; then
-    DIST_BASE=https://www.0x1.org/d/darq
-fi
-
-if [ "x$DARQ_USER" = x ]; then
-    DARQ_USER=darq
-fi
-
-# Check that we're running as root.
-if [ "`whoami`" != root ]; then
+if [ "$(id -u)" != 0 ]; then
     echo "Error: must run as root" >&2
     exit 1
 fi
 
-# Check or create darq user.
-if ! id "$DARQ_USER" >/dev/null 2>&1; then
-    if ! useradd -m "$DARQ_USER"; then
-        echo "Error: unable to create user $DARQ_USER" >&2
+# Fetch the tarball, unless it's given.
+if [ -z "$tarball" ]; then
+    tarball=/tmp/$DIST_FILE
+    rm -f "$tarball"
+    if ! wget -O "$tarball" "$DIST_BASE/$DIST_FILE"; then
+        echo "Error: couldn't download $DIST_BASE/$DIST_FILE" >&2
         exit 1
     fi
-    echo "Ok: created user $DARQ_USER"
+    echo "Ok: downloaded $DIST_BASE/$DIST_FILE"
 fi
-
-# Check $DARQ exists.
-if [ ! -d $DARQ ]; then
-    mkdir -p $DARQ
-    if [ ! -d $DARQ ]; then
-        echo "Error: unable to make $DARQ directory" >&2
-        exit 1
-    fi
-fi
-
-# Remove old $DIST, if it exists.
-if [ -d $DIST ]; then
-    rm -rf $DIST
-    echo "Ok: removed existing distribution files"
-fi
-
-# Make new distribution directory.
-mkdir -p $DIST
-chown $DARQ_USER:$DARQ_USER $DIST
-if [ -d $DIST ]; then
-    echo "Ok: created $DIST directory."
-else
-    echo "Error: $DIST directory does not exist after mkdir and chown" >&2
+if [ ! -f "$tarball" ]; then
+    echo "Error: no tarball $tarball" >&2
     exit 1
 fi
 
-# Fetch DarqOS tarball.
-cd /tmp
-rm -f $DIST_FILE
-wget $DIST_BASE/$DIST_FILE
+# Unpack it, in place of the last.
+rm -rf "$DIST"
+mkdir -p "$DIST"
+tar -C "$DIST" --no-same-owner -xzf "$tarball"
+if [ ! -x "$DIST/darq/bin/install" ]; then
+    echo "Error: $tarball has no darq/bin/install" >&2
+    exit 1
+fi
+echo "Ok: unpacked $tarball into $DIST"
 
-if [ -f /tmp/$DIST_FILE ]; then
-    echo "Ok: $DIST_FILE exists after wget"
-else
-    echo "Error: couldn't download distribution from $DIST_BASE/$DIST_FILE" >&2
+if ! "$DIST/darq/bin/install" "${options[@]}"; then
+    echo "Error: install failed" >&2
     exit 1
 fi
 
-# Unpack distribution.
-cd $DIST
-echo "Ok: current directory is `pwd`"
-
-tar xf /tmp/$DIST_FILE
-if [ -d darq ]; then
-    echo "Ok: tarball extracted into $DIST"
-else
-    echo "Error: 'darq' directory does not exist after extraction" >&2
-    exit 1
-fi
-
-# Reset ownership.
-chown -R $DARQ_USER:$DARQ_USER $DARQ
-
-# Run install script from dist.
-if [ ! -f $DIST/darq/bin/install ]; then
-    echo "Error: install script $DIST/darq/bin/install does not exist" >&2
-    exit 1
-fi
-
-chmod +x $DIST/darq/bin/install
-
-echo "Ok: about to execute install script"
-$DIST/darq/bin/install
-echo "Ok: install script completed"
-
-# Remove distribution files
-#rm -rf /tmp/$DIST_FILE
-#rm -rf $DIST
-
-# Done.
+# The unpacked files aren't used at runtime.
+rm -rf "$DIST"
 echo "Ok: done"
-exit 0

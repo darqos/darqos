@@ -1,3 +1,11 @@
+# DarqOS
+# Copyright (C) 2024-2026, David Arnold
+
+# Booting into DarqOS: the default target, once installed with
+# "install --boot".
+
 [Unit]
-Description=DarqOS Runlevel
+Description=DarqOS
 Requires=multi-user.target
+After=multi-user.target
+AllowIsolate=yes

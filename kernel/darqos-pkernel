@@ -1,7 +1,13 @@
 #! /bin/bash
 # DarqOS
-# Copyright (C) 2024 David Arnold
+# Copyright (C) 2024-2026 David Arnold
 
-cd /darq/kernel
-source /darq/env/bin/activate
-exec ./pkernel
+# Run the installed p-kernel, from its systemd unit: with the venv's
+# Python, and the darq package from the installation root (installed as
+# source, not a wheel).
+
+DARQ=/darq
+
+cd "$DARQ" || exit 1
+export PYTHONPATH="$DARQ"
+exec "$DARQ/env/bin/python" "$DARQ/kernel/pkernel"

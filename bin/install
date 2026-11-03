@@ -2,164 +2,196 @@
 # DarqOS
 # Copyright (C) 2023-2026 David Arnold
 
-# This script will install an unpacked DarqOS distribution, typically
-# in the /darq/dist directory, into the system directory, typically /darq.
+# Install, or update, DarqOS from an unpacked distribution (see
+# install(8), and doc/distribution.rst): normally /darq/dist/darq, run
+# by dui(8), as root, on Debian 13.
 #
-# In addition, it will
-# - install any required Linux (Debian) packages
-# - create or update any required Linux configuration files
-# - create or update systemd units for Darq services
-# - install all needed Python packages
+#     install [--boot]
 #
-# After successful completion, the target system will be ready to
-# start (or restart) the updated Darq system.
-
-# At this point, a new system version is available in /darq/dist.  We
-# need to copy its components into /darq proper, and restart anything
-# that needs to.
-
-# At some point this needs to become more sophisticated.  It should
-# determine whether it's doing an update or an install, and alter its
-# behaviour.
+# It installs from the distribution it's in, into /darq:
 #
-# For an install, it should start up Wayland & Wayfire, and possibly
-# the storage service (?), and then start the GUI install program.  Or,
-# in the short term, start up a text-based installer?  Either way, it
-# needs to collect information about locale, keyboard layout, timezone,
-# WiFi, etc, and persist these somewhere (possibly a file, possibly in
-# storage).  For upgrades, this step should be skipped, and the persisted
-# values used instead.
+# - stop DarqOS, if it's running;
+# - install the Debian packages it needs;
+# - create the darq user;
+# - copy the code into /darq, as source, removing what's gone;
+# - build the compositor;
+# - make or update the Python environment, /darq/env;
+# - create the run directory, /darq/run, owned by darq;
+# - install the systemd units, and the backup configuration;
+# - enable the daily backup;
+# - with --boot, make DarqOS the machine's default boot; and
+# - start DarqOS again, if it was running.
 #
-# Similarly, for a new install, there's no need to stop running services.
+# Its output is logged in /var/log/darqos.
 #
-# The various locations, install/update mode, and perhaps a "devmode"
-# flag should be passed from dui into install as command-line parameters.
-#
-# This script should also probably deal with the differences between a
-# PC and a phone?  That might require per-platform sub-scripts?  Or
-# functions?  Something, anyway.
-#
-# We also need to decide about logging.  It's bad enough that dui just
-# writes to stdout/stderr.  That's better than nothing though.
+# DARQ and LOG_DIR override where it installs and logs.  For tests,
+# DARQOS_INSTALL_SKIP names steps to skip: any of root, stop, packages,
+# user, owner, compositor, venv, units, backup, boot and start.
 
+set -euo pipefail
 
-DARQ=/darq
-DIST=$DARQ/dist
-SERVICES="history index metadata security storage terminal type"
+DIST=$(cd "$(dirname "$0")/.." && pwd)
+DARQ=${DARQ:-/darq}
+DARQ_USER=darq
+LOG_DIR=${LOG_DIR:-/var/log/darqos}
+UNIT_DIR=/etc/systemd/system
+CONF_DIR=/etc/darqos
+SKIP=" ${DARQOS_INSTALL_SKIP:-} "
 
-# Don't let package installs stop to ask questions.
-export DEBIAN_FRONTEND=noninteractive
+# The code's directories, copied whole; and its files.
+CODE="bin darq kernel lib services types lenses tools compositor"
+FILES="requirements.txt VERSION"
 
-# Shut down DarqOS
-# FIXME: what's actually needed here?
-# FIXME: use systemd target?
-# stop p-kernel
-# check everything else is dead
+# The units, from kernel/.
+UNITS="darqos-pkernel.service darqos.target darqos-backup.service darqos-backup.timer"
 
+# Debian packages: for building the compositor; for running it, and
+# Qt (whose wheels bring Qt, but not these); and for the backups.
+PACKAGES="
+    python3.13-venv
+    meson ninja-build pkgconf gcc
+    libwlroots-0.18-dev libwayland-dev wayland-protocols libxkbcommon-dev
+    libgl1 libegl1 libgl1-mesa-dri libegl-mesa0 libwayland-egl1 libwayland-cursor0
+    libfontconfig1 libdbus-1-3 libxkbcommon0 libglib2.0-0t64 fonts-dejavu-core
+    sqlite3 rsync
+"
 
-# Configure OS.
-# Disable/remove anything not needed from default Debian config
-# Set locale to C.UTF-8
-# Create 'darq' user and group.
-# Set auto-login
-# Enable SSH login (for now)
+BOOT=0
+for arg in "$@"; do
+    case "$arg" in
+        --boot) BOOT=1 ;;
+        *) echo "Usage: install [--boot]" >&2; exit 2 ;;
+    esac
+done
 
-# Update OS.
-# NOTE: Assume we start from Debian 13 "Trixie" netinst image.
-apt-get update
-apt-get -u -y dist-upgrade
-apt-get -y autoremove
+# Whether to do a step: not if it's skipped.
+step() {
+    case "$SKIP" in
+        *" $1 "*) return 1 ;;
+    esac
+    return 0
+}
 
-# Install any required Debian packages
-apt-get install -y \
-        foot \
-        python3.13-venv \
-        python3-pyqt6 \
-        qt6-wayland \
-        libgl1-mesa-dri \
-        wayfire
-
-        # Has way too many dependencies for a style, so see pip packages
-        # python3-qdarkstyle
-
-
-# Create virtual environment if it doesn't exist
-cd $DARQ
-if [ ! -d $DARQ/env ]; then
-    python3.13 -m venv --system-site-packages env
+if step root && [ "$(id -u)" != 0 ]; then
+    echo "Error: must run as root" >&2
+    exit 1
 fi
 
-# Install or update Python modules
-. env/bin/activate
-pip install --upgrade \
-    orjson \
-    pillow \
-    pyqtdarktheme \
-    vobject
-echo "Ok: installed Python module dependencies"
+# Log everything, as well as showing it.
+mkdir -p "$LOG_DIR"
+LOG="$LOG_DIR/install-$(date +%Y%m%d-%H%M%S).log"
+exec > >(tee -a "$LOG") 2>&1
+echo "Ok: installing $(cat "$DIST/VERSION" 2>/dev/null || echo "an unknown version") from $DIST into $DARQ"
+trap 'echo "Error: install failed (line $LINENO): see $LOG"' ERR
 
-pip install --force-reinstall \
-    $DIST/darq/lib/darq-0.1-py3-none-any.whl
-echo "Ok: installed darqos Python runtime"
+# Stop DarqOS, remembering whether it was running.
+WAS_RUNNING=0
+if step stop; then
+    if systemctl is-active --quiet darqos-pkernel.service; then
+        WAS_RUNNING=1
+        systemctl stop darqos-pkernel.service
+        echo "Ok: stopped DarqOS"
+    fi
+fi
 
-# Install p-Kernel
-(
-    cd "$DIST/darq/kernel"
-    mkdir -p "$DARQ/kernel"
-    cp -p pkernel pyloader darqos-pkernel "$DARQ/kernel/"
-    chmod +x "$DARQ/kernel/pkernel" "$DARQ/kernel/pyloader" "$DARQ/kernel/darqos-pkernel"
+if step packages; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    # shellcheck disable=SC2086
+    apt-get install -y $PACKAGES
+    echo "Ok: installed Debian packages"
+fi
 
-    cp -p darqos.target darqos-pkernel.service "$DARQ/kernel/"
-    systemctl link "$DARQ/kernel/darqos-pkernel.service"
-    systemctl link "$DARQ/kernel/darqos.target"
-    echo "Installed p-Kernel"
-)
+if step user && ! id "$DARQ_USER" >/dev/null 2>&1; then
+    useradd --create-home --user-group --shell /bin/bash "$DARQ_USER"
+    echo "Ok: created user $DARQ_USER"
+fi
 
-# Install DIDL tools
-(
-    cd "$DIST/darq/bin"
-    mkdir -p "$DARQ/bin"
-    cp -p didlc didlpygen didlcgen "$DARQ/bin/"
-    chmod +x "$DARQ/bin/didlc" "$DARQ/bin/didlpygen" "$DARQ/bin/didlcgen"
-    echo "Ok: installed DIDL tools"
-)
+# The code, owned by whoever installs it (root), not by the
+# distribution's owners: darq runs it, but can't change it.  The
+# compositor's build is kept, to build again from.
+mkdir -p "$DARQ"
+chmod 0755 "$DARQ"
+for dir in $CODE; do
+    rsync -rlptD --delete --exclude /build/ --exclude __pycache__/ "$DIST/$dir/" "$DARQ/$dir/"
+done
+for file in $FILES; do
+    if [ -f "$DIST/$file" ]; then
+        cp --preserve=mode,timestamps "$DIST/$file" "$DARQ/$file"
+    fi
+done
+# The manual pages, by section: read them with "man -M /darq/man".
+rm -rf "$DARQ/man"
+for page in "$DIST"/man/*.[1-8]; do
+    mkdir -p "$DARQ/man/man${page##*.}"
+    cp --preserve=mode,timestamps "$page" "$DARQ/man/man${page##*.}/"
+done
+echo "Ok: copied the code"
 
-# Install DIDL protocol sources
-(
-    cd "$DIST/darq/lib/didl"
-    mkdir -p "$DARQ/lib/didl"
-    cp -p *.didl "$DARQ/lib/didl/"
-    echo "Ok: installed DIDL protocol sources"
-)
+if step compositor; then
+    (
+        cd "$DARQ/compositor"
+        if [ ! -d build ]; then
+            meson setup build
+        fi
+        meson compile -C build
+    )
+    echo "Ok: built the compositor"
+fi
 
-# Install the C DIPC runtime, for code generated by didlcgen
-(
-    cd "$DIST/darq/lib/c/darq"
-    mkdir -p "$DARQ/lib/c/darq"
-    cp -p *.h *.c "$DARQ/lib/c/darq/"
-    echo "Ok: installed the C DIPC runtime"
-)
+if step venv; then
+    # Remake an environment that uses the system's packages, as earlier
+    # installs' did: everything comes from requirements.txt now.
+    if grep -qs "include-system-site-packages = true" "$DARQ/env/pyvenv.cfg"; then
+        rm -rf "$DARQ/env"
+    fi
+    if [ ! -x "$DARQ/env/bin/python" ]; then
+        python3.13 -m venv "$DARQ/env"
+    fi
+    "$DARQ/env/bin/pip" install --quiet --upgrade pip
+    "$DARQ/env/bin/pip" install --quiet --upgrade -r "$DARQ/requirements.txt"
+    # Compiled now, since darq can't write the code's __pycache__.
+    "$DARQ/env/bin/python" -m compileall -q $(for dir in $CODE; do echo "$DARQ/$dir"; done) || true
+    echo "Ok: updated the Python environment"
+fi
 
-# Install manual pages, by section: view with "man -M /darq/man <page>"
-(
-    cd "$DIST/darq/man"
-    for f in *.[1-8]; do
-        section="man${f##*.}"
-        mkdir -p "$DARQ/man/$section"
-        cp -p "$f" "$DARQ/man/$section/"
+# The run directory: only darq may read it.
+mkdir -p "$DARQ/run"
+chmod 0700 "$DARQ/run"
+if step owner; then
+    chown -R "$DARQ_USER:$DARQ_USER" "$DARQ/run"
+fi
+echo "Ok: run directory $DARQ/run"
+
+if step units; then
+    for unit in $UNITS; do
+        # Not through a link an earlier install made into /darq.
+        rm -f "$UNIT_DIR/$unit"
+        cp "$DARQ/kernel/$unit" "$UNIT_DIR/$unit"
     done
-    echo "Ok: installed manual pages"
-)
+    systemctl daemon-reload
+    mkdir -p "$CONF_DIR"
+    if [ ! -f "$CONF_DIR/backup.conf" ]; then
+        cp "$DARQ/kernel/backup.conf" "$CONF_DIR/backup.conf"
+        echo "Ok: created $CONF_DIR/backup.conf"
+    fi
+    echo "Ok: installed systemd units"
+fi
 
-# Check for firstrun
-# - if sysconf file already exists, read it, and apply its settings
-#   - timezone
-#   - keymap
-#   - network
-#   - etc
+if step backup; then
+    systemctl enable --now darqos-backup.timer
+    echo "Ok: enabled the daily backup"
+fi
 
-# Restart DarqOS
-# start p-kernel
-# wait for bootstrap to start all the services
-# check everything is alive
+if [ "$BOOT" = 1 ] && step boot; then
+    systemctl enable darqos-pkernel.service
+    systemctl set-default darqos.target
+    echo "Ok: DarqOS is the default boot"
+fi
 
+if [ "$WAS_RUNNING" = 1 ] && step start; then
+    systemctl start darqos-pkernel.service
+    echo "Ok: started DarqOS"
+fi
+
+echo "Ok: installed"

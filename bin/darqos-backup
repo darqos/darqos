@@ -1,0 +1,62 @@
+#! /bin/bash
+# DarqOS
+# Copyright (C) 2026 David Arnold
+
+# Back up DarqOS's run directory (see darqos-backup(8)): a snapshot of
+# its databases and files, kept locally with the last few, then copied
+# to the backup destination, if there's one.  Run daily, as root, by
+# darqos-backup.timer.
+#
+# The databases are copied with SQLite's online backup, so a running
+# DarqOS can go on writing to them.
+
+set -euo pipefail
+
+CONF=${DARQOS_BACKUP_CONF:-/etc/darqos/backup.conf}
+
+# Defaults, which the configuration file may set.
+RUN_DIR=/darq/run
+SNAPSHOTS=/var/backups/darqos
+KEEP=7
+BACKUP_DEST=
+
+if [ -f "$CONF" ]; then
+    # shellcheck source=/dev/null
+    . "$CONF"
+fi
+
+umask 077
+mkdir -p "$SNAPSHOTS"
+chmod 0700 "$SNAPSHOTS"
+
+stamp=$(date +%Y%m%d-%H%M%S)
+partial="$SNAPSHOTS/.partial-$stamp"
+# Any left by a backup that failed.
+rm -rf "$SNAPSHOTS"/.partial-*
+mkdir "$partial"
+
+# The databases, each consistent; then everything else but their
+# write-ahead logs, which the backups include.
+for db in "$RUN_DIR"/*.sqlite; do
+    [ -e "$db" ] || continue
+    sqlite3 "$db" ".backup '$partial/$(basename "$db")'"
+done
+find "$RUN_DIR" -mindepth 1 -maxdepth 1 -type f \
+     ! -name '*.sqlite' ! -name '*.sqlite-wal' ! -name '*.sqlite-shm' \
+     -exec cp -p {} "$partial/" \;
+
+mv "$partial" "$SNAPSHOTS/$stamp"
+echo "Ok: snapshot $SNAPSHOTS/$stamp"
+
+# Keep the last KEEP snapshots.
+find "$SNAPSHOTS" -mindepth 1 -maxdepth 1 -type d -name '[0-9]*' -printf '%f\n' \
+    | sort | head -n "-$KEEP" \
+    | while read -r old; do
+          rm -rf "${SNAPSHOTS:?}/$old"
+          echo "Ok: removed snapshot $old"
+      done
+
+if [ -n "$BACKUP_DEST" ]; then
+    rsync -a --delete "$SNAPSHOTS/" "$BACKUP_DEST/"
+    echo "Ok: copied snapshots to $BACKUP_DEST"
+fi

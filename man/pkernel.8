@@ -1,6 +1,6 @@
 .\" darqos
 .\" Copyright (C) 2026 David Arnold
-.TH PKERNEL 8 2026-10-25 DarqOS "DarqOS System Manager's Manual"
+.TH PKERNEL 8 2026-11-03 DarqOS "DarqOS System Manager's Manual"
 .SH NAME
 pkernel \- DarqOS pseudo-kernel
 .SH SYNOPSIS
@@ -161,7 +161,9 @@ A
 or
 .B reboot
 p-call from a process the p-kernel spawned itself (parent dpid 0), or
-an interrupt (SIGINT), shuts the system down; the p-call from any other
+an interrupt (SIGINT) or termination (SIGTERM, as
+.B systemctl stop
+sends), shuts the system down; the p-call from any other
 process is ignored, and logged.
 Shutting down, every running
 process is killed, as by
@@ -180,6 +182,18 @@ Replacing itself, rather than starting another process and exiting,
 lets
 .BR systemd (1)
 see the same service continue.
+.PP
+With
+.B DARQ_MACHINE
+set, as the machine's session, a shutdown or reboot p-call powers off
+or reboots the machine instead, once every process has exited, with
+.B systemctl poweroff
+or
+.BR reboot ;
+if that's refused, it's logged, and the p-kernel exits or replaces
+itself as above.
+A reboot after the Terminal fails, a shutdown once it keeps failing,
+and a signal, don't power off or reboot the machine.
 Spawning is refused during shutdown.
 .SS Boot vector
 The p-kernel keeps a small, persistent name:value store, the
@@ -265,6 +279,14 @@ from the desktop session, where
 .B WAYLAND_DISPLAY
 is set.
 .TP
+.B DARQ_MACHINE
+If set, to anything but
+.B 0
+or empty, the p-kernel is the machine's session, as its
+.B systemd
+unit sets: a shutdown or reboot p-call powers off or reboots the
+machine.
+.TP
 .B DARQ_TERMINAL_FAILURES
 How many boots in a row the Terminal has failed quickly; kept across
 a reboot, and not passed to spawned processes.
@@ -279,16 +301,29 @@ Loader for Python executables, started for each new process.
 .I /darq/run/bootvec.json
 The boot vector, as JSON, with values in hex.
 .TP
+.I /darq/kernel/darqos-pkernel
+Launcher script the unit runs: the p-kernel, with the environment's
+Python, and
+.I /darq
+on
+.BR PYTHONPATH .
+.TP
 .I /darq/kernel/darqos-pkernel.service
 .BR systemd (1)
 unit that runs the p-kernel as part of
-.IR darqos.target .
+.IR darqos.target ,
+as the
+.B darq
+user's login session on tty1
+.RB ( PAMName=login ,
+.BR TTYPath=/dev/tty1 ),
+with
+.BR DARQ_MACHINE=1 .
+It's restarted after a failure, at most five times a minute.
 .SH EXIT STATUS
 0 after a shutdown, or 1 if the Terminal kept failing.
 .SH BUGS
 The listening port is fixed at 11000.
-.PP
-The boot sequence doesn't yet start the Index service.
 .PP
 Finished processes the p-kernel spawned itself are never removed from
 the process table.
