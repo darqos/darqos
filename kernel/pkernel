@@ -1600,10 +1600,13 @@ class PseudoKernel(SocketListener, TimerListener):
         dpid = self.get_next_dpid()
         parent_dpid = parent.get_dpid() if parent is not None else 0
 
-        # Fork and exec the language stub.  The path comes from the
-        # requesting process, so it's passed as an argument, not via a shell.
+        # Fork and exec the language stub, with this interpreter (the
+        # venv's), not whichever "python" is first on PATH, if any.  The
+        # path comes from the requesting process, so it's passed as an
+        # argument, not via a shell.
         port = self.socket.getsockname()[1]
-        child = subprocess.Popen([PYTHON_IMAGE_LOADER, str(port), str(dpid), str(parent_dpid), exec_path],
+        child = subprocess.Popen([sys.executable, PYTHON_IMAGE_LOADER, str(port), str(dpid), str(parent_dpid),
+                                  exec_path],
                                  close_fds=True,
                                  cwd="/",
                                  env=self.get_loader_environment())  # FIXME: audit list, and add any more needed here

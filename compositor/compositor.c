@@ -1862,7 +1862,10 @@ static void terminal_destroy(struct wl_listener *listener, void *data) {
 }
 
 int main(int argc, char *argv[]) {
-	wlr_log_init(WLR_DEBUG, NULL);
+	/* wlroots' debug messages come several a second on some hardware:
+	 * only with DARQ_COMPOSITOR_DEBUG set, for development. */
+	const char *debug = getenv("DARQ_COMPOSITOR_DEBUG");
+	wlr_log_init(debug && *debug && strcmp(debug, "0") ? WLR_DEBUG : WLR_INFO, NULL);
 	char *startup_cmd = NULL;
 	int terminal_fd = -1;
 	int policy_fd = -1;

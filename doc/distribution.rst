@@ -40,9 +40,12 @@ updates.  Install:
 
 1. stops DarqOS, if it's running;
 2. installs the Debian packages it needs: to build the compositor, the
-   libraries Qt needs, ``sqlite3`` and ``rsync``;
+   libraries Qt needs, polkit (``polkitd``: without it, logind lets
+   only root power the machine off or reboot it), ``sqlite3`` and
+   ``rsync``;
 3. creates the ``darq`` user;
-4. copies the code into ``/darq``, as source, owned by root, with
+4. copies the code into ``/darq``, as source, owned by root and
+   writable only by root (whatever its modes in the distribution), with
    ``rsync --delete``, so what's gone from the distribution goes; and
    the manual pages, by section;
 5. builds the compositor, in ``/darq/compositor/build``;
@@ -58,9 +61,10 @@ updates.  Install:
 It logs to ``/var/log/darqos``.
 
 Installing doesn't make DarqOS start at boot: once it's been tried
-(``systemctl start darqos-pkernel``), ``dui --boot`` (or ``install
---boot``) enables its unit and makes ``darqos.target`` the default
-boot target.  The p-kernel's unit is the ``darq`` user's login
+(``systemctl start darqos-pkernel``), ``dui --boot`` (or
+``/darq/bin/install --boot``, which, run from the installation itself,
+does everything but copying the code) enables its unit and makes
+``darqos.target`` the default boot target.  The p-kernel's unit is the ``darq`` user's login
 session on tty1 (see :doc:`terminal`, "Session and Login").
 
 Backups

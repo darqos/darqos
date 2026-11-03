@@ -1,0 +1,13 @@
+
+
+virt-install \
+  --name wayland-compositor-test \
+  --memory 4096 \
+  --vcpus 4 \
+  --cpu host-passthrough \
+  --disk path=/var/lib/libvirt/images/wayland-test.qcow2,size=30,format=qcow2 \
+  --cdrom /path/to/debian-13.iso \
+  --os-variant debian12 \
+  --network network=default,model=virtio \
+  --graphics spice,gl=on,listen=none \
+  --video virtio,accel3d=on

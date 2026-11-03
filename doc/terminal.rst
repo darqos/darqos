@@ -253,7 +253,9 @@ default).  With it set, wlroots uses its Wayland backend, and the
 whole display is a window on the host's desktop: that's how it's
 developed.  The window starts at the size ``DARQ_COMPOSITOR_SIZE``
 gives, as ``WIDTHxHEIGHT``, or 1920x1200, and the host can resize it
-after.  Without it, wlroots uses the display hardware (DRM and
+after.  It logs wlroots' messages at the information level, or with
+debug messages too if ``DARQ_COMPOSITOR_DEBUG=1``: on some hardware,
+there are several a second.  Without it, wlroots uses the display hardware (DRM and
 libinput).  Without the Terminal, the p-kernel leaves
 ``WAYLAND_DISPLAY`` alone.
 
@@ -367,6 +369,11 @@ seatd is the fallback, if a PAM session turns out to be awkward: the
 unit would create the runtime directory itself (``RuntimeDirectory=``).
 Switching only changes units and groups, not code.
 
+The unit runs the p-kernel through its launcher,
+``kernel/darqos-pkernel``, with the venv's Python, which the launcher
+also puts first on ``PATH``, as activating it does; and with
+``UMask=0077``, so what it writes in ``/darq/run`` is ``darq``'s alone.
+
 The unit restarts the p-kernel if it fails, five times a minute at
 most: after that, it's left stopped, and the way in is SSH.  Stopping
 the unit shuts
@@ -378,7 +385,9 @@ session, so a shutdown asked for in DarqOS (*Sys-b*, or the
 development Terminal's) powers the machine off, and a reboot reboots
 it, once every process has exited.  It asks systemd
 (``systemctl poweroff`` or ``reboot``), through logind, which polkit
-allows the active local session.  If that's refused, it's logged, and
+allows the active local session, even with others logged in (over
+SSH, say).  Install installs polkit: without it, logind allows only
+root.  If that's refused, it's logged, and
 the p-kernel exits, or restarts itself, as it does without
 ``DARQ_MACHINE``, in a development tree.  Its own reboot after the
 Terminal fails stays a restart of the p-kernel, and being stopped

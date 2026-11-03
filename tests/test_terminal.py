@@ -300,7 +300,13 @@ def test_power_from_lock_screen(terminal):
 
     # The keys come to the prompt, not the password field.
     assert not lock.password.isEnabled()
-    assert lock.message.text() == "s: Shut down    b: Reboot    any other key: Cancel"
+    assert lock.message.text().replace("\u00a0", " ") == "s: Shut down    b: Reboot    any other key: Cancel"
+    # All of it shows, below the fields, even wrapped.
+    message = lock.message
+    assert message.heightForWidth(message.width()) <= message.height()
+    assert message.height() >= 2 * message.fontMetrics().lineSpacing()
+    # And if it wraps, it's between the choices.
+    assert all(" " not in choice for choice in lock.message.text().split("    "))
 
     # A modifier isn't an answer; another key cancels; s shuts down.
     lock.keyPressEvent(key(Qt.Key.Key_Shift))

@@ -536,6 +536,24 @@ def test_window_mode(compositor):
     nothing_more(compositor)
 
 
+@pytest.mark.parametrize("debug", [None, "0", "1"])
+def test_debug_log(tmp_path, debug):
+    # wlroots' debug messages only with DARQ_COMPOSITOR_DEBUG set.
+    env = headless(tmp_path / "run")
+    if debug is not None:
+        env["DARQ_COMPOSITOR_DEBUG"] = debug
+    log_path = tmp_path / "compositor.log"
+    with open(log_path, "w") as log:
+        harness = Harness(Compositor.start(env=env, stderr=log), env)
+        try:
+            receive(harness)
+        finally:
+            harness.stop()
+    log_text = log_path.read_text()
+    assert "[INFO]" in log_text
+    assert ("[DEBUG]" in log_text) == (debug == "1")
+
+
 def test_dies_with_the_terminal(tmp_path):
     # A Terminal whose policy channel is held open by another process,
     # as if it were stuck: the compositor still exits when it dies.

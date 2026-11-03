@@ -245,7 +245,7 @@ def test_spawn_process_starts_stub(pkernel, fake_popen, executable):
 
     module = pkernel.module
     port = str(pkernel.socket.getsockname()[1])
-    assert fake_popen.calls == [[module.PYTHON_IMAGE_LOADER, port, "2", "1", executable]]
+    assert fake_popen.calls == [[sys.executable, module.PYTHON_IMAGE_LOADER, port, "2", "1", executable]]
     child = pkernel._process_table[2]
     assert child.get_status() == module.KernelProcessStatus.SPAWNED
     assert child.get_parent_dpid() == 1
@@ -305,7 +305,7 @@ def test_boot_starts_services_in_order(pkernel, fake_popen):
     assert paths == [os.path.join(module.DARQ_ROOT, path) for path in module.BOOT_PROCESSES]
     assert paths[0].endswith("services/storage") and paths[-1].endswith("tools/type-sync")
     for args in fake_popen.calls:
-        assert args[3] == "0"
+        assert args[4] == "0"
 
 
 @pytest.mark.parametrize("value, started", [(None, False), ("0", False), ("", False), ("1", True), ("yes", True)])
@@ -439,6 +439,13 @@ def test_terminal_missing_reboots(pkernel, fake_popen, tmp_path, monkeypatch):
     assert os.environ["DARQ_TERMINAL_FAILURES"] == "1"
 
 
+def failing_loader(executable: str) -> str:
+    """A loader that exits at once, without connecting to the p-kernel."""
+    loader = pathlib.Path(executable).parent / "failing-loader"
+    loader.write_text("raise SystemExit(1)\n")
+    return str(loader)
+
+
 def test_terminal_exiting_before_running_reboots(live_pkernel, executable, monkeypatch):
     kernel = live_pkernel
     module = kernel.module
@@ -448,7 +455,7 @@ def test_terminal_exiting_before_running_reboots(live_pkernel, executable, monke
     monkeypatch.setattr(module, "DARQ_ROOT", os.path.dirname(executable))
     monkeypatch.setattr(module, "TERMINAL", os.path.basename(executable))
     monkeypatch.setattr(module, "BOOT_PROCESSES", ())
-    module.PYTHON_IMAGE_LOADER = shutil.which("false")
+    module.PYTHON_IMAGE_LOADER = failing_loader(executable)
     kernel.do_boot()
     run_kernel_until(kernel, lambda: kernel._stopping, "the kernel to reboot")
     assert kernel.reboot_requested()
@@ -506,8 +513,10 @@ E2E_TIMEOUT = 15.0
 
 @pytest.fixture
 def live_pkernel(pkernel, monkeypatch):
-    """The p-kernel, spawning real pyloader processes with this interpreter."""
-    monkeypatch.setenv("PATH", os.path.dirname(sys.executable) + os.pathsep + os.environ["PATH"])
+    """The p-kernel, spawning real pyloader processes with this
+    interpreter: without any "python" on PATH, as when it's installed."""
+    monkeypatch.setenv("PATH", os.pathsep.join(d for d in os.environ["PATH"].split(os.pathsep)
+                                               if not shutil.which("python", path=d)))
 
     yield pkernel
 
@@ -595,7 +604,7 @@ def test_spawn_process_exits_before_running(live_pkernel, executable):
     kernel._next_dpid = 2
 
     # A loader that exits at once, without connecting to the p-kernel.
-    module.PYTHON_IMAGE_LOADER = shutil.which("false")
+    module.PYTHON_IMAGE_LOADER = failing_loader(executable)
     send_to_kernel(kernel, parent, pk.SpawnProcessRequest(5, executable))
 
     child = kernel._process_table[2]
@@ -2504,8 +2513,7 @@ def test_live_shutdown(live_pkernel, tmp_path):
 def silent_loader(pkernel, tmp_path, monkeypatch):
     """Make spawned processes run a loader that never connects."""
     loader = tmp_path / "silent-loader"
-    loader.write_text("#!/bin/sh\nexec sleep 60\n")
-    loader.chmod(0o755)
+    loader.write_text("import time\ntime.sleep(60)\n")
     monkeypatch.setattr(pkernel.module, "PYTHON_IMAGE_LOADER", str(loader))
 
 
@@ -2741,7 +2749,7 @@ def test_pyloader_with_unknown_dpid_exits(live_pkernel, tmp_path, body):
         """)
 
     # As if run manually, with a DPID the p-kernel didn't allocate.
-    loader = subprocess.Popen([kernel.module.PYTHON_IMAGE_LOADER, str(port), "99", "0", executable],
+    loader = subprocess.Popen([sys.executable, kernel.module.PYTHON_IMAGE_LOADER, str(port), "99", "0", executable],
                               env=kernel.get_loader_environment(),
                               stderr=subprocess.PIPE, text=True)
     try:

@@ -8,7 +8,9 @@
 #
 #     install [--boot]
 #
-# It installs from the distribution it's in, into /darq:
+# It installs from the distribution it's in, into /darq; or, run from
+# /darq itself (as "/darq/bin/install --boot"), does everything but
+# copying the code:
 #
 # - stop DarqOS, if it's running;
 # - install the Debian packages it needs;
@@ -46,9 +48,10 @@ FILES="requirements.txt VERSION"
 UNITS="darqos-pkernel.service darqos.target darqos-backup.service darqos-backup.timer"
 
 # Debian packages: for building the compositor; for running it, and
-# Qt (whose wheels bring Qt, but not these); and for the backups.
+# Qt (whose wheels bring Qt, but not these); polkit, without which
+# logind lets only root power off or reboot; and for the backups.
 PACKAGES="
-    python3.13-venv
+    python3.13-venv polkitd
     meson ninja-build pkgconf gcc
     libwlroots-0.18-dev libwayland-dev wayland-protocols libxkbcommon-dev
     libgl1 libegl1 libgl1-mesa-dri libegl-mesa0 libwayland-egl1 libwayland-cursor0
@@ -108,25 +111,33 @@ if step user && ! id "$DARQ_USER" >/dev/null 2>&1; then
 fi
 
 # The code, owned by whoever installs it (root), not by the
-# distribution's owners: darq runs it, but can't change it.  The
-# compositor's build is kept, to build again from.
+# distribution's owners, and writable only by its owner, whatever the
+# umask it was made with: darq runs it, but can't change it.  The
+# compositor's build is kept, to build again from.  Run from the
+# installation itself, it's already there.
 mkdir -p "$DARQ"
 chmod 0755 "$DARQ"
-for dir in $CODE; do
-    rsync -rlptD --delete --exclude /build/ --exclude __pycache__/ "$DIST/$dir/" "$DARQ/$dir/"
-done
-for file in $FILES; do
-    if [ -f "$DIST/$file" ]; then
-        cp --preserve=mode,timestamps "$DIST/$file" "$DARQ/$file"
-    fi
-done
-# The manual pages, by section: read them with "man -M /darq/man".
-rm -rf "$DARQ/man"
-for page in "$DIST"/man/*.[1-8]; do
-    mkdir -p "$DARQ/man/man${page##*.}"
-    cp --preserve=mode,timestamps "$page" "$DARQ/man/man${page##*.}/"
-done
-echo "Ok: copied the code"
+if [ "$(cd "$DIST" && pwd -P)" = "$(cd "$DARQ" && pwd -P)" ]; then
+    echo "Ok: installing in place: the code isn't copied"
+else
+    for dir in $CODE; do
+        rsync -rlptD --chmod=go-w --delete --exclude /build/ --exclude __pycache__/ "$DIST/$dir/" "$DARQ/$dir/"
+    done
+    for file in $FILES; do
+        if [ -f "$DIST/$file" ]; then
+            cp --preserve=mode,timestamps "$DIST/$file" "$DARQ/$file"
+            chmod go-w "$DARQ/$file"
+        fi
+    done
+    # The manual pages, by section: read them with "man -M /darq/man".
+    rm -rf "$DARQ/man"
+    for page in "$DIST"/man/*.[1-8]; do
+        mkdir -p "$DARQ/man/man${page##*.}"
+        cp --preserve=mode,timestamps "$page" "$DARQ/man/man${page##*.}/"
+    done
+    chmod -R go-w "$DARQ/man"
+    echo "Ok: copied the code"
+fi
 
 if step compositor; then
     (

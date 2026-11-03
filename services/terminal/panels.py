@@ -18,7 +18,7 @@ from darq.ui.history import HistoryView
 from darq.ui.search import SearchView
 from darq.ui.types import TypeList
 
-from screens import is_modifier, power_choice
+from screens import POWER_TEXT, is_modifier, power_choice
 
 
 Key = QtCore.Qt.Key
@@ -177,7 +177,7 @@ class PowerPanel(Panel):
     def __init__(self, power: typing.Callable[[str], None]):
         super().__init__("Shut down or reboot?", 480, 120)
         self.power = power
-        self.contents.addWidget(QLabel("s: Shut down    b: Reboot    any other key: Cancel"))
+        self.contents.addWidget(QLabel(POWER_TEXT))
 
     def keyPressEvent(self, a0: QKeyEvent | None):
         choice = power_choice(a0) if a0 is not None else None

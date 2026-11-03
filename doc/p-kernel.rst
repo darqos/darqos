@@ -25,7 +25,9 @@ Python
 ~~~~~~
 
 A Darq Python application is launched by the p-kernel starting the
-`pyloader` Linux executable as a new Linux process.
+`pyloader` script as a new Linux process, with the p-kernel's own
+Python interpreter (the venv's, when it's installed), not whichever
+`python` is on `PATH`.
 
 The main thread of the `pyloader` process runs an event loop handling
 messages to and from the p-kernel.  It also spawns a second thread for

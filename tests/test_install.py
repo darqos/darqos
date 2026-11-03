@@ -109,6 +109,11 @@ def install(dist, root, *args, check=True):
 
 
 def test_install(dist, tmp_path):
+    # A distribution made with a umask that lets the group write, and
+    # unpacked as root, which keeps its modes.
+    for path in dist.rglob("*"):
+        if not path.is_symlink():
+            path.chmod(path.stat().st_mode | stat.S_IWGRP | stat.S_IWOTH)
     root = tmp_path / "darq"
     result = install(dist, root)
     assert "Ok: installed" in result.stdout
@@ -118,6 +123,10 @@ def test_install(dist, tmp_path):
                  "lib/didl/kb.didl", "bin/didlc", "requirements.txt", "VERSION"]:
         assert (root / path).is_file(), path
     assert os.access(root / "kernel" / "pkernel", os.X_OK)
+    # Writable only by its owner, whatever the distribution's modes.
+    writable = [str(p.relative_to(root)) for p in root.rglob("*")
+                if p.stat().st_mode & (stat.S_IWGRP | stat.S_IWOTH)]
+    assert writable == []
     # Manual pages, by section.
     assert (root / "man" / "man8" / "install.8").is_file()
     assert (root / "man" / "man1" / "didlc.1").is_file()
@@ -145,6 +154,21 @@ def test_update(dist, tmp_path):
     assert not (root / "man" / "man8" / "gone.8").exists()
     assert (root / "compositor" / "build" / "darq-compositor").read_text() == "built\n"
     assert (root / "run" / "kb.sqlite").read_text() == "data\n"
+
+
+def test_install_in_place(dist, tmp_path):
+    # "/darq/bin/install --boot": run from the installation, it copies
+    # nothing, and does the rest.
+    root = tmp_path / "darq"
+    install(dist, root)
+    before = sorted(str(p.relative_to(root)) for p in root.rglob("*"))
+    shutil.rmtree(root / "run")
+
+    result = run(root / "bin" / "install", "--boot",
+                 env={"DARQ": str(root), "LOG_DIR": str(tmp_path / "log"), "DARQOS_INSTALL_SKIP": HOST_STEPS})
+    assert "installing in place" in result.stdout and "Ok: installed" in result.stdout
+    assert sorted(str(p.relative_to(root)) for p in root.rglob("*")) == before
+    assert (root / "man" / "man8" / "install.8").is_file()
 
 
 def test_install_usage(dist, tmp_path):

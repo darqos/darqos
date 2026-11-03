@@ -1,0 +1,32 @@
+
+
+# apt update
+# apt install qemu-system-x86 qemu-utils libvirt-daemon-system libvirt-clients virt-manager cpu-checker
+
+
+    <graphics type='spice'>
+      <listen type='none'/>
+      <image compression='off'/>
+      <gl enable='yes' rendernode='/dev/dri/by-path/pci-0000:00:02.0-render'/>
+    </graphics>
+
+    <video>
+      <model type='virtio' heads='1' primary='yes'>
+        <acceleration accel3d='yes'/>
+      </model>
+      <address type='pci' domain='0x0000' bus='0x00' slot='0x01' function='0x0'/>
+    </video>
+
+
+
+virt-install \
+  --name DarqOS \
+  --memory 8192 \
+  --vcpus 4 \
+  --cpu host-passthrough \
+  --disk path=/home/d/archive/darqos-dev.qcow2,size=30,format=qcow2 \
+  --cdrom /home/d/archive/debian-13.7.0-amd64-netinst.iso \
+  --os-variant debian13 \
+  --network network=default,model=virtio \
+  --graphics spice,gl=on,listen=none \
+  --video virtio,accel3d=on

@@ -1,6 +1,6 @@
 .\" darqos
 .\" Copyright (C) 2026 David Arnold
-.TH PYLOADER 8 2026-10-25 DarqOS "DarqOS System Manager's Manual"
+.TH PYLOADER 8 2026-11-03 DarqOS "DarqOS System Manager's Manual"
 .SH NAME
 pyloader \- DarqOS loader for Python executables
 .SH SYNOPSIS
@@ -13,8 +13,8 @@ pyloader \- DarqOS loader for Python executables
 .B pyloader
 runs a Python executable as a DarqOS process.
 It is normally started by
-.BR pkernel (8)
-in response to a
+.BR pkernel (8),
+with the p-kernel's own Python interpreter, in response to a
 .B spawn_process
 p-call, and is not meant to be run by hand.
 .PP

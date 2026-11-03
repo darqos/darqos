@@ -23,7 +23,13 @@ Key = QtCore.Qt.Key
 MODIFIER_KEYS = {Key.Key_Shift, Key.Key_Control, Key.Key_Alt, Key.Key_Meta, Key.Key_Super_L,
                  Key.Key_Super_R, Key.Key_Hyper_L, Key.Key_Hyper_R, Key.Key_AltGr, Key.Key_CapsLock}
 
-POWER_TEXT = "s: Shut down    b: Reboot    any other key: Cancel"
+# The power prompt: if it wraps, between its choices, not within one.
+POWER_CHOICES = ("s: Shut down", "b: Reboot", "any other key: Cancel")
+POWER_TEXT = "    ".join(choice.replace(" ", "\u00a0") for choice in POWER_CHOICES)
+
+# The lock screen's message has room for this many lines, so a long one
+# wraps below the fields, not behind them.
+MESSAGE_LINES = 3
 
 # What the lock screen asks for: nothing yet, the password, a new one (on
 # the first boot), or nothing it can (the Security service can't be
@@ -104,6 +110,11 @@ class LockWindow(QWidget):
         self.message = QLabel()
         self.message.setStyleSheet(self.STYLE)
         self.message.setWordWrap(True)
+        self.message.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
+        # Its height is fixed, with its style's font: the layout gives a
+        # wrapped label one line otherwise.
+        self.message.ensurePolished()
+        self.message.setFixedHeight(MESSAGE_LINES * self.message.fontMetrics().lineSpacing())
 
         column = QVBoxLayout()
         column.addStretch()

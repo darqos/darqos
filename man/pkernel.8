@@ -70,8 +70,12 @@ p-call.
 .B pkernel
 allocates a dpid, then starts
 .BR pyloader (8)
-from its own directory with that dpid, the parent's dpid, the
-listening port, and the executable path.
+from its own directory, with its own Python interpreter, not whichever
+.B python
+is on
+.BR PATH ,
+and with that dpid, the parent's dpid, the listening port, and the
+executable path.
 The executable path must be a directory containing a
 .I main.py
 file.
@@ -303,7 +307,9 @@ The boot vector, as JSON, with values in hex.
 .TP
 .I /darq/kernel/darqos-pkernel
 Launcher script the unit runs: the p-kernel, with the environment's
-Python, and
+Python, which it also puts first on
+.BR PATH ,
+and
 .I /darq
 on
 .BR PYTHONPATH .
@@ -318,7 +324,13 @@ user's login session on tty1
 .RB ( PAMName=login ,
 .BR TTYPath=/dev/tty1 ),
 with
-.BR DARQ_MACHINE=1 .
+.BR DARQ_MACHINE=1 ,
+and
+.B UMask=0077
+so that what it writes in
+.I /darq/run
+is readable only by
+.BR darq .
 It's restarted after a failure, at most five times a minute.
 .SH EXIT STATUS
 0 after a shutdown, or 1 if the Terminal kept failing.

@@ -68,7 +68,7 @@ Keyboard
 --------
 
 The system standardises shortcut keys well beyond what existing
-operating systems do.  Two new modifier keys/roles are defined:
+operating systems do.  Three new modifier keys/roles are defined:
 
 * System
 
@@ -82,9 +82,45 @@ operating systems do.  Two new modifier keys/roles are defined:
   use an application modifier.  Similarly, no application will ever
   use the System modifier.
 
+* User
+
+  The User modifier is for hotkeys defined soley by the user.  It will
+  never be used by either of the system or any applications.
+  
 At some point, the plan is to produce a Darq keyboard that adds these
 modifier keys in hardware.
 
+Existing modifiers that maintain their roles are:
+
+* Shift
+
+  Switches a key to produce its capitalized keycode.
+
+* Control
+
+  Does not produce printable characters, but rather is used largely
+  for editing and movement commands.  The set of such the Control key
+  combinations mirrors its default use by the text editor, Emacs.
+
+* Meta (aka Alt)
+
+  Used similarly to Control, including sometimes in combination,
+  primarily for editing and movement commands derived from Emacs.
+
+* Compose
+
+  Produces accented characters by composing two other keys.  For
+  example é is produced by Compose, then e, then apostrophe.  The set
+  of compositions comes from X11, and will need to be replicated and
+  documented somewhere (in the Terminal).
+
+* AltGr
+
+  Used in combination with other keys, produced graphical symbols.
+  Again, the supported combinations will need to be documented in the
+  Terminal documentation.
+
+  
 For First Edition, modifiers are mapped as follows:
 
 * Shift, standard behaviour.
@@ -98,6 +134,9 @@ For First Edition, modifiers are mapped as follows:
 
 Hotkeys
 -------
+
+System
+~~~~~~
 
 +------------+----------------------+
 | Sys-tab    | Switch windows       |
@@ -127,9 +166,18 @@ Hotkeys
 Sys-t is temporary: it starts the vCard import (see
 :doc:`kb-service`), until tools have a place in the Terminal.
 
+Application
+~~~~~~~~~~~
 
-Windows
--------
++------------+----------------------+
+| F1         | Application help     |
++------------+----------------------+
+| F11        | Full screen toggle   |
++------------+----------------------+
+
+
+Window Management
+-----------------
 
 For First Edition:
 
@@ -150,3 +198,15 @@ In future editions:
 * Also possible: Sys-w will show a set of control decorations around
   the window.  Resize handles and a grab target for movement.
 
+
+UI Styling
+----------
+
+* No window decorations
+* No window borders
+* No menu bars
+* No toolbars
+* No ribbon
+
+* Applications should default to dark mode
+* Scrollbars should be thin and dark
