@@ -201,6 +201,9 @@ How does the Terminal, which processes the hotkey, determine what item
   set the default font size, face, weight, etc. +
   (2026-11-04)
 
+* There needs to be a way to update DarqOS from within DarqOS.+
+  (2026-11-04)
+  
 
 === Closed
 
