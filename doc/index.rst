@@ -54,6 +54,7 @@ Services
 .. include:: search-service.rst
 .. include:: kb-service.rst
 .. include:: network.rst
+.. include:: davsync-service.rst	  
 
 ************************************************************************
 Items, Types, and Lenses
