@@ -78,40 +78,40 @@ DarqOS has two modifiers of its own: *System*, for the system's
 shortcuts, and *Application*, for the focused window's.  On a PC
 keyboard (see :doc:`ux`):
 
-* Left Control is System, written *Sys-*;
-* Caps Lock is Control;
-* Left Alt is Meta;
-* the Windows key is Application;
-* Right Control is Compose, and Right Alt is AltGr.
+* Left Control is System, written *S-*;
+* Caps Lock is Control, written *C-*;
+* Left Alt is Meta, written *M-*;
+* the Windows key is Application, written *A-*;
+* Right Control is *Compose*, and Right Alt is *AltGr*.
 
 Only a US layout is supported, for now.
 
 The system's hotkeys:
 
 +---------------+---------------------------------------------------+
-| Sys-n         | New: create an item of a type                     |
+| S-n           | New: create an item of a type                     |
 +---------------+---------------------------------------------------+
-| Sys-space     | Search, with the time and date                    |
+| S-space       | Search, with the time and date                    |
 +---------------+---------------------------------------------------+
-| Sys-h         | History: what's been created, opened and changed  |
+| S-h           | History: what's been created, opened and changed  |
 +---------------+---------------------------------------------------+
-| Sys-Tab       | Switch windows (hold Sys, Tab to move on)         |
+| S-Tab         | Switch windows (hold Sys, Tab to move on)         |
 +---------------+---------------------------------------------------+
-| Sys-x         | Close the focused window                          |
+| S-x           | Close the focused window                          |
 +---------------+---------------------------------------------------+
-| Sys-w         | Hold, and drag or use the arrow keys, to move the |
+| S-w           | Hold, and drag or use the arrow keys, to move the |
 |               | focused window; t, s, b and n to make it taller,  |
 |               | shorter, broader and narrower                     |
 +---------------+---------------------------------------------------+
-| Sys-l         | Lock the screen                                   |
+| S-l           | Lock the screen                                   |
 +---------------+---------------------------------------------------+
-| Sys-b         | Shut down (s) or reboot (b): any other key        |
+| S-b           | Shut down (s) or reboot (b): any other key        |
 |               | cancels.  It works on the lock screen too         |
 +---------------+---------------------------------------------------+
-| Sys-t         | Import an address book (vCards), for now          |
+| S-t           | Import an address book (vCards), for now          |
 +---------------+---------------------------------------------------+
 
-*Sys-e* (Events) and *Sys-i* (Item info) show placeholders in First
+*S-e* (Events) and *S-i* (Item info) show placeholders in First
 Edition.  Escape closes a panel.  Focus follows the mouse, and a click
 raises a window.
 
@@ -124,28 +124,28 @@ find them again with Search or History.
 
 A walk through it:
 
-1. *Sys-n*, type ``text`` to find the Text type, and press Enter: a
+1. *S-n*, type ``text`` to find the Text type, and press Enter: a
    new, empty text document opens in its lens.
 2. Type something.  It's saved as you go, a couple of seconds after
    you stop, and indexed for searching.  The keys follow Emacs (C-f,
    C-b, C-k, C-y, C-/ to undo, and the others: F1 lists them); C-x
    C-q makes it read only, or editable again.
-3. Close it: *Sys-x*, or C-x C-c.
-4. *Sys-space*, and type a word or two from it: words are matched by
+3. Close it: *S-x*, or C-x C-c.
+4. *S-space*, and type a word or two from it: words are matched by
    their beginnings, so ``cof sho`` finds *coffee shop*.  The arrow
    keys move through the results; Enter opens one in its lens again.
-5. *Sys-l* to lock the screen, and the password to unlock it.
-6. *Sys-b*, then *s*, to shut down: the machine powers off.
+5. *S-l* to lock the screen, and the password to unlock it.
+6. *S-b*, then *s*, to shut down: the machine powers off.
 
 Other things to try:
 
 * New's *Import File...* makes an item from a file on the machine,
   such as a photo: the image lens shows it, and +, - and F zoom, [ and
   ] turn it, and C crops it (see :doc:`image-type`).
-* *Sys-t* imports an address book, a ``.vcf`` file of vCards: the
+* *S-t* imports an address book, a ``.vcf`` file of vCards: the
   people and organisations in it are found by Search, by their names,
   and open in the entity lens (see :doc:`kb-service`).
-* *Sys-h* lists what's happened recently, and opens an item from
+* *S-h* lists what's happened recently, and opens an item from
   there too.
 
 Your Data and Backups

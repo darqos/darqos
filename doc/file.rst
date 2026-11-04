@@ -101,3 +101,46 @@ use to interact with the individual files (at least).
 Our UTI types' *mailcap*-like data should include common suffixes, and
 enable automatic ingestion.  Other items would need to be queued for
 human analysis.
+
+Issues
+------
+
+* A USB storage device might have a **lot** of files: even a single
+  drive could be 24GB worth of data.  Does we really want to
+  automatically "import" all of that?  Even at the metadata level?
+
+  * Perhaps it makes more sense to ignore everything to start with,
+    aside from an item to represent the volume, and a lens to show its
+    contents.
+  * The lens could reasonably look like Finder, Nautilus, etc, with
+    either a filetree, icons, or even previews view of the files and
+    directories.
+  * The operator could select files for import: copy the data onto the
+    Darq device, and enrol it as a Darq item.  That's explicitly a
+    copy.  It could perhaps record its source location for future
+    reference.
+
+    * This would imply an inverse operation too: a Darq item could be
+      transformed into a file of a specific format, and exported to
+      the USB storage device.
+      
+  * Or, the file could be used in place.  The type implementation and
+    lens would need to somehow work with an abstraction that can front
+    for the file, or Storage, or whatever mechanism the Darq object
+    uses to persist itself.  I don't know how well this would work:
+    it'd be a lot of effort in the type implementations.
+  * Or, I guess, a temporary object could be created that's written
+    back to the file on changes.
+  * I think ... the import/export model works for basic
+    sneakernet-style data sharing.  But it does not work for allowing
+    access to source code mounted from a remote machine, for instance.
+
+    * I don't think it's reasonable to force every type implementation
+      to deal with real-time translation between a file format and the
+      user of Darq persistence services either.
+
+  * How does import/export even work?  Something has to understand the
+    file format and the type implementation representation.  That
+    almost has to be the type implementation?
+
+  * 

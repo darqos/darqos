@@ -19,7 +19,8 @@ Person
 
     * Try to deal usefully here with non-Western forename/surname
       patterns.  This would also take care of stuff like "Pele", or
-      "Madonna".
+      "Madonna", or Indonesians (who apparently often have a single
+      name).
 
   * Phone numbers
   * Emails
@@ -53,7 +54,8 @@ Person
 
   * Notes
 
-    * Just plain text notes, but make sure they're indexed
+    * Just plain text notes, but make sure they're indexed.
+    * Or even Markdown might be nice?
 
   * Relationships
 
