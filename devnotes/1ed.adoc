@@ -196,6 +196,11 @@ How does the Terminal, which processes the hotkey, determine what item
   the same key again? +
   (2026-11-04)
 
+* The font size in the Text Lens could be a bit smaller.  This is
+  probably a system-wide issue: there needs to be a single place to
+  set the default font size, face, weight, etc. +
+  (2026-11-04)
+
 
 === Closed
 
