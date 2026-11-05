@@ -1,20 +1,20 @@
 Email
 =====
 
-Email, and email applications, has evolved to become a classic example
-of a "silo" application.  It includes both the viewing and composition
-of emails, but also,
+Email, and email applications, have evolved to become a classic
+example of a "silo" application.  It includes both the viewing and
+composition of emails, but also,
 
-- a custom object-collection viewer
-- a custom structured filing system
-- a way of managing contacts, potentially both using a shared
+* a custom object-collection viewer
+* a custom structured filing system
+* a way of managing contacts, potentially both using a shared
   collection of contacts plus an internal-only collection of known
   correspondents without other details
-- a spam filtering system
-- some sort of alerting mechanism
-- integrated viewers for a wide range of MIME types, embedded within
+* a spam filtering system
+* some sort of alerting mechanism
+* integrated viewers for a wide range of MIME types, embedded within
   the RFC-822 data type
-- a vacation notification auto-responder
+* a vacation notification auto-responder
 
 Many of these things could very reasonably be system-wide facilities.
 
@@ -37,14 +37,14 @@ Workflow
 
 There are a few different workflows for email:
 
-- Reading and processing a delivered message
+* Reading and processing a delivered message
 
-  - Including storing important messages for easy future retrieval
+  * Including storing important messages for easy future retrieval
 
-- Composing and sending a message
-- Forwarding a message, optionally with added content
-- Resending a message
-- Searching for previously-received messages
+* Composing and sending a message
+* Forwarding a message, optionally with added content
+* Resending a message
+* Searching for previously-received messages
 
 Reading
 ~~~~~~~
@@ -76,3 +76,25 @@ Having fetched the email (in its entirety? Or just the RFC5322 body?)
 it will be possible to index, history, etc, it.  This should be a
 standard pipeline for handling inbound objects, exposed as a
 system-wide inbox.
+
+Types
+-----
+
+Implement an RFC-5322 Email type, which will display an email header,
+both exhaustively, and in the usual summary form.  Email addresses
+should be converted, where possible, to Person, Organisation, or Group
+references.  The body of the email should be rendered in the same
+window under the header.  Ideally, this would use an existing lens --
+there needs to be an investigation into how this might work with
+separate processes, or if it requires just code reuse.
+
+Attachments should similarly be references to their items.
+
+I think I'd like a browser-style forward/back history here, and a
+hotkey for "open-in-new-window" vs "open-in-this-window".  It'd be
+nice if even the separate window kept track of where it was launched
+from so that a "back" or "back-and-close" would raise the launching
+window again.
+
+As an aside, it's not clear how having a universal history influences
+the use of this model.

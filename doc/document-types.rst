@@ -15,7 +15,7 @@ think they're likely different types:
 * Microsoft Word 97 / XML
 * ODF
 * Postscript
-* PDF
+* PDF (see :doc:`pdf-type`)
 
 There's probably some more that I've forgotten.
 
@@ -120,6 +120,8 @@ largely "read only" documents.  And, at least in the short term,
 that's certainly sufficient.
 
 This class needs only a single pane window rendering the document.
+PDF is implemented this way (see :doc:`pdf-type`): a type and a
+read-only lens of its own.
 
 
 Native Document Formats

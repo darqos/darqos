@@ -141,7 +141,9 @@ Other things to try:
 
 * New's *Import File...* makes an item from a file on the machine,
   such as a photo: the image lens shows it, and +, - and F zoom, [ and
-  ] turn it, and C crops it (see :doc:`image-type`).
+  ] turn it, and C crops it (see :doc:`image-type`).  A PDF opens in
+  the PDF lens: Ctrl+F finds text, and O shows its outline (see
+  :doc:`pdf-type`).
 * *S-t* imports an address book, a ``.vcf`` file of vCards: the
   people and organisations in it are found by Search, by their names,
   and open in the entity lens (see :doc:`kb-service`).

@@ -40,14 +40,17 @@ include = [
     "services/terminal/*.py",
     "lenses/entity/*.py",
     "lenses/image/main.py",
+    "lenses/pdf/main.py",
     "lenses/text/main.py",
     "types/image/*.py",
     "types/kb/main.py",
+    "types/pdf/*.py",
     "types/text/main.py",
     "tools/devterm/main.py",
     "tools/reindex/main.py",
     "tools/type-sync/main.py",
     "tools/vcard-import/*.py",
+    "bench/*.py",
 ]
 line-length = 120
 target-version = "py313"
@@ -88,14 +91,17 @@ include = [
     "services/terminal/*.py",
     "lenses/entity/*.py",
     "lenses/image/main.py",
+    "lenses/pdf/main.py",
     "lenses/text/main.py",
     "types/image/*.py",
     "types/kb/main.py",
+    "types/pdf/*.py",
     "types/text/main.py",
     "tools/devterm/main.py",
     "tools/reindex/main.py",
     "tools/type-sync/main.py",
     "tools/vcard-import/*.py",
+    "bench/*.py",
     "tests",
 ]
 pythonVersion = "3.13"

@@ -25,8 +25,9 @@ enum Status : uint32 {
     // Data given to CreateFrom isn't of its type.
     INVALID_DATA = 4;
 
-    // The type's items have no form as data, for CreateFrom or Export,
-    // or aren't indexed, for IndexEntry.
+    // The type has no empty items, for Create, or its items have no
+    // form as data, for CreateFrom or Export, or aren't indexed, for
+    // IndexEntry.
     UNSUPPORTED = 5;
 }
 

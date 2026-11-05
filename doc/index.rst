@@ -53,8 +53,11 @@ Services
 .. include:: history.rst
 .. include:: search-service.rst
 .. include:: kb-service.rst
+.. include:: extraction-service.rst
 .. include:: network.rst
-.. include:: davsync-service.rst	  
+.. include:: davsync-service.rst
+.. include:: email-sync-service.rst
+   
 
 ************************************************************************
 Items, Types, and Lenses
@@ -76,6 +79,7 @@ Type Implementations
 .. include:: document-types.rst
 .. include:: text.rst
 .. include:: image-type.rst
+.. include:: pdf-type.rst
 .. include:: email.rst
 .. include:: message-type.rst
 .. include:: audio.rst
@@ -85,6 +89,8 @@ Type Implementations
 .. include:: ssh.rst
 
 .. include:: tools.rst
+.. include:: mh-email-import-tool.rst
+.. include:: slack-import-tool.rst
 .. include:: ports.rst
 
 ************************************************************************

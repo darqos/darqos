@@ -756,6 +756,12 @@ Services
   * System-to-user communication
   * Control over what events generate notifications
 
+* Extraction (see :doc:`extraction-service`)
+
+  * Structured data from unstructured text, with a language model
+  * Pluggable models, local or remote
+  * First used by the LinkedIn import, for pasted profile pages
+
 * People
 
   * Repository of data about people

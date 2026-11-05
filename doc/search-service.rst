@@ -41,7 +41,8 @@ The publishers are type implementations only:
   :doc:`text`);
 * the image type, its title, artist and copyright as names, and its
   comment, date taken and format as its body (see :doc:`image-type`);
-  and
+* the PDF type, its title and author as names, and the text of its
+  pages as its body (see :doc:`pdf-type`); and
 * ``types/kb``, the entities of its kinds (people, organisations,
   organisational units, places and groups), with their labels and
   aliases, in every language, as names, and their descriptions as

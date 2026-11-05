@@ -72,11 +72,16 @@ class Failed(Exception):
         self.entity_id = entity_id
 
 
+def batch_size(max_ids: int) -> int:
+    """Return how many identifiers a batch holds: at most max_ids, or
+    MAX_IDS if it's 0."""
+    return MAX_IDS if max_ids == 0 else min(max_ids, MAX_IDS)
+
+
 def page(ids: typing.Iterable[str], max_ids: int, after: str) -> list[str]:
     """Return a batch of sorted identifiers: at most max_ids (0 for
     MAX_IDS), after the identifier after."""
-    limit = MAX_IDS if max_ids == 0 else min(max_ids, MAX_IDS)
-    return [i for i in sorted(ids) if i > after][:limit]
+    return [i for i in sorted(ids) if i > after][:batch_size(max_ids)]
 
 
 class KBService(KB.Handler):
@@ -216,31 +221,28 @@ class KBService(KB.Handler):
 
     # Lookups
 
+    # Lookups answer from identifiers, without reading the entities.
+    # Links and instances are found a batch at a time, so a batch costs
+    # its own size, however many there are in all.
+
     def find_by_label(self, request: FindByLabelRequest, source: int) -> FindByLabelResponse:
-        if request.match == Match.WORDS:
-            found = self.kb.search(request.text, request.language)
-        else:
-            found = self.kb.find_labelled(request.text, request.language)
-        ids = {e.id for e in found}
+        ids = self.kb.label_ids(request.text, request.language, words=request.match == Match.WORDS)
         if request.class_id:
-            ids &= {e.id for e in self.kb.instances(request.class_id)}
+            ids = self.kb.instances_among(ids, request.class_id)
         return FindByLabelResponse(ids=page(ids, request.max, request.after), status=Status.OK)
 
     def find_by_value(self, request: FindByValueRequest, source: int) -> FindByValueResponse:
-        found = self.kb.find_by_value(request.property_id, request.value)
-        return FindByValueResponse(ids=page((e.id for e in found), request.max, request.after),
-                                   status=Status.OK)
+        ids = self.kb.value_ids(request.property_id, request.value)
+        return FindByValueResponse(ids=page(ids, request.max, request.after), status=Status.OK)
 
     def find_links(self, request: FindLinksRequest, source: int) -> FindLinksResponse:
-        found = self.kb.find_links(request.target_id, request.property_id or None,
-                                   model.FROM_ROLES[request.role])
-        return FindLinksResponse(ids=page((e.id for e in found), request.max, request.after),
-                                 status=Status.OK)
+        ids = self.kb.link_ids(request.target_id, request.property_id or None,
+                               model.FROM_ROLES[request.role], request.after, batch_size(request.max))
+        return FindLinksResponse(ids=ids, status=Status.OK)
 
     def instances(self, request: InstancesRequest, source: int) -> InstancesResponse:
-        found = self.kb.instances(request.class_id)
-        return InstancesResponse(ids=page((e.id for e in found), request.max, request.after),
-                                 status=Status.OK)
+        ids = self.kb.instance_ids(request.class_id, request.after, batch_size(request.max))
+        return InstancesResponse(ids=ids, status=Status.OK)
 
     def query(self, request: QueryRequest, source: int) -> QueryResponse:
         limit = MAX_IDS if request.max == 0 else min(request.max, MAX_IDS)

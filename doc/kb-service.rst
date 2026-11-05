@@ -104,7 +104,10 @@ Index tables are derived from the documents, and updated in the same
 transaction as each change:
 
 * labels and aliases, by language, with an SQLite FTS5 full-text index
-  for partial names;
+  for partial names.  The full-text index reads its text from the
+  labels table (an *external content* table), and triggers on that
+  table keep it in step, so each label is stored once, and an entity's
+  rows are found through an ordinary index when it changes;
 * links, by property and target entity, from statements, qualifiers,
   and references, for following links backwards: everyone employed by
   an organisation, or living at an address, or the instances of a
@@ -119,9 +122,24 @@ transaction as each change:
 Each row has its statement's identifier, the snak's role in it (its
 main snak, a qualifier, or in a reference), and the statement's rank,
 for queries (see Queries, below).  Version 1 of the schema had no
-snaks, ranks or roles: a version 1 database's index tables are
-rebuilt from the documents when it's opened, which takes a few seconds
-for about 4,000 entities.
+snaks, ranks or roles.  Version 2 kept the full-text rows apart from
+the labels, found by an unindexed column, so every write scanned the
+whole full-text table: about 23 ms a write at 100,000 entities, and
+growing with them.  An older database's index tables are rebuilt from
+the documents when it's opened, which takes about a second for about
+4,000 entities.
+
+The store keeps SQLite's query planner supplied with statistics, with
+``pragma optimize``, when it opens and after every 10,000 writes:
+without them, a query can start from the wrong end of a join, and at a
+million entities one that takes 0.2 ms took 6 seconds.  SQLite analyses
+only what's changed a lot, reading at most 1,000 rows of each index, so
+it's cheap: a second for a million entities with no statistics, and
+under a millisecond with nothing to do.
+
+The store's scale is measured by ``bench/kb_scale.py``, which grows a
+database of synthetic entities, mostly emails, to millions, and times
+writes and lookups at each step.
 
 A change is written with the revision it was based on, and is refused,
 as a conflict, if the stored entity has a later one, so one client's
@@ -271,6 +289,15 @@ History's ``GetEvents``: at most ``max`` (0 for the service's limit,
 1000), after the identifier ``after``, so the next batch is asked for
 with the last identifier returned.  Destroyed and merged entities are
 left out.
+
+Lookups are answered from the index tables' identifiers, without
+reading the entities.  A batch of ``FindLinks`` by a property, or of
+``Instances``, is read in order from an index ending in the linking
+entity's identifier, and stops when it's full, so it costs its own
+size, however many entities link to the target, or are instances of
+the class: a class's subclasses' instances are read the same way, a
+batch from each, and merged.  ``FindLinks`` without a property sorts
+the target's links, which is cheap unless there are millions.
 
 Queries
 ~~~~~~~

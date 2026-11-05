@@ -241,7 +241,8 @@ Every implementation serves the `Implementation` protocol (also in
 
 * `Create(type_id)` creates an item of a type, and returns its
   identifier, and a port for it.  A type the implementation doesn't
-  implement is `NOT_FOUND`.
+  implement is `NOT_FOUND`, and one with no empty items, such as a
+  PDF, is `UNSUPPORTED`: they're only made with `CreateFrom`.
 * `Open(item_id)` returns a port for an existing item.  An implementation
   must check that the identifier's type is its own: an item of another
   type, including a conforming subtype, is `NOT_FOUND`.

@@ -255,3 +255,219 @@ def test_merge_and_destroy(path):
     assert k.get("gone").destroyed
     assert "gone" not in [e.id for e in k.entities()]
     assert [e.id for e in k.find_links("old")] == ["friend"]
+
+
+def fts_rows(s, word):
+    """The entities whose full-text rows match a word, deleted or not."""
+    return sorted(r[0] for r in s.db.execute(
+        "select entity_id from labels_fts where labels_fts match ?", (f'"{word}"*',)))
+
+
+def fts_intact(s):
+    """Whether the full-text index agrees with the labels."""
+    s.db.execute("insert into labels_fts (labels_fts, rank) values ('integrity-check', 1)")
+    return True
+
+
+def test_search_follows_changes(path):
+    k = open_kb(path)
+    with k.transaction():
+        vocabulary(k)
+        k.add_item("Robert Smith", "old")
+        k.add_item("Bob Smith", "new")
+        k.add_item("Widget Corp", "widgets").add_alias("Gadgets")
+        k.add_item("Ephemeral", "gone")
+    with k.transaction():
+        k.get("widgets").set_label("Sprocket Corp")
+    with k.transaction():
+        k.merge("old", "new")
+        k.destroy("gone")
+
+    k = open_kb(path)
+    assert [e.id for e in k.search("sprock")] == ["widgets"]
+    assert k.search("widget") == []
+    assert [e.id for e in k.search("gadg")] == ["widgets"]
+    assert [e.id for e in k.search("robert")] == ["new"]
+    assert k.search("ephem") == []
+    s = k.store
+    # The old label's full-text row went with it.  A merged entity keeps
+    # its rows, as its labels row does, and search leaves it out.
+    assert fts_rows(s, "widget") == []
+    assert fts_rows(s, "smith") == ["new", "new", "old"]
+    assert fts_intact(s)
+
+
+def test_writes_find_full_text_rows_by_index(path):
+    # An entity's full-text rows are deleted, with its labels, through an
+    # index, not by scanning labels_fts: as it was, each write scanned
+    # the whole table, and slowed as the knowledge base grew.
+    s = open_store(path)
+    plan = s.db.execute("explain query plan delete from labels where entity_id = ?", ("x",)).fetchall()
+    assert any("labels_by_entity" in row[-1] for row in plan), plan
+    assert not any("labels_fts" in row[-1] for row in plan), plan
+
+
+def test_upgrade_from_version_2(path):
+    k = open_kb(path)
+    with k.transaction():
+        vocabulary(k)
+        k.add_item("Acme Pty Ltd", "acme").add_alias("Widgets Inc")
+        k.add_item("Ada Lovelace", "ada")
+    before = (k.search("acm"), k.search("wid"), k.search("lovel"))
+    before = [[e.id for e in found] for found in before]
+    k.store.close()
+    stores.clear()
+
+    # Make it as version 2 had it: labels without an id, and the
+    # full-text rows kept apart, by entity_id.
+    db = sqlite3.connect(path)
+    db.executescript("""
+        drop table labels_fts;
+        create table old_labels as select entity_id, language, role, text, folded from labels;
+        drop table labels;
+        alter table old_labels rename to labels;
+        create index labels_by_text on labels (language, text);
+        create index labels_by_entity on labels (entity_id);
+        create virtual table labels_fts using fts5 (entity_id unindexed, language unindexed, text,
+            tokenize = 'unicode61 remove_diacritics 2');
+        insert into labels_fts select entity_id, language, text from labels;
+        pragma user_version = 2;
+    """)
+    labels = db.execute("select count(*) from labels").fetchone()[0]
+    db.close()
+
+    k = open_kb(path)
+    s = k.store
+    assert s.db.execute("pragma user_version").fetchone()[0] == store.VERSION == 3
+    assert s.db.execute("select count(*) from labels").fetchone()[0] == labels
+    after = [[e.id for e in k.search(text)] for text in ("acm", "wid", "lovel")]
+    assert after == before == [["acme"], ["acme"], ["ada"]]
+    assert fts_intact(s)
+
+    # And it's kept in step from then on.
+    with k.transaction():
+        k.get("ada").set_label("Augusta Ada King")
+    assert k.search("lovel") == []
+    assert [e.id for e in k.search("augus")] == ["ada"]
+    assert fts_intact(s)
+
+
+def walk(lookup, size):
+    """Every batch of a lookup, of at most size, joined."""
+    found, after = [], ""
+    while True:
+        batch = lookup(after, size)
+        assert len(batch) <= size
+        if not batch:
+            return found
+        found += batch
+        after = batch[-1]
+
+
+def classes_and_links(k):
+    """Instances of a class and two of its subclasses, some of two, and
+    links to a hub by two properties, some merged or destroyed."""
+    vocabulary(k)
+    k.add_property("knows", model.Datatype.Item, "knows")
+    k.add_item("company", "company").claim("P279", model.EntityValue("Q4830453"))
+    k.add_item("hub", "hub")
+    for n in range(30):
+        e = k.add_item(f"Thing {n}", f"e{n:02d}")
+        cls = ("Q43229", "Q4830453", "company")[n % 3]
+        e.claim("P31", model.EntityValue(cls))
+        if n % 4 == 0:
+            # An instance of two of the classes, twice over.
+            e.claim("P31", model.EntityValue("company"))
+            e.claim("P31", model.EntityValue("Q43229"))
+        e.claim("P108" if n % 2 else "knows", model.EntityValue("hub"))
+        if n % 5 == 0:
+            e.claim("knows", model.EntityValue("hub"))
+
+
+def test_batches_match_whole_lookups(path):
+    k = open_kb(path)
+    with k.transaction():
+        classes_and_links(k)
+    with k.transaction():
+        k.destroy("e07")
+        k.merge("e11", "e12")
+
+    memory = kb.KnowledgeBase()
+    classes_and_links(memory)
+    memory.destroy("e07")
+    memory.merge("e11", "e12")
+
+    instances = [e.id for e in k.instances("Q43229")]
+    assert len(instances) == len(set(instances)) == 28
+    for size in (1, 2, 7, 100):
+        assert walk(lambda after, n: k.instance_ids("Q43229", after, n), size) == instances
+        assert walk(lambda after, n: memory.instance_ids("Q43229", after, n), size) == instances
+        for prop in ("P108", "knows", None):
+            links = [e.id for e in k.find_links("hub", prop)]
+            assert walk(lambda after, n: k.link_ids("hub", prop, "main", after, n), size) == links
+            assert walk(lambda after, n: memory.link_ids("hub", prop, "main", after, n), size) == links
+    assert "e07" not in instances and "e11" not in instances
+    assert k.instances_among(["e00", "e01", "e07", "nothing"], "Q4830453") == ["e00", "e01"]
+    assert memory.instances_among(["e00", "e01", "e07", "nothing"], "Q4830453") == ["e00", "e01"]
+
+
+def test_batches_read_in_order(path):
+    # A batch of links by a property, or of a class's instances, is read
+    # in order from an index ending in entity_id, and stops at its size,
+    # rather than sorting every match first: no temporary b-tree.  (Both
+    # link indexes serve links by a property: the planner may use either.)
+    s = open_store(path)
+    live = store.LIVE
+    links = ("select l.entity_id from links l join entities e on e.id = l.entity_id "
+             "where l.target_id = ? and l.property_id = ? and l.role = ? and l.entity_id > ? "
+             f"and {live} group by l.entity_id order by l.entity_id limit ?")
+    instances = ("select l.entity_id from links l join entities e on e.id = l.entity_id "
+                 "where l.property_id = ? and l.target_id = ? and l.role = 'main' and l.entity_id > ? "
+                 f"and {live} group by l.entity_id order by l.entity_id limit ?")
+    for sql, args in ((links, ("a", "b", "c", "", 10)), (instances, ("a", "b", "", 10))):
+        plan = [row[-1] for row in s.db.execute(f"explain query plan {sql}", args)]
+        assert any("links_by_" in step and "entity_id>?" in step for step in plan), plan
+        assert not any("TEMP B-TREE" in step for step in plan), plan
+
+
+def analysed(s):
+    """The tables the query planner has statistics for."""
+    return {row[0] for row in s.db.execute("select tbl from sqlite_stat1")}
+
+
+def many_links(k, n):
+    """A hub, linked to by most of n entities, and a few people with an
+    employer of their own, as a query's two patterns would find them."""
+    vocabulary(k)
+    k.add_item("hub", "hub")
+    k.add_item("org", "org")
+    for i in range(n):
+        k.add_item(f"Thing {i}", f"e{i}").claim("P108", model.EntityValue("hub" if i % 50 else "org"))
+
+
+def test_statistics_are_gathered_on_opening(path):
+    k = open_kb(path)
+    with k.transaction():
+        many_links(k, 1000)
+    assert "links" not in analysed(k.store)
+    k.store.close()
+    stores.clear()
+
+    s = open_store(path)
+    assert {"links", "labels"} <= analysed(s)
+
+
+def test_statistics_are_refreshed_as_it_grows(path, monkeypatch):
+    # A knowledge base that grows after opening isn't left with what it
+    # knew when it was small.
+    monkeypatch.setattr(store, "OPTIMIZE_WRITES", 100)
+    s = open_store(path)
+    k = kb.KnowledgeBase(s)
+    assert "links" not in analysed(s)
+    with k.transaction():
+        vocabulary(k)
+    for i in range(300):
+        with k.transaction():
+            k.add_item(f"Thing {i}", f"e{i}").claim("P31", model.EntityValue("Q5"))
+    assert "links" in analysed(s)
+    assert s.writes - s.optimized < 100

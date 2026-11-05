@@ -1,0 +1,13 @@
+{
+  "types": [
+    {
+      "id": "com.adobe.pdf",
+      "name": "PDF Document",
+      "description": "A PDF document, for reading.",
+      "conforms_to": ["public.data", "public.composite-content"],
+      "mime_types": ["application/pdf"],
+      "extensions": ["pdf"],
+      "implemented": true
+    }
+  ]
+}

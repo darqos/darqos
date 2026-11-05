@@ -1,0 +1,38 @@
+Email SMTP/IMAP4 Service
+========================
+
+An Email Service should:
+
+* Support SMTP protocol
+
+  * Support ending emails
+
+* Support IMAP4 protocol
+  
+  * Monitor one-or-more IMAP accounts
+  * Detect newly-added emails
+  
+    * Fetch them
+    * Ingest them
+
+      * Create a KB entity
+      * Create a matching Email item
+
+    * Add a History element
+    * Update the Index
+    * Add an Event
+    
+  * Detect newly-deleted emails
+  
+    * Flag as deleted in KB
+    * Add a History element
+    * Figure out what to do with the Index
+
+The IMAP service must ensure that mobile clients which use the IMAP
+protocol continue to work effectively.  While a DarqOS system can
+participate in processing an operator's email, it must not prevent
+their other clients from continuing to do so as well.
+
+Python's standard library includes a well-tested IMAP library, which
+should make the implementation fairly straightforward.
+

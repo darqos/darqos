@@ -1,0 +1,22 @@
+// darqos
+// Copyright (C) 2026 David Arnold
+//
+// PDF item protocol: see doc/pdf-type.rst.
+//
+// A PDF item is read-only: rendering it is left to its clients.
+
+library darq.pdf;
+
+// The item port of a PDF item, returned by its implementation's
+// CreateFrom and Open (see lib/didl/type.didl).
+protocol Pdf {
+    // As Item.Close.
+    1: Close() -> ();
+
+    // Return the PDF.
+    16: Get() -> (opaque data);
+
+    // Return the PDF's size, in bytes, and its number of pages: 0 if
+    // it's protected by a password, so it can't be read.
+    17: Stat() -> (uint64 size, uint32 pages);
+}

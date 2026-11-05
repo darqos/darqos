@@ -342,6 +342,36 @@ def test_paging(people, monkeypatch):
     assert len(service.instances(InstancesRequest(class_id="Q5", max=10), 0).ids) == 3
 
 
+def test_lookups_read_no_entities(people):
+    # Lookups answer from the store's identifiers: reading every entity
+    # found, to answer one batch, made a batch of links to an entity
+    # with millions cost as much as all of them, and kept them all.
+    service = people
+    service.kb.items.clear()
+    service.kb.properties.clear()
+    service.kb.labels.clear()
+    service.find_links(FindLinksRequest(target_id="acme", property_id="P108", role=Role.MAIN, max=2), 0)
+    service.instances(InstancesRequest(class_id="Q43229"), 0)
+    service.find_by_label(FindByLabelRequest(text="person", language="en", match=Match.WORDS,
+                                             class_id="Q5"), 0)
+    service.find_by_value(FindByValueRequest(property_id="P1329", value="+61 7 3000 1234"), 0)
+    assert service.kb.items == {} and service.kb.properties == {}
+
+
+def test_link_paging(people):
+    service = people
+    ids, after = [], ""
+    while True:
+        batch = service.find_links(FindLinksRequest(target_id="acme", property_id="P108", role=Role.MAIN,
+                                                    max=2, after=after), 0).ids
+        if not batch:
+            break
+        assert len(batch) <= 2
+        ids += batch
+        after = batch[-1]
+    assert ids == [f"person{n}" for n in range(5)]
+
+
 def test_query(people, monkeypatch):
     service = people
 

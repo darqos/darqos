@@ -31,6 +31,12 @@ def _live(entity: Optional[Entity]) -> bool:
             and entity.redirect is None)
 
 
+def _batch(ids: List[str], after: str, limit: Optional[int]) -> List[str]:
+    """Return the sorted identifiers after after, at most limit."""
+    found = [i for i in ids if i > after]
+    return found if limit is None else found[:limit]
+
+
 class KnowledgeBase:
     """A knowledge base.
 
@@ -431,6 +437,61 @@ class KnowledgeBase:
                 break
             classes |= more
         return [e for e in entities if targets(e, INSTANCE_OF) & classes]
+
+    # Lookups returning identifiers, in order, a batch at a time: those
+    # after the identifier after, and at most limit, if given.  With a
+    # store, they're answered from it without reading the entities, so
+    # the service can answer a batch at its own cost.
+
+    def label_ids(self, text: str, language: str = "en", words: bool = False) -> List[str]:
+        """Find entities by label, or, with words, by the words of their
+        labels and aliases (see search)."""
+        if self.store is not None:
+            self.flush()
+            if words:
+                return self.store.search(text, language)
+            return self.store.find_label(text, language)
+        found = self.search(text, language) if words else self.find_labelled(text, language)
+        return sorted(e.id for e in found)
+
+    def value_ids(self, property_id: str, value: str) -> List[str]:
+        """Find entities with a string value for a property (see
+        find_by_value)."""
+        if self.store is not None:
+            self.flush()
+            return self.store.find_value(property_id, normalise(value))
+        return sorted(e.id for e in self.find_by_value(property_id, value))
+
+    def link_ids(self,
+                 target_id: str,
+                 property_id: Optional[str] = None,
+                 role: str = "main",
+                 after: str = "",
+                 limit: Optional[int] = None) -> List[str]:
+        """Find the entities that link to one (see find_links)."""
+        if self.store is not None:
+            self.flush()
+            return self.store.find_links(target_id, property_id, role, after, limit)
+        return _batch(sorted(e.id for e in self.find_links(target_id, property_id, role)), after, limit)
+
+    def instance_ids(self,
+                     class_id: str,
+                     after: str = "",
+                     limit: Optional[int] = None) -> List[str]:
+        """Find the instances of a class, or of any of its subclasses."""
+        if self.store is not None:
+            self.flush()
+            return self.store.instances(class_id, after, limit)
+        return _batch(sorted(e.id for e in self.instances(class_id)), after, limit)
+
+    def instances_among(self, ids: Sequence[str], class_id: str) -> List[str]:
+        """Return those of some entities that are instances of a class,
+        or of any of its subclasses, in order."""
+        if self.store is not None:
+            self.flush()
+            return self.store.instances_among(ids, class_id)
+        instances = {e.id for e in self.instances(class_id)}
+        return sorted(i for i in ids if i in instances)
 
     def query(self,
               query: Query,

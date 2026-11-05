@@ -17,6 +17,7 @@ A Store is used by a KnowledgeBase:
 """
 
 import datetime
+import heapq
 import json
 import os
 import re
@@ -33,9 +34,13 @@ from query import Plan, TooCostly, compile
 
 
 # Version of the schema, kept as the database's user_version.  Version
-# 1 had no snaks table, and no ranks or roles for links and strings:
-# its index tables are rebuilt.
-VERSION = 2
+# 1 had no snaks table, and no ranks or roles for links and strings;
+# version 2 kept the full-text rows apart from labels, found by an
+# unindexed column, so each write scanned them all, and its link
+# indexes didn't end in entity_id, so a batch of links or instances
+# was found by sorting them all.  An older
+# database's index tables are rebuilt.
+VERSION = 3
 
 SCHEMA = """
 create table if not exists entities (
@@ -55,6 +60,7 @@ create table if not exists revisions (
     primary key (id, revision));
 
 create table if not exists labels (
+    id integer primary key,
     entity_id text not null,
     language text not null,
     role text not null,
@@ -63,11 +69,24 @@ create table if not exists labels (
 create index if not exists labels_by_text on labels (language, text);
 create index if not exists labels_by_entity on labels (entity_id);
 
+-- The full-text index of labels, its text read from them, kept in step
+-- by triggers.  The explicit integer key keeps each label's rowid,
+-- which the index refers to, stable through a vacuum.
 create virtual table if not exists labels_fts using fts5 (
     entity_id unindexed,
     language unindexed,
     text,
+    content = 'labels',
+    content_rowid = 'id',
     tokenize = 'unicode61 remove_diacritics 2');
+create trigger if not exists labels_inserted after insert on labels begin
+    insert into labels_fts (rowid, entity_id, language, text)
+    values (new.id, new.entity_id, new.language, new.text);
+end;
+create trigger if not exists labels_deleted after delete on labels begin
+    insert into labels_fts (labels_fts, rowid, entity_id, language, text)
+    values ('delete', old.id, old.entity_id, old.language, old.text);
+end;
 
 create table if not exists links (
     entity_id text not null,
@@ -76,8 +95,10 @@ create table if not exists links (
     target_id text not null,
     role text not null,
     rank text not null);
-create index if not exists links_by_target on links (target_id, property_id);
-create index if not exists links_by_property on links (property_id, target_id);
+-- Each ends in entity_id, so the entities linking to one, or the
+-- instances of a class, are read in order, a batch at a time.
+create index if not exists links_by_target on links (target_id, property_id, role, entity_id);
+create index if not exists links_by_property on links (property_id, target_id, role, entity_id);
 create index if not exists links_by_entity on links (entity_id);
 create index if not exists links_by_statement on links (statement_id);
 
@@ -104,11 +125,20 @@ create index if not exists snaks_by_property on snaks (property_id);
 create index if not exists snaks_by_entity on snaks (entity_id);
 """
 
-# Index tables, each with an entity_id column.
-INDEXES = ("labels", "labels_fts", "links", "strings", "snaks")
+# Rows ANALYZE reads from each index, so it stays quick however large
+# the database grows.
+ANALYSIS_LIMIT = 1000
 
-# The index tables version 1 had, which have changed.
-CHANGED = ("links", "strings")
+# Writes between refreshing the planner's statistics.
+OPTIMIZE_WRITES = 10_000
+
+# Analyse every table that needs it, whether or not this connection has
+# queried it: a connection may only write, or have only just opened.
+OPTIMIZE = "pragma optimize = 0x10002"
+
+# Index tables, each with an entity_id column, other than labels_fts,
+# which follows labels.
+INDEXES = ("labels", "links", "strings", "snaks")
 
 # Condition for an entity, e, that isn't destroyed or merged.
 LIVE = "e.destroyed = 0 and e.redirect is null"
@@ -137,7 +167,7 @@ class Store:
             self.db.close()
             raise ValueError(f"{path}: schema version {version} is newer "
                              f"than {VERSION}")
-        if version == 1:
+        if 0 < version < VERSION:
             self._upgrade()
         else:
             self.db.executescript(SCHEMA)
@@ -147,20 +177,33 @@ class Store:
         self.active = False
         self.written: Set[str] = set()
 
-        # Entity revisions written, in all.
+        # Entity revisions written, in all, and at the last refresh of
+        # the planner's statistics.
         self.writes = 0
+        self.optimized = 0
+
+        self.db.execute(f"pragma analysis_limit = {ANALYSIS_LIMIT}")
+        self.optimize()
 
     def close(self):
         self.db.close()
 
+    def optimize(self):
+        """Refresh the query planner's statistics, if they need it.
+
+        Without them, it can start a join from the wrong end: from every
+        link of a property, not one entity's.  SQLite only analyses what
+        has changed a lot since it was last analysed, so it's cheap when
+        there's nothing to do."""
+        self.db.execute(OPTIMIZE)
+        self.optimized = self.writes
+
     def _upgrade(self):
-        """Upgrade the schema from version 1, rebuilding the index tables
-        from the documents, all or none."""
-        drops = "".join(f"drop table {table}; " for table in CHANGED)
+        """Upgrade the schema from an earlier version, rebuilding the
+        index tables from the documents, all or none."""
+        drops = "".join(f"drop table if exists {table}; " for table in ("labels_fts", *INDEXES))
         self.db.executescript(f"begin immediate; {drops}{SCHEMA}")
         try:
-            for table in INDEXES:
-                self.db.execute(f"delete from {table}")
             rows = self.db.execute("select document from entities").fetchall()
             for (text,) in rows:
                 self._index(decode_entity(json.loads(text)))
@@ -181,6 +224,8 @@ class Store:
         if self.active:
             self.db.execute("commit")
             self._ended()
+            if self.writes - self.optimized >= OPTIMIZE_WRITES:
+                self.optimize()
 
     def rollback(self):
         """Roll back the current transaction, if any."""
@@ -264,12 +309,11 @@ class Store:
         names += [(language, "alias", alias)
                   for language, aliases in entity.aliases.items()
                   for alias in aliases]
-        self.db.executemany("insert into labels values (?, ?, ?, ?, ?)",
+        # The triggers on labels keep labels_fts in step.
+        self.db.executemany("insert into labels (entity_id, language, "
+                            "role, text, folded) values (?, ?, ?, ?, ?)",
                             [(entity.id, language, role, text, fold(text))
                              for language, role, text in names])
-        self.db.executemany("insert into labels_fts values (?, ?, ?)",
-                            [(entity.id, language, text)
-                             for language, _, text in names])
         links, strings, snaks = [], [], []
         for s, snak, role in entity_snaks(entity):
             row = (entity.id, s.id, snak.property_id)
@@ -327,30 +371,80 @@ class Store:
     def find_links(self,
                    target_id: str,
                    property_id: Optional[str],
-                   role: str) -> List[str]:
-        """Return the identifiers of entities linking to one."""
-        condition = "" if property_id is None else "and l.property_id = ? "
-        args = [target_id, role] + ([] if property_id is None
-                                    else [property_id])
-        return self._ids("select distinct l.entity_id from links l "
-                         "join entities e on e.id = l.entity_id "
-                         "where l.target_id = ? and l.role = ? "
-                         f"{condition}and {LIVE} order by 1", *args)
+                   role: str,
+                   after: str = "",
+                   limit: Optional[int] = None) -> List[str]:
+        """Return the identifiers of entities linking to one, in order:
+        those after the identifier after, and at most limit, if given.
 
-    def instances(self, class_id: str) -> List[str]:
-        """Return the identifiers of instances of a class, or of any of
-        its subclasses."""
+        With a property, they're read in order from links_by_target, so
+        a batch costs its own size, however many link to the entity;
+        without one, they're sorted."""
+        condition = "" if property_id is None else "and l.property_id = ? "
+        args = [target_id, *([] if property_id is None else [property_id]),
+                role, after, -1 if limit is None else limit]
+        return self._ids("select l.entity_id from links l "
+                         "join entities e on e.id = l.entity_id "
+                         f"where l.target_id = ? {condition}and l.role = ? "
+                         f"and l.entity_id > ? and {LIVE} "
+                         "group by l.entity_id order by l.entity_id limit ?",
+                         *args)
+
+    def subclasses(self, class_id: str) -> List[str]:
+        """Return a class, and its subclasses, at any depth."""
         return self._ids("with recursive classes (id) as ("
                          "  select ? union"
                          "  select l.entity_id from links l"
                          "  join classes c on l.target_id = c.id"
                          "  where l.property_id = ? and l.role = 'main') "
-                         "select distinct l.entity_id from links l "
-                         "join classes c on l.target_id = c.id "
-                         "join entities e on e.id = l.entity_id "
-                         "where l.property_id = ? and l.role = 'main' "
-                         f"and {LIVE} order by 1",
-                         class_id, SUBCLASS_OF, INSTANCE_OF)
+                         "select id from classes order by 1",
+                         class_id, SUBCLASS_OF)
+
+    def instances(self,
+                  class_id: str,
+                  after: str = "",
+                  limit: Optional[int] = None) -> List[str]:
+        """Return the identifiers of instances of a class, or of any of
+        its subclasses, in order: those after the identifier after, and
+        at most limit, if given.
+
+        Each class's are read in order from links_by_property, at most
+        limit of them, and merged, so a batch costs at most its size
+        for each class, however many instances there are."""
+        batches = [self._ids("select l.entity_id from links l "
+                             "join entities e on e.id = l.entity_id "
+                             "where l.property_id = ? and l.target_id = ? "
+                             "and l.role = 'main' and l.entity_id > ? "
+                             f"and {LIVE} group by l.entity_id "
+                             "order by l.entity_id limit ?",
+                             INSTANCE_OF, c, after,
+                             -1 if limit is None else limit)
+                   for c in self.subclasses(class_id)]
+        found: List[str] = []
+        for entity_id in heapq.merge(*batches):
+            if found and found[-1] == entity_id:
+                continue
+            if limit is not None and len(found) == limit:
+                break
+            found.append(entity_id)
+        return found
+
+    def instances_among(self, ids: Sequence[str], class_id: str) -> List[str]:
+        """Return those of some identifiers that are of instances of a
+        class, or of any of its subclasses, in order."""
+        classes = self.subclasses(class_id)
+        marks = ", ".join("?" * len(classes))
+        found: Set[str] = set()
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            found.update(self._ids(
+                "select l.entity_id from links l "
+                "join entities e on e.id = l.entity_id "
+                f"where l.property_id = ? and l.role = 'main' and {LIVE} "
+                f"and l.target_id in ({marks}) "
+                f"and l.entity_id in ({', '.join('?' * len(chunk))})",
+                INSTANCE_OF, *classes, *chunk))
+        return sorted(found)
 
     def query(self,
               plan: Plan,
