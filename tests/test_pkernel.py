@@ -1978,6 +1978,17 @@ def test_default_run_directory(pkernel):
     assert pkernel.module.DEFAULT_RUN_DIR == "/darq/run"
 
 
+def test_get_version(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+    pkernel.version = darq.Version("2.17", 2, 17)
+    send_to_kernel(pkernel, process, pk.GetVersionRequest(3))
+    [(message_type, buf)] = received_messages(peer)
+    assert message_type == pk.MessageType.GET_VERSION_RESP
+    response = pk.GetVersionResponse()
+    response.decode(buf)
+    assert (response.request_id, response.edition, response.build, response.get_version()) == (3, 2, 17, "2.17")
+
+
 def get_boot_value(kernel, process, peer, name: str) -> tuple[int, bytes]:
     """Get a boot vector value for a process, returning (result, value)."""
     send_to_kernel(kernel, process, pk.GetBootValueRequest(3, name))

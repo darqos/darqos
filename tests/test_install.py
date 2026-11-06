@@ -16,6 +16,8 @@ import tarfile
 
 import pytest
 
+from darq import version as darq_version
+
 
 ROOT = pathlib.Path(__file__).parent.parent
 
@@ -43,6 +45,7 @@ def repo(tmp_path):
     for path, text in [("darq/__init__.py", "# darq\n"), ("services/storage/main.py", "# storage\n"),
                        ("bin/install", "#! /bin/sh\n"), ("man/install.8", ".TH INSTALL 8\n"),
                        ("requirements.txt", "PyQt6\n"), ("doc/index.rst", "Docs\n"),
+                       ("RELEASE", "edition=2\nbuild=16\n"),
                        ("experiments/x.py", "# mine\n")]:
         (repo / path).parent.mkdir(parents=True, exist_ok=True)
         (repo / path).write_text(text)
@@ -54,8 +57,14 @@ def repo(tmp_path):
 
 
 def tarball(directory: pathlib.Path) -> pathlib.Path:
-    [path] = directory.glob("darqos-1ed-snap*.tar.gz")
+    [path] = directory.glob("darqos-*ed-snap*.tar.gz")
     return path
+
+
+def version_file(path: pathlib.Path) -> dict[str, str]:
+    with tarfile.open(path) as tar:
+        text = tar.extractfile("darq/VERSION").read().decode()  # type: ignore[union-attr]
+    return dict(line.split("=", 1) for line in text.splitlines())
 
 
 def test_mkdist(repo, tmp_path):
@@ -64,13 +73,54 @@ def test_mkdist(repo, tmp_path):
     assert result.stderr == ""
     with tarfile.open(tarball(out)) as tar:
         members = {m.name: m for m in tar.getmembers() if m.isfile()}
-        version = tar.extractfile("darq/VERSION").read().decode()  # type: ignore[union-attr]
     # The installed directories' tracked files, owned by root.
     assert sorted(members) == ["darq/VERSION", "darq/bin/install", "darq/darq/__init__.py", "darq/man/install.8",
                                "darq/requirements.txt", "darq/services/storage/main.py"]
     assert {(m.uid, m.gid) for m in members.values()} == {(0, 0)}
     head = git(repo, "rev-parse", "--short", "HEAD").stdout.strip()
-    assert version.split()[0] == head
+    fields = version_file(tarball(out))
+    assert fields["commit"] == head
+    assert (fields["version"], fields["edition"], fields["build"]) == ("2.17", "2", "17")
+
+
+def test_mkdist_names_the_edition_and_build(repo, tmp_path):
+    out = tmp_path / "out"
+    run(repo / "mkdist", out, cwd=repo)
+    assert tarball(out).name.startswith("darqos-2ed-snap") and tarball(out).name.endswith("-b17.tar.gz")
+
+
+def test_mkdist_counts_builds(repo, tmp_path):
+    run(repo / "mkdist", tmp_path / "one", cwd=repo)
+    assert (repo / "RELEASE").read_text() == "edition=2\nbuild=17\n"
+    run(repo / "mkdist", tmp_path / "two", cwd=repo)
+    assert (repo / "RELEASE").read_text() == "edition=2\nbuild=18\n"
+    assert version_file(tarball(tmp_path / "two"))["version"] == "2.18"
+
+
+def test_mkdist_builds_go_on_across_editions(repo, tmp_path):
+    (repo / "RELEASE").write_text("edition=3\nbuild=17\n")
+    out = tmp_path / "out"
+    run(repo / "mkdist", out, cwd=repo)
+    assert version_file(tarball(out))["version"] == "3.18"
+
+
+def test_mkdist_keeps_the_number_if_it_fails(repo, tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    out.chmod(0o500)
+    try:
+        assert run(repo / "mkdist", out, cwd=repo, check=False).returncode != 0
+    finally:
+        out.chmod(0o700)
+    assert (repo / "RELEASE").read_text() == "edition=2\nbuild=16\n"
+
+
+def test_mkdist_doesnt_call_a_new_build_a_change(repo, tmp_path):
+    # RELEASE isn't distributed, so it doesn't make the next one dirty.
+    run(repo / "mkdist", tmp_path / "one", cwd=repo)
+    result = run(repo / "mkdist", tmp_path / "two", cwd=repo)
+    assert result.stderr == ""
+    assert "RELEASE" not in [name.split("/")[-1] for name in tarfile.open(tarball(tmp_path / "two")).getnames()]
 
 
 def test_mkdist_warns_of_changes(repo, tmp_path):
@@ -86,7 +136,7 @@ def test_mkdist_warns_of_changes(repo, tmp_path):
     with tarfile.open(tarball(out)) as tar:
         assert "darq/darq/new.py" not in tar.getnames()
         assert tar.extractfile("darq/darq/__init__.py").read() == b"# changed\n"  # type: ignore[union-attr]
-        assert tar.extractfile("darq/VERSION").read().decode().split()[0].endswith("-dirty")  # type: ignore
+    assert version_file(tarball(out))["version"] == "2.17-dirty"
 
 
 ################################################################
@@ -96,8 +146,11 @@ def test_mkdist_warns_of_changes(repo, tmp_path):
 @pytest.fixture
 def dist(tmp_path):
     """This tree's distribution, unpacked."""
+    # A copy of RELEASE, so testing doesn't use up this tree's numbers.
     out = tmp_path / "out"
-    run(ROOT / "mkdist", out, cwd=ROOT)
+    release = tmp_path / "RELEASE"
+    shutil.copy(ROOT / "RELEASE", release)
+    run(ROOT / "mkdist", out, cwd=ROOT, env={"DARQ_RELEASE": str(release)})
     with tarfile.open(tarball(out)) as tar:
         tar.extractall(tmp_path / "dist", filter="data")
     return tmp_path / "dist" / "darq"
@@ -117,6 +170,8 @@ def test_install(dist, tmp_path):
     root = tmp_path / "darq"
     result = install(dist, root)
     assert "Ok: installed" in result.stdout
+    assert f"installing version {darq_version.find(root).version} from" in result.stdout
+    assert darq_version.find(root).build > 0
 
     for path in ["darq/__init__.py", "kernel/pkernel", "kernel/darqos-pkernel.service", "services/storage/main.py",
                  "types/text/main.py", "lenses/text/main.py", "tools/reindex/main.py", "compositor/compositor.c",

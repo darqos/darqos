@@ -378,10 +378,10 @@ Key features of Second Edition are:
 * The beginnings of interaction outside Darq, with Filesystem and URL
   fetching support.
 
-Documents and books: fetch them by
-URL, catalogue them in the Knowledge Base, find them again with
-search, and read them; and a REPL.  Web browsing, with the HTML type
-and credentials, moved to Third Edition.
+Documents and books: fetch them by URL, catalogue them in the
+Knowledge Base, find them again with search, and read them; and a
+REPL.  Web browsing, with the HTML type and credentials, moved to
+Third Edition.
 
 Infrastructure
 
@@ -413,7 +413,9 @@ Services
 * URL fetcher
 
   * HTTP, HTTPS, FTP, SFTP, FTPS, etc
+    
     * Does not do WebSockets or WebRTC
+
   * Caching / archiving
   * Use curl?  Or CEF?  Or ... something else?
   * Should have a route (at least) to HTTP/2 and HTTP/3 support, if

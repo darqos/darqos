@@ -26,6 +26,8 @@ __all__ = [
     "ExitReason",
     "GetBootValueRequest",
     "GetBootValueResponse",
+    "GetVersionRequest",
+    "GetVersionResponse",
     "IPC_PORT",
     "KillProcessRequest",
     "KillProcessResponse",
@@ -110,6 +112,8 @@ class MessageType(IntEnum):
     SET_BOOT_VALUE_RESP = 30
     NOTIFY_ON_DEATH_RQST = 31
     NOTIFY_ON_DEATH_RESP = 32
+    GET_VERSION_RQST = 33
+    GET_VERSION_RESP = 34
 
 
 class SendResult(IntEnum):
@@ -1040,6 +1044,60 @@ class GetBootValueResponse(Message):
         if value_start + bits[2] > self.length:
             raise MessageDecodingError("value overruns message")
         self.value = bytes(buffer[value_start:value_start + bits[2]])
+        return
+
+
+class GetVersionRequest(Message):
+    """Request the system's version."""
+    def __init__(self, request_id: int = 0):
+        super().__init__(MessageType.GET_VERSION_RQST)
+        self.request_id: int = UInt32(request_id)
+        self.set_length(self.header_length + 8)
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">Lxxxx", self.request_id)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+        self.request_id = struct.unpack(">Lxxxx", buffer[self.header_length:self.header_length + 8])[0]
+        return
+
+
+class GetVersionResponse(Message):
+    """The system's version: as text, and its edition and build."""
+    def __init__(self, request_id: int = 0, edition: int = 0, build: int = 0, version: str = ""):
+        super().__init__(MessageType.GET_VERSION_RESP)
+        self.request_id: int = UInt32(request_id)
+        self.edition: int = UInt32(edition)
+        self.build: int = UInt32(build)
+        self.text = version.encode("utf-8")
+        self.set_length(self.header_length + 16 + self.padded_length(self.text))
+
+    def get_version(self) -> str:
+        """Return the version, raising UnicodeDecodeError if it's not
+        valid UTF-8."""
+        return self.text.decode("utf-8")
+
+    def encode(self) -> bytes:
+        buf = super().encode()
+        buf += struct.pack(">LLLL", self.request_id, self.edition, self.build, len(self.text))
+        buf += self.pad_bytes(self.text)
+        return buf
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+
+        start = self.header_length + 16
+        self.request_id, self.edition, self.build, length = struct.unpack(">LLLL", buffer[self.header_length:start])
+        if start + length > self.length:
+            raise MessageDecodingError("version overruns message")
+        self.text = bytes(buffer[start:start + length])
         return
 
 

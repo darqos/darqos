@@ -75,6 +75,8 @@ from .pcall import (
     ExitReason,
     GetBootValueRequest,
     GetBootValueResponse,
+    GetVersionRequest,
+    GetVersionResponse,
     KillProcessRequest,
     MAX_BOOT_VALUE_LENGTH,
     MAX_BOOT_VALUES,
@@ -125,6 +127,7 @@ from .errors import (
     ValueTooLargeError,
 )
 from .loop import EventLoopInterface, TimerListener
+from .version import Version
 
 
 # Default exported symbols.
@@ -159,6 +162,7 @@ __all__ = [
     "lookup_name",
     "lookup_name_cb",
     "get_boot_value",
+    "get_version",
     "set_boot_value",
     "shutdown",
     "reboot",
@@ -916,6 +920,30 @@ def get_boot_value(name: str) -> bytes | None:
     if response.result != BootResult.OK:
         raise _boot_error(response.result, name)
     return response.value
+
+
+# The system's version, once it's been asked for: it can't change while
+# a process runs.
+_version: Version | None = None
+
+
+def get_version() -> Version:
+    """Return the system's version, from the p-kernel: as text, such as
+    "2.17", and its edition and build, to compare.
+
+    See doc/distribution.rst."""
+    global _version
+    if _version is None:
+        syscall = SystemCallState()
+        syscall.set_mode(SystemCallMode.SYNC)
+        syscall.set_request(GetVersionRequest(0))
+
+        _darq_process_state.queue_new_syscall(syscall)
+        syscall.sync_wait()
+
+        response = typing.cast(GetVersionResponse, syscall.get_response())
+        _version = Version(response.get_version(), response.edition, response.build)
+    return _version
 
 
 def set_boot_value(name: str, value: bytes | None):

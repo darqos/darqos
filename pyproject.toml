@@ -80,6 +80,7 @@ include = [
     "darq/process.py",
     "darq/protocols",
     "darq/system.py",
+    "darq/version.py",
     "kernel/pkernel",
     "kernel/pyloader",
     "bin/didlc",

@@ -4,19 +4,22 @@
 
 # Make a distribution tarball (see doc/distribution.rst): the files git
 # tracks in the directories install(8) installs, as they are in the
-# working tree, under darq/, with a VERSION file naming the commit.
+# working tree, under darq/, with a VERSION file giving its version.
 # Files git doesn't track are left out, with a warning.
 #
 #     mkdist [output directory]
 #
 # It's written to dist/ (or the directory given), as
-# darqos-1ed-snapYYYYMMDD.tar.gz.  Uncommitted changes to them make a
+# darqos-2ed-snapYYYYMMDD-b17.tar.gz.  Uncommitted changes to them make a
 # "-dirty" version, with a warning: a release should be made from a
 # commit.
+#
+# Each tarball is a new build: RELEASE, at the top of the tree, has the
+# edition, and the last build, which never goes back to 1.  It's written
+# once the tarball's made, and committed with everything else.
+# DARQ_RELEASE names another file to use, as the tests do.
 
 set -euo pipefail
-
-EDITION=1
 
 # What's distributed: as install(8) copies it.
 PATHS="bin darq kernel lib services types lenses tools compositor man requirements.txt"
@@ -25,9 +28,16 @@ root=$(cd "$(dirname "$0")" && pwd)
 cd "$root"
 out=$(mkdir -p "${1:-dist}" && cd "${1:-dist}" && pwd)
 
-# The commit, "-dirty" if what's distributed has changed since; and a
-# warning about files git doesn't track, which are left out.
-version=$(git describe --always)
+# The edition, and this build.
+release=${DARQ_RELEASE:-$root/RELEASE}
+edition=$(sed -n 's/^edition=//p' "$release")
+build=$(( $(sed -n 's/^build=//p' "$release") + 1 ))
+
+# The version, "-dirty" if what's distributed has changed since the
+# commit; and a warning about files git doesn't track, which are left
+# out.
+commit=$(git describe --always)
+version="$edition.$build"
 # shellcheck disable=SC2086
 if [ -n "$(git status --porcelain --untracked-files=no -- $PATHS)" ]; then
     version="$version-dirty"
@@ -39,7 +49,6 @@ if [ -n "$untracked" ]; then
     echo "Warning: files git doesn't track, left out:" >&2
     echo "$untracked" | sed 's/^/    /' >&2
 fi
-version="$version $(date +%Y-%m-%d)"
 
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
@@ -52,8 +61,13 @@ git ls-files -z -- $PATHS | while IFS= read -r -d '' file; do
     mkdir -p "$stage/darq/$(dirname "$file")"
     cp -p "$file" "$stage/darq/$file"
 done
-echo "$version" > "$stage/darq/VERSION"
+printf 'version=%s\nedition=%s\nbuild=%s\ncommit=%s\ndate=%s\n' \
+    "$version" "$edition" "$build" "$commit" "$(date +%Y-%m-%d)" > "$stage/darq/VERSION"
 
-name="darqos-${EDITION}ed-snap$(date +%Y%m%d).tar.gz"
+name="darqos-${edition}ed-snap$(date +%Y%m%d)-b$build.tar.gz"
 tar -C "$stage" --owner=0 --group=0 --sort=name -czf "$out/$name" darq
+
+# Only now is the number used.
+printf 'edition=%s\nbuild=%s\n' "$edition" "$build" > "$release.new"
+mv "$release.new" "$release"
 echo "Ok: $out/$name ($version, $(find "$stage/darq" -type f | wc -l) files)"

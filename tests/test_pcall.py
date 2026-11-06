@@ -19,6 +19,8 @@ from darq.pcall import (
     Exited,
     GetBootValueRequest,
     GetBootValueResponse,
+    GetVersionRequest,
+    GetVersionResponse,
     KillProcessRequest,
     KillProcessResponse,
     LookupNameRequest,
@@ -281,6 +283,36 @@ class TestBootValueMessages:
 
     @pytest.mark.parametrize("message", [GetBootValueRequest(1, "abc"), GetBootValueResponse(1, 0, b"abc"),
                                          SetBootValueRequest(1, "abc", b"v"), SetBootValueResponse(1, 0)])
+    def test_truncated_raises(self, message):
+        with pytest.raises(MessageDecodingError):
+            type(message)().decode(message.encode()[:-1])
+
+
+class TestVersionMessages:
+    def test_request_roundtrip(self):
+        buf = GetVersionRequest(7).encode()
+        check_header(buf, MessageType.GET_VERSION_RQST)
+        d = GetVersionRequest()
+        d.decode(buf)
+        assert d.request_id == 7
+
+    @pytest.mark.parametrize("version", ["", "2", "2.17", "2.17-dirty", "unknown"])
+    def test_response_roundtrip(self, version):
+        buf = GetVersionResponse(7, 2, 17, version).encode()
+        check_header(buf, MessageType.GET_VERSION_RESP)
+        assert len(buf) % 4 == 0
+        d = GetVersionResponse()
+        d.decode(buf)
+        assert (d.request_id, d.edition, d.build, d.get_version()) == (7, 2, 17, version)
+
+    def test_response_overrun_raises(self):
+        message = GetVersionResponse(7, 2, 17, "2.17")
+        buf = bytearray(message.encode())
+        buf[message.header_length + 12:message.header_length + 16] = (99).to_bytes(4, "big")
+        with pytest.raises(MessageDecodingError):
+            GetVersionResponse().decode(bytes(buf))
+
+    @pytest.mark.parametrize("message", [GetVersionRequest(1), GetVersionResponse(1, 2, 17, "2.17")])
     def test_truncated_raises(self, message):
         with pytest.raises(MessageDecodingError):
             type(message)().decode(message.encode()[:-1])

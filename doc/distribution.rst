@@ -13,16 +13,39 @@ Making a Distribution
 ---------------------
 
 ``mkdist``, at the top of the tree, makes
-``dist/darqos-1ed-snapYYYYMMDD.tar.gz`` (or in the directory given):
+``dist/darqos-2ed-snapYYYYMMDD-b17.tar.gz`` (or in the directory given):
 the files git tracks in the directories that are installed (``bin``,
 ``darq``, ``kernel``, ``lib``, ``services``, ``types``, ``lenses``,
 ``tools``, ``compositor``, ``man``, and ``requirements.txt``), as they
 are in the working tree, under ``darq/``, owned by root.  Its
-``VERSION`` file names the commit, and the date.
+``VERSION`` file gives its version, the commit, and the date.
 
 Files git doesn't track are left out, with a warning, and uncommitted
 changes to what's distributed make a ``-dirty`` version: a release is
 made from a commit.
+
+Versions
+--------
+
+A version is an edition and a build, written ``2.17``.  ``RELEASE``, at
+the top of the tree, has the edition, and the last build.  Each tarball
+``mkdist`` makes is a new build, so a number identifies one tarball:
+it's added to ``RELEASE`` once the tarball's been made, and committed
+with everything else.  Builds aren't started again for an edition, so a
+higher build is always later, whatever its edition.
+
+================  ====================================================
+Version           What it is
+================  ====================================================
+``2.17``          An installed tarball.
+``2.17-dirty``    One made with uncommitted changes.
+``2.17-dev``      A source tree, since build 17.
+``unknown``       Neither ``VERSION`` nor ``RELEASE`` can be read.
+================  ====================================================
+
+The p-kernel reads the version when it starts, and logs it.
+``darq.get_version()`` returns it, as a ``darq.Version``: the text, for
+showing, and the edition and build, to compare.  Any process can ask.
 
 Installing
 ----------
@@ -106,7 +129,7 @@ Image Layout
 
 * `/darq/VERSION`
 
-  * The installed distribution's commit and date.
+  * The installed distribution's version, commit and date.
 
 * `/darq/darq`
 

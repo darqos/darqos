@@ -13,3 +13,4 @@ from .identifier import *
 from .loop import *
 from .process import *
 from .system import *
+from .version import *

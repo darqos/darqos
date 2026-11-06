@@ -33,6 +33,7 @@ from enum import IntEnum
 import darq
 from darq import dipc
 from darq import pcall as pk
+from darq import version as darq_version
 from darq.loop import SocketListener, TimerListener
 
 
@@ -678,6 +679,9 @@ class PseudoKernel(SocketListener, TimerListener):
         # Event loop, using the callbacks model for I/O.
         self._loop = darq.SelectEventLoop()
 
+        # What's running: it's read once, as it can't change until reboot.
+        self.version = darq_version.find(DARQ_ROOT)
+
         # Platform details for logging.
         self.host_os = ''
         self.host_os_version = ''
@@ -771,6 +775,7 @@ class PseudoKernel(SocketListener, TimerListener):
         self._loop.add_socket(self._sigchld_reader, self)
 
         # Log platform details for debugging.
+        logging.info(f"DarqOS {self.version.version}")
         logging.info(f"Using {self.host_os} {self.host_os_version}")
         logging.info(f"On a {self.device} ({self.cpu})")
         logging.info(f"Running Python v{self.python_version}")
@@ -1044,6 +1049,12 @@ class PseudoKernel(SocketListener, TimerListener):
             logging.warning(f"{process.name()} get_boot_value({name!r}) failed: {result.name}")
         process.send_data(pk.GetBootValueResponse(request.request_id, result, value or b"").encode())
         return
+
+    def handle_get_version_request(self, process: KernelProcessState, request: pk.GetVersionRequest):
+        """Answer a request for the system's version: anything can ask."""
+        version = self.version
+        process.send_data(pk.GetVersionResponse(request.request_id, version.edition, version.build,
+                                                version.version).encode())
 
     def handle_set_boot_value_request(self, process: KernelProcessState, request: pk.SetBootValueRequest):
         """Set, or remove, a boot vector value: only for processes the
@@ -2088,6 +2099,11 @@ class PseudoKernel(SocketListener, TimerListener):
             message = pk.WaitRequest()
             message.decode(message_bytes)
             self.handle_wait_request(process, message)
+
+        elif message_type == pk.MessageType.GET_VERSION_RQST:
+            message = pk.GetVersionRequest()
+            message.decode(message_bytes)
+            self.handle_get_version_request(process, message)
 
         elif message_type == pk.MessageType.GET_BOOT_VALUE_RQST:
             message = pk.GetBootValueRequest()

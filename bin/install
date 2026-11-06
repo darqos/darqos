@@ -84,7 +84,8 @@ fi
 mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/install-$(date +%Y%m%d-%H%M%S).log"
 exec > >(tee -a "$LOG") 2>&1
-echo "Ok: installing $(cat "$DIST/VERSION" 2>/dev/null || echo "an unknown version") from $DIST into $DARQ"
+VERSION=$(sed -n 's/^version=//p' "$DIST/VERSION" 2>/dev/null || true)
+echo "Ok: installing version ${VERSION:-unknown} from $DIST into $DARQ"
 trap 'echo "Error: install failed (line $LINENO): see $LOG"' ERR
 
 # Stop DarqOS, remembering whether it was running.

@@ -13,7 +13,7 @@ What You Need
   is its only session, and there's no other desktop.
 * A Debian 13 *trixie* AMD64 netinst image, on a USB stick
   (https://www.debian.org/download).
-* A DarqOS distribution tarball, ``darqos-1ed-snapYYYYMMDD.tar.gz``,
+* A DarqOS distribution tarball, ``darqos-2ed-snapYYYYMMDD-b17.tar.gz``,
   made by ``mkdist`` (see :doc:`distribution`).
 * Another computer, to reach it over SSH if DarqOS doesn't start.
 
