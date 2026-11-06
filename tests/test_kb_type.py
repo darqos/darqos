@@ -15,13 +15,16 @@ import pytest
 
 import darq
 import darq.kb as model
+import darq.message
 from darq.protocols import kb as wire
 from darq.protocols.kb import (
     Changed,
     CloseRequest,
     FindEntitiesRequest,
     GetEntityRequest,
+    GetLinkedEntitiesRequest,
     GetLinksRequest,
+    GetLinkSummaryRequest,
     Kind,
     PutEntityRequest,
     Role,
@@ -308,7 +311,8 @@ def test_kind_of(kb, implementation):
 
 @pytest.mark.parametrize("type_id, cls", [
     ("darq.person", "Q5"), ("Darq.Organisation", "Q43229"), ("darq.organisational-unit", "Q9261468"),
-    ("darq.place", "Q2221906"), ("darq.group", "Q16334295"), ("darq.entity", None)])
+    ("darq.place", "Q2221906"), ("darq.group", "Q16334295"), ("darq.conversation", model.CONVERSATION),
+    ("darq.message", model.INSTANT_MESSAGE), ("darq.entity", None)])
 def test_create_and_open(kb, implementation, type_id, cls):
     item_id, port = create(implementation, type_id)
     canonical, entity_id = darq.split_item_id(item_id)
@@ -398,6 +402,69 @@ def test_write_entities_keeps_kinds(kb, implementation):
     with pytest.raises(model.ConflictError):
         items.put(stale, entity("other", "Other"))
     assert kb.get("other") is None
+
+
+def message(entity_id: str, body: str = "Hello") -> model.Item:
+    item = model.Item(entity_id)
+    item.claim(darq.message.BODY, model.TextValue(body, darq.message.UNDETERMINED))
+    return item
+
+
+def test_create_entities(kb, implementation, index):
+    items = model.KB(kb.client, Writer(implementation))
+    first, second = message("m1", "Hello there"), message("m2", "Goodbye")
+    items.create("darq.message", first, second)
+    assert first.revision == second.revision == 1
+
+    stored = kb.get("m1")
+    assert implementation.kind_of(stored) == "darq.message"
+    assert [s.get_value().value for s in stored.get_statements(model.DARQOS_TYPE)] == ["darq.message"]
+    assert [s.get_value().get_id() for s in stored.get_statements(model.INSTANCE_OF)] == [model.INSTANT_MESSAGE]
+
+    # Its text is its body, and it's found by nothing else.
+    assert ("publish", "darq.message:m1", "Hello there") in index.sent
+    assert index.names[-1] == []
+    assert index_entry(implementation, "darq.message:m2") == ([], "Goodbye")
+
+    # It's opened as any other item.
+    assert item(implementation, open_item(implementation, "darq.message:m1")).entity_id == "m1"
+
+
+def test_create_entities_keeps_a_class_and_its_kind_only(kb, implementation):
+    items = model.KB(kb.client, Writer(implementation))
+    new = message("m1")
+    new.claim(model.INSTANCE_OF, model.EntityValue(model.INSTANT_MESSAGE))
+    new.claim(model.DARQOS_TYPE, model.StringValue("darq.person"))
+    items.create("darq.message", new)
+
+    stored = kb.get("m1")
+    assert len(stored.get_statements(model.INSTANCE_OF)) == 1
+    assert [s.get_value().value for s in stored.get_statements(model.DARQOS_TYPE)] == ["darq.message"]
+
+
+def test_create_entities_is_all_or_none(kb, implementation):
+    items = model.KB(kb.client, Writer(implementation))
+    items.create("darq.message", message("m1"))
+    with pytest.raises(model.ConflictError):
+        items.create("darq.message", message("m2"), message("m1"))
+    assert kb.get("m2") is None
+
+
+def test_create_entities_refused(kb, implementation):
+    items = model.KB(kb.client, Writer(implementation))
+    with pytest.raises(LookupError):
+        items.create("public.png", message("m1"))
+    with pytest.raises(ValueError):
+        items.create("bad:type", message("m1"))
+    written = message("m1")
+    written.revision = 1
+    with pytest.raises(ValueError):
+        items.create("darq.message", written)
+    assert kb.get("m1") is None
+
+    # Creating needs the implementation.
+    with pytest.raises(ValueError):
+        kb.create("darq.message", message("m1"))
 
 
 def test_merge_and_destroy_through_writer(kb, implementation):
@@ -524,6 +591,104 @@ def test_get_links(kb, implementation, ada):
         (ada.entity_id, f"darq.person:{ada.entity_id}", "Ada")]
 
 
+def test_get_links_newest_first_and_without_messages(kb, implementation):
+    items = model.KB(kb.client, Writer(implementation))
+    iid, port = create(implementation, "darq.conversation")
+    conversation = darq.split_item_id(iid)[1]
+    for name in ("m1", "m2", "m3"):
+        new = message(name)
+        new.claim(darq.message.CONVERSATION, model.EntityValue(conversation))
+        items.create("darq.message", new)
+    person = entity("ada", "Ada", "Q5")
+    person.claim(darq.message.CONVERSATION, model.EntityValue(conversation))
+    kb.put(person)
+
+    def links(**arguments):
+        request = GetLinksRequest(role=Role.MAIN, languages=["en"], **arguments)
+        response = item(implementation, port).get_links(request, 0)
+        return [link.entity_id for link in response.linked]
+
+    assert links(property_id=darq.message.CONVERSATION, reverse=True, max=2) == ["m3", "m2"]
+    assert links(property_id=darq.message.CONVERSATION, reverse=True, max=2, after="m2") == ["m1", "ada"]
+    assert links(type_id="darq.message") == ["m1", "m2", "m3"]
+    assert links(type_id="darq.entity") == ["ada"]
+
+
+def test_messages_are_summarised_when_listed(kb, implementation):
+    items = model.KB(kb.client, Writer(implementation))
+    iid, port = create(implementation, "darq.conversation")
+    conversation = darq.split_item_id(iid)[1]
+    kb.put(entity("ada", "Ada", "Q5"))
+    new = message("m1", "Hello there\nSecond line")
+    new.claim(darq.message.CONVERSATION, model.EntityValue(conversation))
+    new.claim(darq.message.SENDER, model.EntityValue("ada"))
+    new.claim(darq.message.TIME, darq.message.time_value(1_700_000_000_000_000))
+    items.create("darq.message", new)
+
+    response = item(implementation, port).get_links(GetLinksRequest(role=Role.MAIN, languages=["en"]), 0)
+    assert [link.summary for link in response.linked] == ["Ada, 2023-11-14: Hello there"]
+
+
+def test_get_link_summary(kb, implementation):
+    items = model.KB(kb.client, Writer(implementation))
+    iid, port = create(implementation, "darq.conversation")
+    conversation = darq.split_item_id(iid)[1]
+    for name in ("m1", "m2"):
+        new = message(name)
+        new.claim(darq.message.CONVERSATION, model.EntityValue(conversation))
+        items.create("darq.message", new)
+    person = entity("ada", "Ada", "Q5")
+    person.claim(darq.message.CONVERSATION, model.EntityValue(conversation))
+    person.claim(darq.message.BODY, model.TextValue("Hello", "en"))
+    kb.put(person)
+
+    response = item(implementation, port).get_link_summary(GetLinkSummaryRequest(languages=["en"]), 0)
+    assert response.status == wire.Status.OK
+    assert [(g.property_id, g.role, g.type_id, g.count, g.label, g.inverse_label) for g in response.groups] == [
+        (darq.message.CONVERSATION, Role.MAIN, "darq.entity", 1, "part of", "has part"),
+        (darq.message.CONVERSATION, Role.MAIN, "darq.message", 2, "part of", "has part")]
+
+
+def test_get_link_summary_without_an_inverse_label(kb, implementation, ada):
+    # The fallback's up to the lens.
+    response = item(implementation, open_item(implementation, "darq.organisation:acme")).get_link_summary(
+        GetLinkSummaryRequest(languages=["en"]), 0)
+    groups = [(g.property_id, g.count, g.inverse_label) for g in response.groups]
+    assert ("P108", 1, "") in groups
+
+
+def test_get_linked_entities(kb, implementation):
+    items = model.KB(kb.client, Writer(implementation))
+    iid, port = create(implementation, "darq.conversation")
+    conversation = darq.split_item_id(iid)[1]
+    kb.put(entity("ada", "Ada", "Q5"))
+    for name in ("m1", "m2", "m3"):
+        new = message(name, f"Hello from {name}")
+        new.claim(darq.message.CONVERSATION, model.EntityValue(conversation))
+        new.claim(darq.message.SENDER, model.EntityValue("ada"))
+        items.create("darq.message", new)
+
+    response = item(implementation, port).get_linked_entities(GetLinkedEntitiesRequest(
+        property_id=darq.message.CONVERSATION, role=Role.MAIN, type_id="darq.message", languages=["en"], max=2,
+        reverse=True), 0)
+    assert response.status == wire.Status.OK
+
+    # Newest first, whole, with who they refer to by name.
+    entities = [model.entity_from_wire(e) for e in response.entities]
+    assert [e.id for e in entities] == ["m3", "m2"]
+    assert [module.index_entry(e)[1] for e in entities] == ["Hello from m3", "Hello from m2"]
+    assert {link.entity_id: link.label for link in response.linked}["ada"] == "Ada"
+
+
+def test_start_states_inverse_labels_once(kb, implementation, kb_service):
+    creator = kb.get(darq.message.SENDER)
+    statements = creator.get_statements(model.INVERSE_LABEL)
+    assert len(statements) == 1
+    revision = creator.revision
+    implementation.start()
+    assert kb.get(darq.message.SENDER).revision == revision
+
+
 def test_watch_entity_and_close(kb, implementation, ports, ada):
     assert ada.watch_entity(WatchEntityRequest(listener=999), 0).status == wire.Status.OK
     assert 999 in ports.closed
@@ -562,6 +727,7 @@ def test_kb_type(live_pkernel, tmp_path):  # noqa: F811
         import time
         import darq
         import darq.kb as model
+        import darq.message
         from darq.protocols.kb import EntityItem, Changed
         from darq.protocols import kb as wire
         from darq.protocols.type import Implementation, Status, Type
@@ -614,6 +780,34 @@ def test_kb_type(live_pkernel, tmp_path):  # noqa: F811
             labels = {link.entity_id: link.label for link in again.linked}
             if model.entity_from_wire(again.entity).get_label() != "Ada Lovelace" or labels["Q5"] != "human":
                 return f"reopened: {labels!r}"
+
+            # A message, created with the identifier it's given.
+            kb = model.KB.connect(30, wire.EntityWriter.Client(person.implementation, timeout=30))
+            if types.describe(type_id="darq.message").status != Status.OK:
+                return "darq.message isn't registered"
+            message_id = darq.message.message_id("test:1", 1_700_000_000_123_456)
+            new = model.Item(message_id)
+            new.claim(darq.message.BODY, model.TextValue("Hello", darq.message.UNDETERMINED))
+            new.claim(darq.message.TIME, darq.message.time_value(1_700_000_000_123_456))
+            kb.create("darq.message", new)
+            opened = implementation.open(item_id=f"darq.message:{message_id}")
+            if opened.status != Status.OK:
+                return f"open the message: {opened!r}"
+
+            # And it's found through what it links to.
+            created = implementation.create(type_id="darq.conversation")
+            conversation = darq.split_item_id(created.item_id)[1]
+            reply = model.Item(darq.message.message_id("test:2", 1_700_000_000_123_457))
+            reply.claim(darq.message.CONVERSATION, model.EntityValue(conversation))
+            kb.create("darq.message", reply)
+            item = EntityItem.Client(created.item, timeout=30)
+            summary = item.get_link_summary(languages=["en"])
+            if [(g.type_id, g.count, g.inverse_label) for g in summary.groups] != [("darq.message", 1, "has part")]:
+                return f"summary: {summary!r}"
+            found = item.get_linked_entities(property_id=darq.message.CONVERSATION, role=wire.Role.MAIN,
+                                             type_id="darq.message", languages=["en"], max=10, reverse=True)
+            if [e.id for e in found.entities] != [reply.id]:
+                return f"linked entities: {found!r}"
             return 0
         """)
 

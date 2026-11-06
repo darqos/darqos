@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (QApplication, QComboBox, QFrame, QHBoxLayout, QLabe
 
 import darq.kb as model
 from darq.protocols.kb import Kind, Linked
+from darq.ui import style
 
 import render
 import times
@@ -46,17 +47,14 @@ RANKS = [model.Rank.Normal, model.Rank.Preferred, model.Rank.Deprecated]
 # A URL: its scheme, and the rest.
 URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:\S+")
 
-STYLE = """
-EntityForm { background-color: #323232; }
-QLabel { color: #e0e0e0; }
-QLabel[role="property"] { color: #9a9a9a; font-size: 15px; margin-top: 10px; }
-QLabel[role="detail"] { color: #9a9a9a; font-size: 13px; }
-QLabel[role="error"] { color: #f28b82; font-size: 13px; }
-QLineEdit, QComboBox, QListWidget { color: #e0e0e0; background-color: #404040; border: 1px solid #505050;
-                                    padding: 3px; }
-QLineEdit[conflict="true"] { border: 1px solid #f28b82; }
-QPushButton { color: #e0e0e0; background-color: #454545; border: none; padding: 3px 8px; }
-QFrame[role="conflict"] { background-color: #5c3c3c; }
+STYLE = f"""
+EntityForm {{ background-color: {style.SURFACE}; }}
+QLabel[role="property"] {{ color: {style.TEXT_DIM}; font-size: 15px; margin-top: 10px; }}
+QLabel[role="detail"] {{ color: {style.TEXT_DIM}; font-size: 13px; }}
+QLabel[role="error"] {{ color: {style.ERROR}; font-size: 13px; }}
+QLineEdit[conflict="true"] {{ border: 1px solid {style.ERROR}; }}
+QPushButton {{ padding: 3px 8px; }}
+QFrame[role="conflict"] {{ background-color: {style.CONFLICT}; }}
 """
 
 
@@ -603,7 +601,7 @@ class EntityForm(QWidget):
             for s in model.in_order(entity.get_statements(property_id)):
                 row_ = StatementRow(self, s)
                 if self.conflict is not None and self.conflict[1] == f"statement:{s.id}":
-                    row_.setStyleSheet("StatementRow { border-left: 3px solid #f28b82; }")
+                    row_.setStyleSheet(f"StatementRow {{ border-left: 3px solid {style.ERROR}; }}")
                 layout.addWidget(row_)
 
         for n, property_id in enumerate(self.new_statements):

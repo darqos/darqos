@@ -40,7 +40,9 @@ from darq.loop import QtEventLoop
 from darq.protocols import pdf as wire
 from darq.protocols.history import History
 from darq.protocols.lens import Close, Lens, Ready, Status, UseRequest, UseResponse
-from darq.ui.lens import MESSAGE_SHOWN, SCROLL_BARS, overlay, show_over
+from darq.ui import style
+from darq.ui.lens import MESSAGE_SHOWN, overlay, show_over
+from darq.ui.style import BACKGROUND, CONTROLS
 
 
 # History source for the events it records.
@@ -61,21 +63,12 @@ PAGE_SPACING = 8
 MARGIN = 8
 OUTLINE_WIDTH = 280
 
-# The lens's dark colours, as the other lenses': the pages on #2b2b2b,
-# and the outline and find bar on #323232.
-BACKGROUND = "#2b2b2b"
-STYLE = """
-PdfWindow, FindBar, QInputDialog { background-color: #323232; }
-QLabel { color: #e0e0e0; }
-QLineEdit, QSpinBox { color: #e0e0e0; background-color: #404040; border: 1px solid #505050; padding: 3px; }
-QPushButton { color: #e0e0e0; background-color: #454545; border: none; padding: 6px 12px; }
-QPushButton:hover { background-color: #505050; }
-QTreeView { color: #e0e0e0; background-color: #323232; border: none;
-            selection-background-color: #4a5f73; selection-color: #ffffff; }
-QMenu { color: #e0e0e0; background-color: #3a3a3a; border: 1px solid #505050; }
-QMenu::item:selected { background-color: #4a5f73; }
-QMenu::separator { height: 1px; background: #505050; margin: 4px 8px; }
-""" + SCROLL_BARS
+# The usual controls, with the outline and find bar on the surface.
+STYLE = CONTROLS + f"""
+PdfWindow, FindBar {{ background-color: {style.SURFACE}; }}
+QTreeView {{ color: {style.TEXT}; background-color: {style.SURFACE}; border: none;
+            selection-background-color: {style.SELECTION}; selection-color: {style.TEXT_STRONG}; }}
+"""
 
 # Zoom factors: 1 is the document's actual size.
 ZOOMS = [1 / 4, 1 / 3, 1 / 2, 2 / 3, 3 / 4, 1, 5 / 4, 3 / 2, 2, 3, 4, 6, 8]
@@ -269,7 +262,7 @@ class PdfWindow(QWidget):
         self.find_bar.hide()
 
         self.help = QLabel(HELP, self)
-        self.help.setStyleSheet("QLabel { background-color: #404040; color: #e0e0e0; padding: 16px; }")
+        self.help.setStyleSheet(style.HELP)
         self.help.hide()
 
         # A new zoom or page, in its middle, and messages, at its foot,

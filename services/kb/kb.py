@@ -17,7 +17,8 @@ from darq.kb import (INSTANCE_OF, SUBCLASS_OF, VALUE_TYPES, ConflictError,
                      Datatype, Entity, EntityValue, Item, Property, Query,
                      QuantityValue, Rank, Reference, Snak, Statement,
                      StringValue, TextValue, TimeValue, document,
-                     entity_links, entity_strings, fold, normalise)
+                     entity_links, entity_strings, fold, normalise,
+                     recorded_type)
 
 from query import TIME_LIMIT, QueryError, check, evaluate
 
@@ -467,12 +468,35 @@ class KnowledgeBase:
                  property_id: Optional[str] = None,
                  role: str = "main",
                  after: str = "",
-                 limit: Optional[int] = None) -> List[str]:
-        """Find the entities that link to one (see find_links)."""
+                 limit: Optional[int] = None,
+                 reverse: bool = False,
+                 type_id: str = "") -> List[str]:
+        """Find the entities that link to one (see find_links), as
+        Store.find_links does."""
         if self.store is not None:
             self.flush()
-            return self.store.find_links(target_id, property_id, role, after, limit)
-        return _batch(sorted(e.id for e in self.find_links(target_id, property_id, role)), after, limit)
+            return self.store.find_links(target_id, property_id, role, after, limit, reverse, type_id)
+        ids = sorted((e.id for e in self.find_links(target_id, property_id, role)
+                      if not type_id or recorded_type(e) == type_id), reverse=reverse)
+        if reverse and after:
+            ids = ids[next((n for n, i in enumerate(ids) if i < after), len(ids)):]
+            after = ""
+        if reverse:
+            return ids[:limit]
+        return _batch(ids, after, limit)
+
+    def link_counts(self, target_id: str) -> List[Tuple[str, str, str, int]]:
+        """Return how many entities link to one, by each property, role
+        and type, in order."""
+        if self.store is not None:
+            self.flush()
+            return self.store.link_counts(target_id)
+        counts: Dict[Tuple[str, str, str], int] = {}
+        for entity in self.entities():
+            groups = {(p, r, recorded_type(entity)) for _, p, t, r in entity_links(entity) if t == target_id}
+            for group in groups:
+                counts[group] = counts.get(group, 0) + 1
+        return [(*group, count) for group, count in sorted(counts.items())]
 
     def instance_ids(self,
                      class_id: str,

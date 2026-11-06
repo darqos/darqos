@@ -16,6 +16,12 @@
 # watched, so the view keeps up with changes, and recorded in History
 # as opened.
 #
+# What links to an item is shown in groups (see darq.ui.links).  A large
+# group opens to a paged list, in place of the item's page, with Back to
+# return: it isn't an item, so it's not recorded in History, and can't
+# have a window of its own.  An entity chosen from a group opens in its
+# type's own lens, if it has one.
+#
 # In edit mode (E), the page is a form (see edit.py), and each change is
 # saved as it's made, as edits (see darq.kb): applied to the entity as
 # last read, and written whole with PutEntity.  If it's been changed
@@ -46,10 +52,13 @@ import darq.kb as model
 import darq.launch
 from darq.loop import QtEventLoop
 from darq.protocols.history import History
-from darq.protocols.kb import Changed, EntityItem, Kind, Linked, Listener, Role
+from darq.protocols.kb import Changed, EntityItem, Kind, Linked, LinkGroup, Listener
 from darq.protocols.kb import Status as KBStatus
 from darq.protocols.lens import Close, Lens, Ready, Status, UseRequest, UseResponse
+from darq.ui import links as grouped
+from darq.ui import style
 from darq.ui.launcher import Launcher
+from darq.ui.style import CONTROLS
 
 # Its own modules are beside it.
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
@@ -65,13 +74,6 @@ TIMEOUT = 10.0
 
 # Seconds after starting to wait for a Use, before giving up and exiting.
 USE_TIMEOUT = 60.0
-
-# Most items listed as linking to the one shown.
-MAX_LINKED_FROM = 200
-
-# How many of those are asked for: the KB's limit, so "and N more" is
-# right for up to that many.
-LINKED_FROM_BATCH = 1000
 
 # Most entities asked for when searching, to choose from.
 MAX_FOUND = 50
@@ -109,11 +111,26 @@ class Opener(typing.Protocol):
         """Use an item, with its own lens, without blocking."""
         ...
 
+    def own_lens(self, item_id: str) -> bool:
+        """Return whether an item's type has a lens of its own, rather
+        than this one."""
+        ...
+
+
+class Place(typing.NamedTuple):
+    """Somewhere to go back to: an item, scrolled to a position, and the
+    group of what links to it that was shown, if one was."""
+
+    item_id: str
+    scroll: int
+    view: grouped.View | None = None
+
 
 class Shown:
     """The item being shown: its port, a client for it, and the port it's
     watched on; and, as last read, its entity, the entities it refers to,
-    and those that link to it."""
+    the groups of those that link to it, the entities of the groups shown
+    in place, and the page of a group that's being shown."""
 
     def __init__(self, item_id: str, port: int, client: EntityItem.Client):
         self.item_id = item_id
@@ -122,7 +139,10 @@ class Shown:
         self.listener: int | None = None
         self.entity: model.Entity = model.Item()
         self.linked: dict[str, Linked] = {}
-        self.linked_from: list[Linked] = []
+        self.groups: list[LinkGroup] = []
+        self.inline: dict[grouped.Key, list[Linked]] = {}
+        self.rows: list[Linked] = []
+        self.more = False
 
 
 class EntityWindow(QWidget):
@@ -136,13 +156,14 @@ class EntityWindow(QWidget):
         self.on_closed = on_closed
         self.chain = render.languages(os.environ.get("LANG", "") or "en")
 
-        # The item shown, and the items to go back to, with where they
-        # were scrolled to.
+        # The item shown, the places to go back to, and the group of what
+        # links to the item that's shown in place of its page, if one is.
         self.shown: Shown | None = None
-        self.back: list[tuple[str, int]] = []
+        self.back: list[Place] = []
+        self.view: grouped.View | None = None
 
-        # The item identifiers the page's links lead to, by number.
-        self.targets: list[str] = []
+        # What the page's links lead to, by number.
+        self.targets: list[render.Target] = []
 
         # Whether deprecated statements are shown on the page.
         self.show_deprecated = False
@@ -157,12 +178,8 @@ class EntityWindow(QWidget):
         self.recorded_edit = False
 
         self.setWindowFlags(QtCore.Qt.WindowType.FramelessWindowHint)
-        self.setStyleSheet("EntityWindow { background-color: #323232; }"
-                           "QLabel { color: #e0e0e0; }"
-                           "QPushButton { color: #e0e0e0; background-color: #454545; border: none;"
-                           " padding: 6px 12px; }"
-                           "QPushButton:disabled { color: #707070; }"
-                           "QTextBrowser { background-color: #323232; border: none; }")
+        self.setStyleSheet(CONTROLS + f"EntityWindow {{ background-color: {style.SURFACE}; }}"
+                           f"QTextBrowser {{ background-color: {style.SURFACE}; border: none; }}")
         self.resize(900, 700)
 
         layout = QVBoxLayout()
@@ -180,13 +197,13 @@ class EntityWindow(QWidget):
         self.title = QLabel(self)
         self.title.setStyleSheet("QLabel { font-size: 22px; }")
         self.item_label = QLabel(self)
-        self.item_label.setStyleSheet("QLabel { color: #9a9a9a; font-size: 12px; }")
+        self.item_label.setStyleSheet(f"QLabel {{ color: {style.TEXT_DIM}; font-size: 12px; }}")
         self.item_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         titles.addWidget(self.title)
         titles.addWidget(self.item_label)
         header.addLayout(titles, 1)
         self.kind = QLabel(self)
-        self.kind.setStyleSheet("QLabel { color: #9a9a9a; font-size: 15px; }")
+        self.kind.setStyleSheet(f"QLabel {{ color: {style.TEXT_DIM}; font-size: 15px; }}")
         header.addWidget(self.kind, 0, QtCore.Qt.AlignmentFlag.AlignTop)
         layout.addLayout(header)
 
@@ -198,7 +215,7 @@ class EntityWindow(QWidget):
         self.form = edit.EntityForm(self)
         self.form_area = QScrollArea(self)
         self.form_area.setWidgetResizable(True)
-        self.form_area.setStyleSheet("QScrollArea { background-color: #323232; border: none; }")
+        self.form_area.setStyleSheet(f"QScrollArea {{ background-color: {style.SURFACE}; border: none; }}")
         self.form_area.setWidget(self.form)
         self.stack = QStackedWidget(self)
         self.stack.addWidget(self.browser)
@@ -206,13 +223,12 @@ class EntityWindow(QWidget):
         layout.addWidget(self.stack, 1)
 
         self.status = QLabel(self)
-        self.status.setStyleSheet("QLabel { color: #9a9a9a; font-size: 14px; }")
+        self.status.setStyleSheet(f"QLabel {{ color: {style.TEXT_DIM}; font-size: 14px; }}")
         layout.addWidget(self.status)
         self.setLayout(layout)
 
         self.help = QLabel(HELP, self)
-        self.help.setStyleSheet("QLabel { background-color: rgba(20, 20, 20, 230); color: #e0e0e0;"
-                                " font-family: monospace; font-size: 15px; padding: 24px; }")
+        self.help.setStyleSheet(style.HELP)
         self.help.hide()
         self.update_back()
 
@@ -248,10 +264,8 @@ class EntityWindow(QWidget):
             if response.status != KBStatus.OK:
                 self.show_status(f"Can't read {shown.item_id}: {response.status.name}")
                 return False
-            linked_from = shown.linked_from
             if links:
-                linked_from = shown.client.get_links(property_id="", role=Role.MAIN, languages=self.chain,
-                                                     max=LINKED_FROM_BATCH, after="").linked
+                self.read_links(shown)
             entity = model.entity_from_wire(response.entity)
         except (darq.DarqError, TimeoutError, ValueError) as e:
             logging.error(f"Can't read {shown.item_id}: {e!r}")
@@ -259,32 +273,63 @@ class EntityWindow(QWidget):
             return False
         shown.entity = entity
         shown.linked.update((link.entity_id, link) for link in response.linked)
-        shown.linked_from = linked_from
         return True
 
-    def page(self, shown: Shown) -> tuple[str, str, list[str]] | None:
+    def read_links(self, shown: Shown):
+        """Read what links to an item: its groups, the entities of those
+        shown in place, and the page of the group being shown.
+
+        :raises darq.DarqError: if they can't be read."""
+        summary = shown.client.get_link_summary(languages=self.chain)
+        if summary.status != KBStatus.OK:
+            raise darq.DarqError(summary.status.name)
+        groups = list(summary.groups)
+        inline = {grouped.key_of(g): self.group_rows(shown, grouped.key_of(g), grouped.INLINE_MAX, "")
+                  for g in groups if grouped.is_inline(g)}
+
+        # A group that's gone since is left, for the item's page.
+        if self.view is not None and self.view.key not in map(grouped.key_of, groups):
+            self.view = None
+        rows: list[Linked] = []
+        if self.view is not None:
+            rows = self.group_rows(shown, self.view.key, grouped.PAGE_ROWS + 1, self.view.after)
+        shown.groups, shown.inline = groups, inline
+        shown.rows, shown.more = rows[:grouped.PAGE_ROWS], len(rows) > grouped.PAGE_ROWS
+
+    def group_rows(self, shown: Shown, key: grouped.Key, limit: int, after: str) -> list[Linked]:
+        """Read the entities of a group, newest first, after one."""
+        property_id, role, type_id = key
+        response = shown.client.get_links(property_id=property_id, role=role, languages=self.chain, max=limit,
+                                          after=after, reverse=True, type_id=type_id)
+        if response.status != KBStatus.OK:
+            raise darq.DarqError(response.status.name)
+        return list(response.linked)
+
+    def page(self, shown: Shown) -> tuple[str, str, list[render.Target]] | None:
         """Read an item, and return its title, its page, and its links'
         targets, or None if it can't be read."""
         if not self.read(shown):
             return None
         return self.render_page(shown)
 
-    def render_page(self, shown: Shown) -> tuple[str, str, list[str]]:
-        """Return an item's title, page, and links' targets, as last read."""
+    def render_page(self, shown: Shown) -> tuple[str, str, list[render.Target]]:
+        """Return an item's title, page, and links' targets, as last read:
+        the page of the group being shown, if one is."""
         entity = shown.entity
         page = render.Page(self.chain, {link.entity_id: render.Link(link.item_id, link.label)
                                         for link in shown.linked.values()})
-        linked_from = [render.Link(link.item_id, link.label) for link in shown.linked_from if link.item_id]
+        title = render.best(entity.labels, self.chain) or entity.id
+        group = next((g for g in shown.groups if self.view is not None and grouped.key_of(g) == self.view.key), None)
+        if self.view is not None and group is not None:
+            return title, page.render_view(group, self.view, shown.rows, shown.more), page.targets
         note = None
         _, requested = darq.split_item_id(shown.item_id)
         if entity.id != requested:
             note = f"{requested} was merged into this."
-        html = page.render(entity, linked_from[:MAX_LINKED_FROM], max(0, len(linked_from) - MAX_LINKED_FROM),
-                           note, self.show_deprecated)
-        title = render.best(entity.labels, self.chain) or entity.id
+        html = page.render(entity, grouped.sections(shown.groups), shown.inline, note, self.show_deprecated)
         return title, html, page.targets
 
-    def display(self, page: tuple[str, str, list[str]], scroll: int):
+    def display(self, page: tuple[str, str, list[render.Target]], scroll: int):
         """Show a page, scrolled to a position."""
         title, html, self.targets = page
         assert self.shown is not None
@@ -292,6 +337,7 @@ class EntityWindow(QWidget):
         self.setWindowTitle(title)
         self.item_label.setText(self.shown.item_id)
         self.kind.setText(render.kind_name(self.shown.item_id))
+        self.edit_button.setEnabled(self.view is None)
         self.browser.setHtml(html)
         bar = self.browser.verticalScrollBar()
         if bar is not None:
@@ -329,7 +375,7 @@ class EntityWindow(QWidget):
 
     def toggle_deprecated(self):
         self.show_deprecated = not self.show_deprecated
-        if self.shown is not None and not self.editing:
+        if self.shown is not None and not self.editing and self.view is None:
             self.display(self.render_page(self.shown), self.scroll_position())
 
     # Editing
@@ -341,8 +387,9 @@ class EntityWindow(QWidget):
             self.start_editing()
 
     def start_editing(self):
-        """Show the item as a form, read afresh."""
-        if self.shown is None or self.editing or not self.read(self.shown, links=False):
+        """Show the item as a form, read afresh.  A group of what links to
+        it can't be edited."""
+        if self.shown is None or self.editing or self.view is not None or not self.read(self.shown, links=False):
             return
         entity = self.shown.entity
         base = self.chain[0].split("-")[0]
@@ -573,52 +620,121 @@ class EntityWindow(QWidget):
         except (darq.DarqError, TimeoutError) as e:
             self.show_status(f"Can't open {item_id}: {e}")
             return
-        previous = (self.shown.item_id, self.scroll_position()) if self.shown is not None else None
+        previous = Place(self.shown.item_id, self.scroll_position(), self.view) if self.shown is not None else None
+        view, self.view = self.view, None
         if self.show_item(item_id, port) and previous is not None:
             self.back.append(previous)
             self.update_back()
             self.show_status("")
+        else:
+            self.view = view if previous is not None and self.shown is not None \
+                and self.shown.item_id == previous.item_id else None
 
     def go_back(self):
-        """Show the item shown before, as it was scrolled."""
+        """Show the place shown before, as it was scrolled."""
         if not self.back:
             return
-        item_id, scroll = self.back[-1]
-        try:
-            port = self.lens.opener.open(item_id)
-        except (darq.DarqError, TimeoutError) as e:
-            self.show_status(f"Can't go back to {item_id}: {e}")
+        place = self.back[-1]
+        if self.shown is not None and self.shown.item_id == place.item_id:
+            self.go_back_within(place)
             return
-        if self.show_item(item_id, port):
+        try:
+            port = self.lens.opener.open(place.item_id)
+        except (darq.DarqError, TimeoutError) as e:
+            self.show_status(f"Can't go back to {place.item_id}: {e}")
+            return
+        view, self.view = self.view, place.view
+        if self.show_item(place.item_id, port):
             self.back.pop()
             bar = self.browser.verticalScrollBar()
             if bar is not None:
-                bar.setValue(scroll)
+                bar.setValue(place.scroll)
             self.update_back()
             self.show_status("")
+        else:
+            self.view = view
+
+    def go_back_within(self, place: Place):
+        """Go back to a place in the item shown, which needs no opening."""
+        assert self.shown is not None
+        view, self.view = self.view, place.view
+        page = self.page(self.shown)
+        if page is None:
+            self.view = view
+            return
+        self.back.pop()
+        self.display(page, place.scroll)
+        self.show_status("")
+
+    # What links to the item
+
+    def open_group(self, key: grouped.Key):
+        """Show a group of what links to the item, in place of its page."""
+        if self.shown is None or self.editing:
+            return
+        place = Place(self.shown.item_id, self.scroll_position(), self.view)
+        self.view = grouped.View(key)
+        page = self.page(self.shown)
+        if page is None:
+            self.view = place.view
+            return
+        self.back.append(place)
+        self.display(page, 0)
+        self.show_status("")
+
+    def turn(self, step: int):
+        """Show the next page of the group, or the previous.  A page isn't
+        a place to go back to: Back leaves the group."""
+        if self.shown is None or self.view is None:
+            return
+        cursors = list(self.view.cursors)
+        if step > 0 and self.shown.more and self.shown.rows:
+            self.view.cursors.append(self.shown.rows[-1].entity_id)
+        elif step < 0 and len(cursors) > 1:
+            self.view.cursors.pop()
+        else:
+            return
+        page = self.page(self.shown)
+        if page is None:
+            if self.view is not None:
+                self.view.cursors[:] = cursors
+            return
+        self.display(page, 0)
+
+    def choose(self, target: render.Target, new_window: bool = False):
+        """Do what a link does."""
+        if isinstance(target, grouped.OpenGroup):
+            self.open_group(target.key)
+        elif isinstance(target, grouped.Turn):
+            self.turn(target.step)
+        elif isinstance(target, grouped.Row):
+            # Listed among many, it's opened to be used, by its own lens.
+            self.follow(target.item_id, new_window or self.lens.opener.own_lens(target.item_id))
+        else:
+            self.follow(target, new_window)
 
     def update_back(self):
         self.back_button.setEnabled(bool(self.back))
 
-    def target(self, href: str) -> str | None:
-        """Return the item a link leads to, from its anchor."""
+    def target(self, href: str) -> render.Target | None:
+        """Return what a link leads to, from its anchor."""
         if not href.startswith("#") or not href[1:].isdigit():
             return None
         n = int(href[1:])
         return self.targets[n] if n < len(self.targets) else None
 
     def on_anchor(self, url: QtCore.QUrl):
-        item_id = self.target("#" + url.fragment())
-        if item_id is not None:
-            new_window = bool(QApplication.keyboardModifiers() & Modifier.ControlModifier)
-            self.follow(item_id, new_window)
+        target = self.target("#" + url.fragment())
+        if target is not None:
+            self.choose(target, bool(QApplication.keyboardModifiers() & Modifier.ControlModifier))
 
     def on_context_menu(self, pos: QtCore.QPoint):
         menu = QMenu(self)
-        item_id = self.target(self.browser.anchorAt(pos))
-        if item_id is not None:
-            menu.addAction("Open", lambda: self.follow(item_id))
-            menu.addAction("Open in New Window", lambda: self.follow(item_id, new_window=True))
+        target = self.target(self.browser.anchorAt(pos))
+        if target is not None:
+            menu.addAction("Open", lambda: self.choose(target))
+            if isinstance(target, str | grouped.Row):
+                menu.addAction("Open in New Window", lambda: self.choose(target, new_window=True))
             menu.addSeparator()
         back = menu.addAction("Back", self.go_back)
         if back is not None:
@@ -723,11 +839,25 @@ class LaunchOpener:
     def __init__(self, launcher: Launcher):
         self.launcher = launcher
 
+        # Whether each type has a lens of its own, as found so far.
+        self.lenses: dict[str, bool] = {}
+
     def open(self, item_id: str) -> int:
         return darq.launch.open_item(item_id)
 
     def use(self, item_id: str):
         self.launcher.use(item_id)
+
+    def own_lens(self, item_id: str) -> bool:
+        type_id = darq.split_item_id(item_id)[0]
+        if type_id not in self.lenses:
+            try:
+                lens = pathlib.Path(darq.launch.find_lens(type_id)).resolve()
+            except (darq.DarqError, TimeoutError) as e:
+                logging.warning(f"Can't find a lens for {type_id}: {e!r}")
+                return False
+            self.lenses[type_id] = lens != pathlib.Path(__file__).parent.resolve()
+        return self.lenses[type_id]
 
 
 class LensServices:

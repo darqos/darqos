@@ -28,6 +28,8 @@ __all__ = [
     "Changed",
     "CloseRequest",
     "CloseResponse",
+    "CreateEntitiesRequest",
+    "CreateEntitiesResponse",
     "Datatype",
     "DestroyEntityRequest",
     "DestroyEntityResponse",
@@ -48,6 +50,10 @@ __all__ = [
     "GetEntitiesResponse",
     "GetEntityRequest",
     "GetEntityResponse",
+    "GetLinkSummaryRequest",
+    "GetLinkSummaryResponse",
+    "GetLinkedEntitiesRequest",
+    "GetLinkedEntitiesResponse",
     "GetLinksRequest",
     "GetLinksResponse",
     "InstancesRequest",
@@ -55,6 +61,10 @@ __all__ = [
     "KB",
     "Kind",
     "Label",
+    "LinkCount",
+    "LinkCountsRequest",
+    "LinkCountsResponse",
+    "LinkGroup",
     "Linked",
     "Listener",
     "Match",
@@ -303,6 +313,38 @@ class Label(Record):
         self.text = text
 
 
+class LinkCount(Record):
+    """struct LinkCount: 32 bytes, 8-byte aligned."""
+
+    def __init__(self,
+                 property_id: str = '',
+                 role: Role = Role.MAIN,
+                 type_id: str = '',
+                 count: int = 0):
+        self.property_id = property_id
+        self.role = role
+        self.type_id = type_id
+        self.count = count
+
+
+class LinkGroup(Record):
+    """struct LinkGroup: 48 bytes, 8-byte aligned."""
+
+    def __init__(self,
+                 property_id: str = '',
+                 role: Role = Role.MAIN,
+                 type_id: str = '',
+                 count: int = 0,
+                 label: str = '',
+                 inverse_label: str = ''):
+        self.property_id = property_id
+        self.role = role
+        self.type_id = type_id
+        self.count = count
+        self.label = label
+        self.inverse_label = inverse_label
+
+
 class Term(Record):
     """struct Term: 12 bytes, 4-byte aligned."""
 
@@ -340,7 +382,7 @@ class Row(Record):
 
 
 class Linked(Record):
-    """struct Linked: 44 bytes, 4-byte aligned."""
+    """struct Linked: 52 bytes, 4-byte aligned."""
 
     def __init__(self,
                  entity_id: str = '',
@@ -348,13 +390,15 @@ class Linked(Record):
                  language: str = '',
                  label: str = '',
                  description: str = '',
-                 datatype: Datatype = Datatype.NONE):
+                 datatype: Datatype = Datatype.NONE,
+                 summary: str = ''):
         self.entity_id = entity_id
         self.item_id = item_id
         self.language = language
         self.label = label
         self.description = description
         self.datatype = datatype
+        self.summary = summary
 
 
 Text.CODEC = StructCodec(Text, 16, [
@@ -449,13 +493,32 @@ Pattern.CODEC = StructCodec(Pattern, 36, [
 ])
 
 
-Linked.CODEC = StructCodec(Linked, 44, [
+LinkCount.CODEC = StructCodec(LinkCount, 32, [
+    ("property_id", 0, STRING_CODEC),
+    ("role", 8, EnumCodec(Role, "B")),
+    ("type_id", 12, STRING_CODEC),
+    ("count", 24, Codec("Q")),
+])
+
+
+Linked.CODEC = StructCodec(Linked, 52, [
     ("entity_id", 0, STRING_CODEC),
     ("item_id", 8, STRING_CODEC),
     ("language", 16, STRING_CODEC),
     ("label", 24, STRING_CODEC),
     ("description", 32, STRING_CODEC),
     ("datatype", 40, EnumCodec(Datatype, "B")),
+    ("summary", 44, STRING_CODEC),
+])
+
+
+LinkGroup.CODEC = StructCodec(LinkGroup, 48, [
+    ("property_id", 0, STRING_CODEC),
+    ("role", 8, EnumCodec(Role, "B")),
+    ("type_id", 12, STRING_CODEC),
+    ("count", 24, Codec("Q")),
+    ("label", 32, STRING_CODEC),
+    ("inverse_label", 40, STRING_CODEC),
 ])
 
 
@@ -977,10 +1040,10 @@ class FindLinksRequest(Message):
 
     METHOD = 7
     RESPONSE = FindLinksResponse
-    BODY_FORMAT = "<IIIIB3xIII"
+    BODY_FORMAT = "<IIIIB3xIIIB3xII"
     BODY_START = 8
-    LENGTH = 40
-    DATA_START = 40
+    LENGTH = 52
+    DATA_START = 56
 
     def __init__(self,
                  txid: int = 0,
@@ -988,13 +1051,17 @@ class FindLinksRequest(Message):
                  property_id: str = '',
                  role: Role = Role.MAIN,
                  max: int = 0,
-                 after: str = ''):
+                 after: str = '',
+                 reverse: bool = False,
+                 type_id: str = ''):
         super().__init__(txid)
         self.target_id = target_id
         self.property_id = property_id
         self.role = role
         self.max = max
         self.after = after
+        self.reverse = reverse
+        self.type_id = type_id
 
     def encode(self) -> tuple[bytes, list[int]]:
         buf, handles = super().encode()
@@ -1004,7 +1071,10 @@ class FindLinksRequest(Message):
                            *out.string(self.property_id),
                            self.role,
                            self.max,
-                           *out.string(self.after))
+                           *out.string(self.after),
+                           self.reverse,
+                           *out.string(self.type_id))
+        buf += b'\0' * 4
         buf += out.data
         return buf, handles
 
@@ -1020,6 +1090,8 @@ class FindLinksRequest(Message):
         self.role = self.decode_enum(Role, bits[4])
         self.max = bits[5]
         self.after = inp.string(bits[6], bits[7])
+        self.reverse = self.decode_bool(bits[8])
+        self.type_id = inp.string(bits[9], bits[10])
         return
 
 
@@ -1330,6 +1402,79 @@ class QueryRequest(Message):
         return
 
 
+class LinkCountsResponse(Message):
+    """KB.LinkCounts response."""
+
+    METHOD = 12
+    BODY_FORMAT = "<III"
+    BODY_START = 8
+    LENGTH = 20
+    DATA_START = 24
+    CODEC_0 = LinkCount.CODEC
+
+    def __init__(self,
+                 txid: int = 0,
+                 counts: list[LinkCount] | None = None,
+                 status: Status = Status.OK):
+        super().__init__(txid)
+        self.counts = [] if counts is None else counts
+        self.status = status
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.sequence(self.counts, self.CODEC_0),
+                           self.status)
+        buf += b'\0' * 4
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.counts = inp.sequence(self.CODEC_0, bits[0], bits[1])
+        self.status = self.decode_enum(Status, bits[2])
+        return
+
+
+class LinkCountsRequest(Message):
+    """KB.LinkCounts request."""
+
+    METHOD = 12
+    RESPONSE = LinkCountsResponse
+    BODY_FORMAT = "<II"
+    BODY_START = 8
+    LENGTH = 16
+    DATA_START = 16
+
+    def __init__(self, txid: int = 0, target_id: str = ''):
+        super().__init__(txid)
+        self.target_id = target_id
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.target_id))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.target_id = inp.string(bits[0], bits[1])
+        return
+
+
 class WriteEntitiesResponse(Message):
     """EntityWriter.WriteEntities response."""
 
@@ -1530,6 +1675,87 @@ class DestroyEntityRequest(Message):
         bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
         inp = Decoder(buffer, self.DATA_START, handles)
         self.entity_id = inp.string(bits[0], bits[1])
+        return
+
+
+class CreateEntitiesResponse(Message):
+    """EntityWriter.CreateEntities response."""
+
+    METHOD = 19
+    BODY_FORMAT = "<IIIII"
+    BODY_START = 8
+    LENGTH = 28
+    DATA_START = 32
+    CODEC_0 = Entity.CODEC
+
+    def __init__(self,
+                 txid: int = 0,
+                 entities: list[Entity] | None = None,
+                 failed_id: str = '',
+                 status: Status = Status.OK):
+        super().__init__(txid)
+        self.entities = [] if entities is None else entities
+        self.failed_id = failed_id
+        self.status = status
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.sequence(self.entities, self.CODEC_0),
+                           *out.string(self.failed_id),
+                           self.status)
+        buf += b'\0' * 4
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.entities = inp.sequence(self.CODEC_0, bits[0], bits[1])
+        self.failed_id = inp.string(bits[2], bits[3])
+        self.status = self.decode_enum(Status, bits[4])
+        return
+
+
+class CreateEntitiesRequest(Message):
+    """EntityWriter.CreateEntities request."""
+
+    METHOD = 19
+    RESPONSE = CreateEntitiesResponse
+    BODY_FORMAT = "<IIII"
+    BODY_START = 8
+    LENGTH = 24
+    DATA_START = 24
+    CODEC_0 = Entity.CODEC
+
+    def __init__(self, txid: int = 0, type_id: str = '', entities: list[Entity] | None = None):
+        super().__init__(txid)
+        self.type_id = type_id
+        self.entities = [] if entities is None else entities
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.type_id),
+                           *out.sequence(self.entities, self.CODEC_0))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.type_id = inp.string(bits[0], bits[1])
+        self.entities = inp.sequence(self.CODEC_0, bits[2], bits[3])
         return
 
 
@@ -1837,10 +2063,10 @@ class GetLinksRequest(Message):
 
     METHOD = 18
     RESPONSE = GetLinksResponse
-    BODY_FORMAT = "<IIB3xIIIII"
+    BODY_FORMAT = "<IIB3xIIIIIB3xII"
     BODY_START = 8
-    LENGTH = 40
-    DATA_START = 40
+    LENGTH = 52
+    DATA_START = 56
     CODEC_0 = STRING_CODEC
 
     def __init__(self,
@@ -1849,13 +2075,17 @@ class GetLinksRequest(Message):
                  role: Role = Role.MAIN,
                  languages: list[str] | None = None,
                  max: int = 0,
-                 after: str = ''):
+                 after: str = '',
+                 reverse: bool = False,
+                 type_id: str = ''):
         super().__init__(txid)
         self.property_id = property_id
         self.role = role
         self.languages = [] if languages is None else languages
         self.max = max
         self.after = after
+        self.reverse = reverse
+        self.type_id = type_id
 
     def encode(self) -> tuple[bytes, list[int]]:
         buf, handles = super().encode()
@@ -1865,7 +2095,10 @@ class GetLinksRequest(Message):
                            self.role,
                            *out.sequence(self.languages, self.CODEC_0),
                            self.max,
-                           *out.string(self.after))
+                           *out.string(self.after),
+                           self.reverse,
+                           *out.string(self.type_id))
+        buf += b'\0' * 4
         buf += out.data
         return buf, handles
 
@@ -1881,6 +2114,8 @@ class GetLinksRequest(Message):
         self.languages = inp.sequence(self.CODEC_0, bits[3], bits[4])
         self.max = bits[5]
         self.after = inp.string(bits[6], bits[7])
+        self.reverse = self.decode_bool(bits[8])
+        self.type_id = inp.string(bits[9], bits[10])
         return
 
 
@@ -2115,6 +2350,186 @@ class SuggestPropertiesRequest(Message):
         return
 
 
+class GetLinkSummaryResponse(Message):
+    """EntityItem.GetLinkSummary response."""
+
+    METHOD = 22
+    BODY_FORMAT = "<III"
+    BODY_START = 8
+    LENGTH = 20
+    DATA_START = 24
+    CODEC_0 = LinkGroup.CODEC
+
+    def __init__(self,
+                 txid: int = 0,
+                 groups: list[LinkGroup] | None = None,
+                 status: Status = Status.OK):
+        super().__init__(txid)
+        self.groups = [] if groups is None else groups
+        self.status = status
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.sequence(self.groups, self.CODEC_0),
+                           self.status)
+        buf += b'\0' * 4
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.groups = inp.sequence(self.CODEC_0, bits[0], bits[1])
+        self.status = self.decode_enum(Status, bits[2])
+        return
+
+
+class GetLinkSummaryRequest(Message):
+    """EntityItem.GetLinkSummary request."""
+
+    METHOD = 22
+    RESPONSE = GetLinkSummaryResponse
+    BODY_FORMAT = "<II"
+    BODY_START = 8
+    LENGTH = 16
+    DATA_START = 16
+    CODEC_0 = STRING_CODEC
+
+    def __init__(self, txid: int = 0, languages: list[str] | None = None):
+        super().__init__(txid)
+        self.languages = [] if languages is None else languages
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.sequence(self.languages, self.CODEC_0))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.languages = inp.sequence(self.CODEC_0, bits[0], bits[1])
+        return
+
+
+class GetLinkedEntitiesResponse(Message):
+    """EntityItem.GetLinkedEntities response."""
+
+    METHOD = 23
+    BODY_FORMAT = "<IIIII"
+    BODY_START = 8
+    LENGTH = 28
+    DATA_START = 32
+    CODEC_0 = Entity.CODEC
+    CODEC_1 = Linked.CODEC
+
+    def __init__(self,
+                 txid: int = 0,
+                 entities: list[Entity] | None = None,
+                 linked: list[Linked] | None = None,
+                 status: Status = Status.OK):
+        super().__init__(txid)
+        self.entities = [] if entities is None else entities
+        self.linked = [] if linked is None else linked
+        self.status = status
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.sequence(self.entities, self.CODEC_0),
+                           *out.sequence(self.linked, self.CODEC_1),
+                           self.status)
+        buf += b'\0' * 4
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.entities = inp.sequence(self.CODEC_0, bits[0], bits[1])
+        self.linked = inp.sequence(self.CODEC_1, bits[2], bits[3])
+        self.status = self.decode_enum(Status, bits[4])
+        return
+
+
+class GetLinkedEntitiesRequest(Message):
+    """EntityItem.GetLinkedEntities request."""
+
+    METHOD = 23
+    RESPONSE = GetLinkedEntitiesResponse
+    BODY_FORMAT = "<IIB3xIIIIIIIB3x"
+    BODY_START = 8
+    LENGTH = 52
+    DATA_START = 56
+    CODEC_0 = STRING_CODEC
+
+    def __init__(self,
+                 txid: int = 0,
+                 property_id: str = '',
+                 role: Role = Role.MAIN,
+                 type_id: str = '',
+                 languages: list[str] | None = None,
+                 max: int = 0,
+                 after: str = '',
+                 reverse: bool = False):
+        super().__init__(txid)
+        self.property_id = property_id
+        self.role = role
+        self.type_id = type_id
+        self.languages = [] if languages is None else languages
+        self.max = max
+        self.after = after
+        self.reverse = reverse
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.property_id),
+                           self.role,
+                           *out.string(self.type_id),
+                           *out.sequence(self.languages, self.CODEC_0),
+                           self.max,
+                           *out.string(self.after),
+                           self.reverse)
+        buf += b'\0' * 4
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.property_id = inp.string(bits[0], bits[1])
+        self.role = self.decode_enum(Role, bits[2])
+        self.type_id = inp.string(bits[3], bits[4])
+        self.languages = inp.sequence(self.CODEC_0, bits[5], bits[6])
+        self.max = bits[7]
+        self.after = inp.string(bits[8], bits[9])
+        self.reverse = self.decode_bool(bits[10])
+        return
+
+
 ################################################################
 # Protocols
 ################################################################
@@ -2135,6 +2550,7 @@ class KB:
         9: WatchRequest,
         10: UnwatchRequest,
         11: QueryRequest,
+        12: LinkCountsRequest,
     }
 
     RESPONSES = {
@@ -2149,6 +2565,7 @@ class KB:
         9: WatchResponse,
         10: UnwatchResponse,
         11: QueryResponse,
+        12: LinkCountsResponse,
     }
 
     class Client(system.Client):
@@ -2204,13 +2621,17 @@ class KB:
                        property_id: str = '',
                        role: Role = Role.MAIN,
                        max: int = 0,
-                       after: str = '') -> FindLinksResponse:
+                       after: str = '',
+                       reverse: bool = False,
+                       type_id: str = '') -> FindLinksResponse:
             """KB.FindLinks."""
             request = FindLinksRequest(target_id=target_id,
                                        property_id=property_id,
                                        role=role,
                                        max=max,
-                                       after=after)
+                                       after=after,
+                                       reverse=reverse,
+                                       type_id=type_id)
             return self.call(request, FindLinksResponse)
 
         def instances(self, class_id: str = '', max: int = 0, after: str = '') -> InstancesResponse:
@@ -2242,6 +2663,10 @@ class KB:
                                    after=after)
             return self.call(request, QueryResponse)
 
+        def link_counts(self, target_id: str = '') -> LinkCountsResponse:
+            """KB.LinkCounts."""
+            return self.call(LinkCountsRequest(target_id=target_id), LinkCountsResponse)
+
     class Handler(system.Handler):
         """protocol KB: base class for a service's handler."""
 
@@ -2257,6 +2682,7 @@ class KB:
             9: (WatchRequest, "watch"),
             10: (UnwatchRequest, "unwatch"),
             11: (QueryRequest, "query"),
+            12: (LinkCountsRequest, "link_counts"),
         }
 
         def get_entities(self,
@@ -2319,6 +2745,12 @@ class KB:
             """Handle KB.Query."""
             raise NotImplementedError
 
+        def link_counts(self,
+                        request: LinkCountsRequest,
+                        source: int) -> LinkCountsResponse | system.Deferred:
+            """Handle KB.LinkCounts."""
+            raise NotImplementedError
+
 
 class EntityWriter:
     """protocol EntityWriter: message classes by method number, and its Client and Handler."""
@@ -2327,12 +2759,14 @@ class EntityWriter:
         16: WriteEntitiesRequest,
         17: MergeEntityRequest,
         18: DestroyEntityRequest,
+        19: CreateEntitiesRequest,
     }
 
     RESPONSES = {
         16: WriteEntitiesResponse,
         17: MergeEntityResponse,
         18: DestroyEntityResponse,
+        19: CreateEntitiesResponse,
     }
 
     class Client(system.Client):
@@ -2350,6 +2784,13 @@ class EntityWriter:
             """EntityWriter.DestroyEntity."""
             return self.call(DestroyEntityRequest(entity_id=entity_id), DestroyEntityResponse)
 
+        def create_entities(self,
+                            type_id: str = '',
+                            entities: list[Entity] | None = None) -> CreateEntitiesResponse:
+            """EntityWriter.CreateEntities."""
+            request = CreateEntitiesRequest(type_id=type_id, entities=entities)
+            return self.call(request, CreateEntitiesResponse)
+
     class Handler(system.Handler):
         """protocol EntityWriter: base class for a service's handler."""
 
@@ -2357,6 +2798,7 @@ class EntityWriter:
             16: (WriteEntitiesRequest, "write_entities"),
             17: (MergeEntityRequest, "merge_entity"),
             18: (DestroyEntityRequest, "destroy_entity"),
+            19: (CreateEntitiesRequest, "create_entities"),
         }
 
         def write_entities(self,
@@ -2375,6 +2817,12 @@ class EntityWriter:
                            request: DestroyEntityRequest,
                            source: int) -> DestroyEntityResponse | system.Deferred:
             """Handle EntityWriter.DestroyEntity."""
+            raise NotImplementedError
+
+        def create_entities(self,
+                            request: CreateEntitiesRequest,
+                            source: int) -> CreateEntitiesResponse | system.Deferred:
+            """Handle EntityWriter.CreateEntities."""
             raise NotImplementedError
 
 
@@ -2417,6 +2865,8 @@ class EntityItem:
         19: WatchEntityRequest,
         20: FindEntitiesRequest,
         21: SuggestPropertiesRequest,
+        22: GetLinkSummaryRequest,
+        23: GetLinkedEntitiesRequest,
     }
 
     RESPONSES = {
@@ -2427,6 +2877,8 @@ class EntityItem:
         19: WatchEntityResponse,
         20: FindEntitiesResponse,
         21: SuggestPropertiesResponse,
+        22: GetLinkSummaryResponse,
+        23: GetLinkedEntitiesResponse,
     }
 
     class Client(system.Client):
@@ -2449,13 +2901,17 @@ class EntityItem:
                       role: Role = Role.MAIN,
                       languages: list[str] | None = None,
                       max: int = 0,
-                      after: str = '') -> GetLinksResponse:
+                      after: str = '',
+                      reverse: bool = False,
+                      type_id: str = '') -> GetLinksResponse:
             """EntityItem.GetLinks."""
             request = GetLinksRequest(property_id=property_id,
                                       role=role,
                                       languages=languages,
                                       max=max,
-                                      after=after)
+                                      after=after,
+                                      reverse=reverse,
+                                      type_id=type_id)
             return self.call(request, GetLinksResponse)
 
         def watch_entity(self, listener: int | None = None) -> WatchEntityResponse:
@@ -2485,6 +2941,28 @@ class EntityItem:
             request = SuggestPropertiesRequest(languages=languages, max=max)
             return self.call(request, SuggestPropertiesResponse)
 
+        def get_link_summary(self, languages: list[str] | None = None) -> GetLinkSummaryResponse:
+            """EntityItem.GetLinkSummary."""
+            return self.call(GetLinkSummaryRequest(languages=languages), GetLinkSummaryResponse)
+
+        def get_linked_entities(self,
+                                property_id: str = '',
+                                role: Role = Role.MAIN,
+                                type_id: str = '',
+                                languages: list[str] | None = None,
+                                max: int = 0,
+                                after: str = '',
+                                reverse: bool = False) -> GetLinkedEntitiesResponse:
+            """EntityItem.GetLinkedEntities."""
+            request = GetLinkedEntitiesRequest(property_id=property_id,
+                                               role=role,
+                                               type_id=type_id,
+                                               languages=languages,
+                                               max=max,
+                                               after=after,
+                                               reverse=reverse)
+            return self.call(request, GetLinkedEntitiesResponse)
+
     class Handler(system.Handler):
         """protocol EntityItem: base class for a service's handler."""
 
@@ -2496,6 +2974,8 @@ class EntityItem:
             19: (WatchEntityRequest, "watch_entity"),
             20: (FindEntitiesRequest, "find_entities"),
             21: (SuggestPropertiesRequest, "suggest_properties"),
+            22: (GetLinkSummaryRequest, "get_link_summary"),
+            23: (GetLinkedEntitiesRequest, "get_linked_entities"),
         }
 
         def close(self, request: CloseRequest, source: int) -> CloseResponse | system.Deferred:
@@ -2536,4 +3016,16 @@ class EntityItem:
                                request: SuggestPropertiesRequest,
                                source: int) -> SuggestPropertiesResponse | system.Deferred:
             """Handle EntityItem.SuggestProperties."""
+            raise NotImplementedError
+
+        def get_link_summary(self,
+                             request: GetLinkSummaryRequest,
+                             source: int) -> GetLinkSummaryResponse | system.Deferred:
+            """Handle EntityItem.GetLinkSummary."""
+            raise NotImplementedError
+
+        def get_linked_entities(self,
+                                request: GetLinkedEntitiesRequest,
+                                source: int) -> GetLinkedEntitiesResponse | system.Deferred:
+            """Handle EntityItem.GetLinkedEntities."""
             raise NotImplementedError

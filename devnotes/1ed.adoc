@@ -203,7 +203,34 @@ How does the Terminal, which processes the hotkey, determine what item
 
 * There needs to be a way to update DarqOS from within DarqOS.+
   (2026-11-04)
-  
+
+* The "help" key should be C-h, not F1.+
+  (2026-11-06)
+
+* The help text should be an item.  It could be compiled from reST
+  into HTML or some other rich text format supporting images and
+  diagrams and links to external documents.
++
+The viewer should behave as it does now: tied to the parent window,
+  not able to be repositioned independently.  Extra-dark bg, light fg.
+  It should open, and then close, both using C-h.  The viewer should
+  be fixed at some minimum size, but otherwise relative to the host
+  window?  When open, it should use the standard Text lens hotkeys,
+  except that its own help should be suppressed.
++
+When should the help file be built?+
+  (2026-11-06)
+
+* We need a concept that generalises the indexing phase of item
+  creation: it would be nice to have things like addresses and
+  people's names extracted from item content and properly linked in
+  the knowledge base.  That could be done asynchronously.+
+  (2026-11-06)
+
+* All the Terminal windows needs a style and layout makeover.+
+  (2026-11-06)
+
+
 
 === Closed
 

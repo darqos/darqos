@@ -386,6 +386,12 @@ filename extension in Windows: the file extension basically identifies
 the file as being of a particular type, and the application is a lens
 through which the operator can see the data.
 
+Lenses share their look: ``darq.ui.style`` has their palette, and
+stylesheets for the usual controls, the scroll bars, and the F1 help
+panel, and ``darq.ui.lens`` has the text shown over a window for a
+moment.  A lens adds rules only for its own widgets, so it needs no
+colours of its own.
+
 
 Contexts
 --------

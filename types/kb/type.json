@@ -41,6 +41,20 @@
       "description": "A group of people, in the Knowledge Base.",
       "conforms_to": ["darq.entity"],
       "implemented": true
+    },
+    {
+      "id": "darq.conversation",
+      "name": "Conversation",
+      "description": "A conversation: a channel, direct message, or group chat, in the Knowledge Base.",
+      "conforms_to": ["darq.entity"],
+      "implemented": true
+    },
+    {
+      "id": "darq.message",
+      "name": "Message",
+      "description": "An instant message, in the Knowledge Base.",
+      "conforms_to": ["darq.entity", "public.message"],
+      "implemented": true
     }
   ]
 }

@@ -271,6 +271,10 @@ class TextImplementation(Implementation.Handler):
             text = request.data.decode("utf-8").removeprefix("\ufeff")
         except UnicodeDecodeError:
             return CreateFromResponse(status=Status.INVALID_DATA)
+
+        # DIDL's strings can't hold one, so it's binary, not text.
+        if "\0" in text:
+            return CreateFromResponse(status=Status.INVALID_DATA)
         buffer = self.new(text)
         if buffer is None:
             return CreateFromResponse(status=Status.FAILED)

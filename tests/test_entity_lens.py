@@ -19,10 +19,13 @@ from darq.protocols.kb import (
     Changed,
     FindEntitiesResponse,
     GetEntityResponse,
+    GetLinkSummaryResponse,
     GetLinksResponse,
     Kind,
+    LinkGroup,
     Linked,
     PutEntityResponse,
+    Role,
     SuggestPropertiesResponse,
     WatchEntityResponse,
 )
@@ -47,6 +50,7 @@ def load():
 
 
 lens = load()
+grouped = lens.grouped
 render = lens.render
 edit = lens.edit
 times = edit.times
@@ -81,9 +85,9 @@ def test_format_time(time, text):
     assert render.format_time(time) == text
 
 
-def page_for(entity, links=None, linked_from=(), more=0, note=None):
+def page_for(entity, links=None, groups=(), inline=None, note=None):
     page = render.Page(["en-AU", "en"], links or {})
-    return page, page.render(entity, list(linked_from), more, note)
+    return page, page.render(entity, grouped.sections(groups), inline, note)
 
 
 def test_render():
@@ -107,7 +111,9 @@ def test_render():
         "P108": render.Link("", "employer"),
         "Q11573": render.Link("darq.entity:Q11573", "metre"),
     }
-    page, html = page_for(ada, links, [render.Link("darq.person:bob", "Bob")], more=3, note="merged")
+    group = LinkGroup("P108", Role.MAIN, "darq.person", 1, "employer", "employs")
+    bob = Linked("bob", "darq.person:bob", "en", "Bob")
+    page, html = page_for(ada, links, [group], {("P108", Role.MAIN, "darq.person"): [bob]}, note="merged")
 
     assert "mathematician &lt;b&gt;" in html
     assert "&lt;script&gt;" in html and "<script>" not in html
@@ -119,9 +125,9 @@ def test_render():
     assert "1.65 ± 0.05 " in html and "metre</a>" in html
     assert "g&#x27;day" in html
     assert "employer" in html and 'href' not in html.split("employer")[0][-10:]
-    assert "Linked from" in html and "and 3 more" in html and "(Person)" in html
+    assert "<h3>Employs</h3>" in html and "(Person)" in html
     assert "merged" in html
-    assert ACME in page.targets and "darq.person:bob" in page.targets
+    assert ACME in page.targets and grouped.Row("darq.person:bob") in page.targets
 
     # The property's name is on its first statement only.
     assert html.count(">employer<") == 1
@@ -129,7 +135,7 @@ def test_render():
 
 def test_render_empty():
     _, html = page_for(model.Item("x"))
-    assert "No statements." in html and "Linked from" not in html
+    assert "No statements." in html and "<h3>" not in html
 
 
 def test_render_names_in_order():
@@ -219,6 +225,9 @@ class World:
     def __init__(self):
         self.entities: dict[str, model.Entity] = {}
         self.links: dict[str, list[Linked]] = {}
+        self.link_reads = 0
+        self.inverse = ""
+        self.failing_links: set[str] = set()
         self.ports: dict[int, str] = {}
         self.next_port = 500
         self.closed_items: list[str] = []
@@ -312,8 +321,25 @@ class FakeItem:
         ids += [p for p in dict.fromkeys(s.get_property_id() for s in entity.statements) if p not in ids]
         return SuggestPropertiesResponse(found=[self.world.linked(i) for i in ids], status=wire.Status.OK)
 
-    def get_links(self, property_id, role, languages, max, after):
-        return GetLinksResponse(linked=self.world.links.get(self.item_id, []), status=wire.Status.OK)
+    def get_link_summary(self, languages):
+        if self.item_id in self.world.failing_links:
+            return GetLinkSummaryResponse(status=wire.Status.NOT_FOUND)
+        types: dict[str, int] = {}
+        for link in self.world.links.get(self.item_id, []):
+            type_id = darq.split_item_id(link.item_id)[0]
+            types[type_id] = types.get(type_id, 0) + 1
+        return GetLinkSummaryResponse(groups=[LinkGroup("P108", Role.MAIN, t, n, "employer", self.world.inverse)
+                                              for t, n in types.items()], status=wire.Status.OK)
+
+    def get_links(self, property_id, role, languages, max, after, reverse=False, type_id=""):
+        # The links as listed are newest first.
+        assert reverse
+        self.world.link_reads += 1
+        links = [link for link in self.world.links.get(self.item_id, [])
+                 if darq.split_item_id(link.item_id)[0] == type_id]
+        ids = [link.entity_id for link in links]
+        start = ids.index(after) + 1 if after else 0
+        return GetLinksResponse(linked=links[start:start + max], status=wire.Status.OK)
 
     def watch_entity(self, listener):
         self.world.watched.append((self.item_id, listener))
@@ -327,12 +353,16 @@ class FakeOpener:
     def __init__(self, world):
         self.world = world
         self.used: list[str] = []
+        self.own_lenses: set[str] = set()
 
     def open(self, item_id):
         return self.world.open(item_id)
 
     def use(self, item_id):
         self.used.append(item_id)
+
+    def own_lens(self, item_id):
+        return darq.split_item_id(item_id)[0] in self.own_lenses
 
 
 class FakeLoop:
@@ -416,11 +446,11 @@ def test_follow_and_back(entity_lens, world):
     assert window.back_button.isEnabled()
     assert world.closed_items == [ADA]
     assert 900 in entity_lens.closed_ports
-    assert "Linked from" in window.browser.toHtml()
-    assert window.targets == [ADA, "darq.person:bob"]
+    assert "With this as employer" in window.browser.toHtml()
+    assert window.targets == [grouped.Row(ADA), grouped.Row("darq.person:bob")]
 
     window.follow("darq.person:bob")
-    assert window.back == [(ADA, 0), (ACME, 0)]
+    assert window.back == [lens.Place(ADA, 0), lens.Place(ACME, 0)]
     window.go_back()
     assert window.title.text() == "Acme"
     window.go_back()
@@ -430,6 +460,166 @@ def test_follow_and_back(entity_lens, world):
 
     opened = [e[0] for e in entity_lens.history.events]
     assert opened == [ADA, ACME, "darq.person:bob", ACME, ADA]
+
+
+def messages(world, n):
+    """Make n messages link to Acme, newest first."""
+    links = []
+    for number in range(n, 0, -1):
+        item_id = f"darq.message:m{number:04d}"
+        world.add(item_id, "")
+        links.append(Linked(f"m{number:04d}", item_id, "", "", "", wire.Datatype.NONE, f"Ada: message {number}"))
+    world.links[ACME] = links
+
+
+KEY = ("P108", Role.MAIN, "darq.message")
+
+
+def test_small_groups_are_shown_in_place(entity_lens, world):
+    messages(world, grouped.INLINE_MAX)
+    use(entity_lens, world, ACME)
+    window = entity_lens.window
+    assert "Ada: message 3" in window.browser.toHtml()
+    assert grouped.Row("darq.message:m0003") in window.targets
+
+
+def test_large_groups_are_counts(entity_lens, world):
+    messages(world, grouped.PAGE_ROWS * 2 + 5)
+    use(entity_lens, world, ACME)
+    window = entity_lens.window
+    assert "205 Messages" in window.browser.toPlainText()
+    assert "Ada: message" not in window.browser.toPlainText()
+    assert window.targets == [grouped.OpenGroup(KEY)]
+
+    # Reading a page doesn't read a large group's entities.
+    assert world.link_reads == 0
+
+
+def test_group_is_shown_in_the_window(entity_lens, world):
+    messages(world, 105)
+    use(entity_lens, world, ACME)
+    window = entity_lens.window
+    opened = len(entity_lens.history.events)
+    window.choose(window.targets[0])
+
+    text = window.browser.toPlainText()
+    assert "1 to 100, newest first" in text
+    assert "Ada: message 105" in text and "Ada: message 6" in text and "Ada: message 5\n" not in text
+    assert window.title.text() == "Acme" and window.back_button.isEnabled()
+
+    # It's not an item: it isn't recorded, and the item stays open.
+    assert len(entity_lens.history.events) == opened
+    assert world.closed_items == []
+
+
+def test_group_pages(entity_lens, world):
+    messages(world, 205)
+    use(entity_lens, world, ACME)
+    window = entity_lens.window
+    window.open_group(KEY)
+    assert grouped.Turn(-1) not in window.targets
+
+    window.choose(grouped.Turn(1))
+    text = window.browser.toPlainText()
+    assert "101 to 200, newest first" in text and "Ada: message 105" in text
+    assert grouped.Turn(-1) in window.targets and grouped.Turn(1) in window.targets
+
+    window.choose(grouped.Turn(1))
+    assert "201 to 205, newest first" in window.browser.toPlainText()
+    assert grouped.Turn(1) not in window.targets
+
+    # Past the end does nothing.
+    window.turn(1)
+    assert "201 to 205, newest first" in window.browser.toPlainText()
+
+    window.choose(grouped.Turn(-1))
+    assert "101 to 200, newest first" in window.browser.toPlainText()
+
+
+def test_back_leaves_a_group_however_many_pages_in(entity_lens, world):
+    messages(world, 205)
+    use(entity_lens, world, ACME)
+    window = entity_lens.window
+    window.open_group(KEY)
+    window.turn(1)
+    window.turn(1)
+    window.go_back()
+    assert window.view is None
+    assert "205 Messages" in window.browser.toPlainText()
+    assert not window.back_button.isEnabled()
+    assert world.closed_items == []
+
+
+def test_back_returns_to_the_place_in_a_group(entity_lens, world):
+    messages(world, 205)
+    use(entity_lens, world, ACME)
+    window = entity_lens.window
+    window.open_group(KEY)
+    window.turn(1)
+    window.choose(grouped.Row("darq.message:m0090"))
+    assert window.view is None
+    assert window.item_label.text() == "darq.message:m0090"
+
+    window.go_back()
+    assert window.item_label.text() == ACME
+    assert "101 to 200, newest first" in window.browser.toPlainText()
+    window.go_back()
+    assert window.view is None and "205 Messages" in window.browser.toPlainText()
+
+
+def test_row_opens_in_its_own_lens(entity_lens, world):
+    messages(world, 205)
+    entity_lens.opener.own_lenses.add("darq.message")
+    use(entity_lens, world, ACME)
+    window = entity_lens.window
+    window.open_group(KEY)
+    window.choose(grouped.Row("darq.message:m0205"))
+    assert entity_lens.opener.used == ["darq.message:m0205"]
+
+    # This window stays where it is.
+    assert window.item_label.text() == ACME and window.view is not None
+
+
+def test_following_failure_keeps_the_group(entity_lens, world):
+    messages(world, 205)
+    use(entity_lens, world, ACME)
+    window = entity_lens.window
+    window.open_group(KEY)
+    world.failing.add("darq.message:m0205")
+    window.choose(grouped.Row("darq.message:m0205"))
+    assert window.item_label.text() == ACME and window.view is not None
+
+
+def test_group_that_cant_be_read_stays_on_the_page(entity_lens, world):
+    messages(world, 205)
+    use(entity_lens, world, ACME)
+    window = entity_lens.window
+    world.failing_links.add(ACME)
+    window.open_group(KEY)
+    assert window.view is None and window.back == []
+    assert "Can't read" in window.status.text()
+
+
+def test_group_gone_leaves_the_page(entity_lens, world):
+    messages(world, 205)
+    use(entity_lens, world, ACME)
+    window = entity_lens.window
+    window.open_group(KEY)
+    world.links[ACME] = []
+    window.refresh()
+    assert window.view is None
+
+
+def test_groups_arent_edited(entity_lens, world):
+    messages(world, 205)
+    use(entity_lens, world, ACME)
+    window = entity_lens.window
+    window.open_group(KEY)
+    assert not window.edit_button.isEnabled()
+    window.start_editing()
+    assert not window.editing
+    window.go_back()
+    assert window.edit_button.isEnabled()
 
 
 def test_follow_in_a_new_window(entity_lens, world):

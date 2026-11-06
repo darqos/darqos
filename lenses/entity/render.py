@@ -12,30 +12,27 @@ import html
 import typing
 
 import darq.kb as model
+from darq.protocols.kb import LinkGroup, Linked
+from darq.ui import links as grouped
+from darq.ui import style
 
 
-# The kinds' names, by type.
-KIND_NAMES = {
-    "darq.entity": "Entity",
-    "darq.person": "Person",
-    "darq.organisation": "Organisation",
-    "darq.organisational-unit": "Organisational Unit",
-    "darq.place": "Place",
-    "darq.group": "Group",
-}
+# What a page's link can lead to: an item, or, in what links to the item
+# shown, one of those in grouped.
+Target = str | grouped.Row | grouped.OpenGroup | grouped.Turn
 
 MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September",
           "October", "November", "December"]
 
-STYLE = """
-body { color: #e0e0e0; font-size: 15px; }
-a { color: #8ab4f8; text-decoration: none; }
-.description { color: #c0c0c0; }
-.aliases { color: #9a9a9a; }
-.property { color: #9a9a9a; padding-right: 24px; }
-.detail { color: #9a9a9a; font-size: 13px; }
-.deprecated { color: #808080; }
-h3 { color: #c0c0c0; font-size: 15px; margin-top: 18px; }
+STYLE = f"""
+body {{ color: {style.TEXT}; font-size: 15px; }}
+a {{ color: {style.LINK}; text-decoration: none; }}
+.description {{ color: {style.TEXT_SOFT}; }}
+.aliases {{ color: {style.TEXT_DIM}; }}
+.property {{ color: {style.TEXT_DIM}; padding-right: 24px; }}
+.detail {{ color: {style.TEXT_DIM}; font-size: 13px; }}
+.deprecated {{ color: {style.FAINT}; }}
+h3 {{ color: {style.TEXT_SOFT}; font-size: 15px; margin-top: 18px; }}
 """
 
 
@@ -65,8 +62,7 @@ def best(texts: dict[str, str], chain: list[str]) -> str | None:
 
 def kind_name(item_id: str) -> str:
     """Return the name of an item's kind."""
-    type_id = item_id.partition(":")[0]
-    return KIND_NAMES.get(type_id, type_id)
+    return grouped.type_name(item_id.partition(":")[0])
 
 
 def ordinal(n: int) -> str:
@@ -122,12 +118,16 @@ class Page:
         :param links: The entities the page refers to, by identifier."""
         self.chain = chain
         self.links = links
-        self.targets: list[str] = []
+        self.targets: list[Target] = []
+
+    def anchor(self, target: Target, text: str) -> str:
+        """Return an anchor for a target."""
+        self.targets.append(target)
+        return f'<a href="#{len(self.targets) - 1}">{html.escape(text)}</a>'
 
     def link(self, item_id: str, text: str) -> str:
         """Return an anchor for an item."""
-        self.targets.append(item_id)
-        return f'<a href="#{len(self.targets) - 1}">{html.escape(text)}</a>'
+        return self.anchor(item_id, text)
 
     def name(self, entity_id: str) -> str:
         """Return an entity's label, or its identifier, as a link if it's
@@ -181,14 +181,14 @@ class Page:
 
     def render(self,
                entity: model.Entity,
-               linked_from: list[Link],
-               more: int = 0,
+               sections: typing.Sequence[grouped.Section] = (),
+               inline: dict[grouped.Key, list[Linked]] | None = None,
                note: str | None = None,
                deprecated: bool = True) -> str:
         """Return an entity's page.
 
-        :param linked_from: The items that link to it.
-        :param more: How many more link to it, not listed.
+        :param sections: What links to it, in groups.
+        :param inline: The entities of the groups shown in place.
         :param note: A note, such as that it was merged, shown first.
         :param deprecated: Whether deprecated statements are shown, or
                            just counted."""
@@ -221,16 +221,11 @@ class Page:
             plural = "s" if hidden > 1 else ""
             parts.append(f'<p class="detail">{hidden} deprecated statement{plural} hidden: D shows them.</p>')
 
-        if linked_from:
-            parts.append("<h3>Linked from</h3><p>")
-            entries = []
-            for link in linked_from:
-                text = link.label or link.item_id
-                entries.append(f"{self.link(link.item_id, text)} "
-                               f'<span class="detail">({html.escape(kind_name(link.item_id))})</span>')
-            parts.append(" · ".join(entries))
-            if more:
-                parts.append(f' <span class="detail">and {more} more</span>')
-            parts.append("</p>")
+        parts.append(grouped.render_sections(list(sections), inline or {}, self.anchor))
         parts.append("</body></html>")
         return "\n".join(parts)
+
+    def render_view(self, group: LinkGroup, view: grouped.View, rows: list[Linked], more: bool) -> str:
+        """Return a page of a group of what links to an entity."""
+        page = grouped.render_view(group, view, rows, more, self.anchor)
+        return f"<html><head><style>{STYLE}</style></head><body>{page}</body></html>"

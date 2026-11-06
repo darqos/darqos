@@ -338,7 +338,7 @@ def test_upgrade_from_version_2(path):
 
     k = open_kb(path)
     s = k.store
-    assert s.db.execute("pragma user_version").fetchone()[0] == store.VERSION == 3
+    assert s.db.execute("pragma user_version").fetchone()[0] == store.VERSION == 4
     assert s.db.execute("select count(*) from labels").fetchone()[0] == labels
     after = [[e.id for e in k.search(text)] for text in ("acm", "wid", "lovel")]
     assert after == before == [["acme"], ["acme"], ["ada"]]
@@ -419,12 +419,12 @@ def test_batches_read_in_order(path):
     s = open_store(path)
     live = store.LIVE
     links = ("select l.entity_id from links l join entities e on e.id = l.entity_id "
-             "where l.target_id = ? and l.property_id = ? and l.role = ? and l.entity_id > ? "
+             "where l.target_id = ? and l.property_id = ? and l.role = ? and l.type = ? and l.entity_id > ? "
              f"and {live} group by l.entity_id order by l.entity_id limit ?")
     instances = ("select l.entity_id from links l join entities e on e.id = l.entity_id "
                  "where l.property_id = ? and l.target_id = ? and l.role = 'main' and l.entity_id > ? "
                  f"and {live} group by l.entity_id order by l.entity_id limit ?")
-    for sql, args in ((links, ("a", "b", "c", "", 10)), (instances, ("a", "b", "", 10))):
+    for sql, args in ((links, ("a", "b", "c", 1, "", 10)), (instances, ("a", "b", "", 10))):
         plan = [row[-1] for row in s.db.execute(f"explain query plan {sql}", args)]
         assert any("links_by_" in step and "entity_id>?" in step for step in plan), plan
         assert not any("TEMP B-TREE" in step for step in plan), plan
@@ -471,3 +471,137 @@ def test_statistics_are_refreshed_as_it_grows(path, monkeypatch):
             k.add_item(f"Thing {i}", f"e{i}").claim("P31", model.EntityValue("Q5"))
     assert "links" in analysed(s)
     assert s.writes - s.optimized < 100
+
+
+def links_world(k):
+    """Five entities linking to a hub, two of them messages."""
+    k.add_property("link", model.Datatype.Item, "link")
+    k.add_property("DarqOS type", model.Datatype.String, model.DARQOS_TYPE)
+    k.add_item("hub", "hub")
+    for name in ("a", "b", "c", "d", "e"):
+        item = k.add_item(name, name)
+        item.claim("link", model.EntityValue("hub"))
+        if name in ("b", "d"):
+            item.claim(model.DARQOS_TYPE, model.StringValue("darq.message"))
+
+
+@pytest.fixture(params=[True, False], ids=["stored", "memory"])
+def links_kb(request, tmp_path):
+    # The store's SQL and the in-memory scan agree.
+    return kb.KnowledgeBase(open_store(str(tmp_path / "links.sqlite"))) if request.param else kb.KnowledgeBase()
+
+
+def test_link_ids_reverse_and_type(links_kb):
+    k = links_kb
+    with k.transaction():
+        links_world(k)
+
+    assert k.link_ids("hub", "link") == ["a", "b", "c", "d", "e"]
+    assert k.link_ids("hub", "link", reverse=True) == ["e", "d", "c", "b", "a"]
+
+    # Backwards in batches: after is the last one returned.
+    assert k.link_ids("hub", "link", limit=2, reverse=True) == ["e", "d"]
+    assert k.link_ids("hub", "link", after="d", limit=2, reverse=True) == ["c", "b"]
+    assert k.link_ids("hub", "link", after="b", limit=2, reverse=True) == ["a"]
+    assert k.link_ids("hub", "link", after="a", limit=2, reverse=True) == []
+
+    assert k.link_ids("hub", "link", type_id="darq.message") == ["b", "d"]
+    assert k.link_ids("hub", None, type_id="darq.message") == ["b", "d"]
+    assert k.link_ids("hub", "link", type_id="darq.entity") == ["a", "c", "e"]
+    assert k.link_ids("hub", "link", type_id="darq.person") == []
+    assert k.link_ids("hub", "link", limit=1, type_id="darq.message") == ["b"]
+    assert k.link_ids("hub", "link", reverse=True, limit=1, type_id="darq.message") == ["d"]
+
+    # Types are merged in order.
+    assert k.link_ids("hub", "link", limit=3) == ["a", "b", "c"]
+    assert k.link_ids("hub", "link", after="b", limit=2) == ["c", "d"]
+
+
+def test_link_counts(links_kb):
+    k = links_kb
+    with k.transaction():
+        links_world(k)
+    assert k.link_counts("hub") == [("link", "main", "darq.entity", 3), ("link", "main", "darq.message", 2)]
+    assert k.link_counts("a") == []
+
+
+def test_link_counts_are_of_entities_not_links(links_kb):
+    # Every statement's reference to a source is one link: it's one entity.
+    k = links_kb
+    with k.transaction():
+        k.add_property("link", model.Datatype.Item, "link")
+        k.add_property("stated in", model.Datatype.Item, model.STATED_IN)
+        k.add_item("source", "source")
+        k.add_item("hub", "hub")
+        k.add_item("other", "other")
+        item = k.add_item("a", "a")
+        for target in ("hub", "other"):
+            item.claim("link", model.EntityValue(target)).add_reference(
+                model.Reference().add(model.STATED_IN, model.EntityValue("source")))
+    assert k.link_counts("source") == [(model.STATED_IN, "reference", "darq.entity", 1)]
+
+
+def test_link_counts_follow_changes(links_kb):
+    k = links_kb
+    with k.transaction():
+        links_world(k)
+
+    def counts():
+        return {t: n for _, _, t, n in k.link_counts("hub")}
+
+    # Rewriting it changes nothing.
+    with k.transaction():
+        k.get("a").set_label("Another")
+    assert counts() == {"darq.entity": 3, "darq.message": 2}
+
+    # A statement removed.
+    with k.transaction():
+        a = k.get("a")
+        a.remove_statement(a.get_statements("link")[0])
+    assert counts() == {"darq.entity": 2, "darq.message": 2}
+
+    # Destroyed.
+    with k.transaction():
+        k.destroy("b")
+    assert counts() == {"darq.entity": 2, "darq.message": 1}
+    assert k.link_ids("hub", "link", type_id="darq.message") == ["d"]
+
+    # Merged: its statements are the other's now, with its type.
+    with k.transaction():
+        k.merge("c", "d")
+    assert counts() == {"darq.entity": 1, "darq.message": 1}
+    assert k.link_ids("hub", "link") == ["d", "e"]
+
+    # Its type changed.
+    with k.transaction():
+        k.get("e").claim(model.DARQOS_TYPE, model.StringValue("darq.person"))
+    assert counts() == {"darq.message": 1, "darq.person": 1}
+
+
+def test_link_counts_roll_back(tmp_path):
+    k = kb.KnowledgeBase(open_store(str(tmp_path / "links.sqlite")))
+    with k.transaction():
+        links_world(k)
+    with pytest.raises(RuntimeError):
+        with k.transaction():
+            k.get("a").claim(model.DARQOS_TYPE, model.StringValue("darq.place"))
+            raise RuntimeError
+    assert {t: n for _, _, t, n in k.link_counts("hub")} == {"darq.entity": 3, "darq.message": 2}
+
+    # A type that went with the transaction can be used again.
+    with k.transaction():
+        k.get("a").claim(model.DARQOS_TYPE, model.StringValue("darq.place"))
+    assert k.link_ids("hub", "link", type_id="darq.place") == ["a"]
+
+
+def test_batch_from_the_end_uses_the_index(tmp_path):
+    # It costs its own size, without sorting them all.
+    k = kb.KnowledgeBase(open_store(str(tmp_path / "links.sqlite")))
+    with k.transaction():
+        links_world(k)
+    plan = k.store.db.execute(
+        "explain query plan select l.entity_id from links l join entities e on e.id = l.entity_id "
+        "where l.target_id = 'hub' and l.property_id = 'link' and l.role = 'main' and l.type = 1 "
+        "and e.destroyed = 0 and e.redirect is null group by l.entity_id order by l.entity_id desc limit 2"
+    ).fetchall()
+    assert not any("TEMP B-TREE" in row[-1] for row in plan)

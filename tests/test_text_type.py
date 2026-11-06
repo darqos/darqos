@@ -201,6 +201,7 @@ def test_create_from(call, blobs):
 
 @pytest.mark.parametrize("type_id, data, status", [
     (text_module.TYPE_ID, b"\xff\xfeH\x00i\x00", Status.INVALID_DATA),
+    (text_module.TYPE_ID, b"binary\x00data", Status.INVALID_DATA),
     ("public.png", b"Hi", Status.NOT_FOUND),
     ("bad:id", b"Hi", Status.INVALID_ID),
 ])

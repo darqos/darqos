@@ -28,6 +28,9 @@ from darq.protocols.kb import (
     FindByValueResponse,
     FindLinksRequest,
     FindLinksResponse,
+    LinkCount,
+    LinkCountsRequest,
+    LinkCountsResponse,
     GetEntitiesRequest,
     GetEntitiesResponse,
     InstancesRequest,
@@ -237,8 +240,14 @@ class KBService(KB.Handler):
 
     def find_links(self, request: FindLinksRequest, source: int) -> FindLinksResponse:
         ids = self.kb.link_ids(request.target_id, request.property_id or None,
-                               model.FROM_ROLES[request.role], request.after, batch_size(request.max))
+                               model.FROM_ROLES[request.role], request.after, batch_size(request.max),
+                               request.reverse, request.type_id)
         return FindLinksResponse(ids=ids, status=Status.OK)
+
+    def link_counts(self, request: LinkCountsRequest, source: int) -> LinkCountsResponse:
+        counts = [LinkCount(property_id, model.ROLES[role], type_id, count)
+                  for property_id, role, type_id, count in self.kb.link_counts(request.target_id)]
+        return LinkCountsResponse(counts=counts, status=Status.OK)
 
     def instances(self, request: InstancesRequest, source: int) -> InstancesResponse:
         ids = self.kb.instance_ids(request.class_id, request.after, batch_size(request.max))

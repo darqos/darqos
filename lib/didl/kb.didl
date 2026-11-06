@@ -178,6 +178,26 @@ struct Label {
     string text;
 }
 
+// How many entities link to one, by a property, in a role, by the
+// linking entities' DarqOS type (darq.entity if they have none).
+struct LinkCount {
+    string property_id;
+    Role role;
+    string type_id;
+    uint64 count;
+}
+
+// A LinkCount, for showing: the property's label, and its inverse label
+// if it has one (empty if not), in a chain of languages.
+struct LinkGroup {
+    string property_id;
+    Role role;
+    string type_id;
+    uint64 count;
+    string label;
+    string inverse_label;
+}
+
 // A query's term: a variable, by its number, from 1, or a constant: an
 // entity's identifier, a string value, or, as an object, any value.
 enum TermType : uint8 {
@@ -264,8 +284,11 @@ protocol KB {
     6: FindByValue(string property_id, string value, uint32 max, string after) -> (sequence<string> ids, Status status);
 
     // Find the entities that link to one, by a property (or any, if
-    // it's empty), in a statement's role.
-    7: FindLinks(string target_id, string property_id, Role role, uint32 max, string after) -> (sequence<string> ids, Status status);
+    // it's empty), in a statement's role.  With reverse, they're in
+    // descending order, from the last, and after is still the last one
+    // returned.  If type_id isn't empty, only entities with that DarqOS
+    // type, or darq.entity for none, are found.
+    7: FindLinks(string target_id, string property_id, Role role, uint32 max, string after, bool reverse, string type_id) -> (sequence<string> ids, Status status);
 
     // Find the instances of a class, or of any of its subclasses.
     8: Instances(string class_id, uint32 max, string after) -> (sequence<string> ids, Status status);
@@ -284,6 +307,10 @@ protocol KB {
     // first batch).  If languages isn't empty, labels has the labels of
     // the entities in the rows, in that chain of languages.
     11: Query(sequence<Pattern> patterns, sequence<uint8> select, bool deprecated, sequence<string> languages, uint32 max, sequence<string> after) -> (sequence<Row> rows, sequence<Label> labels, Status status);
+
+    // Return how many entities link to one, by each property, role and
+    // type: entities, not links, of those not destroyed or merged.
+    12: LinkCounts(string target_id) -> (sequence<LinkCount> counts, Status status);
 }
 
 // Served by the KB type implementation (types/kb) on its Implementation
@@ -301,6 +328,12 @@ protocol EntityWriter {
 
     // Mark an entity destroyed, as the KB's Destroy.
     18: DestroyEntity(string entity_id) -> (Status status);
+
+    // Create new entities of a kind, all or none, with the identifiers
+    // they have, or a UUID, if they've none: for an import, which
+    // chooses them.  Each gets the class and DarqOS type of an item of
+    // the kind, as Create gives, and it's CONFLICT if one exists.
+    19: CreateEntities(string type_id, sequence<Entity> entities) -> (sequence<Entity> entities, string failed_id, Status status);
 }
 
 // Served by a watcher, on the port it gives Watch.
@@ -313,8 +346,9 @@ protocol Listener {
 // An entity an item refers to, that refers to it, or that's found, as
 // an item: its item identifier (empty for a property, which isn't an
 // item), its label and description in the first language of a chain
-// that it has a label in (empty for none), and a property's datatype
-// (NONE for an item).
+// that it has a label in (empty for none), a property's datatype (NONE
+// for an item), and a line about it, for listing an entity with no
+// label, such as a message (empty for others).
 struct Linked {
     string entity_id;
     string item_id;
@@ -322,6 +356,7 @@ struct Linked {
     string label;
     string description;
     Datatype datatype;
+    string summary;
 }
 
 // Served by the KB type implementation (types/kb) on an item's port:
@@ -339,8 +374,9 @@ protocol EntityItem {
     17: PutEntity(Entity entity) -> (uint64 revision, Status status);
 
     // Return the entities that link to this one, by a property (or any,
-    // if it's empty), in a statement's role, in batches, as KB lookups.
-    18: GetLinks(string property_id, Role role, sequence<string> languages, uint32 max, string after) -> (sequence<Linked> linked, Status status);
+    // if it's empty), in a statement's role, in batches, as KB lookups,
+    // and as FindLinks with reverse and type_id.
+    18: GetLinks(string property_id, Role role, sequence<string> languages, uint32 max, string after, bool reverse, string type_id) -> (sequence<Linked> linked, Status status);
 
     // Have changes to the entity reported to a listener, which serves
     // Listener, until its port is destroyed.
@@ -356,4 +392,14 @@ protocol EntityItem {
     // qualifier on this entity: the qualifiers for annotating statements
     // by hand (start and end time, and the like), then those it has.
     21: SuggestProperties(sequence<string> languages, uint32 max) -> (sequence<Linked> found, Status status);
+
+    // Return how many entities link to this one, in groups, as
+    // LinkCounts.
+    22: GetLinkSummary(sequence<string> languages) -> (sequence<LinkGroup> groups, Status status);
+
+    // Return the entities that link to this one, whole, as GetLinks finds
+    // them, with the entities they refer to: a lens uses these to show a
+    // conversation's messages, say.  They can't be written through this
+    // port.
+    23: GetLinkedEntities(string property_id, Role role, string type_id, sequence<string> languages, uint32 max, string after, bool reverse) -> (sequence<Entity> entities, sequence<Linked> linked, Status status);
 }

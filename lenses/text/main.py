@@ -33,7 +33,9 @@ from darq.protocols.history import History
 from darq.protocols.lens import Close, Lens, Ready, Status, UseRequest, UseResponse
 from darq.protocols.text import Status as TextStatus
 from darq.protocols.text import Text
-from darq.ui.lens import MESSAGE_SHOWN, SCROLL_BARS, overlay, show_over
+from darq.ui import style
+from darq.ui.lens import MESSAGE_SHOWN, overlay, show_over
+from darq.ui.style import CONTROLS, SCROLL_BARS
 
 
 # History source for the events it records.
@@ -222,8 +224,8 @@ class LensEdit(QPlainTextEdit):
         super().__init__(window)
         self.window_ = window
         self.setStyleSheet("QPlainTextEdit {"
-                           " background-color: #323232;"
-                           " color: #7bbbec;"
+                           f" background-color: {style.SURFACE};"
+                           f" color: {style.ACCENT};"
                            " border-style: none;"
                            " font-size: 18px;"
                            "}" + SCROLL_BARS)
@@ -470,7 +472,7 @@ class TextWindow(QWidget):
 
         self.setWindowTitle(sync.item_id)
         self.setWindowFlags(QtCore.Qt.WindowType.FramelessWindowHint)
-        self.setStyleSheet("TextWindow { background-color: #323232; }")
+        self.setStyleSheet(f"TextWindow {{ background-color: {style.SURFACE}; }}" + CONTROLS)
         self.resize(1024, 768)
 
         layout = QVBoxLayout()
@@ -484,12 +486,11 @@ class TextWindow(QWidget):
         # the corner, for as long as it lasts.
         self.notice, self.notice_timer = overlay(self, 16)
         self.badge = QLabel("Read only", self)
-        self.badge.setStyleSheet("QLabel { color: #9a9a9a; font-size: 13px; }")
+        self.badge.setStyleSheet(f"QLabel {{ color: {style.TEXT_DIM}; font-size: 13px; }}")
         self.badge.hide()
 
         self.help = QLabel(help_text(), self)
-        self.help.setStyleSheet("QLabel { background-color: rgba(20, 20, 20, 230); color: #e0e0e0;"
-                                " font-family: monospace; font-size: 15px; padding: 24px; }")
+        self.help.setStyleSheet(style.HELP)
         self.help.hide()
 
         document = self.edit.document()

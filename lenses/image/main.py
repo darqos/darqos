@@ -52,7 +52,9 @@ from darq.loop import QtEventLoop
 from darq.protocols import image as wire
 from darq.protocols.history import History
 from darq.protocols.lens import Close, Lens, Ready, Status, UseRequest, UseResponse
-from darq.ui.lens import MESSAGE_SHOWN, SCROLL_BARS, overlay, show_over
+from darq.ui import style
+from darq.ui.lens import MESSAGE_SHOWN, overlay, show_over
+from darq.ui.style import CONTROLS
 
 pillow_heif.register_heif_opener()
 
@@ -71,25 +73,16 @@ USE_TIMEOUT = 60.0
 # MESSAGE_SHOWN).
 ZOOM_SHOWN = 1500
 
-# The lens's dark colours, as the other lenses': the image on #2b2b2b,
-# the information panel, menus and dialogs on #323232, and slim
-# scroll bars.
-STYLE = """
-ImageWindow, InfoPanel, QDialog { background-color: #323232; }
-QScrollArea { background-color: #2b2b2b; border: none; }
-QLabel, QCheckBox { color: #e0e0e0; }
-QLineEdit, QSpinBox { color: #e0e0e0; background-color: #404040; border: 1px solid #505050; padding: 3px; }
-QPushButton { color: #e0e0e0; background-color: #454545; border: none; padding: 6px 12px; }
-QPushButton:hover { background-color: #505050; }
-QTableWidget { color: #e0e0e0; background-color: #323232; gridline-color: #404040; border: none;
-               selection-background-color: #4a5f73; selection-color: #ffffff; }
-QHeaderView::section { color: #c0c0c0; background-color: #3a3a3a; border: none; padding: 4px; }
-QTableCornerButton::section { background-color: #3a3a3a; border: none; }
-QMenu { color: #e0e0e0; background-color: #3a3a3a; border: 1px solid #505050; }
-QMenu::item:selected { background-color: #4a5f73; }
-QMenu::separator { height: 1px; background: #505050; margin: 4px 8px; }
-QToolTip { color: #e0e0e0; background-color: #404040; border: 1px solid #505050; }
-""" + SCROLL_BARS
+# The usual controls, with the image on the background, and its panels'
+# table.
+STYLE = CONTROLS + f"""
+ImageWindow, InfoPanel {{ background-color: {style.SURFACE}; }}
+QScrollArea {{ background-color: {style.BACKGROUND}; border: none; }}
+QTableWidget {{ color: {style.TEXT}; background-color: {style.SURFACE}; gridline-color: {style.FIELD}; border: none;
+               selection-background-color: {style.SELECTION}; selection-color: {style.TEXT_STRONG}; }}
+QHeaderView::section {{ color: {style.TEXT_SOFT}; background-color: {style.RAISED}; border: none; padding: 4px; }}
+QTableCornerButton::section {{ background-color: {style.RAISED}; border: none; }}
+"""
 
 # Zoom factors, in device pixels per image pixel.
 ZOOMS = [1 / 16, 1 / 12, 1 / 8, 1 / 6, 1 / 4, 1 / 3, 1 / 2, 2 / 3, 1, 1.5, 2, 3, 4, 6, 8, 12, 16, 24, 32]
@@ -401,7 +394,7 @@ class ImageView(QWidget):
                          QtCore.QRectF(whole.left(), inside.top(), inside.left(), inside.height()),
                          QtCore.QRectF(inside.right(), inside.top(), whole.right() - inside.right(), inside.height())):
                 painter.fillRect(part, shade)
-            painter.setPen(QPen(QColor("#7bbbec"), 1, QtCore.Qt.PenStyle.DashLine))
+            painter.setPen(QPen(QColor(style.ACCENT), 1, QtCore.Qt.PenStyle.DashLine))
             painter.drawRect(inside)
         painter.end()
 
@@ -572,7 +565,7 @@ class ImageWindow(QWidget):
         self.info = InfoPanel(self)
         self.info.hide()
         self.help = QLabel(HELP, self)
-        self.help.setStyleSheet("QLabel { background-color: #404040; color: #e0e0e0; padding: 16px; }")
+        self.help.setStyleSheet(style.HELP)
         self.help.hide()
 
         # A new zoom, in its middle, and messages, at its foot, shown over

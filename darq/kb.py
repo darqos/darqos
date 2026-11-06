@@ -910,6 +910,13 @@ ANNOTATIONS = frozenset({START_TIME, END_TIME, POINT_IN_TIME,
                          REASON_FOR_DEPRECATED_RANK,
                          REASON_FOR_PREFERRED_RANK})
 
+# Inverse label item: on a property, an item whose label reads the
+# property backwards, for showing what links to an entity.  "Creator"
+# reads from a message to its author: read from the author, it's
+# "created".  A property's statements are one way, so this is only for
+# showing them.
+INVERSE_LABEL = "P7087"
+
 # Series ordinal: a statement's place in order, among its property's,
 # such as a person's given names (a String, "1", "2" and so on).
 SERIES_ORDINAL = "P1545"
@@ -947,6 +954,13 @@ REMOVED = "efc0fb84-3ef0-43d1-81c8-a1b40a0a12d8"
 # no other kind is a darq.entity.
 ENTITY_TYPE = "darq.entity"
 
+# The class of a conversation: local, as Wikidata's (Q52943) is of spoken
+# ones.
+CONVERSATION = "4b73743b-b6d3-4091-9afc-71bcbc69d0e1"
+
+# Instant message.
+INSTANT_MESSAGE = "Q30070565"
+
 # The other kinds, in order of priority, with the class of a new item of
 # each: an entity that's of several kinds is of the first.
 KINDS = [
@@ -955,14 +969,16 @@ KINDS = [
     ("darq.place", "Q2221906"),
     ("darq.organisation", "Q43229"),
     ("darq.group", "Q16334295"),
+    ("darq.conversation", CONVERSATION),
+    ("darq.message", INSTANT_MESSAGE),
 ]
 
 KIND_TYPES = [ENTITY_TYPE] + [kind for kind, _ in KINDS]
 
 # The instance type of each class, by default, with its label: human,
 # organizational subdivision, organization, geographic location,
-# address, and group of humans.  An address isn't a geographic location
-# on Wikidata.
+# address, group of humans, conversation, and instant message.  An
+# address isn't a geographic location on Wikidata.
 DEFAULT_INSTANCE_TYPES = [
     ("Q5", "human", "darq.person"),
     ("Q9261468", "organizational subdivision", "darq.organisational-unit"),
@@ -970,6 +986,8 @@ DEFAULT_INSTANCE_TYPES = [
     ("Q2221906", "geographic location", "darq.place"),
     ("Q319608", "address", "darq.place"),
     ("Q16334295", "group of humans", "darq.group"),
+    (CONVERSATION, "conversation", "darq.conversation"),
+    (INSTANT_MESSAGE, "instant message", "darq.message"),
 ]
 
 # Most classes searched for an entity's kind.
@@ -992,6 +1010,14 @@ def _targets(entity: Entity, property_id: str) -> List[str]:
     values = [s.get_value() for s in entity.get_statements(property_id)
               if s.rank != Rank.Deprecated]
     return [v.entity_id for v in values if isinstance(v, EntityValue)]
+
+
+def recorded_type(entity: Entity) -> str:
+    """Return an entity's recorded DarqOS type, or darq.entity if it has
+    none, as links are grouped by it: classes are left to kind_of, so
+    that the store needn't read any."""
+    recorded = _strings(entity, DARQOS_TYPE)
+    return recorded[0] if recorded else ENTITY_TYPE
 
 
 def kind_of(entity: Entity, get: Callable[[str], Optional[Entity]]) -> str:
@@ -2030,6 +2056,22 @@ class KB:
             entity.revision = written.revision
         return list(entities)
 
+    def create(self, type_id: str, *entities: Entity) -> List[Entity]:
+        """Create new entities of a kind, all or none, with the
+        identifiers they have, and set their revisions.
+
+        This needs a writer, the kind's implementation.  Raises
+        ConflictError if one exists; ValueError if a statement doesn't
+        fit its property."""
+        if self.writer is None:
+            raise ValueError("create: there's no writer")
+        wired = [entity_to_wire(e) for e in entities]
+        response = self.writer.create_entities(type_id, wired)
+        self._check(response.status, response.failed_id or "create")
+        for entity, written in zip(entities, response.entities):
+            entity.revision = written.revision
+        return list(entities)
+
     def ensure(self, *entities: Entity) -> Dict[str, Entity]:
         """Find, or create, some entities: those that exist are left as
         they are, and those that don't are put.
@@ -2127,6 +2169,13 @@ class KB:
         """Find the entities that link to one."""
         return self._all(lambda after: self.client.find_links(
             target_id, property_id or "", ROLES[role], 0, after), target_id)
+
+    def link_counts(self, target_id: str) -> List[Tuple[str, str, str, int]]:
+        """Return how many entities link to one, as (property, role,
+        type, count)."""
+        response = self.client.link_counts(target_id)
+        self._check(response.status, target_id)
+        return [(c.property_id, FROM_ROLES[c.role], c.type_id, c.count) for c in response.counts]
 
     def instances(self, class_id: str) -> Iterator[str]:
         """Find the instances of a class, or of any of its subclasses."""

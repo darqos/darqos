@@ -166,37 +166,16 @@ Messages
 
 Message items are stored across the KB and Storage services.
 
-Relevent Wikidata ids:
-* Q58199 Instant messaging
-* Q2462003 Instant messaging client
-* Q628523 = Message, which might be good for the entity super-class?
-* Q30070565 = Instant message, which might be good the the entity class?
-
-  * This doesn't appear very well integrated/populated?
-  * It appear to be the correct type though
-
-    
-Properties:
-* Service (P400 = OS platform, which isn't really right.  Q17130715 = Slack)
-* Service Channel (Q733553 is comms channel, but a bit technical)
-* Text (Storage blob) (P6553)
-* Timestamp  (P577)
-* Language (P407)
-
-Entity Relationships
-* Sender (Person) (P170)
-* Receiver (Person | Group) (P710)
-* Attachment (Item)
-* InResponseTo (Message) (P8018506)
+The Wikidata identifiers are in the vocabulary, under Design, below.
 
 
 Design
 ------
 
 *Decided for Second Edition, for importing Slack history: see*
-:doc:`slack-import-tool`.  *Not yet built.  Sending, replying,
-forwarding, tags, notifications, and constraining a search to a person
-or conversation come later.*
+:doc:`slack-import-tool`.  *The type is built, in* ``types/kb`` *and*
+``darq.message``.  *Sending, replying, forwarding, tags, notifications,
+and constraining a search to a person or conversation come later.*
 
 Each message is a Knowledge Base entity, of a new kind.  This is a
 trial: it's the first real load of content items as entities, and
@@ -228,8 +207,42 @@ Attachment               An item, of its own type, referred to by its
 =======================  =============================================
 
 A message's statements are its sender, conversation, time, body,
-what it's in response to, attachments, mentions, reactions, and when
-it was last edited.
+what it replies to, attachments, mentions, reactions, and when it was
+last edited.  Each has a reference to its source, as a source's
+statements do, though that's the largest of the shapes measured,
+below.  It can be changed later, if the size matters more.
+
+Vocabulary
+~~~~~~~~~~
+
+``darq.message`` has the vocabulary, which ``types/kb`` makes sure of
+when it starts.  Wikidata's identifiers are used where it has a clean
+match, which was checked against Wikidata.  Its *conversation*
+(Q52943) is about spoken ones, so that class is local.
+
+================  ===============================  ===================
+Meaning           Identifier                       Value
+================  ===============================  ===================
+A message         instant message (Q30070565)      Class
+A conversation    local                            Class
+Sender            creator (P170)                   Item
+Conversation      part of (P361)                   Item
+Time              publication date (P577)          Time
+Replies to        reply to (P2675)                 Item
+Participant       participant (P710)               Item
+Service           platform (P400)                  Item
+Body              local                            Text
+Mentions          local                            Item
+Reaction          local, with *reacted by*         String
+Last edited       local                            Time
+Attachment        local, with *file name*,         String
+                  *media type*, and *file size*
+================  ===============================  ===================
+
+The point-in-time property (P585) isn't used for a message's time,
+since the KB keeps that for annotations made by hand (see
+:doc:`kb-service`).  A body's language is ``und``, undetermined, as a
+service doesn't say.
 
 So, to the question above: a channel is a Conversation, not a Group.
 A Group is a set of people; a Conversation is a sequence of messages,
@@ -245,23 +258,71 @@ messages are a few dozen characters, and a page of messages would
 otherwise take a request for each.  It's a small subset of Markdown,
 so that each service's markup is converted once, on the way in.
 
-A message's identifier is a UUID made from its time, followed by a
-hash of its conversation and its identifier on the service.  So
-importing it again gives the same entity, and since KB lookups are
-sorted by identifier, a conversation's messages page in time order
-through ``GetLinks``, which needs a way to page backwards: a lens
-opens at the newest.
+A message's identifier is a UUID made from its time, to the
+microsecond, followed by a hash of its conversation and its identifier
+on the service.  It has the form of a version 7 UUID, as RFC 9562
+allows.  So importing it again gives the same entity, and since KB
+lookups are sorted by identifier, a conversation's messages page in
+time order through ``GetLinkedEntities``, newest first with
+``reverse``, as a lens opens at the newest.  Milliseconds aren't enough: Slack numbers
+messages within one.  These identifiers are chosen by the importer,
+which creates messages with ``CreateEntities`` (see :doc:`kb-service`).
+
+A reply also sent to its channel is listed by Slack in both, and is
+one message, as its identifier shows.
 
 The ``types/kb`` implementation publishes a message's body to the
 Index.  An import records one ``imported`` History event for each
 conversation, rather than one for each message.
 
 The Conversation lens, ``lenses/conversation``, is one read-only
-timeline for both types: opening a message shows its conversation, at
-that message.  Senders open their Person, and attachments open in
-their own lenses.  The entity lens leaves messages out of the links it
-lists, since a person may have tens of thousands.
+timeline for both types.  A conversation opens at its newest message;
+a message opens in its conversation, highlighted, with those around
+it, or alone if it isn't in one.
 
-To be checked before they're used: the Wikidata identifiers above.
-``P8018506`` doesn't look like a real property, and anything without a
-good match becomes a local property.
+* Messages are read 100 at a time, through the conversation's item
+  port (``GetLinkedEntities``), as they're scrolled to, and at most 400
+  are held, so a conversation of any length can be read.
+* A sender's messages are shown together, without their name again,
+  while they're within five minutes, under headings for each day.
+  Times are in the local time zone.
+* A reply shows what it replies to, quoted: choosing it goes to that
+  message.
+* Senders and attachments open in their own lenses, in new windows.  A
+  file that isn't an item is shown by its name, type and size.
+* Home and End go to the oldest and newest.  What's shown doesn't change
+  as messages arrive: F5 reads the newest.
+
+Since this is the lens for both types, neither opens in the entity
+lens any more, so a conversation's statements can't be seen or edited.
+A way to choose among an item's lenses would allow that.
+
+A person's messages are shown in the entity lens as a group, like
+anything else that links to them (see :doc:`kb-service`).
+
+Measurements
+~~~~~~~~~~~~
+
+``bench/message_scale.py`` makes these entities from a Slack export,
+with the service's own store, and reads them as the lens would.  For
+66,137 real messages, with 5.7 MB of text:
+
+=============  ===========  ==========  ==========  ============
+Statements     Database     A message   Writes/s    Page of 50
+=============  ===========  ==========  ==========  ============
+Each with a    813 MB       12.3 KB     2,900       1.7 ms
+reference
+One source     536 MB       8.1 KB      4,000       1.3 ms
+statement
+Also without   436 MB       6.6 KB      4,500       1.2 ms
+instance of
+=============  ===========  ==========  ==========  ============
+
+The first shape is the one used, for now.  Reading is no concern at
+this size: the largest conversation, of
+34,097 messages, is walked in about 40 ms, and a sender's latest 200
+take 0.2 ms.  Size is the cost, at 76 to 142 times the text.  A
+message's document is only 1.2 to 1.8 KB: most of the rest is indexes,
+and each document stored twice, in ``entities`` and ``revisions``.
+Keeping a first revision only once would save a further 18 to 23%.
+The Index adds 13 MB.

@@ -276,10 +276,16 @@ Most questions are answered by a lookup, each backed by an index:
   property's string value: an email address, a phone number, or a
   vCard UID, normalised, so a phone number matches however it's
   written.
-* ``FindLinks(target_id, property_id, role, max, after)`` finds the
-  entities that link to one, by a property, or any, from a statement's
-  main snak, a qualifier, or a reference: its employees, residents, or
-  members.
+* ``FindLinks(target_id, property_id, role, max, after, reverse,
+  type_id)`` finds the entities that link to one, by a property, or
+  any, from a statement's main snak, a qualifier, or a reference: its
+  employees, residents, or members.  With ``reverse``, they're in
+  descending order, from the last, as a conversation's messages are
+  read, newest first, and ``after`` is still the last one returned.
+  With ``type_id``, only entities with that DarqOS type are found:
+  ``darq.entity`` for those with none.
+* ``LinkCounts(target_id)`` returns how many entities link to one, by
+  each property, role and type.
 * ``Instances(class_id, max, after)`` finds the instances of a class.
 
 A class matches by conformance: *human* matches instances of its
@@ -291,13 +297,33 @@ with the last identifier returned.  Destroyed and merged entities are
 left out.
 
 Lookups are answered from the index tables' identifiers, without
-reading the entities.  A batch of ``FindLinks`` by a property, or of
-``Instances``, is read in order from an index ending in the linking
-entity's identifier, and stops when it's full, so it costs its own
-size, however many entities link to the target, or are instances of
-the class: a class's subclasses' instances are read the same way, a
-batch from each, and merged.  ``FindLinks`` without a property sorts
-the target's links, which is cheap unless there are millions.
+reading the entities.  A batch of ``FindLinks``, or of ``Instances``,
+is read in order from an index ending in the linking entity's
+identifier, and stops when it's full, so it costs its own size,
+however many entities link to the target, or are instances of the
+class: a batch is read for each property and type of link, or for each
+of a class's subclasses, and merged.
+
+People create, send and use a great many things: tens of thousands of
+messages, and as many emails, files and web pages.  So what links to
+an entity isn't a list, but groups, by property, role, and the linking
+entity's type, each with a count, which is what ``LinkCounts`` gives.
+No kind is treated specially, so a new type gets its own group.  Each
+link records its entity's DarqOS type, as a number, in
+``links_by_target``, and a table of counts is kept in the same
+transaction as the links.  It counts entities, rather than links, since
+a message's every statement can cite the one source, and leaves out
+those destroyed or merged.  For 66,137 messages it adds 0.2% to the
+database, and about a quarter to the time a write takes; a person's
+groups take 0.007 ms, and the newest 200 of their 34,277 messages
+0.2 ms.
+
+Kinds with many items should have identifiers that sort by time, as
+messages' do (see :doc:`message-type`), so that their groups can be
+read newest first, with no other index.  An entity's *type* here is
+its recorded DarqOS type: one that has only a class, with no recorded
+type, is in the ``darq.entity`` group, so the store needn't read
+classes.
 
 Queries
 ~~~~~~~
@@ -481,6 +507,11 @@ Type                           Entities
 ``darq.place``                 Countries, regions, localities, and
                                addresses.
 ``darq.group``                 Groups of people.
+``darq.conversation``          Conversations: channels, direct
+                               messages, and group chats.
+``darq.message``               Instant messages (see
+                               :doc:`message-type`).  Also conforms to
+                               ``public.message``.
 =============================  =======================================
 
 The others conform to ``darq.entity``.  ``darq.entity`` doesn't
@@ -508,8 +539,10 @@ data in the KB, rather than code.  An entity's kind is the first of
 1. ``darq.person``,
 2. ``darq.organisational-unit``,
 3. ``darq.place``,
-4. ``darq.organisation``, and
-5. ``darq.group``
+4. ``darq.organisation``,
+5. ``darq.group``,
+6. ``darq.conversation``, and
+7. ``darq.message``
 
 that any of its classes, or of their superclasses, by subclass of
 (P279), has as its instance type, or else ``darq.entity``.  Place comes
@@ -524,8 +557,9 @@ the *DarqOS* source item (see Storage), as are the statements of the
 items it creates, their kind and class: human (Q5)
 is a person, organizational subdivision (Q9261468) an organisational
 unit, geographic location (Q2221906) and address (Q319608) places,
-organization (Q43229) an organisation, and group of humans (Q16334295)
-a group.  The type implementation states them each time it starts,
+organization (Q43229) an organisation, group of humans (Q16334295)
+a group, a local *conversation* class a conversation, and instant
+message (Q30070565) a message.  The type implementation states them each time it starts,
 so a later version can change them, and a statement of the operator's,
 with preferred rank, overrides them, and is kept.  Department
 (Q2366457) and organizational unit (Q679206) are both subclasses of
@@ -577,7 +611,12 @@ too, from 16, for clients that write many at once, such as an import:
   does, all or none, keeping an existing entity's DarqOS type; a new
   one can't have one, since an item of a kind is made by ``Create``;
 * ``MergeEntity(old_id, new_id)`` and ``DestroyEntity(entity_id)``
-  are the KB's ``Merge`` and ``Destroy``.
+  are the KB's ``Merge`` and ``Destroy``; and
+* ``CreateEntities(type_id, entities)`` creates new entities of a
+  kind, all or none, with the identifiers they have, each with the
+  class and DarqOS type ``Create`` gives.  It's for an import that
+  chooses its identifiers, as messages' are chosen, and too many to
+  create one at a time.  One that exists is a conflict.
 
 Given an ``EntityWriter`` client, ``darq.kb.KB`` writes through it:
 ``put``, ``ensure``, ``state``, ``merge`` and ``destroy`` go to the
@@ -589,8 +628,8 @@ Each entity of a kind other than ``darq.entity`` that it creates or
 writes, with ``Create``, ``PutEntity`` or ``WriteEntities``, is
 published to the Index (see :doc:`search-service`): its labels and
 aliases, in every language, as names, and its descriptions as its
-body, so the Terminal's Search finds people, organisations and places
-by name.  One that's destroyed, or merged into another, is withdrawn,
+body, with a message's text, so the Terminal's Search finds people,
+organisations and places by name, and messages by what they say.  One that's destroyed, or merged into another, is withdrawn,
 as is one whose kind has changed, under the kind it was; the one it's
 merged into is published again.  ``IndexEntry`` gives the same entry,
 for a reindex, and is ``UNSUPPORTED`` for ``darq.entity``.
@@ -603,8 +642,15 @@ An item's port serves the ``EntityItem`` protocol, in
   chain of languages, and properties' datatypes;
 * ``PutEntity(entity)``, which writes it, as ``PutEntities`` does,
   keeping its DarqOS type;
-* ``GetLinks(property_id, role, languages, max, after)``, for the
-  entities that link to it, as ``Linked``; and
+* ``GetLinks(property_id, role, languages, max, after, reverse,
+  type_id)``, for the entities that link to it, as ``Linked``, with
+  ``reverse`` and ``type_id`` as for ``FindLinks``;
+* ``GetLinkSummary(languages)``, for how many link to it, in groups,
+  as ``LinkCounts``, each with its property's label and inverse label;
+* ``GetLinkedEntities(property_id, role, type_id, languages, max,
+  after, reverse)``, for the entities that link to it, whole and
+  read-only, with those they refer to as ``Linked``, for a lens that
+  shows a conversation's messages, say; and
 * ``WatchEntity(listener)``, which has the KB report the entity's
   changes to the listener directly;
 * ``FindEntities(text, languages, kind, class_id, max, after)``, for
@@ -617,7 +663,8 @@ An item's port serves the ``EntityItem`` protocol, in
 
 So an item port is a capability for a single entity: a lens given a
 person's port can read and change that person, see the entities it
-refers to, and find others to refer to, but no more.  To follow a link, it asks for the other
+refers to, read those that link to it, and find others to refer to,
+but no more.  To follow a link, it asks for the other
 item to be used, by its item identifier, as with any item.  Queries
 across the whole graph are made on the KB service's own port, by
 tools and search.
@@ -635,8 +682,8 @@ back through conformance, so every kind has this lens from the start.
 
 * It shows the entity's label, kind, and item identifier; its
   description and aliases; its statements, by property, with their
-  qualifiers and references, preferred ones starred; and the items
-  that link to it, up to 200.  A property's statements are in order by
+  qualifiers and references, preferred ones starred; and what links to
+  it, in groups (see below).  A property's statements are in order by
   series ordinal (P1545), where they have one, as names are
   (``darq.kb.in_order``), and then as they are.  Deprecated statements
   are counted, and shown, struck through, with D.  Labels and text are in the locale's
@@ -700,6 +747,40 @@ be made to a later revision, and are undone by their inverses.
 ``remove_statement`` make an operator's changes as edits, keeping a
 source's statements its own.  They're in ``darq.kb``, not the lens,
 for synchronisation to use too.
+
+What links to an entity is shown in groups (see Lookups, above), under
+a heading for each property.  A group of up to 12 is shown in place,
+and a larger one by its count, which opens to a paged list of its
+entities, 100 at a time, newest first, within the lens.  A group isn't
+an item, so it has no lens of its own, can't be opened in another
+window, and isn't recorded in History.  Back leaves a group, from
+whichever page of it, and a place to go back to holds the group and
+page as well as the item, so coming back from an entity chosen in a
+group returns to that page.  A group's paged by cursors, so there's no
+jumping to a page.  A group is read-only, so Edit is disabled there.
+
+An entity chosen from a group opens in its own type's lens, if it has
+one, in a new window: it's been chosen to be used, rather than looked
+up.  Otherwise it's shown in the same window.  An entity with no label,
+such as a message, is listed by its ``Linked`` summary, a line from the
+type implementation: for a message, its sender, date, and how it
+starts.
+
+``darq.ui.links`` has this, without Qt, for other lenses to share.  A
+lens gives it a way to make anchors, and does what's chosen.  The
+counts come as they're read: a new link is a change to the entity it's
+from, not the one shown, so they aren't kept up to date as they change,
+until the item's read again.
+
+A group is headed by its property's inverse label.  A property reads
+from an entity to what it refers to: *creator* reads from a message to
+its author, and from the author, it's *created*.  Statements are only
+stored one way, so that's only for showing them.  As on Wikidata, a
+property has an *inverse label item* (P7087), an item with the label,
+so it's in any language, like any other.  One without is headed *With
+this as employer*, as is a link from a qualifier or a reference, which
+says so.  Inverse properties (P1696) would store every link twice, and
+the link index already reads them backwards.
 
 Then, each kind can have its own lens:
 

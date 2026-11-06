@@ -28,7 +28,7 @@ from typing import List, Optional, Sequence, Set, Tuple
 
 from darq.kb import (INSTANCE_OF, SUBCLASS_OF, ConflictError, Entity,
                      EntityValue, Property, StringValue, decode_entity,
-                     entity_snaks, fold, normalise)
+                     entity_snaks, fold, normalise, recorded_type)
 
 from query import Plan, TooCostly, compile
 
@@ -38,9 +38,9 @@ from query import Plan, TooCostly, compile
 # version 2 kept the full-text rows apart from labels, found by an
 # unindexed column, so each write scanned them all, and its link
 # indexes didn't end in entity_id, so a batch of links or instances
-# was found by sorting them all.  An older
-# database's index tables are rebuilt.
-VERSION = 3
+# was found by sorting them all; version 3 didn't have links' types, or
+# their counts.  An older database's index tables are rebuilt.
+VERSION = 4
 
 SCHEMA = """
 create table if not exists entities (
@@ -94,13 +94,30 @@ create table if not exists links (
     property_id text not null,
     target_id text not null,
     role text not null,
-    rank text not null);
+    rank text not null,
+    type integer not null);
 -- Each ends in entity_id, so the entities linking to one, or the
 -- instances of a class, are read in order, a batch at a time.
-create index if not exists links_by_target on links (target_id, property_id, role, entity_id);
+create index if not exists links_by_target on links (target_id, property_id, role, type, entity_id);
 create index if not exists links_by_property on links (property_id, target_id, role, entity_id);
 create index if not exists links_by_entity on links (entity_id);
 create index if not exists links_by_statement on links (statement_id);
+
+-- The DarqOS types of entities that link, as links have them.
+create table if not exists link_types (
+    id integer primary key,
+    type_id text not null unique);
+
+-- How many entities, not destroyed or merged, link to each target, by
+-- each property, role and type: they're what a link can be found by, so
+-- this is also the sorted runs of links there are to read.
+create table if not exists link_counts (
+    target_id text not null,
+    property_id text not null,
+    role text not null,
+    type integer not null,
+    count integer not null,
+    primary key (target_id, property_id, role, type)) without rowid;
 
 create table if not exists strings (
     entity_id text not null,
@@ -137,7 +154,8 @@ OPTIMIZE_WRITES = 10_000
 OPTIMIZE = "pragma optimize = 0x10002"
 
 # Index tables, each with an entity_id column, other than labels_fts,
-# which follows labels.
+# which follows labels, and link_counts and link_types, which follow
+# links.
 INDEXES = ("labels", "links", "strings", "snaks")
 
 # Condition for an entity, e, that isn't destroyed or merged.
@@ -173,6 +191,9 @@ class Store:
             self.db.executescript(SCHEMA)
             self.db.execute(f"pragma user_version = {VERSION}")
 
+        # Links' types, by identifier.
+        self.link_types = dict(self.db.execute("select type_id, id from link_types"))
+
         # Entities written in the current transaction, if there is one.
         self.active = False
         self.written: Set[str] = set()
@@ -201,12 +222,14 @@ class Store:
     def _upgrade(self):
         """Upgrade the schema from an earlier version, rebuilding the
         index tables from the documents, all or none."""
-        drops = "".join(f"drop table if exists {table}; " for table in ("labels_fts", *INDEXES))
+        drops = "".join(f"drop table if exists {table}; "
+                        for table in ("labels_fts", "link_counts", "link_types", *INDEXES))
         self.db.executescript(f"begin immediate; {drops}{SCHEMA}")
+        self.link_types = {}
         try:
             rows = self.db.execute("select document from entities").fetchall()
             for (text,) in rows:
-                self._index(decode_entity(json.loads(text)))
+                self._index(decode_entity(json.loads(text)), False)
             self.db.execute(f"pragma user_version = {VERSION}")
             self.db.execute("commit")
         except BaseException:
@@ -232,6 +255,9 @@ class Store:
         if self.active:
             self.db.execute("rollback")
             self._ended()
+
+            # A type first seen in the transaction has gone with it.
+            self.link_types = dict(self.db.execute("select type_id, id from link_types"))
 
     def _ended(self):
         self.active = False
@@ -260,6 +286,7 @@ class Store:
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
         kind = "property" if isinstance(entity, Property) else "item"
         destroyed = int(entity.destroyed)
+        counted = self._counted(entity)
 
         if entity.id in self.written:
             self.db.execute("update entities set document = ?, redirect = ?, "
@@ -296,10 +323,33 @@ class Store:
             self.written.add(entity.id)
             self.writes += 1
 
-        self._index(entity)
+        self._index(entity, counted)
 
-    def _index(self, entity: Entity):
-        """Replace an entity's rows in the index tables."""
+    def _counted(self, entity: Entity) -> bool:
+        """Return whether an entity's links are counted, as it's stored."""
+        if entity.revision == 0 and entity.id not in self.written:
+            return False
+        row = self.db.execute("select redirect, destroyed from entities where id = ?", (entity.id,)).fetchone()
+        return row is not None and row[0] is None and not row[1]
+
+    def _link_type(self, type_id: str) -> int:
+        """Return the number for an entity's type, in links."""
+        number = self.link_types.get(type_id)
+        if number is None:
+            number = self.db.execute("insert into link_types (type_id) values (?)", (type_id,)).lastrowid
+            assert number is not None
+            self.link_types[type_id] = number
+        return number
+
+    def _index(self, entity: Entity, counted: bool):
+        """Replace an entity's rows in the index tables.
+
+        :param counted: Whether its links, as they are, are counted."""
+        if counted:
+            self.db.executemany("update link_counts set count = count - 1 "
+                                "where target_id = ? and property_id = ? and role = ? and type = ?",
+                                self.db.execute("select distinct target_id, property_id, role, type from links "
+                                                "where entity_id = ?", (entity.id,)).fetchall())
         for table in INDEXES:
             self.db.execute(f"delete from {table} where entity_id = ?",
                             (entity.id,))
@@ -315,17 +365,22 @@ class Store:
                             [(entity.id, language, role, text, fold(text))
                              for language, role, text in names])
         links, strings, snaks = [], [], []
+        link_type = self._link_type(recorded_type(entity))
         for s, snak, role in entity_snaks(entity):
             row = (entity.id, s.id, snak.property_id)
             rank = s.rank.name.lower()
             if isinstance(snak.value, EntityValue):
-                links.append((*row, snak.value.entity_id, role, rank))
+                links.append((*row, snak.value.entity_id, role, rank, link_type))
             elif isinstance(snak.value, StringValue):
                 strings.append((*row, normalise(snak.value.value),
                                 snak.value.value, role, rank))
             snaks.append((*row, role, rank))
-        self.db.executemany("insert into links values (?, ?, ?, ?, ?, ?)",
+        self.db.executemany("insert into links values (?, ?, ?, ?, ?, ?, ?)",
                             links)
+        if entity.redirect is None and not entity.destroyed:
+            self.db.executemany("insert into link_counts values (?, ?, ?, ?, 1) "
+                                "on conflict do update set count = count + 1",
+                                {(link[3], link[2], link[4], link_type) for link in links})
         self.db.executemany("insert into strings values "
                             "(?, ?, ?, ?, ?, ?, ?)", strings)
         self.db.executemany("insert into snaks values (?, ?, ?, ?, ?)",
@@ -373,22 +428,50 @@ class Store:
                    property_id: Optional[str],
                    role: str,
                    after: str = "",
-                   limit: Optional[int] = None) -> List[str]:
+                   limit: Optional[int] = None,
+                   reverse: bool = False,
+                   type_id: str = "") -> List[str]:
         """Return the identifiers of entities linking to one, in order:
         those after the identifier after, and at most limit, if given.
 
-        With a property, they're read in order from links_by_target, so
-        a batch costs its own size, however many link to the entity;
-        without one, they're sorted."""
-        condition = "" if property_id is None else "and l.property_id = ? "
-        args = [target_id, *([] if property_id is None else [property_id]),
-                role, after, -1 if limit is None else limit]
-        return self._ids("select l.entity_id from links l "
-                         "join entities e on e.id = l.entity_id "
-                         f"where l.target_id = ? {condition}and l.role = ? "
-                         f"and l.entity_id > ? and {LIVE} "
-                         "group by l.entity_id order by l.entity_id limit ?",
-                         *args)
+        With reverse, the order's descending, from the last, and those
+        after are those before it, as they're read.  With type_id, only
+        entities of that DarqOS type are found.
+
+        Each property and type of link is read in order from
+        links_by_target, at most limit of them, and merged, so a batch
+        costs at most its size for each, however many link to the
+        entity."""
+        groups = [(p, t) for p, r, t, _ in self.link_counts(target_id)
+                  if r == role and (property_id is None or p == property_id) and (not type_id or t == type_id)]
+        conditions = ""
+        if after or not reverse:
+            conditions = f"and l.entity_id {'<' if reverse else '>'} ? "
+        order = "desc" if reverse else "asc"
+        batches = [self._ids("select l.entity_id from links l "
+                             "join entities e on e.id = l.entity_id "
+                             "where l.target_id = ? and l.property_id = ? and l.role = ? and l.type = ? "
+                             f"{conditions}and {LIVE} group by l.entity_id "
+                             f"order by l.entity_id {order} limit ?",
+                             target_id, p, role, self.link_types[t],
+                             *([after] if conditions else []), -1 if limit is None else limit)
+                   for p, t in groups]
+        found: List[str] = []
+        for entity_id in heapq.merge(*batches, reverse=reverse):
+            if found and found[-1] == entity_id:
+                continue
+            if limit is not None and len(found) == limit:
+                break
+            found.append(entity_id)
+        return found
+
+    def link_counts(self, target_id: str) -> List[Tuple[str, str, str, int]]:
+        """Return how many entities link to one, by each property, role
+        and type, in order."""
+        return self.db.execute("select c.property_id, c.role, t.type_id, c.count from link_counts c "
+                               "join link_types t on t.id = c.type "
+                               "where c.target_id = ? and c.count > 0 "
+                               "order by c.property_id, c.role, t.type_id", (target_id,)).fetchall()
 
     def subclasses(self, class_id: str) -> List[str]:
         """Return a class, and its subclasses, at any depth."""

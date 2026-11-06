@@ -1,18 +1,19 @@
 # darqos
 # Copyright (C) 2026 David Arnold
 
-# What the lenses share of their look: slim, dark scroll bars, and text
-# shown over a window for a moment (a pop-over), in place of a status
-# line.
+# What the lenses share of their widgets: text shown over a window for
+# a moment (a pop-over), in place of a status line.  Their colours and
+# stylesheets are in darq.ui.style.
 
 from PyQt6 import QtCore
 from PyQt6.QtWidgets import QLabel, QWidget
+
+from .style import TEXT
 
 
 # Control exports
 __all__ = [
     "MESSAGE_SHOWN",
-    "SCROLL_BARS",
     "overlay",
     "show_over",
 ]
@@ -21,20 +22,8 @@ __all__ = [
 # Milliseconds a message is shown over a window.
 MESSAGE_SHOWN = 3000
 
-# Slim, dark scroll bars, on the lenses' #2b2b2b.
-SCROLL_BARS = """
-QScrollBar:vertical { background: #2b2b2b; width: 12px; margin: 0; }
-QScrollBar:horizontal { background: #2b2b2b; height: 12px; margin: 0; }
-QScrollBar::handle:vertical { background: #555555; min-height: 24px; border-radius: 4px; margin: 2px; }
-QScrollBar::handle:horizontal { background: #555555; min-width: 24px; border-radius: 4px; margin: 2px; }
-QScrollBar::handle:hover { background: #6a6a6a; }
-QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
-QScrollBar::add-page, QScrollBar::sub-page { background: none; }
-QAbstractScrollArea::corner { background: #2b2b2b; }
-"""
-
 # How what's shown over a window looks.
-OVERLAY_STYLE = ("QLabel { background-color: rgba(0, 0, 0, 160); color: #e0e0e0; padding: 8px 16px;"
+OVERLAY_STYLE = ("QLabel { background-color: rgba(0, 0, 0, 160); color: " + TEXT + "; padding: 8px 16px;"
                  " border-radius: 8px; font-size: %dpx; }")
 
 

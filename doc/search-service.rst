@@ -44,9 +44,10 @@ The publishers are type implementations only:
 * the PDF type, its title and author as names, and the text of its
   pages as its body (see :doc:`pdf-type`); and
 * ``types/kb``, the entities of its kinds (people, organisations,
-  organisational units, places and groups), with their labels and
-  aliases, in every language, as names, and their descriptions as
-  body, each time it writes one: an entity destroyed, merged into
+  organisational units, places, groups, conversations and messages),
+  with their labels and aliases, in every language, as names, and
+  their descriptions, and a message's text, as body, each time it
+  writes one: an entity destroyed, merged into
   another, or no longer of its kind is withdrawn.  The Knowledge Base
   service doesn't index, and entities that aren't of a kind with its
   own implementation, such as properties, classes and ``darq.entity``
