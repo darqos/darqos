@@ -21,6 +21,8 @@ Each record consists of:
 
     * created
     * imported (created from data, such as a file)
+    * fetched (a URL's item, each time it's fetched from the server,
+      whether or not it's changed)
     * opened
     * edited
     * destroyed

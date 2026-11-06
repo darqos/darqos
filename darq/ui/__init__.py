@@ -20,6 +20,7 @@ import darq
 import darq.index
 import darq.launch
 from darq.protocols.history import History
+from darq.protocols.http import Http
 from darq.protocols.security import Security
 from darq.protocols.type import Type
 
@@ -40,6 +41,9 @@ __all__ = [
 TIMEOUT = 10.0
 SECURITY_TIMEOUT = 60.0
 
+# Seconds to wait for a fetch.
+FETCH_TIMEOUT = 600.0
+
 
 class Services:
     """What the Terminals use: the Type, History and Security services,
@@ -52,6 +56,14 @@ class Services:
         self.security = Security.Client(darq.connect("darq.security"), timeout=SECURITY_TIMEOUT)
         self.index = darq.index
         self.launch = darq.launch
+
+    def http(self) -> Http.Client | None:
+        """Return a client of the HTTP service, or None if it's not
+        running.  It's looked for only when it's wanted: connecting waits
+        for a service, and a Terminal mustn't wait at boot for one it can
+        work without."""
+        handle = darq.lookup_name("darq.http", blocking=False)
+        return Http.Client(handle, timeout=FETCH_TIMEOUT) if handle is not None else None
 
     def shutdown(self):
         darq.shutdown()

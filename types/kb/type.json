@@ -55,6 +55,13 @@
       "description": "An instant message, in the Knowledge Base.",
       "conforms_to": ["darq.entity", "public.message"],
       "implemented": true
+    },
+    {
+      "id": "public.url",
+      "name": "URL",
+      "description": "A place on the web, in the Knowledge Base, with what's been fetched from it.",
+      "conforms_to": ["darq.entity"],
+      "implemented": true
     }
   ]
 }

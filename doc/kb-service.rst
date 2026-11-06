@@ -512,6 +512,8 @@ Type                           Entities
 ``darq.message``               Instant messages (see
                                :doc:`message-type`).  Also conforms to
                                ``public.message``.
+``public.url``                 Places on the web (see :doc:`url-type`),
+                               with what's been fetched from them.
 =============================  =======================================
 
 The others conform to ``darq.entity``.  ``darq.entity`` doesn't
@@ -541,8 +543,9 @@ data in the KB, rather than code.  An entity's kind is the first of
 3. ``darq.place``,
 4. ``darq.organisation``,
 5. ``darq.group``,
-6. ``darq.conversation``, and
-7. ``darq.message``
+6. ``darq.conversation``,
+7. ``darq.message``, and
+8. ``public.url``
 
 that any of its classes, or of their superclasses, by subclass of
 (P279), has as its instance type, or else ``darq.entity``.  Place comes
@@ -558,8 +561,8 @@ items it creates, their kind and class: human (Q5)
 is a person, organizational subdivision (Q9261468) an organisational
 unit, geographic location (Q2221906) and address (Q319608) places,
 organization (Q43229) an organisation, group of humans (Q16334295)
-a group, a local *conversation* class a conversation, and instant
-message (Q30070565) a message.  The type implementation states them each time it starts,
+a group, a local *conversation* class a conversation, instant message
+(Q30070565) a message, and URL (Q42253) a URL.  The type implementation states them each time it starts,
 so a later version can change them, and a statement of the operator's,
 with preferred rank, overrides them, and is kept.  Department
 (Q2366457) and organizational unit (Q679206) are both subclasses of

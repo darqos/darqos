@@ -1,0 +1,66 @@
+// darqos
+// Copyright (C) 2026 David Arnold
+//
+// HTTP service protocol: see doc/http-service.rst.
+
+library darq.http;
+
+enum Status : uint32 {
+    OK = 0;
+
+    // The URL can't be parsed.
+    INVALID_URL = 1;
+
+    // It's not http or https.
+    UNSUPPORTED_SCHEME = 2;
+
+    // It's larger than the limit.
+    TOO_LARGE = 3;
+
+    // A name, connection, TLS or redirect failure.
+    NETWORK = 4;
+
+    // It took too long, or stopped.
+    TIMEOUT = 5;
+
+    // It was cancelled.
+    CANCELLED = 6;
+
+    // No type with an implementation takes what was fetched.
+    NO_TYPE = 7;
+
+    // Something else went wrong.
+    FAILED = 8;
+}
+
+struct Header {
+    string name;
+    string value;
+}
+
+// The HTTP service, registered as "darq.http".
+//
+// A max_size of 0 is the default, 64 MiB.  A client that may cancel, or
+// wants to hear of progress, gives an id of its own, unique among its
+// fetches: 0 has neither.  With a listener, which serves Progress, it's
+// told how much has been fetched, now and then.  A status is whether the
+// fetch worked: what the server said is http_status, so a 404 is OK.
+protocol Http {
+    // Make a request, which makes no items.
+    1: Request(string method, string url, sequence<Header> headers, opaque body, uint64 max_size, uint64 id, port listener) -> (uint32 http_status, string final_url, string media_type, sequence<Header> headers, opaque body, Status status);
+
+    // Keep what's at a URL: as a new item of its real type, if it's
+    // changed, recorded on the URL's item.  Returns the URL's item, the
+    // snapshot, and whether it's a new one.  If the server didn't return
+    // it, as for a 404, they're as they were: empty, if there are none.
+    2: Snapshot(string url, uint64 max_size, uint64 id, port listener) -> (uint32 http_status, string url_item, string item, bool changed, Status status);
+
+    // Stop a fetch, by its id.  One-way.
+    3: Cancel(uint64 id);
+}
+
+// Served by a client, to hear of a fetch's progress.  Total is 0 if it's
+// not known.
+protocol Progress {
+    1: Fetched(uint64 id, uint64 done, uint64 total);
+}

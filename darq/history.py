@@ -7,6 +7,7 @@
 
 CREATED = "created"
 IMPORTED = "imported"
+FETCHED = "fetched"
 OPENED = "opened"
 EDITED = "edited"
 DESTROYED = "destroyed"

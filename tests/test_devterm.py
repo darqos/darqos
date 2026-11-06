@@ -15,6 +15,8 @@ import pytest
 from darq.errors import DarqError, LaunchError
 from darq.ui import history as ui_history
 from darq.ui import search as ui_search
+from darq.protocols.http import SnapshotResponse
+from darq.protocols.http import Status as HttpStatus
 from darq.protocols.index import Result
 from darq.protocols.history import Event, GetEventsResponse
 from darq.protocols.history import Status as HistoryStatus
@@ -32,6 +34,7 @@ from test_pkernel import live_pkernel, pkernel, run_kernel_until  # noqa: F401
 DEVTERM_PATH = pathlib.Path(__file__).parent.parent / "tools" / "devterm"
 TEXT = "public.utf8-plain-text"
 DOC = f"{TEXT}:0123456789abcdef0123456789abcdef"
+PDF = "com.adobe.pdf:0123456789abcdef0123456789abcdef"
 
 
 def load():
@@ -135,13 +138,33 @@ class FakeIndex:
         return found[offset:offset + max] if max else found[offset:]
 
 
+class FakeHttp:
+    """Stands in for an Http.Client: says what snapshot asks it to."""
+
+    def __init__(self):
+        self.response = SnapshotResponse(http_status=200, url_item="public.url:u", item=PDF, changed=True,
+                                         status=HttpStatus.OK)
+        self.fetched: list[str] = []
+        self.error: Exception | None = None
+
+    def snapshot(self, url):
+        self.fetched.append(url)
+        if self.error is not None:
+            raise self.error
+        return self.response
+
+
 class FakeServices:
     def __init__(self, types=None):
+        self.fake_http: FakeHttp | None = FakeHttp()
         self.types = FakeTypes(types)
         self.history = FakeHistory()
         self.index = FakeIndex()
         self.launch = FakeLaunch()
         self.calls = []
+
+    def http(self):
+        return self.fake_http
 
     def shutdown(self):
         self.calls.append("shutdown")

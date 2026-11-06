@@ -14,6 +14,8 @@ import pytest
 
 import darq
 import darq.kb as model
+import darq.message
+import darq.url
 from darq.protocols import kb as wire
 from darq.protocols.kb import (
     Changed,
@@ -131,6 +133,20 @@ def test_render():
 
     # The property's name is on its first statement only.
     assert html.count(">employer<") == 1
+
+
+def test_item_values_are_links():
+    url = model.Item("url")
+    url.claim(darq.url.SNAPSHOT, model.StringValue("com.adobe.pdf:abc"))
+    page, html = page_for(url)
+    assert grouped.Row("com.adobe.pdf:abc") in page.targets
+    assert "com.adobe.pdf:abc</a>" in html
+
+
+def test_a_file_that_isnt_an_item_isnt_a_link():
+    message = model.Item("m")
+    message.claim(darq.message.ATTACHMENT, model.StringValue(""))
+    assert page_for(message)[0].targets == []
 
 
 def test_render_empty():

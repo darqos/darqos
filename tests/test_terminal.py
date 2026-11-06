@@ -42,7 +42,11 @@ from darq.protocols.compositor import (
     WindowRetitled,
 )
 
-from test_devterm import DOC, TEXT, FakeServices, inline
+from darq.protocols.http import SnapshotResponse
+from darq.protocols.http import Status as HttpStatus
+from darq.ui.search import is_url
+
+from test_devterm import DOC, PDF, TEXT, FakeServices, inline
 from test_pkernel import live_pkernel, pkernel, run_kernel_until  # noqa: F401
 
 
@@ -561,6 +565,116 @@ def test_search_panel(terminal):
     assert terminal.search.status.text() == f"No lens for {DOC}"
     terminal.search.keyPressEvent(key(Qt.Key.Key_Escape))
     assert visible(terminal) == []
+
+
+def fetch_panel(terminal):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QKeyEvent
+    unlock(terminal)
+    hotkey(terminal, main.XK_space)
+    view = terminal.search.view
+
+    def fetch(url):
+        view.field.setText(url)
+        view.field.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Return,
+                                           Qt.KeyboardModifier.NoModifier, ""))
+
+    return view, fetch, terminal.fake_services
+
+
+URL = "https://example.org/paper.pdf"
+
+
+def test_search_fetches_a_url_and_shows_it(terminal):
+    view, fetch, services = fetch_panel(terminal)
+    fetch(URL)
+    assert services.fake_http.fetched == [URL]
+    assert services.launch.used == [(PDF, None)]
+    assert visible(terminal) == []
+
+
+def test_search_says_a_url_will_be_fetched(terminal):
+    view, _, services = fetch_panel(terminal)
+    services.index.items = {DOC: "https example org"}
+    view.field.setText(URL)
+    view.search()
+    assert view.shown == []
+    assert terminal.search.status.text() == "Enter fetches this"
+
+
+def test_search_still_searches_for_words(terminal):
+    view, fetch, services = fetch_panel(terminal)
+    services.index.items = {DOC: "coffee shop"}
+    view.field.setText("coffee")
+    view.search()
+    fetch("coffee")
+    assert services.fake_http.fetched == []
+    assert services.launch.used == [(DOC, None)]
+
+
+def test_search_shows_what_went_wrong(terminal):
+    view, fetch, services = fetch_panel(terminal)
+    services.fake_http.response = SnapshotResponse(status=HttpStatus.NO_TYPE)
+    fetch(URL)
+    assert visible(terminal) == [terminal.search]
+    assert terminal.search.status.text() == f"No type can hold {URL}"
+    assert services.launch.used == []
+    assert not view.fetching
+
+
+def test_search_when_the_server_says_no(terminal):
+    view, fetch, services = fetch_panel(terminal)
+    services.fake_http.response = SnapshotResponse(http_status=404, status=HttpStatus.OK)
+    fetch(URL)
+    assert terminal.search.status.text() == f"{URL}: the server said 404"
+    assert services.launch.used == []
+
+
+def test_search_when_the_server_says_no_shows_what_was_kept(terminal):
+    view, fetch, services = fetch_panel(terminal)
+    services.fake_http.response = SnapshotResponse(http_status=404, item=PDF, status=HttpStatus.OK)
+    fetch(URL)
+    assert services.launch.used == [(PDF, None)]
+    assert "the last copy kept" in terminal.search.status.text()
+
+
+def test_search_when_nothing_changed_shows_what_was_kept(terminal):
+    view, fetch, services = fetch_panel(terminal)
+    services.fake_http.response = SnapshotResponse(http_status=304, item=PDF, status=HttpStatus.OK)
+    fetch(URL)
+    assert services.launch.used == [(PDF, None)]
+    assert visible(terminal) == []
+
+
+def test_search_without_the_http_service(terminal):
+    view, fetch, services = fetch_panel(terminal)
+    services.fake_http = None
+    fetch(URL)
+    assert terminal.search.status.text() == "The HTTP service isn't running"
+
+
+def test_search_when_the_fetch_times_out(terminal):
+    view, fetch, services = fetch_panel(terminal)
+    services.fake_http.error = TimeoutError("no reply")
+    fetch(URL)
+    assert terminal.search.status.text().startswith(f"Can't fetch {URL}")
+
+
+def test_search_fetches_one_at_a_time(terminal):
+    view, fetch, services = fetch_panel(terminal)
+    terminal.launcher.run = deferred = Deferred()
+    fetch(URL)
+    fetch(URL)
+    assert terminal.search.status.text() == "Still fetching ..."
+    assert len(deferred.jobs) == 1
+
+
+@pytest.mark.parametrize("text, expected", [
+    (URL, True), ("http://example.org", True), ("HTTPS://EXAMPLE.ORG/", True), ("  https://example.org  ", True),
+    ("coffee shop", False), ("https", False), ("https://", False), ("see https://example.org", False),
+    ("ftp://example.org", False), ("example.org", False), ("", False)])
+def test_is_url(text, expected):
+    assert is_url(text) == expected
 
 
 def test_clock_text():

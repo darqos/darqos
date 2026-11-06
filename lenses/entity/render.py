@@ -12,10 +12,17 @@ import html
 import typing
 
 import darq.kb as model
+import darq.message
+import darq.url
 from darq.protocols.kb import LinkGroup, Linked
 from darq.ui import links as grouped
 from darq.ui import style
 
+
+# Properties whose values are items' identifiers, as strings, until the
+# Item identifier datatype exists (see doc/entity-vs-item.rst): shown as
+# links to the items.
+ITEM_VALUES = frozenset({darq.message.ATTACHMENT, darq.url.SNAPSHOT})
 
 # What a page's link can lead to: an item, or, in what links to the item
 # shown, one of those in grouped.
@@ -166,6 +173,9 @@ class Page:
         """Return a statement's rows: the property's name only on the first
         of its statements."""
         value = self.value(s.main_snak.value)
+        main = s.main_snak.value
+        if s.get_property_id() in ITEM_VALUES and isinstance(main, model.StringValue) and main.value:
+            value = self.anchor(grouped.Row(main.value), main.value)
         if s.rank == model.Rank.Preferred:
             value += " ★"
         elif s.rank == model.Rank.Deprecated:

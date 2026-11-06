@@ -3,8 +3,8 @@
 
 # Knowledge Base type implementation: items of darq.entity, and of its
 # kinds, darq.person, darq.organisation, darq.organisational-unit,
-# darq.place, darq.group, darq.conversation and darq.message, each an
-# entity in the Knowledge Base.
+# darq.place, darq.group, darq.conversation, darq.message and public.url,
+# each an entity in the Knowledge Base.
 #
 # The Type service spawns it, with a bootstrap port it reports Ready on
 # (see doc/types.rst), once for all of these types.  It serves the
@@ -41,6 +41,7 @@ import darq
 import darq.index
 import darq.kb as model
 import darq.message
+import darq.url
 from darq.protocols import kb as wire
 from darq.protocols.kb import (
     Changed,
@@ -143,6 +144,7 @@ def vocabulary() -> list[model.Entity]:
         prop(model.REASON_FOR_DEPRECATED_RANK, "reason for deprecated rank", model.Datatype.Item),
         prop(model.REASON_FOR_PREFERRED_RANK, "reason for preferred rank", model.Datatype.Item),
         *darq.message.vocabulary(),
+        *darq.url.vocabulary(),
         item(model.DARQOS, "DarqOS"),
         item(model.REPLACED, "replaced by hand"),
         item(model.REMOVED, "removed by hand"),
@@ -183,7 +185,7 @@ class EntityImplementation(Implementation.Handler, EntityWriter.Handler):
         for class_id, _, kind in model.DEFAULT_INSTANCE_TYPES:
             self.kb.state(class_id, model.DARQOS, [
                 model.Statement(model.Snak(model.DARQOS_INSTANCE_TYPE, model.StringValue(kind)))])
-        for property_id, item_id, _ in darq.message.INVERSE_LABELS:
+        for property_id, item_id, _ in (*darq.message.INVERSE_LABELS, *darq.url.INVERSE_LABELS):
             self.kb.state(property_id, model.DARQOS, [
                 model.Statement(model.Snak(model.INVERSE_LABEL, model.EntityValue(item_id)))])
 

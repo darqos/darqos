@@ -16,6 +16,7 @@ import typing
 
 import darq
 import darq.history
+from darq.protocols.http import Status as HttpStatus
 
 from . import Host
 
@@ -25,6 +26,19 @@ __all__ = [
     "Launcher",
     "start_thread",
 ]
+
+
+# What's said when a fetch fails, with its URL.
+FETCH_FAILURES = {
+    HttpStatus.INVALID_URL: "{url} isn't a URL",
+    HttpStatus.UNSUPPORTED_SCHEME: "Can't fetch {url}: only http and https",
+    HttpStatus.TOO_LARGE: "{url} is too large to fetch",
+    HttpStatus.NETWORK: "Can't reach {url}",
+    HttpStatus.TIMEOUT: "{url} took too long",
+    HttpStatus.CANCELLED: "Stopped fetching {url}",
+    HttpStatus.NO_TYPE: "No type can hold {url}",
+    HttpStatus.FAILED: "Can't fetch {url}",
+}
 
 
 def start_thread(job: typing.Callable[[], None]):
@@ -116,6 +130,36 @@ class Launcher:
                     logging.warning(f"Can't record imported for {item_id}: {e!r}")
                 return item_id, self.use_item(item_id, item)
             return None, f"Can't import {name}: it isn't a {' or '.join(type_ids)}"
+
+        self.start(job, context, done)
+
+    def fetch(self, url: str, context: object = None, done: typing.Callable[[], None] | None = None):
+        """Keep what's at a URL, with the HTTP service, and use it.
+
+        If it can't be fetched, but there's an earlier snapshot, that's
+        used, and it says so.
+
+        :param done: As for create."""
+        self.host.show_status(f"Fetching {url} ...")
+        services = self.host.services
+
+        def job() -> tuple[str | None, str | None]:
+            try:
+                http = services.http()
+                if http is None:
+                    return None, "The HTTP service isn't running"
+                response = http.snapshot(url=url)
+            except (darq.DarqError, TimeoutError) as e:
+                return None, f"Can't fetch {url}: {e}"
+            if response.status != HttpStatus.OK:
+                return None, FETCH_FAILURES[response.status].format(url=url)
+            answered = 200 <= response.http_status < 300 or response.http_status == 304
+            if not response.item:
+                return None, f"{url}: the server said {response.http_status}"
+            error = self.use_item(response.item, None)
+            if error is None and not answered:
+                error = f"{url}: the server said {response.http_status}, so this is the last copy kept"
+            return response.item, error
 
         self.start(job, context, done)
 

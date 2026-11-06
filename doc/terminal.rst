@@ -497,8 +497,10 @@ search field, and Enter, or a double-click, starts a lens for the
 selected one's item, recording `opened`, and closes the panel.  It
 opens empty, with nothing found until something's typed.  Above it is
 the clock: the time, and the date, updated each second while it's
-shown.  Slash commands, Internet search, and the History of recent
-items are for later.
+shown.  A URL is fetched, kept, and shown, rather than searched for
+(see :doc:`url-type`): Enter does that, and it's said so as it's typed.
+Slash commands, Internet search, and the History of recent items are
+for later.
 
 Events
 ~~~~~~

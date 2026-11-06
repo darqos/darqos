@@ -10,6 +10,7 @@ In the First Edition, the following services exist:
 * Security
 * Storage
 * History
+* HTTP (see :doc:`http-service`)
 
 ..
    * Metadata

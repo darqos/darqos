@@ -56,6 +56,28 @@ def create_item_from(type_id: str, data: bytes) -> tuple[str, int]:
     return response.item_id, response.item
 
 
+def import_data(media_type: str, extension: str, data: bytes) -> str | None:
+    """Create an item from data that's come from somewhere else, of the
+    first type for its media type, or else its extension, that takes it.
+
+    :param extension: The extension of its name, without its dot.
+    :returns: The item's identifier, or None if no type takes it."""
+    types = find_types(mime_type=media_type) if media_type else []
+    if extension:
+        types += find_types(extension=extension)
+    for type_id in dict.fromkeys(types):
+        try:
+            item_id, port = create_item_from(type_id, data)
+        except LaunchError:
+            continue
+        try:
+            type_protocol.Item.Client(port, timeout=TIMEOUT).close()
+        finally:
+            close_port(port)
+        return item_id
+    return None
+
+
 def export_item(item_id: str) -> tuple[bytes, str]:
     """Return an item's content as data in its type's format, and its
     MIME type.

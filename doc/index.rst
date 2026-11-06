@@ -54,6 +54,7 @@ Services
 .. include:: search-service.rst
 .. include:: kb-service.rst
 .. include:: extraction-service.rst
+.. include:: http-service.rst
 .. include:: network.rst
 .. include:: davsync-service.rst
 .. include:: email-sync-service.rst
@@ -87,6 +88,7 @@ Type Implementations
 .. include:: project.rst
 .. include:: host-type.rst
 .. include:: ssh.rst
+.. include:: url-type.rst
 
 .. include:: tools.rst
 .. include:: mh-email-import-tool.rst

@@ -958,8 +958,9 @@ ENTITY_TYPE = "darq.entity"
 # ones.
 CONVERSATION = "4b73743b-b6d3-4091-9afc-71bcbc69d0e1"
 
-# Instant message.
+# Instant message, and URL.
 INSTANT_MESSAGE = "Q30070565"
+URL_CLASS = "Q42253"
 
 # The other kinds, in order of priority, with the class of a new item of
 # each: an entity that's of several kinds is of the first.
@@ -971,13 +972,14 @@ KINDS = [
     ("darq.group", "Q16334295"),
     ("darq.conversation", CONVERSATION),
     ("darq.message", INSTANT_MESSAGE),
+    ("public.url", URL_CLASS),
 ]
 
 KIND_TYPES = [ENTITY_TYPE] + [kind for kind, _ in KINDS]
 
 # The instance type of each class, by default, with its label: human,
 # organizational subdivision, organization, geographic location,
-# address, group of humans, conversation, and instant message.  An
+# address, group of humans, conversation, instant message, and URL.  An
 # address isn't a geographic location on Wikidata.
 DEFAULT_INSTANCE_TYPES = [
     ("Q5", "human", "darq.person"),
@@ -988,6 +990,7 @@ DEFAULT_INSTANCE_TYPES = [
     ("Q16334295", "group of humans", "darq.group"),
     (CONVERSATION, "conversation", "darq.conversation"),
     (INSTANT_MESSAGE, "instant message", "darq.message"),
+    (URL_CLASS, "URL", "public.url"),
 ]
 
 # Most classes searched for an entity's kind.

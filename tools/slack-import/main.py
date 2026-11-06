@@ -27,7 +27,7 @@ import darq.launch
 from darq.loop import QtEventLoop
 from darq.protocols.history import History
 from darq.protocols.kb import EntityWriter
-from darq.protocols.type import Implementation, Item, Status, Type
+from darq.protocols.type import Implementation, Status, Type
 from darq.ui.launcher import start_thread
 
 # Its own modules are beside it.
@@ -47,17 +47,7 @@ class LaunchFiles:
     """Makes items from files' data, with darq.launch."""
 
     def create(self, media_type: str, extension: str, data: bytes) -> str | None:
-        for type_id in dict.fromkeys(darq.launch.find_types(media_type) + darq.launch.find_types(extension=extension)):
-            try:
-                item_id, port = darq.launch.create_item_from(type_id, data)
-            except darq.LaunchError:
-                continue
-            try:
-                Item.Client(port, timeout=TIMEOUT).close()
-            finally:
-                darq.close_port(port)
-            return item_id
-        return None
+        return darq.launch.import_data(media_type, extension, data)
 
 
 def run_import(path: str, name: str, progress: typing.Callable[[str, int, int], None]) -> slack_importer.Result:

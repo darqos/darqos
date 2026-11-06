@@ -5,8 +5,12 @@
 # by the words of their text, as they're typed.  The arrow keys move
 # through what's found, and choosing one (Enter, or double-click) uses
 # its item, with the host's Launcher.
+#
+# A URL is fetched instead: Enter keeps what's there, with the HTTP
+# service (see doc/url-type.rst), and shows it.
 
 import datetime
+import re
 
 from PyQt6 import QtCore
 from PyQt6.QtGui import QKeyEvent
@@ -33,6 +37,7 @@ __all__ = [
     "PAGE",
     "SearchView",
     "format_updated",
+    "is_url",
 ]
 
 
@@ -43,6 +48,14 @@ DELAY = 200
 
 # Items found at a time.
 PAGE = 50
+
+# What's taken for a URL, rather than words to search for.
+URL = re.compile(r"https?://\S+", re.IGNORECASE)
+
+
+def is_url(text: str) -> bool:
+    """Return whether what's typed is a URL, to fetch."""
+    return URL.fullmatch(text.strip()) is not None
 
 
 def format_updated(micros: int, now: datetime.datetime | None = None) -> str:
@@ -65,7 +78,7 @@ class SearchField(QLineEdit):
         if a0 is not None and a0.key() in (Key.Key_Up, Key.Key_Down):
             self.view.move(-1 if a0.key() == Key.Key_Up else 1)
         elif a0 is not None and a0.key() in (Key.Key_Return, Key.Key_Enter):
-            self.view.use(self.view.table.currentRow())
+            self.view.enter()
         else:
             super().keyPressEvent(a0)
 
@@ -106,6 +119,9 @@ class SearchView(QWidget):
 
         self.shown: list[Result] = []
 
+        # Set while a URL's being fetched.
+        self.fetching = False
+
         # Types' names, by identifier, as they're needed.
         self.names: dict[str, str] = {}
 
@@ -122,6 +138,11 @@ class SearchView(QWidget):
         if not text.strip():
             self.show_results([])
             self.host.show_status("")
+            return
+        if is_url(text):
+            self.show_results([])
+            if not self.fetching:
+                self.host.show_status("Enter fetches this")
             return
         try:
             results = self.host.services.index.search(text, max=PAGE)
@@ -166,6 +187,27 @@ class SearchView(QWidget):
         if self.shown:
             row = min(max(self.table.currentRow() + step, 0), len(self.shown) - 1)
             self.table.selectRow(row)
+
+    def enter(self):
+        """Fetch what's typed, if it's a URL, or else use the selected
+        result."""
+        text = self.field.text().strip()
+        if is_url(text):
+            self.fetch(text)
+        else:
+            self.use(self.table.currentRow())
+
+    def fetch(self, url: str):
+        """Keep what's at a URL, and use it: the host's launched() is
+        called with this as the context."""
+        if self.fetching:
+            self.host.show_status("Still fetching ...")
+            return
+        self.fetching = True
+        self.host.launcher.fetch(url, context=self, done=self.fetched)
+
+    def fetched(self):
+        self.fetching = False
 
     def use(self, row: int):
         """Use a result's item: the host's launched() is called with this

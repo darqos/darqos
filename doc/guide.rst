@@ -144,6 +144,9 @@ Other things to try:
   ] turn it, and C crops it (see :doc:`image-type`).  A PDF opens in
   the PDF lens: Ctrl+F finds text, and O shows its outline (see
   :doc:`pdf-type`).
+* Typing a URL into Search, such as a PDF's, and pressing Enter fetches
+  it, keeps it as an item, and opens it (see :doc:`url-type`).  Web
+  pages can't be kept yet: PDFs, images and text can.
 * *S-t* imports an address book, a ``.vcf`` file of vCards: the
   people and organisations in it are found by Search, by their names,
   and open in the entity lens (see :doc:`kb-service`).
