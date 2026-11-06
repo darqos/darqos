@@ -25,8 +25,7 @@ the ``Item`` protocol's ``Close``, and
 * ``Stat()``, which returns its size, and number of pages.
 
 Rendering is done by the lens: the item is just its bytes, so the same
-protocol will serve an eBook lens, or anything else that wants to show
-a PDF.  As for other items, the PDF is sent whole in a message, until
+protocol will serve anything else that wants to show a PDF.  As for other items, the PDF is sent whole in a message, until
 Storage has ranged access (see :doc:`storage`).
 
 PDF items are plain Storage items, as text and images are, for now.
@@ -42,6 +41,15 @@ text of its pages as its body.  Few PDFs have a title: of 44 from one
 Slack workspace, 15 did.  So most are found by their text.  A
 destroyed item is withdrawn.  ``IndexEntry`` gives the same, for a
 reindex.
+
+Books
+-----
+
+A PDF can be catalogued as a book, which doesn't change its item, and
+the lens gains a reading view for those (see :doc:`book`).  Neither is
+built yet, nor is what goes with them: a reading position in the blob's
+header, with ``GetPosition`` and ``SetPosition`` on the protocol, in a
+second format version, with first-version blobs still read.
 
 The Lens
 --------

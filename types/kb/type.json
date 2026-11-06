@@ -62,6 +62,34 @@
       "description": "A place on the web, in the Knowledge Base, with what's been fetched from it.",
       "conforms_to": ["darq.entity"],
       "implemented": true
+    },
+    {
+      "id": "darq.book.work",
+      "name": "Book",
+      "description": "A book, as a creation, in the Knowledge Base: its editions, formats and copies are under it.",
+      "conforms_to": ["darq.entity"],
+      "implemented": true
+    },
+    {
+      "id": "darq.book.expression",
+      "name": "Book Text",
+      "description": "A book's text, such as a translation, in the Knowledge Base.",
+      "conforms_to": ["darq.entity"],
+      "implemented": true
+    },
+    {
+      "id": "darq.book.manifestation",
+      "name": "Book Edition",
+      "description": "An edition or format of a book, in the Knowledge Base.",
+      "conforms_to": ["darq.entity"],
+      "implemented": true
+    },
+    {
+      "id": "darq.book.item",
+      "name": "Book Copy",
+      "description": "A copy of a book, on a shelf or as a file, in the Knowledge Base.",
+      "conforms_to": ["darq.entity"],
+      "implemented": true
     }
   ]
 }

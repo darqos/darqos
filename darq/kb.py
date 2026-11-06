@@ -962,6 +962,14 @@ CONVERSATION = "4b73743b-b6d3-4091-9afc-71bcbc69d0e1"
 INSTANT_MESSAGE = "Q30070565"
 URL_CLASS = "Q42253"
 
+# The classes of books' four levels (see doc/book.rst): Wikidata's work,
+# expression and manifestation, in FRBR's sense, and individual copy of
+# a book.
+WORK_CLASS = "Q111955339"
+EXPRESSION_CLASS = "Q111955324"
+MANIFESTATION_CLASS = "Q111955382"
+COPY_CLASS = "Q53731850"
+
 # The other kinds, in order of priority, with the class of a new item of
 # each: an entity that's of several kinds is of the first.
 KINDS = [
@@ -973,14 +981,19 @@ KINDS = [
     ("darq.conversation", CONVERSATION),
     ("darq.message", INSTANT_MESSAGE),
     ("public.url", URL_CLASS),
+    ("darq.book.work", WORK_CLASS),
+    ("darq.book.expression", EXPRESSION_CLASS),
+    ("darq.book.manifestation", MANIFESTATION_CLASS),
+    ("darq.book.item", COPY_CLASS),
 ]
 
 KIND_TYPES = [ENTITY_TYPE] + [kind for kind, _ in KINDS]
 
 # The instance type of each class, by default, with its label: human,
 # organizational subdivision, organization, geographic location,
-# address, group of humans, conversation, instant message, and URL.  An
-# address isn't a geographic location on Wikidata.
+# address, group of humans, conversation, instant message, URL, and a
+# book's four levels.  An address isn't a geographic location on
+# Wikidata.
 DEFAULT_INSTANCE_TYPES = [
     ("Q5", "human", "darq.person"),
     ("Q9261468", "organizational subdivision", "darq.organisational-unit"),
@@ -991,6 +1004,10 @@ DEFAULT_INSTANCE_TYPES = [
     (CONVERSATION, "conversation", "darq.conversation"),
     (INSTANT_MESSAGE, "instant message", "darq.message"),
     (URL_CLASS, "URL", "public.url"),
+    (WORK_CLASS, "work", "darq.book.work"),
+    (EXPRESSION_CLASS, "expression", "darq.book.expression"),
+    (MANIFESTATION_CLASS, "manifestation", "darq.book.manifestation"),
+    (COPY_CLASS, "individual copy of a book", "darq.book.item"),
 ]
 
 # Most classes searched for an entity's kind.

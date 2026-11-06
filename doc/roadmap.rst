@@ -511,12 +511,13 @@ Story
 
   * Open Search (S-space)
   * Type in a PDF's URL and hit enter: it's fetched, stored,
-    Item-ised, Historied, Indexed, and shown in the e-book viewer
+    Item-ised, Historied, Indexed, and shown in the PDF lens
 
-    * Enter its metadata as prompted: a BookRecord, in the Knowledge
-      Base, with its author and title
-    * How is the distinction made in the ingestion process between a
-      document and an ebook when they're both PDF?
+    * Press B to catalogue it, and confirm the Book card: a Work and
+      its Expression, Manifestation and LRM Item, in the Knowledge
+      Base, with its author and title (see Book Type)
+    * Fetching doesn't distinguish a document from an ebook: being
+      catalogued does, and it then opens in the reading view
 
 * Search by content across types
 

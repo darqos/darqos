@@ -38,6 +38,10 @@ TYPE_NAMES = {
     "darq.conversation": ("Conversation", "Conversations"),
     "darq.message": ("Message", "Messages"),
     "public.url": ("URL", "URLs"),
+    "darq.book.work": ("Book", "Books"),
+    "darq.book.expression": ("Text", "Texts"),
+    "darq.book.manifestation": ("Edition", "Editions"),
+    "darq.book.item": ("Copy", "Copies"),
 }
 
 # Said after a heading, for a link that isn't from a statement's value.

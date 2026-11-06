@@ -93,6 +93,7 @@ Type Implementations
 .. include:: tools.rst
 .. include:: mh-email-import-tool.rst
 .. include:: slack-import-tool.rst
+.. include:: librarything-import-tool.rst
 .. include:: gedcom-import-tool.rst
 .. include:: ports.rst
 

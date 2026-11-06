@@ -122,6 +122,8 @@ DarqOS has no files or folders: it has *items*, each of a *type*,
 shown by a *lens* (see :doc:`types`).  You create them with New, and
 find them again with Search or History.
 
+*S-n* and Book starts a book for the catalogue: see :doc:`book`.
+
 A walk through it:
 
 1. *S-n*, type ``text`` to find the Text type, and press Enter: a

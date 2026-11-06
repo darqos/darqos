@@ -246,8 +246,6 @@ Open Questions
 
 * Fetching a page's resources, its images and style sheets, so that a
   snapshot of a page looks as it did.  It needs the HTML type.
-* A PDF that's a document, and one that's a book: fetching can't tell
-  them apart (see :doc:`book`).
 * Rate limits, for a service that fetches on a schedule.
 * Whether old snapshots are ever thrown away, and when.
 * Whether FTP and SFTP belong to a service called HTTP.

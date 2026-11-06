@@ -159,13 +159,14 @@ def start_lens(path: str, timeout: float = READY_TIMEOUT) -> int:
         close_port(bootstrap)
 
 
-def use_item(item_id: str, item: int | None = None, context: str = "terminal") -> int:
+def use_item(item_id: str, item: int | None = None, context: str = "terminal", lens_for: str = "") -> int:
     """Start a lens to use an item.
 
     :param item_id: The item's identifier.
     :param item: A port for it, from create_item or open_item, which the
                  lens takes over; or None to open it.
     :param context: Context to use it in.
+    :param lens_for: A type to use the lens of, instead of the item's own.
     :returns: A handle for the lens's port.
     :raises LaunchError: if the item couldn't be opened, or the lens
                          started, or it can't use the item."""
@@ -173,7 +174,7 @@ def use_item(item_id: str, item: int | None = None, context: str = "terminal") -
     if item is None:
         item = open_item(item_id)
     try:
-        path = find_lens(type_id, context)
+        path = find_lens(lens_for or type_id, context)
         lens = start_lens(path)
     except LaunchError:
         _close_item(item)

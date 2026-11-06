@@ -163,16 +163,20 @@ class Launcher:
 
         self.start(job, context, done)
 
-    def use(self, item_id: str, context: object = None):
-        """Open an item, and use it."""
+    def use(self, item_id: str, context: object = None, lens_for: str = ""):
+        """Open an item, and use it, with the lens of another type, if
+        one's given."""
         self.host.show_status(f"Starting a lens for {item_id} ...")
-        self.start(lambda: (item_id, self.use_item(item_id, None)), context)
+        self.start(lambda: (item_id, self.use_item(item_id, None, lens_for)), context)
 
-    def use_item(self, item_id: str, item: int | None) -> str | None:
+    def use_item(self, item_id: str, item: int | None, lens_for: str = "") -> str | None:
         """Start a lens for an item, on the launch's thread.  Returns what
         went wrong, if anything."""
         try:
-            self.host.services.launch.use_item(item_id, item)
+            if lens_for:
+                self.host.services.launch.use_item(item_id, item, lens_for=lens_for)
+            else:
+                self.host.services.launch.use_item(item_id, item)
         except (darq.DarqError, TimeoutError) as e:
             return str(e)
         return None

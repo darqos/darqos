@@ -12,11 +12,19 @@
      - ``types/text``
      - 1st
      - 1
-   * - ``darq.book.printed``
-     - ``types/book``
+   * - ``darq.book.work``
+
+       ``darq.book.expression``
+
+       ``darq.book.manifestation``
+
+       ``darq.book.item``
+     - ``types/kb``
      - 2nd
-     - Physical item
-   * - ``darq.book.epub``
+     - Kinds, with ``lenses/book``: see :doc:`book`
+   * - ``darq.ebook``
+
+       ``darq.book.epub``
 
        ``darq.book.mobi``
 

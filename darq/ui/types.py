@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 import darq
+from darq.book import PARTS as BOOK_PARTS
 from darq.protocols.type import Status, Type
 
 from . import Host
@@ -58,6 +59,8 @@ def load_types(types: Type.Client) -> list[TypeEntry]:
     """Return the implemented types, sorted by name."""
     entries = []
     for type_id in types.list_types(implemented=True).type_ids:
+        if type_id in BOOK_PARTS:
+            continue
         described = types.describe(type_id=type_id)
         if described.status != Status.OK:
             continue

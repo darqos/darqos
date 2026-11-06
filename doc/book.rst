@@ -46,33 +46,102 @@ the LRM available.
    https://www.iflastandards.info/lrm/lrmer.html
 
    
-Within this framework, there are (at least) three relevant Darq Item
-types that will be needed:
+A Book Is Not a Format
+----------------------
 
-* For e-books, an actual blob containing the PDF, AZW, Mobi, ePub,
-  etc, data.  These will be *LRM Items* in the WEMI hierarchy, and will
-  have specific *Manifestation*, *Expression*, and *Work* parent
-  relationships.
-* For paper books, an *LRM Item*'s Darq Item will be a record
-  representing the existence of a particular real paper book.  It will
-  combine the links to the WEMI hierarchy with details about its
-  physical location.
-* Citations, from papers and bibliographies, will likely be KB links
-  to an *LRM Manifestation*, *LRM Expression*, or *LRM Work*,
-  depending on the specificity of the reference.  Page numbers imply a
-  *Manifestation*, whereas an author and title might just be a *Work*.
+A book is a catalogue fact, not a file format.  A fetched PDF stays a
+``com.adobe.pdf`` item: that it's a book is something said about it, so
+ingestion doesn't need to guess, and a fetched paper stays a PDF unless
+it's said to be otherwise.  It also settles whether an item's identity
+should outlive its format: for a book, identity is the Work, and a
+format belongs to a Manifestation.
 
-So, an e-book or audio book LRM item will be a Darq Item, with the
-implementation using a Storage blob to maintain the content.
+.. code-block:: none
 
-A paper book's catalog record will probably implemented using the KB
-(or perhaps, Metadata?) backend to store information about where it is
-(or should be).
+   Work: Bliss (Peter Carey)
+   └─ Expression: English text
+      ├─ Manifestation: first US edition, Harper & Row, hardcover
+      │  └─ LRM Item: my copy
+      └─ Manifestation: UK edition, Picador paperback, 1982
+         └─ LRM Item: my copy, 9th printing
 
-Works, Expressions, and Manifestations should probably be implemented
-using the KB backend, because it's ideal for keeping track of their
-interrelationships with other entities, and maps well to the RDF
-triples of the BIBFRAME implementation.
+   Work: 1984 (George Orwell)
+   └─ Expression: English text
+      ├─ Manifestation: the EPUB   → LRM Item → an EPUB item
+      ├─ Manifestation: the PDF    → LRM Item → a PDF item
+      └─ Manifestation: the MOBI   → LRM Item → a MOBI item
+
+All four levels are there from the start, though Expression is rarely
+of interest in a personal library, as adding it later would mean
+migrating every book.  The Work and Expression are made for you:
+nobody needs to think about WEMI to catalogue a book.
+
+All four are KB entities, of the kinds below, in ``types/kb``, as
+Message is.  There's no BookRecord kind: a paper book is an LRM Item
+that gives a location, and an e-book is an LRM Item that gives a file,
+as an item's identifier, as URL snapshots do (see :doc:`url-type`).
+The file's item isn't changed by being catalogued.
+
+``darq.book`` has their vocabulary, and reads the four levels as one
+``Book``, from any of them, writing each field back to its own level.
+It knows nothing of how entities are reached, so it's tested alone.
+
+New offers only Book, which makes a work: what's under it is made as
+it's needed, so the other three aren't offered.  Each level has a label
+of its own, and only the work's is the title, so that Search finds a
+book once.
+
+=================  =====================================  ==================
+Level              Class                                  Tied to the next by
+=================  =====================================  ==================
+Work               work (Q111955339)
+Expression         expression (Q111955324)                version, edition or
+                                                          translation of
+                                                          (P629)
+Manifestation      manifestation (Q111955382)             P629
+LRM Item           individual copy of a book (Q53731850)  exemplar of (P1574)
+=================  =====================================  ==================
+
+Wikidata's individual copy is described as physical, and an e-book's
+LRM Item isn't, but it's the nearest there is.  The fields are:
+
+=============  ==========================================================
+Level          Properties
+=============  ==========================================================
+Work           Label (title), subtitle (P1680), author (P50), part of the
+               series (P179, with series ordinal P1545 for its volume)
+Expression     Language (P407), translator (P655), editor (P98), and
+               local *started reading* and *finished reading*
+Manifestation  Publisher (P123), publication date (P577), edition number
+               (P393), ISBN-13 (P212), ISBN-10 (P957), number of pages
+               (P1104), and local *imprint* and *binding*
+LRM Item       Local *location*, *file*, *printing* and *date of printing*
+=============  ==========================================================
+
+An imprint is text, for now, unlike a publisher.  People, publishers,
+languages and series are entities: a new name finds
+an entity with exactly that label, or makes one, while a name that's
+already there keeps its entity, so two people with one name aren't
+confused.  A person's page then shows *author of*, through an inverse
+label, in a group of Books.
+
+Which Level
+~~~~~~~~~~~
+
+* A new publisher, imprint, country, binding or file format is a new
+  Manifestation, as is a reprint that changes the text or the cover.
+* A reprint that changes nothing is the same Manifestation, with the
+  printing on the LRM Item, so print runs don't each make a row.
+* Two copies of one printing are two LRM Items of one Manifestation,
+  each with its own location, condition, and where it was bought.
+* Publication date and edition statements are on the Manifestation, and
+  printing number and year on the LRM Item: a 9th printing of a 1982
+  edition has both.
+* A changed text is, strictly, a new Expression, but editions are
+  treated as one Expression unless the text's known to differ: being
+  finished is said of the Expression, so splitting it needlessly would
+  stop that applying to both, and the card can split them later.
+* Identical files, by hash, are one item.
 
 Types
 -----
@@ -80,8 +149,8 @@ Types
 LRM Work
 ~~~~~~~~
 
-* The LRM Work type, as a Darq Item and KB Kind.
-* UTI: ???
+* The LRM Work type, as a KB Kind.
+* UTI: ``darq.book.work``
   
   * `lrmer:E2`
     
@@ -101,8 +170,8 @@ LRM Work
 LRM Expression
 ~~~~~~~~~~~~~~
 
-* The LRM Expression type, as a Darq Item and KB Kind.
-* UTI: ???
+* The LRM Expression type, as a KB Kind.
+* UTI: ``darq.book.expression``
 * Attributes
 * Relationships
   
@@ -119,8 +188,8 @@ LRM Expression
 LRM Manifestation
 ~~~~~~~~~~~~~~~~~
 
-* The LRM Manifestation type, as a Darq Item and KB Kind.
-* UTI: ???
+* The LRM Manifestation type, as a KB Kind.
+* UTI: ``darq.book.manifestation``
 * Attributes
 * Relationships
   
@@ -137,8 +206,11 @@ LRM Manifestation
   *
 
 
-Item
-~~~~
+LRM Item
+~~~~~~~~
+
+* The LRM Item type, as a KB Kind.
+* UTI: ``darq.book.item``
 * Relationships
 
   * exemplifies -> Manifestation (lrmer:R5)
@@ -154,153 +226,284 @@ Item
 E-Book
 ~~~~~~
 
-* An item for various e-book format data (.mobi, .epub, .azw, etc)
-* Show allow PDF also
-* Conforms to LRM Item
-* Attributes
-* Should be implemented as a combination of a KB entity with
-  associated relationships, and a Storage element to maintain the
-  e-book content.
-  
-Book Record
-~~~~~~~~~~~
+An item of e-book data.  These are types of their own, conforming to an
+abstract ``darq.ebook``, in one implementation, as images are (see
+:doc:`image-type`), so a new format needs only an entry in ``type.json``:
 
-* A "catalog card" item for a real physical book instance.
-* Conforms to LRM Item
-* Attributes
-* Should be implemented using the KB service for persistence, and for
-  simple relationships with the related entities, like people,
-  organisational authors, publishers, places of publishing, etc.
+=====================  ==============================
+Type                   Extensions
+=====================  ==============================
+``darq.book.epub``     epub
+``darq.book.mobi``     mobi, prc
+``darq.book.azw``      azw, azw3
+=====================  ==============================
 
-  * All content should reasonably go in the KB service.
+The implementation, ``types/ebook``, hides the format.  It offers a lens
+one view of any book: its parts as HTML, its style sheets, images and
+fonts, its table of contents, and its metadata.
 
-* Creating a new book record should be a process that's launched in
-  the usual way from the factory menu, but the type implementation
-  should support lookup (eg. Amazon, LOC, NLA, BL, whatever; and the
-  Dublin Core from epub, etc) so you can populate all the metadata
-  without needing to type it all in manually.
+* Every file is kept, and catalogued, whether or not it can be shown.
+* EPUB is a zip file of XHTML and CSS, so it needs no library.
+* MOBI and AZW use libmobi, a C library, through ``ctypes``, with the
+  data loaded from memory.  It's licensed under the LGPL, as Qt PDF is.
+  ``mobi`` and KindleUnpack are GPL, as are Lector and Calibre, so none
+  of their code can be used in an MIT-licensed project.  ``ebook-rs``,
+  in Rust, is MIT-licensed, and is the fallback.
+* Parsing happens in the type's process, so a damaged book can't take a
+  lens with it.  It's a C parser reading untrusted files: books can come
+  from ``darq.http``.
+* A book with DRM can be kept and catalogued, but not read, and the lens
+  says so.  Nothing tries to remove it.
 
+libmobi rebuilds a KF8 book's skeleton and fragments, and its links, so
+that what comes out is ordinary HTML.  Two MOBI and two AZW3 samples
+were tried, with no DRM, and all came out correctly, from a parse of 3
+to 51 ms: an old MOBI 6 novel, a hybrid book, and pure KF8 books, with
+CSS, images and embedded fonts.  An old MOBI book is one long part, so
+its ``mbp:pagebreak`` tags need to become page breaks.
+
+Cataloguing
+-----------
+
+Cataloguing is an action, not a step of fetching: most fetched PDFs
+aren't books, so nothing prompts for it.
+
+From a PDF's or an e-book's lens, B starts it:
+
+1. The lens reads the file's metadata, and looks for an ISBN in the
+   first pages.
+2. The Book card opens, filled in, and asks whether it's one of the
+   books already there, by ISBN and by title and author: each format
+   often has an ISBN of its own, and older books may have none.
+3. It's another copy of a printing that's there (a new LRM Item), or
+   another format or edition (a new Manifestation, copying what's
+   shared), or a new book.
+4. Confirming writes what's new.  The file's item doesn't change.
+
+So a book in three formats is added once, and the others attached to it.
+
+The Add Loop
+~~~~~~~~~~~~
+
+Paper books are the bulk of the library, between 1,000 and 10,000 of
+them, so New → Book opens a loop, built for speed:
+
+1. Scan or type an ISBN.  A USB barcode scanner just types.
+2. It's looked up, and shown to be checked.  A book with no ISBN falls
+   back on a search by title.
+3. Set its location, which sticks for the next book.
+4. Enter, and on to the next.
+
+Lookups go to Open Library first, as it's open, and needs no account.
+It goes through ``darq.http``, and only when asked, since it sends an
+ISBN to a third party.  Each statement cites where it came from.
+
+At four entities a book, 10,000 books are 40,000 entities, which the KB
+handles easily.
+
+Importing
+~~~~~~~~~
+
+* **LibraryThing:** its JSON export comes first, as real records test
+  the model, and the books are then there for the add loop to match
+  (see :doc:`librarything-import-tool`).
+* **Calibre:** its ``metadata.db`` is plain SQLite, and its base tables
+  can be read directly, with a book having a row per format in ``data``,
+  and its ISBNs in ``identifiers``: an Expression and its Manifestations.
+  The importer is written from the schema, using none of Calibre's code.
+* **Dropbox:** a folder of files, matched up by name and embedded
+  metadata.
+* **Kindle:** last, as DRM may mean those can only be catalogued.
+
+Reading
+-------
+
+Read opens a book's file in that file's own lens.  A book in several
+formats is read in the first of a default order of preference, a
+setting, which a book can override with the KB's preferred rank on a
+Manifestation.  The card always lets you pick a specific one.
+
+What's been read has two parts:
+
+* That a book's being read, or was finished on some day, is knowledge,
+  so it's a statement on the Expression, in the KB.  Reading the PDF
+  means the EPUB isn't unread.
+* Where you are in a file is view state, kept in the item, in a header
+  in its Storage blob.  It's specific to that file, as pages don't
+  line up between formats.  DarqOS is a single-user system, so an item
+  needs only one.  It stays in the item unless the Metadata Service
+  comes to be, and it's why ``GetPosition`` and ``SetPosition`` are calls
+  on a reader's protocol: lenses wouldn't change.
+
+A position is a string, which only the lens makes sense of: a page
+number for a PDF, and a part and offset for an e-book, as a part can
+run to 170 pages.  Since ``Put`` writes a whole value, saving a position
+rewrites the blob, the book included, so it's saved when the book's
+closed, rather than as you read: a lens that's killed loses its
+position.  Ranged access to Storage would change that.
 
 Lenses
 ------
 
-The base UI is essentially a table of name:value pairs.  Some
-sensitivity in laying out authors, title, etc, will give a decent
-result.
+Work, Expression, Manifestation and LRM Item
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-UI Fields
-~~~~~~~~~
+These open the Book card, with the one you opened highlighted.  The
+generic entity lens is still there for all of their statements.
 
-* Not every book will populate every field.
-* Title and Author should use a larger font, especially title.
-* It'd be good if authors, publishers, place published, etc, had
-  completion based on previous entries.
-* Should this be using the MARC21 (MARCXML, MARCJSON, ISO2709)
-  standard for bibliographic data?  it's potentially a good idea ...
-* Examples:
-
-  * Books.app (macOS, was iBooks))
-  * Calibre (macOS)
-  * iTunes (macOS)
-  * Bookpedia (macOS)
-  * Clearview (macOS)
-  * Kindle (macOS, iOS)
-  * Lector (macOS, Windows, Linux)
-    
-
-Work
-~~~~
-
-I think this can fall back to the generic KB entity lens.
-
-Expression
-~~~~~~~~~~
-
-I think this can fall back to the generic KB entity lens.
-
-Manifestation
+The Book Card
 ~~~~~~~~~~~~~
 
-I think this can fall back to the generic KB Entity lens.
+There's one card for a book, though it's four levels and any number of
+copies: it's centred on the Expression, with what you hold beneath it.
+Fields are saved to the right level, and it supports both viewing and
+editing, in ``lenses/book``.  Editions are in order of date, as a
+link's order means nothing.  A save goes through the same edits as the
+entity lens, so a source's statements stay the source's, and a re-import
+doesn't fight what's been changed by hand.
 
-Item
-~~~~
+* E edits it, Ctrl+S saves, and Escape cancels.  A new book starts in
+  the form.  Names in a field are separated by semicolons.
+* R reads the first file, and a format's Read reads that one.
+* I shows what was opened in the entity lens, with all of its statements.
+* A name opens that person or publisher in their own lens.
 
-I think this can fall back to the generic KB Entity lens.  Note that
-most LRM Items will in fact be E-Book or Book Record instances, and
-this will be left for things like an Audio Book which doesn't have a
-specialization.
+A save writes each level on its own, so a failure can leave some
+written: what's been made is kept in the form, and saving again
+finishes it.  An edition or copy can't be removed yet, and covers
+aren't shown yet.
 
+.. code-block:: none
 
-E-Book
-~~~~~~
+   Bliss  Peter Carey
+   English · 1981
+   ────────────────────────────────────────────
+   Paper    Harper & Row, hardcover      study, shelf 3
+            Picador, paperback, 1982     office
+   ────────────────────────────────────────────
+   Finished 3 March
 
-The e-book lens (lenses/ebook) facilitates reading an e-book.
+   1984  George Orwell
+   ────────────────────────────────────────────
+   Formats  EPUB    Read
+            PDF     Read
+            MOBI    Read
 
-* It should have a distraction-free UI with hotkeys for turning the
-  pages.
+It starts with title, subtitle, contributors with their roles, series,
+publisher, date, ISBN, language, pages, cover and location, with title
+and author in a larger font.  The rest are ordinary statements, which
+the entity lens can add from the first day.  Authors and publishers
+should complete from previous entries.  It should be possible to add
+front and back cover images, and a photo of an ISBN bar code is a
+later possibility.
 
-  * Page-forward
+Readers
+~~~~~~~
 
-    * Space
-    * Page Down
-    * C-f
+There's one lens for reflowable formats, and one for PDF, with
+near-identical UI, sharing their window, keys, find, contents panel and
+look, in ``darq.ui.reader``.  The real difference is that + and −
+change the size of the text, rather than zoom.
 
-  * Page-back
+* It's distraction-free, with hotkeys for turning the pages.
 
-    * Backspace
-    * Page Up
-    * C-b
+  * Page-forward: Space, Page Down, C-f
+  * Page-back: Backspace, Page Up, C-b
+  * Home and End go to the front and rear covers
 
-  * Home / End should go to front and rear covers
-
-* The text size should be able to be increased or decreased for
-  reflowable formats (ie. not PDF).
-* PDF should zoom to fit in the window.
-* It should remember the last page being read for each book, and
-  default to starting from there when opened again
+* It offers dark, sepia and light modes.
+* It reopens where you left off, as above.
 * In a future edition, it should support annotations, but not yet.
-* It should offer a dark-mode, sepia-mode, and light-mode choices for
-  rendering the pages.
+* It doesn't change a book's content: only its catalogue entry can be
+  edited.
 
-It should support:
+The PDF Lens
+~~~~~~~~~~~~
 
-* PDF
-* ePub
-* Mobi
-* Whatever is possible with Amazon's azw formats
+There's one PDF lens, ``lenses/pdf``, with two views.  A lens is found
+by type and context, so there's no way to give an item a lens of its
+own, and none is needed: being catalogued is the mark.
 
-Note
+When it opens, it looks for an LRM Item that gives this item as its
+file (``FindByValue``).
 
-   The E-Book lens does not, currently, implement editing of its
-   content, other than that of the WEMI properties: you cannot alter
-   the actual content of the book with this (yet).
+* If there is one, it starts in the reading view: a page at a time,
+  fitted to the window, with the keys above, and a way to the Book card.
+* If not, or the KB isn't there, it's the view it has now: a continuous
+  column, fitted to the width.
 
-   In a future edition, it might support full e-book editing.
+Cataloguing switches it at once, and it can be switched by hand either
+way.  Lookups aren't added to opening other types, and an item's
+identifier begins with its type, so giving catalogued PDFs a type of
+their own would change their identity, and break what links to them.
 
-Implementation:
+A changed PDF, fetched again, is a new item, which isn't catalogued, so
+it opens in the plain view: it may well be a new edition.  Offering to
+add it, through the URL's snapshots, can come later.
 
-* Lector is a PyQT5-based e-book reader.  It's not great, but it's
-  likely to be a good start.
-* PyMuPDF is a Python/C++ PDF renderer (which Lector uses).  It might
-  be a better basis, given how flakey Lector is?
+The E-Book Lens
+~~~~~~~~~~~~~~~
 
+``lenses/ebook`` renders with Qt WebEngine, which is Chromium, and takes
+what the type gives it through a custom ``book:`` URL scheme, so nothing
+is written to disk.  Pages are CSS columns, and turning one is a scroll,
+which is also what Calibre's viewer does.
 
-Book Record
-~~~~~~~~~~~
+``QTextBrowser`` was considered, and needs no dependency, but it has
+only part of HTML and CSS, with no SVG or MathML, and a page break must
+be worked out by hand, as Lector does.  That's poor for computer science
+textbooks, so WebEngine makes for a simpler lens, not a harder one.
 
-This is essentially a card catalog entry for a physical paper book.
-It describes the Item properties of that book, collected from the
-Item, Manifestation, Expression, and Work.
+* JavaScript is off for the book, while the lens's own scripts run in a
+  world of their own, and a book's scripts don't run.
+* Remote content isn't loaded, so a book can't call home.  A profile
+  setting does that, and a request interceptor makes sure of it.
+* A link out of the book is refused by ``acceptNavigationRequest``, and
+  offered to ``darq.http``, as a URL in Search is.
+* Keys and mouse events reach the lens before Chromium does, so it
+  decides what's handled by discarding them, and what's left goes on.
+* Page turns must cross parts, and a position snap to a page.  Calls
+  into the page are asynchronous, and a refused link reports a failed
+  load, which is to be ignored.
 
-This lens should support both viewing and editing.
+It was tried on real hardware, as a client of the compositor, on Intel
+UHD 620: it loads a chapter in about half a second, and uses about 270
+MB, in a process and 4 of Chromium's.  Killing the process takes those
+with it within half a second.  It needs a GPU: under the headless
+compositor's software renderer, Chromium draws nothing, so tests use
+Qt's offscreen platform.
 
-When creating a book record, it would be great to allow a photo/video
-of the ISBN bar code to automatically pre-populate the other properies
-of the record.
+It takes about 290 MB of Python packages, and 10 small Debian packages
+for the dist, some of them X11 libraries (``libnspr4``, ``libnss3``,
+``libxcomposite1``, ``libxdamage1``, ``libxfixes3``, ``libxrandr2``,
+``libxtst6``, ``libxkbfile1``, ``libxi6`` and ``libxrender1``), and
+``libmobi0t64``.  ``requirements.txt`` needs Qt pinned, as the dist has
+6.12, and a development environment may have 6.9.
 
-It should also be possible to add front/back cover images to the book
-record.
+Whether the web lens of Third Edition uses this or CEF is its own
+decision (see ``types/html``), which this bears on: sharing an engine
+saves a second copy of Chromium, and control of keys and mouse has been
+fine with a book, though not yet tried with real pages.
+
+The Order of Work
+-----------------
+
+1. The kinds, and the Book card.  (Done.)
+2. The LibraryThing import.  (Done: see :doc:`librarything-import-tool`.)
+3. The add loop, and ISBN lookups.
+4. ``types/ebook``, ``lenses/ebook``, ``darq.ui.reader``, and the
+   PDF lens's reading view, starting with a real lens under ``pyloader``.
+5. Importing e-books, from Calibre, then Dropbox, then Kindle.
+
+The Complete Data
+-----------------
+
+Not every book will populate every field.  Properties use Wikidata's
+where it has them, checked as they're built: those so far are in *A
+Book Is Not a Format*.  It also has Dewey Decimal (P1036), Library of Congress (P1149)
+and OCLC (P243) numbers, an LCCN (P1144), an ASIN (P5749), and ids for
+Open Library (P648) and LibraryThing (P1085).  It has no printing, so
+that's local.
 
 The complete data should include:
 
@@ -447,3 +650,16 @@ the presentation and links to the actual books?  Not sure that's a
 great UX though ... but certainly music, video and books should all be
 similarly implemented here.
 
+Open Questions
+--------------
+
+* How an old MOBI book's single part should be split, and whether that's
+  the type's job or the lens's.
+* What a book with DRM should show, which hasn't been tried.
+* Whether MARC21 is worth supporting as an import or export format.
+* Whether location is free text, or a structure of its own.
+* Whether a collection browser belongs to the object selector, to a
+  collection type, or to a type's own specialisation of them.
+* A later "this is a newer version: add it?" for a re-fetched PDF.
+* ``Citable``, for papers as well as books (see :doc:`bib`): cataloguing
+  could become "Catalogue as ...", with Book as its first choice.
