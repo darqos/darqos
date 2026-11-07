@@ -14,6 +14,7 @@ import typing
 import pytest
 
 import darq
+import darq.book
 import darq.kb as model
 import darq.message
 from darq.protocols import kb as wire
@@ -263,6 +264,22 @@ def test_start_states_the_defaults_once(kb, implementation, kb_service):
     writes = kb_service.store.writes
     implementation.start()
     assert kb_service.store.writes == writes
+
+
+def test_a_renamed_property_gets_its_new_label(kb, implementation):
+    entity = kb.get(darq.book.CONTENT)
+    entity.set_label("file")
+    kb.put(entity)
+    implementation.start()
+    assert kb.get(darq.book.CONTENT).get_label() == "content"
+
+
+def test_a_label_changed_by_hand_isnt_renamed(kb, implementation):
+    entity = kb.get(darq.book.CONTENT)
+    entity.set_label("mine")
+    kb.put(entity)
+    implementation.start()
+    assert kb.get(darq.book.CONTENT).get_label() == "mine"
 
 
 def test_kind_of(kb, implementation):

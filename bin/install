@@ -49,7 +49,8 @@ UNITS="darqos-pkernel.service darqos.target darqos-backup.service darqos-backup.
 
 # Debian packages: for building the compositor; for running it, and
 # Qt (whose wheels bring Qt, but not these); polkit, without which
-# logind lets only root power off or reboot; and for the backups.
+# logind lets only root power off or reboot; for the backups; and for
+# e-books, libmobi, and what Qt WebEngine's wheels need.
 PACKAGES="
     python3.13-venv polkitd
     meson ninja-build pkgconf gcc
@@ -57,6 +58,8 @@ PACKAGES="
     libgl1 libegl1 libgl1-mesa-dri libegl-mesa0 libwayland-egl1 libwayland-cursor0
     libfontconfig1 libdbus-1-3 libxkbcommon0 libglib2.0-0t64 fonts-dejavu-core
     sqlite3 rsync
+    libmobi0t64
+    libnspr4 libnss3 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libxtst6 libxkbfile1 libxi6 libxrender1
 "
 
 BOOT=0

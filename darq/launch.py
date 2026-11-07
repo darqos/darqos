@@ -197,6 +197,16 @@ def use_item(item_id: str, item: int | None = None, context: str = "terminal", l
     return lens
 
 
+def destroy_item(item_id: str):
+    """Destroy an item.
+
+    :raises LaunchError: if it couldn't be."""
+    type_id, _ = split_item_id(item_id)
+    response = _activate(type_id).destroy(item_id=item_id)
+    if response.status != type_protocol.Status.OK:
+        raise LaunchError(f"Can't destroy {item_id}: {response.status.name}")
+
+
 def _close_item(item: int):
     """Close an item that nothing took over, ignoring a failure."""
     try:

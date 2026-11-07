@@ -247,6 +247,7 @@ class Importer:
                 made = model.Item(entity_id)
                 made.set_label(text)
                 self.items.create(type_id, made)
+                self.record(model.item_id(entity_id, type_id), darq.history.CREATED)
         self.names[key] = entity_id
         return entity_id
 
@@ -391,6 +392,5 @@ class Importer:
             self.result.created[level.type_id] = self.result.created.get(level.type_id, 0) + len(new)
         self.result.updated += len(changed)
         self.result.unchanged += len(ids) - len(new) - len(changed)
-        if level.type_id == WORK_TYPE:
-            for entity in new:
-                self.record(model.item_id(entity.id, WORK_TYPE), darq.history.IMPORTED)
+        for entity in new:
+            self.record(model.item_id(entity.id, level.type_id), darq.history.IMPORTED)

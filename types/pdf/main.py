@@ -30,9 +30,13 @@ from darq.protocols import storage
 from darq.protocols.pdf import (
     CloseRequest,
     CloseResponse,
+    GetPositionRequest,
+    GetPositionResponse,
     GetRequest,
     GetResponse,
     Pdf,
+    SetPositionRequest,
+    SetPositionResponse,
     StatRequest,
     StatResponse,
 )
@@ -60,13 +64,19 @@ import pdfdoc
 TYPE_ID = "com.adobe.pdf"
 MIME_TYPE = "application/pdf"
 
-# Blob header: magic, format version, and flags.
+# Blob header: magic, format version, and flags.  The second version has
+# the length of the reader's position next, and then the position: the
+# first's are still read, and written as the second when they change.
 HEADER = struct.Struct(">4sHH")
+POSITION_LENGTH = struct.Struct(">I")
 MAGIC = b"DPDF"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 
 # Header flag: the item is destroyed (see doc/types.rst).
 DESTROYED = 0x0001
+
+# Tries at writing a position.
+SAVE_ATTEMPTS = 3
 
 # Item specifier: the Storage key, as 32 lowercase hex digits.
 SPECIFIER = re.compile(r"[0-9a-f]{32}")
@@ -76,20 +86,27 @@ class FormatError(ValueError):
     """A blob isn't a PDF item."""
 
 
-def encode_blob(data: bytes, flags: int = 0) -> bytes:
-    return HEADER.pack(MAGIC, FORMAT_VERSION, flags) + data
+def encode_blob(data: bytes, flags: int = 0, position: str = "") -> bytes:
+    encoded = position.encode()
+    return HEADER.pack(MAGIC, FORMAT_VERSION, flags) + POSITION_LENGTH.pack(len(encoded)) + encoded + data
 
 
-def decode_blob(value: bytes) -> tuple[bytes, int]:
-    """Return a blob's PDF and flags.
+def decode_blob(value: bytes) -> tuple[bytes, int, str]:
+    """Return a blob's PDF, flags and position.
 
     :raises FormatError: if it isn't a PDF item."""
     if len(value) < HEADER.size:
         raise FormatError(f"{len(value)} bytes is too short")
     magic, version, flags = HEADER.unpack_from(value)
-    if magic != MAGIC or version != FORMAT_VERSION:
+    if magic != MAGIC or version not in (1, FORMAT_VERSION):
         raise FormatError(f"header {magic!r} version {version}, expected {MAGIC!r} version {FORMAT_VERSION}")
-    return value[HEADER.size:], flags
+    if version == 1:
+        return value[HEADER.size:], flags, ""
+    start = HEADER.size + POSITION_LENGTH.size
+    if len(value) < start:
+        raise FormatError(f"{len(value)} bytes is too short")
+    [length] = POSITION_LENGTH.unpack_from(value, HEADER.size)
+    return value[start + length:], flags, value[start:start + length].decode("utf-8", "replace")
 
 
 def item_id(key: storage.Key) -> str:
@@ -116,12 +133,14 @@ def index_entry(data: bytes, info: pdfdoc.Info) -> tuple[list[str], str]:
 class Document:
     """An open item, or one being looked at."""
 
-    def __init__(self, key: storage.Key, generation: int, data: bytes, info: pdfdoc.Info, flags: int = 0):
+    def __init__(self, key: storage.Key, generation: int, data: bytes, info: pdfdoc.Info, flags: int = 0,
+                 position: str = ""):
         self.key = key
         self.generation = generation
         self.data = data
         self.info = info
         self.flags = flags
+        self.position = position
 
         # The ports of the clients that have it open.
         self.ports: set[int] = set()
@@ -179,14 +198,14 @@ class PdfImplementation(Implementation.Handler):
         response = self.storage.get(key=key)
         if response.status != storage.Status.OK:
             return None
-        data, flags = decode_blob(response.value)
+        data, flags, position = decode_blob(response.value)
         if flags & DESTROYED:
             return None
         try:
             info = pdfdoc.inspect(data)
         except pdfdoc.PdfError as e:
             raise FormatError(str(e)) from None
-        return Document(key, response.generation, data, info, flags)
+        return Document(key, response.generation, data, info, flags, position)
 
     def find(self, iid: str) -> tuple[Document | None, Status]:
         """Return an item, by its identifier, or why it can't be."""
@@ -277,7 +296,7 @@ class PdfImplementation(Implementation.Handler):
         flags = document.flags | DESTROYED
         try:
             response = self.storage.put(key=document.key, expected=document.generation,
-                                        value=encode_blob(document.data, flags))
+                                        value=encode_blob(document.data, flags, document.position))
         except (darq.DarqError, TimeoutError) as e:
             logging.error(f"Can't destroy {request.item_id}: {e!r}")
             return DestroyResponse(status=Status.FAILED)
@@ -308,6 +327,31 @@ class PdfItem(Pdf.Handler):
 
     def stat(self, request: StatRequest, source: int) -> StatResponse:
         return StatResponse(size=len(self.document.data), pages=self.document.info.pages)
+
+    def get_position(self, request: GetPositionRequest, source: int) -> GetPositionResponse:
+        return GetPositionResponse(position=self.document.position)
+
+    def set_position(self, request: SetPositionRequest, source: int) -> SetPositionResponse:
+        """Record a position: it's rewriting the whole blob, so one that's
+        lost isn't worth failing for."""
+        document = self.document
+        if request.position == document.position:
+            return SetPositionResponse()
+        client = self.implementation.storage
+        for _ in range(SAVE_ATTEMPTS):
+            try:
+                response = client.put(key=document.key, expected=document.generation,
+                                      value=encode_blob(document.data, document.flags, request.position))
+                if response.status == storage.Status.OK:
+                    document.generation = response.generation
+                    document.position = request.position
+                    break
+                logging.warning(f"Can't save the position of {document.iid}: {response.status.name}")
+                document.generation = client.stat(key=document.key).generation
+            except (darq.DarqError, TimeoutError) as e:
+                logging.warning(f"Can't save the position of {document.iid}: {e!r}")
+                break
+        return SetPositionResponse()
 
 
 def darq_main():

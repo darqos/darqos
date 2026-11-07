@@ -19,4 +19,12 @@ protocol Pdf {
     // Return the PDF's size, in bytes, and its number of pages: 0 if
     // it's protected by a password, so it can't be read.
     17: Stat() -> (uint64 size, uint32 pages);
+
+    // Return where the reader had got to: a string only a lens makes
+    // sense of, empty if it hasn't been read.
+    18: GetPosition() -> (string position);
+
+    // Record where the reader's got to.  Writing it rewrites the blob,
+    // PDF included, so it's for closing a document, rather than each page.
+    19: SetPosition(string position) -> ();
 }

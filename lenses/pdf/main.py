@@ -8,7 +8,10 @@
 # and then asked to Use the item (see lib/didl/lens.didl).  It gets the
 # PDF from the item, and renders it itself, with Qt PDF: pages in one
 # continuous column, fitted to the window's width to begin with, with
-# Find, and the document's outline, if it has one.
+# Find, and the document's outline, if it has one.  A PDF that's been
+# catalogued as a book opens in the reading view, a page at a time, with
+# the keys of the e-book lens (darq.ui.reader): being catalogued is the
+# mark (see doc/book.rst).  It reopens where the reader left off.
 #
 # Its thread is Qt's: the lens port is served on Qt's event loop (see
 # darq.Server.attach), and its calls to the item and History are
@@ -35,12 +38,15 @@ from PyQt6.QtWidgets import (
 )
 
 import darq
+import darq.book
 import darq.history
 from darq.loop import QtEventLoop
 from darq.protocols import pdf as wire
 from darq.protocols.history import History
 from darq.protocols.lens import Close, Lens, Ready, Status, UseRequest, UseResponse
-from darq.ui import style
+from darq.ui import catalogue, reader, style
+from darq.ui.catalogue import Details
+from darq.ui.launcher import Launcher
 from darq.ui.lens import MESSAGE_SHOWN, overlay, show_over
 from darq.ui.style import BACKGROUND, CONTROLS
 
@@ -82,9 +88,13 @@ HELP = """\
 W&nbsp;&nbsp;Fit the width &nbsp;&nbsp; F&nbsp;&nbsp;Fit a page &nbsp;&nbsp; 0&nbsp;&nbsp;Actual size<br>
 Page Up / Page Down, Space&nbsp;&nbsp;Move a screen<br>
 Home / End&nbsp;&nbsp;First, last page &nbsp;&nbsp; G&nbsp;&nbsp;Go to a page<br>
-Ctrl+F&nbsp;&nbsp;Find &nbsp;&nbsp; F3 / Shift+F3&nbsp;&nbsp;Next, previous match<br>
+Ctrl+S, Ctrl+F&nbsp;&nbsp;Find &nbsp;&nbsp; F3 / Shift+F3&nbsp;&nbsp;Next, previous match<br>
 O&nbsp;&nbsp;Outline<br>
+V&nbsp;&nbsp;Reading view &nbsp;&nbsp; B&nbsp;&nbsp;Catalogue it as a book<br>
 F1&nbsp;&nbsp;This help &nbsp;&nbsp; F11&nbsp;&nbsp;Full screen"""
+
+# How many of the first pages are looked through for an ISBN.
+ISBN_PAGES = 8
 
 
 def zoom_text(zoom: float) -> str:
@@ -144,6 +154,33 @@ class PdfSync:
             self.available = False
             return False
         return True
+
+    def position(self) -> int:
+        """Return the page the reader had got to, from 0."""
+        try:
+            return int(self.client.get_position().position or 0)
+        except (darq.DarqError, TimeoutError, ValueError) as e:
+            logging.warning(f"Can't get the position of {self.item_id}: {e!r}")
+            return 0
+
+    def note(self, item_id: str, event: str):
+        """Record a History event about another item, if History's running."""
+        if self.history is None:
+            return
+        try:
+            self.history.add_event(item_id=item_id, event=event, source=SOURCE)
+        except darq.DarqError as e:
+            logging.warning(f"Can't record {event} for {item_id}: {e!r}")
+
+    def save_position(self, page: int):
+        """Save the page the reader's got to: it rewrites the blob, so
+        it's only done on closing."""
+        if not self.available:
+            return
+        try:
+            self.client.set_position(position=str(page))
+        except (darq.DarqError, TimeoutError) as e:
+            logging.warning(f"Can't save the position of {self.item_id}: {e!r}")
 
     def record(self, event: str):
         """Record a History event about the item, if History is running."""
@@ -207,10 +244,15 @@ class PdfWindow(QWidget):
     """The window: the pages, with the outline beside them, the find bar
     below, and messages shown over them."""
 
-    def __init__(self, sync: PdfSync, on_closed: typing.Callable[[], None] | None = None):
+    def __init__(self, sync: PdfSync, on_closed: typing.Callable[[], None] | None = None,
+                 on_catalogue: typing.Callable[[], None] | None = None):
         super().__init__()
         self.sync = sync
         self.on_closed = on_closed
+        self.on_catalogue = on_catalogue
+
+        # Whether it's in the reading view.
+        self.reading = False
         self.setWindowTitle(sync.item_id)
         self.setWindowFlags(QtCore.Qt.WindowType.FramelessWindowHint)
         self.setStyleSheet(STYLE)
@@ -382,6 +424,55 @@ class PdfWindow(QWidget):
         page, chosen = QInputDialog.getInt(self, "Go to page", "Page:", self.page + 1, 1, max(1, self.page_count))
         return page if chosen else None
 
+    # The reading view
+
+    def set_reading(self, reading: bool):
+        """Show a page at a time, fitted to the window, or the continuous
+        column."""
+        page = self.page
+        self.reading = reading
+        self.view.setPageMode(QPdfView.PageMode.SinglePage if reading else QPdfView.PageMode.MultiPage)
+        self.view.setZoomMode(QPdfView.ZoomMode.FitInView if reading else QPdfView.ZoomMode.FitToWidth)
+        self.go_to(page)
+
+    def turn(self, step: int):
+        self.go_to(self.page + step)
+
+    def catalogue(self):
+        if self.on_catalogue is not None:
+            self.on_catalogue()
+
+    def read_key(self, a0: QKeyEvent) -> bool:
+        """Handle a key as the reading view does, returning whether it was
+        one of its keys."""
+        action = reader.action_for(a0.key(), bool(a0.modifiers() & Modifier.ControlModifier))
+        actions: dict[str, typing.Callable[[], object]] = {
+            reader.NEXT: lambda: self.turn(1),
+            reader.PREVIOUS: lambda: self.turn(-1),
+            reader.FIRST: lambda: self.go_to(0),
+            reader.LAST: lambda: self.go_to(self.page_count - 1),
+            reader.LARGER: lambda: self.zoom_step(1),
+            reader.SMALLER: lambda: self.zoom_step(-1),
+            reader.CONTENTS: self.toggle_outline,
+            reader.FIND: self.open_find,
+            reader.CATALOGUE: self.catalogue,
+            reader.SHOW_HELP: self.toggle_help,
+            reader.FULL_SCREEN: self.toggle_full_screen,
+        }
+        if action not in actions:
+            return False
+        actions[action]()
+        return True
+
+    def details(self) -> Details:
+        """Return the document's title, authors and ISBN, as far as it
+        says: an ISBN's looked for in its first pages."""
+        title = str(self.document.metaData(QPdfDocument.MetaDataField.Title) or "").strip()
+        author = str(self.document.metaData(QPdfDocument.MetaDataField.Author) or "").strip()
+        pages = range(min(ISBN_PAGES, self.page_count))
+        text = "\n".join(self.document.getAllText(page).text() for page in pages)
+        return Details(title, [author] if author else [], darq.book.find_isbn(text))
+
     def go_to_page(self):
         page = self.ask_page()
         if page is not None:
@@ -475,6 +566,8 @@ class PdfWindow(QWidget):
     def keyPressEvent(self, a0: QKeyEvent | None):
         if a0 is None:
             return
+        if self.reading and self.read_key(a0):
+            return
         try:
             key = Key(a0.key())
         except ValueError:
@@ -483,7 +576,7 @@ class PdfWindow(QWidget):
         modifiers = a0.modifiers()
         shift = bool(modifiers & Modifier.ShiftModifier)
         if modifiers & Modifier.ControlModifier:
-            if key == Key.Key_F:
+            if key in (Key.Key_F, Key.Key_S):
                 self.open_find()
             else:
                 super().keyPressEvent(a0)
@@ -506,6 +599,8 @@ class PdfWindow(QWidget):
             Key.Key_G: self.go_to_page,
             Key.Key_F3: lambda: self.find_next(-1 if shift else 1),
             Key.Key_O: self.toggle_outline,
+            Key.Key_V: lambda: self.set_reading(not self.reading),
+            Key.Key_B: self.catalogue,
             Key.Key_Escape: lambda: self.help.hide(),
             Key.Key_F1: self.toggle_help,
             Key.Key_F11: self.toggle_full_screen,
@@ -529,6 +624,8 @@ class PdfWindow(QWidget):
         menu.addAction("Go to Page...", self.go_to_page)
         menu.addAction("Find", self.open_find)
         menu.addAction("Outline", self.toggle_outline)
+        menu.addAction("Reading View", lambda: self.set_reading(not self.reading))
+        menu.addAction("Catalogue as a Book", self.catalogue)
         menu.addSeparator()
         menu.addAction("Full screen", self.toggle_full_screen)
         menu.addAction("Help", self.toggle_help)
@@ -537,6 +634,7 @@ class PdfWindow(QWidget):
         menu.exec(a0.globalPos())
 
     def closeEvent(self, a0):
+        self.sync.save_position(self.page)
         self.sync.close()
         super().closeEvent(a0)
         if self.on_closed is not None:
@@ -547,10 +645,18 @@ class PdfWindow(QWidget):
 class PdfLens(Lens.Handler):
     """Answers the Lens protocol: uses one item, in a window."""
 
-    def __init__(self, loop: QtEventLoop, history: History.Client | None):
+    def __init__(self, loop: QtEventLoop, history: History.Client | None,
+                 find_copy: typing.Callable[[str], str] = catalogue.find_copy):
+        """Constructor.
+
+        :param find_copy: Returns the copy an item is of a book, if any."""
         self.loop = loop
         self.history = history
+        self.find_copy = find_copy
         self.window: PdfWindow | None = None
+        self.item_id = ""
+        self.services = typing.cast(typing.Any, catalogue.Services(history))
+        self.launcher = Launcher(self, SOURCE, lambda job: loop.post(job))
 
     def use(self, request: UseRequest, source: int) -> UseResponse:
         if self.window is not None:
@@ -561,9 +667,13 @@ class PdfLens(Lens.Handler):
         sync = PdfSync(wire.Pdf.Client(request.item, timeout=TIMEOUT), request.item_id, self.history)
         if not sync.reload():
             return UseResponse(status=Status.FAILED)
-        self.window = PdfWindow(sync, on_closed=self.finished)
+        self.window = PdfWindow(sync, on_closed=self.finished, on_catalogue=self.catalogue)
+        self.item_id = request.item_id
         self.window.show()
         self.window.show_failure()
+        self.window.go_to(sync.position())
+        if self.find_copy(request.item_id):
+            self.window.set_reading(True)
         sync.record(darq.history.OPENED)
         logging.info(f"Using {request.item_id}")
         return UseResponse(status=Status.OK)
@@ -573,6 +683,27 @@ class PdfLens(Lens.Handler):
             self.window.close()
         else:
             self.finished()
+
+    def catalogue(self):
+        """Catalogue the PDF as a book, or show its card."""
+        window = self.window
+        if window is None:
+            return
+        problem = catalogue.catalogue(window, self.launcher, self.item_id, window.details(), window.sync.note)
+        if problem:
+            window.show_zoom(problem)
+        else:
+            window.set_reading(True)
+
+    # As the Launcher's host
+
+    def show_status(self, message: str):
+        if self.window is not None:
+            self.window.show_zoom(message)
+
+    def launched(self, context: object, item_id: str | None, error: str | None):
+        if error:
+            self.show_status(error)
 
     def expire(self):
         """Give up, if no Use has come."""

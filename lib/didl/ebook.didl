@@ -1,0 +1,58 @@
+// darqos
+// Copyright (C) 2026 David Arnold
+//
+// E-book item protocol: see doc/book.rst.
+//
+// An e-book item is read-only.  Whatever its format, a client sees one
+// view of it: its parts, in reading order, as HTML, with what they refer
+// to fetched by name, so a lens never knows which format it's showing.
+
+library darq.ebook;
+
+enum Status : uint32 {
+    OK = 0;
+
+    // There's no such part.
+    NOT_FOUND = 1;
+
+    // The book can't be read: it has DRM, it's damaged, or the library
+    // for its format isn't installed.  The file's still kept.
+    UNREADABLE = 2;
+}
+
+// An entry in a book's table of contents.  A target is a part's name,
+// and perhaps a fragment.
+struct ContentsEntry {
+    string title;
+    string target;
+    uint32 level;
+}
+
+// The item port of an e-book item, returned by its implementation's
+// CreateFrom and Open (see lib/didl/type.didl).
+protocol Ebook {
+    // As Item.Close.
+    1: Close() -> ();
+
+    // Return the file.
+    16: Get() -> (opaque data);
+
+    // Return the book's details, as far as the file says, with its
+    // language's name, the name of its cover image, if it has one, its
+    // parts, in reading order, and its table of contents.  If it's UNREADABLE, reason says why, for
+    // showing, and only title can be set.
+    17: Contents() -> (string title, sequence<string> authors, string isbn, string publisher, string date,
+                       string language, string cover, sequence<string> parts, sequence<ContentsEntry> contents,
+                       string reason, Status status);
+
+    // Return a part, or anything a part refers to, by name.
+    18: GetPart(string name) -> (string media_type, opaque data, Status status);
+
+    // Return where the reader had got to: a string only a lens makes
+    // sense of, empty if it hasn't been read.
+    19: GetPosition() -> (string position);
+
+    // Record where the reader's got to.  Writing it rewrites the file's
+    // blob, so it's for closing a book, rather than each page.
+    20: SetPosition(string position) -> ();
+}

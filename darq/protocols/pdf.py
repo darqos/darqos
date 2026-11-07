@@ -14,9 +14,13 @@ from darq.errors import MessageDecodingError
 __all__ = [
     "CloseRequest",
     "CloseResponse",
+    "GetPositionRequest",
+    "GetPositionResponse",
     "GetRequest",
     "GetResponse",
     "Pdf",
+    "SetPositionRequest",
+    "SetPositionResponse",
     "StatRequest",
     "StatResponse",
 ]
@@ -165,6 +169,108 @@ class StatRequest(Message):
         return
 
 
+class GetPositionResponse(Message):
+    """Pdf.GetPosition response."""
+
+    METHOD = 18
+    BODY_FORMAT = "<II"
+    BODY_START = 8
+    LENGTH = 16
+    DATA_START = 16
+
+    def __init__(self, txid: int = 0, position: str = ''):
+        super().__init__(txid)
+        self.position = position
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.position))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.position = inp.string(bits[0], bits[1])
+        return
+
+
+class GetPositionRequest(Message):
+    """Pdf.GetPosition request."""
+
+    METHOD = 18
+    RESPONSE = GetPositionResponse
+    LENGTH = 8
+
+    def __init__(self, txid: int = 0):
+        super().__init__(txid)
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        return
+
+
+class SetPositionResponse(Message):
+    """Pdf.SetPosition response."""
+
+    METHOD = 19
+    LENGTH = 8
+
+    def __init__(self, txid: int = 0):
+        super().__init__(txid)
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        return
+
+
+class SetPositionRequest(Message):
+    """Pdf.SetPosition request."""
+
+    METHOD = 19
+    RESPONSE = SetPositionResponse
+    BODY_FORMAT = "<II"
+    BODY_START = 8
+    LENGTH = 16
+    DATA_START = 16
+
+    def __init__(self, txid: int = 0, position: str = ''):
+        super().__init__(txid)
+        self.position = position
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.position))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.position = inp.string(bits[0], bits[1])
+        return
+
+
 ################################################################
 # Protocols
 ################################################################
@@ -177,12 +283,16 @@ class Pdf:
         1: CloseRequest,
         16: GetRequest,
         17: StatRequest,
+        18: GetPositionRequest,
+        19: SetPositionRequest,
     }
 
     RESPONSES = {
         1: CloseResponse,
         16: GetResponse,
         17: StatResponse,
+        18: GetPositionResponse,
+        19: SetPositionResponse,
     }
 
     class Client(system.Client):
@@ -200,6 +310,14 @@ class Pdf:
             """Pdf.Stat."""
             return self.call(StatRequest(), StatResponse)
 
+        def get_position(self) -> GetPositionResponse:
+            """Pdf.GetPosition."""
+            return self.call(GetPositionRequest(), GetPositionResponse)
+
+        def set_position(self, position: str = '') -> SetPositionResponse:
+            """Pdf.SetPosition."""
+            return self.call(SetPositionRequest(position=position), SetPositionResponse)
+
     class Handler(system.Handler):
         """protocol Pdf: base class for a service's handler."""
 
@@ -207,6 +325,8 @@ class Pdf:
             1: (CloseRequest, "close"),
             16: (GetRequest, "get"),
             17: (StatRequest, "stat"),
+            18: (GetPositionRequest, "get_position"),
+            19: (SetPositionRequest, "set_position"),
         }
 
         def close(self, request: CloseRequest, source: int) -> CloseResponse | system.Deferred:
@@ -219,4 +339,16 @@ class Pdf:
 
         def stat(self, request: StatRequest, source: int) -> StatResponse | system.Deferred:
             """Handle Pdf.Stat."""
+            raise NotImplementedError
+
+        def get_position(self,
+                         request: GetPositionRequest,
+                         source: int) -> GetPositionResponse | system.Deferred:
+            """Handle Pdf.GetPosition."""
+            raise NotImplementedError
+
+        def set_position(self,
+                         request: SetPositionRequest,
+                         source: int) -> SetPositionResponse | system.Deferred:
+            """Handle Pdf.SetPosition."""
             raise NotImplementedError

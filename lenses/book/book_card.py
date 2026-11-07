@@ -6,62 +6,132 @@
 # It uses no Qt, so it can be tested without a display.  Every value is
 # escaped.  As in the entity lens, a link is an anchor, "#" and its
 # number in the page's targets, so nothing is parsed out of URLs.  A
-# target is an item to open: a person, say, or a file to read.
+# target is an item to open: a person, say, or something to read.
 
+import dataclasses
 import html
+import typing
 
 import darq.book
-from darq.book import Book, Copy, Edition
+from darq.book import Book, Copy, Edition, Text
 from darq.ui import style
 
+
+# Pixels each level's indented under the one above: a work's at the edge,
+# with its texts, their editions, and their copies stepping in.
+INDENT = 28
 
 STYLE = f"""
 body {{ color: {style.TEXT}; font-size: 15px; }}
 a {{ color: {style.LINK}; text-decoration: none; }}
 h1 {{ font-size: 26px; font-weight: normal; margin-bottom: 0; }}
 h2 {{ font-size: 18px; font-weight: normal; margin-top: 2px; color: {style.TEXT_SOFT}; }}
-h3 {{ color: {style.TEXT_SOFT}; font-size: 15px; margin-top: 18px; margin-bottom: 4px; }}
-td {{ padding-right: 24px; padding-bottom: 2px; }}
+p {{ margin-top: 0; margin-bottom: 2px; }}
 .subtitle {{ color: {style.TEXT_SOFT}; }}
 .detail {{ color: {style.TEXT_DIM}; font-size: 13px; }}
+.text {{ margin-left: {INDENT}px; }}
+.edition {{ margin-left: {2 * INDENT}px; }}
+.copy {{ margin-left: {3 * INDENT}px; margin-top: 2px; }}
 .opened {{ background-color: {style.RAISED}; }}
+.add a, .edit a {{ color: {style.TEXT_DIM}; font-size: 13px; }}
+.add {{ margin-top: 4px; }}
 """
+
+# A faint line between entities: a QTextBrowser's rule takes the widget's
+# text colour, which the lens sets, as the page's own text says its colour.
+LINE = "<hr>"
+
+# The levels.
+WORK = "Work"
+EXPRESSION = "Expression"
+MANIFESTATION = "Manifestation"
+COPY = "Copy"
+
+# Their types.
+TYPES = {WORK: darq.book.WORK_TYPE, EXPRESSION: darq.book.EXPRESSION_TYPE,
+         MANIFESTATION: darq.book.MANIFESTATION_TYPE, COPY: darq.book.ITEM_TYPE}
+
+
+@dataclasses.dataclass(frozen=True)
+class Add:
+    """A link to add a level, to an entity of the one above."""
+
+    level: str
+    parent: typing.Any
+
+
+@dataclasses.dataclass(frozen=True)
+class Edit:
+    """A link to edit a level's entity, or remove it."""
+
+    level: str
+    entity: typing.Any
+
+
+@dataclasses.dataclass(frozen=True)
+class Prefer:
+    """A link to make a copy the one to read, of a book's."""
+
+    copy: typing.Any
+
+
+# What a page's link can lead to: an item, adding something, editing it,
+# or preferring a copy.
+Target = str | Add | Edit | Prefer
+
+# Pixels high that a cover's shown.
+COVER_HEIGHT = 120
 
 # What a copy on paper that's in no known place says.
 NO_LOCATION = "Location unknown"
 
 
+def cover_url(item_id: str) -> str:
+    """Return what a cover's called on the page."""
+    return "cover:" + html.escape(item_id.replace(":", "/"), quote=True)
+
+
 class Page:
     """A book's page: its HTML, and the items its links lead to, by
-    number."""
+    number.  Lines separate its entities, and each level's indented: a
+    work, its texts, their editions, and their copies.  The text it's
+    about comes first, and the others are shown too, so that a translation
+    can be seen for what it is, with a link to open it."""
 
     def __init__(self, book: Book):
         self.book = book
-        self.targets: list[str] = []
+        self.targets: list[Target] = []
 
-    def anchor(self, item_id: str, text: str) -> str:
-        """Return an anchor for an item, or just the text, without one."""
-        if not item_id:
+        # The covers it shows, which the lens has to give the page.
+        self.covers: list[str] = []
+
+        # Whether it has more than one copy to read, when one's preferred.
+        editions = [*book.editions, *(e for text in book.texts for e in text.editions)]
+        self.choosing = sum(1 for e in editions for c in e.copies if c.content) > 1
+
+    def anchor(self, target: Target, text: str) -> str:
+        """Return an anchor for a target, or just the text, without one."""
+        if not target:
             return html.escape(text)
-        self.targets.append(item_id)
+        self.targets.append(target)
         return f'<a href="#{len(self.targets) - 1}">{html.escape(text)}</a>'
 
     def names(self, names: list[str]) -> str:
         """Return names, as links."""
         return ", ".join(self.anchor(self.book.links.get(name, ""), name) for name in names)
 
-    def opened(self, *entities: object) -> str:
-        """Return a row's attribute, if the book was opened on it."""
-        ids = (getattr(e, "id", None) for e in entities)
-        return ' class="opened"' if self.book.opened in ids else ""
+    def opened(self, entity: object) -> str:
+        """Return a class, if the book was opened on an entity."""
+        return " opened" if self.book.opened == getattr(entity, "id", None) else ""
 
     @staticmethod
-    def about_edition(edition: Edition, shown: str = "") -> str:
-        """Return an edition, in words, leaving out what's shown already."""
-        binding = "" if edition.binding.casefold() == shown.casefold() else edition.binding
+    def about_edition(edition: Edition) -> str:
+        """Return an edition, in words: its format, for one that's an item
+        with no binding given, as that's what it is."""
+        binding = edition.binding or next((darq.book.content_format(c) for c in edition.copies if c.content), "")
         parts = [edition.publisher, edition.imprint, binding, edition.edition and f"{edition.edition} edition",
                  edition.date[:4]]
-        return html.escape(", ".join(p for p in parts if p))
+        return html.escape(", ".join(p for p in parts if p)) or html.escape(darq.book.EDITION_LABEL)
 
     @staticmethod
     def details(edition: Edition) -> str:
@@ -72,90 +142,114 @@ class Page:
             parts.append(f"ISBN {edition.isbn_13 or edition.isbn_10}")
         return html.escape(" · ".join(parts))
 
-    @staticmethod
-    def about_copy(copy: Copy) -> str:
-        """Return a paper copy, in words."""
-        parts = [copy.location or NO_LOCATION]
+    def about_copy(self, copy: Copy) -> str:
+        """Return a copy, in words: Read, for one that's an item, whose
+        edition says what format it is."""
+        parts = [self.anchor(copy.content, "Read")] if copy.content else []
+        if copy.content and self.choosing:
+            parts.append("★ the one to read" if copy.preferred
+                         else self.anchor(Prefer(copy), "Make it the one to read"))
+        if copy.location or not copy.content:
+            parts.append(html.escape(copy.location or NO_LOCATION))
         if copy.printing:
             printing = f"printing {copy.printing}"
-            parts.append(f"{printing}, {copy.printed}" if copy.printed else printing)
+            parts.append(html.escape(f"{printing}, {copy.printed}" if copy.printed else printing))
         elif copy.printed:
-            parts.append(f"printed {copy.printed}")
-        return html.escape(" · ".join(parts))
+            parts.append(html.escape(f"printed {copy.printed}"))
+        return " · ".join(parts)
 
-    def formats(self) -> str:
-        """Return the rows of the copies that are files."""
-        rows = []
-        for edition in self.book.editions:
-            for copy in edition.copies:
-                if copy.file:
-                    name = html.escape(darq.book.file_format(copy))
-                    rows.append(f"<tr{self.opened(edition.entity, copy.entity)}><td>{name}</td>"
-                                f"<td>{self.about_edition(edition, name)}</td>"
-                                f"<td>{self.anchor(copy.file, 'Read')}</td></tr>")
-        return self.section("Formats", rows)
+    def edition(self, edition: Edition) -> str:
+        """Return an edition, with its copies under it."""
+        edit = self.edit_link(MANIFESTATION, edition.entity)
+        parts = [f'<p class="edition{self.opened(edition.entity)}">{self.about_edition(edition)}{edit}</p>']
+        details = self.details(edition)
+        if details:
+            parts.append(f'<p class="edition detail">{details}</p>')
+        if edition.cover:
+            self.covers.append(edition.cover)
+            parts.append(f'<p class="edition"><img src="{cover_url(edition.cover)}" height="{COVER_HEIGHT}"></p>')
+        for copy in edition.copies:
+            edit = self.edit_link(COPY, copy.entity)
+            parts.append(f'<p class="copy{self.opened(copy.entity)}">{self.about_copy(copy)}{edit}</p>')
+        if not edition.copies:
+            parts.append('<p class="copy detail">No copies</p>')
 
-    def paper(self) -> str:
-        """Return the rows of editions, with their copies on paper."""
-        rows = []
-        for edition in self.book.editions:
-            copies = [c for c in edition.copies if not c.file]
-            if not copies and any(c.file for c in edition.copies):
-                continue
-            first = (f"{self.about_edition(edition)}"
-                     f'<br><span class="detail">{self.details(edition)}</span>')
-            if not copies:
-                rows.append(f"<tr{self.opened(edition.entity)}><td>{first}</td>"
-                            '<td><span class="detail">No copies</span></td></tr>')
-            for n, copy in enumerate(copies):
-                rows.append(f"<tr{self.opened(edition.entity, copy.entity)}><td>{first if n == 0 else ''}</td>"
-                            f"<td>{self.about_copy(copy)}</td></tr>")
-        return self.section("Paper", rows)
+        # A digital copy comes from its item: see doc/book.rst.
+        if edition.entity is not None and not any(c.content for c in edition.copies):
+            parts.append(self.add_link("copy", COPY, edition.entity))
+        return "".join(parts)
 
-    @staticmethod
-    def section(title: str, rows: list[str]) -> str:
-        return f"<h3>{title}</h3><table>{''.join(rows)}</table>" if rows else ""
+    def edit_link(self, level: str, entity: object) -> str:
+        """Return a link to edit an entity, beside what's said of it."""
+        if entity is None:
+            return ""
+        return f' <span class="edit">{self.anchor(Edit(level, entity), "Edit")}</span>'
 
-    def render(self) -> str:
+    def add_link(self, indent: str, level: str, parent: object) -> str:
+        return f'<p class="{indent} add">{self.anchor(Add(level, parent), f"+ Add {level}")}</p>'
+
+    def work(self) -> str:
         book = self.book
-        parts = [f"<html><head><style>{STYLE}</style></head><body>"]
-        parts.append(f"<h1>{html.escape(book.title or 'Untitled')}</h1>")
+        parts = [f"<h1>{html.escape(book.title or 'Untitled')}</h1>"]
         if book.subtitle:
             parts.append(f'<p class="subtitle">{html.escape(book.subtitle)}</p>')
         if book.authors:
             parts.append(f"<h2>{self.names(book.authors)}</h2>")
-
-        about = []
+        if book.work is not None:
+            parts.append(f"<p>{self.edit_link(WORK, book.work)}</p>")
         if book.series:
             volume = f" {html.escape(book.volume)}" if book.volume else ""
-            about.append(f"{self.names([book.series])}{volume}")
-        if book.language:
-            about.append(self.names([book.language]))
-        if book.translators:
-            about.append(f"translated by {self.names(book.translators)}")
-        if book.editors:
-            about.append(f"edited by {self.names(book.editors)}")
-        for name, role in book.contributors:
+            parts.append(f'<p class="detail">{self.names([book.series])}{volume}</p>')
+        return "".join(parts)
+
+    def text(self, text: Text, link: bool = False) -> str:
+        """Return a text.
+
+        :param link: Whether it needs to be shown, with a link to open it."""
+        about = []
+        if link and text.entity is not None:
+            label = text.entity.get_label() or darq.book.TEXT_LABEL
+            about.append(self.anchor(darq.book.item_of(text.entity), label))
+        elif text.title:
+            about.append(html.escape(text.title))
+        if text.language and (not link or text.title):
+            about.append(self.names([text.language]))
+        if text.translators:
+            about.append(f"translated by {self.names(text.translators)}")
+        if text.editors:
+            about.append(f"edited by {self.names(text.editors)}")
+        for name, role in text.contributors:
             words = f"{html.escape(role)}: " if role else "with "
             about.append(f"{words}{self.names([name])}")
-        if about:
-            parts.append(f'<p class="detail">{" · ".join(about)}</p>')
-
-        parts.append(self.formats())
-        parts.append(self.paper())
+        if not about:
+            about.append(f'<span class="detail">{html.escape(darq.book.TEXT_LABEL)}</span>')
+        edit = self.edit_link(EXPRESSION, text.entity)
+        parts = [f'<p class="text{self.opened(text.entity)}">{" · ".join(about)}{edit}</p>']
 
         reading = []
-        if book.started:
-            reading.append(f"Started {html.escape(book.started)}")
-        if book.finished:
-            reading.append(f"Finished {html.escape(book.finished)}")
+        if text.started:
+            reading.append(f"Started {html.escape(text.started)}")
+        if text.finished:
+            reading.append(f"Finished {html.escape(text.finished)}")
         if reading:
-            parts.append(f'<h3>Reading</h3><p>{" · ".join(reading)}</p>')
+            parts.append(f'<p class="text">{" · ".join(reading)}</p>')
+        return "".join(parts)
 
-        if book.others:
-            others = ", ".join(self.anchor(darq.book.item_of(e), e.get_label() or e.id) for e in book.others)
-            parts.append(f"<h3>Other texts</h3><p>{others}</p>")
-        if not book.editions and book.work is not None:
-            parts.append('<p class="detail">No editions yet: E adds one.</p>')
-        parts.append("</body></html>")
-        return "\n".join(parts)
+    def render(self) -> str:
+        book = self.book
+        main = Text(book.expression, book.language, book.translators, book.editors, book.contributors, book.started,
+                    book.finished, book.editions, book.text_title)
+        sections = [self.work()]
+        for text, link in ((main, False), *((other, True) for other in book.texts)):
+            if text.entity is None and not text.editions:
+                continue
+            sections.append(self.text(text, link))
+            sections += [self.edition(e) for e in text.editions]
+
+            # It's no entity, so no line sets it apart.
+            if text.entity is not None:
+                sections[-1] += self.add_link("edition", MANIFESTATION, text.entity)
+        if book.work is not None:
+            sections.append(self.add_link("text", EXPRESSION, book.work))
+        page = LINE.join(section for section in sections if section)
+        return f"<html><head><style>{STYLE}</style></head><body>{page}</body></html>"

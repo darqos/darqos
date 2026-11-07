@@ -122,7 +122,9 @@ DarqOS has no files or folders: it has *items*, each of a *type*,
 shown by a *lens* (see :doc:`types`).  You create them with New, and
 find them again with Search or History.
 
-*S-n* and Book starts a book for the catalogue: see :doc:`book`.
+*S-n* and Book adds books to the catalogue, by ISBN.  New's *Import
+File...* takes an EPUB, MOBI or AZW file, and B in its lens, or a PDF's,
+catalogues it: see :doc:`book`.
 
 A walk through it:
 

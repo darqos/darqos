@@ -397,8 +397,20 @@ def test_a_book_with_no_author(target):
 
 def test_history(target):
     run(target, record())
-    [(item_id, event, source)] = target[2].events
-    assert item_id.startswith("darq.book.work:") and (event, source) == ("imported", "librarything-import")
+    events = {(item_id.partition(":")[0], event, source) for item_id, event, source in target[2].events}
+    assert events == {("darq.person", "created", "librarything-import"),
+                      ("darq.organisation", "created", "librarything-import"),
+                      ("darq.entity", "created", "librarything-import"),
+                      *((t, "imported", "librarything-import") for t in (
+                          darq.book.WORK_TYPE, darq.book.EXPRESSION_TYPE, darq.book.MANIFESTATION_TYPE,
+                          darq.book.ITEM_TYPE))}
+
+
+def test_importing_again_records_nothing(target):
+    run(target, record())
+    target[2].events.clear()
+    run(target, record())
+    assert target[2].events == []
 
 
 def test_summary():
@@ -420,7 +432,6 @@ def test_librarything_import(live_pkernel, tmp_path):  # noqa: F811
     export_path = tmp_path / "export.json"
     second = record("2", isbn=["0060150300"], originalisbn="0060150300")
     export_path.write_text(json.dumps({"1": record(), "2": second}))
-    lens_path = TOOL_PATH.parent.parent / "lenses" / "book"
 
     client_path = write_app(tmp_path / "client", f"""
         import importlib.util
@@ -434,8 +445,7 @@ def test_librarything_import(live_pkernel, tmp_path):  # noqa: F811
         from darq.protocols.type import Type
 
         TOOL = pathlib.Path({str(TOOL_PATH)!r})
-        sys.path.insert(0, {str(lens_path)!r})
-        import book_store
+        from darq.ui import book_store
 
         def darq_main():
             types = Type.Client(darq.connect("darq.type"), timeout=30)

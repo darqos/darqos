@@ -45,11 +45,12 @@ reindex.
 Books
 -----
 
-A PDF can be catalogued as a book, which doesn't change its item, and
-the lens gains a reading view for those (see :doc:`book`).  Neither is
-built yet, nor is what goes with them: a reading position in the blob's
-header, with ``GetPosition`` and ``SetPosition`` on the protocol, in a
-second format version, with first-version blobs still read.
+A PDF can be catalogued as a book, with B, which doesn't change its
+item, and the lens has a reading view for those, a page at a time, which
+V switches to or from (see :doc:`book`).  Every PDF has a reading
+position, in the blob's header, with ``GetPosition`` and ``SetPosition``
+on the protocol, in a second format version, with first-version blobs
+still read.
 
 The Lens
 --------
@@ -62,10 +63,11 @@ the window, with the pages in one continuous column.
   shows the document at actual size.
 * The usual keys move: Page Up and Page Down, Space, Home and End.  G
   goes to a page by its number.
-* Ctrl+F finds text: matches are highlighted, and Enter and Shift+Enter
+* Ctrl+S or Ctrl+F finds text: matches are highlighted, and Enter and Shift+Enter
   (or F3 and Shift+F3) move between them.
 * O shows the document's outline, if it has one, in a panel: Enter or a
   click goes to that place.
+* V is the reading view, and B catalogues it as a book.
 * F1 shows the keys, and F11 is full screen.
 * It's recorded in History as ``opened``, from ``pdf-lens``.
 

@@ -183,6 +183,7 @@ class EntityImplementation(Implementation.Handler, EntityWriter.Handler):
         """Find or create the vocabulary, and state the default instance
         types."""
         self.kb.ensure(*vocabulary())
+        self.relabel()
         for class_id, _, kind in model.DEFAULT_INSTANCE_TYPES:
             self.kb.state(class_id, model.DARQOS, [
                 model.Statement(model.Snak(model.DARQOS_INSTANCE_TYPE, model.StringValue(kind)))])
@@ -198,6 +199,15 @@ class EntityImplementation(Implementation.Handler, EntityWriter.Handler):
 
     def kind_of(self, entity: model.Entity) -> str:
         return model.kind_of(entity, self.get_class)
+
+    def relabel(self):
+        """Give vocabulary that's been renamed its new label, unless it's
+        been changed by hand."""
+        for entity_id, old, new in darq.book.RELABELLED:
+            entity = self.kb.get(entity_id, follow=False)
+            if entity is not None and entity.get_label() == old:
+                entity.set_label(new)
+                self.kb.put(entity)
 
     def indexed_kind(self, entity: model.Entity) -> str | None:
         """Return an entity's kind, if it's indexed, or None."""

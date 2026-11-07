@@ -77,10 +77,11 @@ migrating every book.  The Work and Expression are made for you:
 nobody needs to think about WEMI to catalogue a book.
 
 All four are KB entities, of the kinds below, in ``types/kb``, as
-Message is.  There's no BookRecord kind: a paper book is an LRM Item
-that gives a location, and an e-book is an LRM Item that gives a file,
-as an item's identifier, as URL snapshots do (see :doc:`url-type`).
-The file's item isn't changed by being catalogued.
+Message is.  A paper book is an LRM Item that gives a location, and an
+e-book is an LRM Item that gives an item identifier, as URL snapshots
+do (see :doc:`url-type`).
+
+The e-book item isn't changed by being catalogued.
 
 ``darq.book`` has their vocabulary, and reads the four levels as one
 ``Book``, from any of them, writing each field back to its own level.
@@ -115,7 +116,8 @@ Expression     Language (P407), translator (P655), editor (P98), and
 Manifestation  Publisher (P123), publication date (P577), edition number
                (P393), ISBN-13 (P212), ISBN-10 (P957), number of pages
                (P1104), and local *imprint* and *binding*
-LRM Item       Local *location*, *file*, *printing* and *date of printing*
+LRM Item       Local *location* (Shelved at), *content*, *printing* and *date of printing*
+               (Date printed)
 =============  ==========================================================
 
 An imprint is text, for now, unlike a publisher.  People, publishers,
@@ -239,13 +241,18 @@ Type                   Extensions
 =====================  ==============================
 
 The implementation, ``types/ebook``, hides the format.  It offers a lens
-one view of any book: its parts as HTML, its style sheets, images and
-fonts, its table of contents, and its metadata.
+one view of any book, through ``lib/didl/ebook.didl``: its parts as HTML,
+its table of contents and details, and its style sheets, images and
+fonts, by name.  ``bookfile.py`` reads EPUB, and ``mobifile.py`` MOBI and
+AZW.
 
 * Every file is kept, and catalogued, whether or not it can be shown.
 * EPUB is a zip file of XHTML and CSS, so it needs no library.
 * MOBI and AZW use libmobi, a C library, through ``ctypes``, with the
-  data loaded from memory.  It's licensed under the LGPL, as Qt PDF is.
+  data loaded from memory, and its structures as of 0.12 declared there.
+  It's licensed under the LGPL, as Qt PDF is.  ``DARQ_LIBMOBI`` names it
+  for a tree without it installed: without it, a book's kept and
+  catalogued, but says it can't be read.
   ``mobi`` and KindleUnpack are GPL, as are Lector and Calibre, so none
   of their code can be used in an MIT-licensed project.  ``ebook-rs``,
   in Rust, is MIT-licensed, and is the fallback.
@@ -260,7 +267,11 @@ that what comes out is ordinary HTML.  Two MOBI and two AZW3 samples
 were tried, with no DRM, and all came out correctly, from a parse of 3
 to 51 ms: an old MOBI 6 novel, a hybrid book, and pure KF8 books, with
 CSS, images and embedded fonts.  An old MOBI book is one long part, so
-its ``mbp:pagebreak`` tags need to become page breaks.
+its ``mbp:pagebreak`` tags become column breaks, unless they're at the
+very end, which would only make an empty page.  It has no table of
+contents, either, unless it was given one.  libmobi leaves a placeholder
+name, ``XXXXXXXXXXXXXXXX``, for something it can't resolve: it's just not
+found.
 
 Cataloguing
 -----------
@@ -268,17 +279,20 @@ Cataloguing
 Cataloguing is an action, not a step of fetching: most fetched PDFs
 aren't books, so nothing prompts for it.
 
-From a PDF's or an e-book's lens, B starts it:
+From a PDF's or an e-book's lens, B starts it (``darq.ui.catalogue``):
 
-1. The lens reads the file's metadata, and looks for an ISBN in the
-   first pages.
-2. The Book card opens, filled in, and asks whether it's one of the
-   books already there, by ISBN and by title and author: each format
+1. The lens reads the file's metadata: title, authors, ISBN, publisher,
+   date and language, as far as it says, or a PDF's title and author,
+   and its first pages are looked through for an ISBN.  Only a file with
+   no title asks for one.
+2. It looks for the book, by ISBN, and by title and author: each format
    often has an ISBN of its own, and older books may have none.
-3. It's another copy of a printing that's there (a new LRM Item), or
-   another format or edition (a new Manifestation, copying what's
-   shared), or a new book.
-4. Confirming writes what's new.  The file's item doesn't change.
+3. If it might be one that's here, it asks whether it is: another copy
+   of an edition that's there (a new LRM Item), or another format (a new
+   Manifestation), or a new book.
+4. What's new's written, and its Book card opens, to be filled in.  The
+   file's item doesn't change.  If it's been catalogued, B just opens
+   its card.
 
 So a book in three formats is added once, and the others attached to it.
 
@@ -286,17 +300,51 @@ The Add Loop
 ~~~~~~~~~~~~
 
 Paper books are the bulk of the library, between 1,000 and 10,000 of
-them, so New → Book opens a loop, built for speed:
+them, so New → Book opens a loop, built for speed, as does A on a card:
 
-1. Scan or type an ISBN.  A USB barcode scanner just types.
-2. It's looked up, and shown to be checked.  A book with no ISBN falls
-   back on a search by title.
-3. Set its location, which sticks for the next book.
-4. Enter, and on to the next.
+1. Scan or type an ISBN, and press Enter.  A USB barcode scanner just
+   types, and usually sends the Enter itself.  It's looked up, and shown
+   to be checked.  Anything else that's typed is a search by title, to
+   choose from.  What Open Library doesn't know is typed in.
+2. The focus goes to Shelved at, which stays for the next book, as the
+   language does.  What the book is to what's here is shown.
+3. Enter adds it, and it's ready for the next.  Escape clears what's
+   there, and then finishes, showing the last book.
 
-Lookups go to Open Library first, as it's open, and needs no account.
-It goes through ``darq.http``, and only when asked, since it sends an
-ISBN to a third party.  Each statement cites where it came from.
+Nearly always, a book's all four levels new, and Enter's all it takes.
+Otherwise, it stops and asks:
+
+* The same ISBN, in either form, is a duplicate: Y adds another copy,
+  and N doesn't.  It may well be the same book scanned twice, or one
+  that was imported, whose copy wants a location on its card instead.
+  A copy changes nothing else on the card.
+* The same title and author is only a guess: M adds a new Manifestation
+  of that book, and N a new book.
+* If their languages differ, it's a text of its own: N adds a new book,
+  or Escape leaves it to be added from that book's card.
+
+It asks on keys of their own, as a scanner usually sends Enter by itself,
+and a stray one mustn't count as a yes.  Other keys do nothing.  If a new
+book's empty item isn't used, it's cleared away.
+
+Lookups go to Open Library, as it's open, and needs no account, through
+``darq.http``, and only when Enter's pressed, since what's typed goes to
+a third party.  They're in ``darq.openlibrary``, which knows nothing of
+how they're fetched.  What's confirmed is the operator's, as it's been
+checked, with Open Library's identifier (P648) kept on the edition.
+
+* Its Books API's ``data`` form is used for an ISBN, as the one request
+  with authors' names, publishers and identifiers.  Open Library calls it
+  legacy: Search is its successor, but has the work, not the edition.  It
+  gives no language, so that's the field that stays.
+* An ISBN's check digit is checked first, and a repeated digit refused.
+  A record has to carry the ISBN asked for, in either form, as a junk
+  ISBN found a stray record.
+* It's one book at a time.  Open Library's APIs are limited to a request
+  a second, or three for an application that gives its contact, and
+  aren't for bulk use, so nothing here looks up a batch: use its monthly
+  data dumps for that.  ``darq.http``'s ``User-Agent`` doesn't identify
+  the operator, so these are ordinary requests.
 
 At four entities a book, 10,000 books are 40,000 entities, which the KB
 handles easily.
@@ -307,7 +355,7 @@ Importing
 * **LibraryThing:** its JSON export comes first, as real records test
   the model, and the books are then there for the add loop to match
   (see :doc:`librarything-import-tool`).
-* **Calibre:** its ``metadata.db`` is plain SQLite, and its base tables
+* **Calibre:** (not needed: Import File and B will do) its ``metadata.db`` is plain SQLite, and its base tables
   can be read directly, with a book having a row per format in ``data``,
   and its ISBNs in ``identifiers``: an Expression and its Manifestations.
   The importer is written from the schema, using none of Calibre's code.
@@ -318,10 +366,14 @@ Importing
 Reading
 -------
 
-Read opens a book's file in that file's own lens.  A book in several
-formats is read in the first of a default order of preference, a
-setting, which a book can override with the KB's preferred rank on a
-Manifestation.  The card always lets you pick a specific one.
+Read opens a book's content in that item's own lens.  The card lets you
+pick a specific one, and R reads the one that's preferred, or else the
+first.  A copy's preferred by having the characteristic (P1552)
+preference (Q908656): the card marks it with a star, and offers to make
+another the one to read, when a book has more than one to read.  Only one
+of a book's copies is, across all its texts.  Preferred rank was
+considered, and isn't what that's for: it's about how true a statement
+is.
 
 What's been read has two parts:
 
@@ -336,11 +388,13 @@ What's been read has two parts:
   on a reader's protocol: lenses wouldn't change.
 
 A position is a string, which only the lens makes sense of: a page
-number for a PDF, and a part and offset for an e-book, as a part can
-run to 170 pages.  Since ``Put`` writes a whole value, saving a position
-rewrites the blob, the book included, so it's saved when the book's
-closed, rather than as you read: a lens that's killed loses its
-position.  Ranged access to Storage would change that.
+number for a PDF, and a part and how far through it for an e-book, as a
+part can run to 170 pages, and a page depends on the window.  ``Put``
+writes a whole value, so saving a position rewrites the blob, the book
+included, and it's saved when the book's closed, rather than as you
+read: a lens that's killed loses its position.  Ranged access to Storage
+would change that.  Every PDF has one, catalogued or not, and a blob of
+the first version is read, and upgraded when it's next written.
 
 Lenses
 ------
@@ -362,32 +416,84 @@ link's order means nothing.  A save goes through the same edits as the
 entity lens, so a source's statements stay the source's, and a re-import
 doesn't fight what's been changed by hand.
 
-* E edits it, Ctrl+S saves, and Escape cancels.  A new book starts in
-  the form.  Names in a field are separated by semicolons.
-* R reads the first file, and a format's Read reads that one.
+* E edits it, Ctrl+S saves, and Escape cancels.  Names in a field are
+  separated by semicolons.  What's made and changed is recorded in
+  History against each level's own item, as well as any people and
+  publishers that are made, so they all have their histories.
+* A adds more books (see *The Add Loop*), which is where a new book
+  starts.
+* R reads the first of its content, and a format's Read reads that one.
 * I shows what was opened in the entity lens, with all of its statements.
 * A name opens that person or publisher in their own lens.
 
 A save writes each level on its own, so a failure can leave some
 written: what's been made is kept in the form, and saving again
-finishes it.  An edition or copy can't be removed yet, and covers
-aren't shown yet.
+finishes it.  Covers aren't shown yet.
 
 .. code-block:: none
 
-   Bliss  Peter Carey
-   English · 1981
+   Harry Potter and the Philosopher's Stone
+   J. K. Rowling
    ────────────────────────────────────────────
-   Paper    Harper & Row, hardcover      study, shelf 3
-            Picador, paperback, 1982     office
+       English
+       Finished 3 March
    ────────────────────────────────────────────
-   Finished 3 March
+           Bloomsbury, paperback, 1997
+           ISBN 0747532699
+               study, shelf 3 · printing 1
+   ────────────────────────────────────────────
+           Faber, EPUB, 2010
+               Read
+   ────────────────────────────────────────────
+       Latin text
+   ────────────────────────────────────────────
+           Bloomsbury, 2003
+               lounge
 
-   1984  George Orwell
-   ────────────────────────────────────────────
-   Formats  EPUB    Read
-            PDF     Read
-            MOBI    Read
+Faint lines separate its entities, unlabelled, and each level's indented
+under the one above, so that it's clear what belongs to which, without
+anybody needing the words: the Work, its Expressions, their
+Manifestations, in order of date, whether they're paper or digital, and
+their LRM Items.  An LRM Item that's digital says Read, as its
+Manifestation has its format.
+
+Every Expression's shown, so a translation can be seen for what it is,
+even with nothing known of it, so that its links have a place.  The one
+that was opened, or the first, comes first, and it's the one E edits:
+another's opened by its link, and edited there.  The form has the same
+divisions.  An Expression's own title, if it has one, as a translation
+does, is its label: Wikidata's title (P1476).  It's not the Work's, so
+Search finds a book once.
+
+Dim links add each level: **+ Add Expression** under a Work's last,
+**+ Add Manifestation** under an Expression's last, and **+ Add Copy**
+under a Manifestation's last.  Each opens a short form of that level's
+fields, and Ctrl+S saves it.  Add Manifestation has the add loop's ISBN
+box.  A new Manifestation has no copies until one's added, as not every
+edition catalogued is one you have.  A digital copy comes from its item,
+by B, so a Manifestation with one has no Add Copy link.
+
+A Manifestation can have a cover, an image item (a local *cover*
+property), shown small with it.  B takes an EPUB's own; an ISBN lookup
+fetches Open Library's, through ``darq.http``, after it's added; and a
+Manifestation's Edit form can take one from an image file on the host.
+A cover that can't be had isn't a failure.  MOBI and AZW files don't say
+which image is their cover.
+
+Names are offered as they're typed, from what's here: people for
+authors, translators and editors, organisations for a publisher, and
+other entities for a language or series.  In a field of several, it's the
+last that's completed.
+
+An Edit link beside each level opens the same form, filled in, wherever
+it is on the card, with a Remove button, and, but for a Work's, a Move
+button, which moves it to another book, chosen by its title: an
+Expression to its Work, a Manifestation to one of its Expressions, and a
+Copy to one of its Manifestations.  Two Works are merged by moving one's
+Expressions to the other, and removing it.  The form  Only something with nothing
+under it can be removed, once it's been confirmed, so a branch goes a
+level at a time.  Removing a digital copy takes it out of the catalogue,
+and leaves its item alone.  An add that fails clears away what it made.
 
 It starts with title, subtitle, contributors with their roles, series,
 publisher, date, ISBN, language, pages, cover and location, with title
@@ -401,17 +507,20 @@ Readers
 ~~~~~~~
 
 There's one lens for reflowable formats, and one for PDF, with
-near-identical UI, sharing their window, keys, find, contents panel and
-look, in ``darq.ui.reader``.  The real difference is that + and −
-change the size of the text, rather than zoom.
+near-identical UI, sharing their keys, and what they say about them, in
+``darq.ui.reader``.  The real difference is that + and − change the size
+of the text, rather than zoom.
 
 * It's distraction-free, with hotkeys for turning the pages.
 
   * Page-forward: Space, Page Down, C-f
   * Page-back: Backspace, Page Up, C-b
   * Home and End go to the front and rear covers
+  * O shows the contents, C-s finds, and B catalogues it
+  * S-x closes it, as with any window
 
-* It offers dark, sepia and light modes.
+* M goes through dark, sepia and light modes, in the e-book lens.  A
+  PDF's pages are as they are.
 * It reopens where you left off, as above.
 * In a future edition, it should support annotations, but not yet.
 * It doesn't change a book's content: only its catalogue entry can be
@@ -425,15 +534,16 @@ by type and context, so there's no way to give an item a lens of its
 own, and none is needed: being catalogued is the mark.
 
 When it opens, it looks for an LRM Item that gives this item as its
-file (``FindByValue``).
+content (``FindByValue``).
 
 * If there is one, it starts in the reading view: a page at a time,
   fitted to the window, with the keys above, and a way to the Book card.
 * If not, or the KB isn't there, it's the view it has now: a continuous
   column, fitted to the width.
 
-Cataloguing switches it at once, and it can be switched by hand either
-way.  Lookups aren't added to opening other types, and an item's
+Cataloguing switches it at once, and V switches it by hand either way.
+In the plain view, C-f finds, as well as C-s, as the keys are only the
+reader's in the reading view.  Lookups aren't added to opening other types, and an item's
 identifier begins with its type, so giving catalogued PDFs a type of
 their own would change their identity, and break what links to them.
 
@@ -446,8 +556,12 @@ The E-Book Lens
 
 ``lenses/ebook`` renders with Qt WebEngine, which is Chromium, and takes
 what the type gives it through a custom ``book:`` URL scheme, so nothing
-is written to disk.  Pages are CSS columns, and turning one is a scroll,
-which is also what Calibre's viewer does.
+is written to disk.  Pages are CSS columns, as in Calibre's viewer.
+They aren't scrolled to, as the last can't quite be reached: the body's
+moved with a transform, so every page is an exact number of windows
+along.  Without a doctype, the body's width is the viewport's, which
+changes with the transform, so it's measured without one.  Paging's in
+``ebook_pages.py``, which uses no Qt, so it's tested without Chromium.
 
 ``QTextBrowser`` was considered, and needs no dependency, but it has
 only part of HTML and CSS, with no SVG or MathML, and a page break must
@@ -462,9 +576,14 @@ textbooks, so WebEngine makes for a simpler lens, not a harder one.
   offered to ``darq.http``, as a URL in Search is.
 * Keys and mouse events reach the lens before Chromium does, so it
   decides what's handled by discarding them, and what's left goes on.
-* Page turns must cross parts, and a position snap to a page.  Calls
-  into the page are asynchronous, and a refused link reports a failed
-  load, which is to be ignored.
+* Page turns cross parts, and going back arrives at the last page of
+  one.  A link within a book's the lens's to follow, to a part and a
+  fragment's page.  The wheel turns pages.  Calls into the page are
+  asynchronous, and a refused link reports a failed load, which is
+  ignored.
+* WebEngine won't start without a program name, so unlike other lenses'
+  its ``QApplication`` is given one, and its URL scheme's registered
+  before there's an application.
 
 It was tried on real hardware, as a client of the compositor, on Intel
 UHD 620: it loads a chapter in about half a second, and uses about 270
@@ -477,8 +596,9 @@ It takes about 290 MB of Python packages, and 10 small Debian packages
 for the dist, some of them X11 libraries (``libnspr4``, ``libnss3``,
 ``libxcomposite1``, ``libxdamage1``, ``libxfixes3``, ``libxrandr2``,
 ``libxtst6``, ``libxkbfile1``, ``libxi6`` and ``libxrender1``), and
-``libmobi0t64``.  ``requirements.txt`` needs Qt pinned, as the dist has
-6.12, and a development environment may have 6.9.
+``libmobi0t64``, all in ``bin/install``.  A development environment
+may have an older Qt than the dist, which is fine as long as
+``PyQt6-WebEngine`` matches it: 6.9.0 with Qt 6.9, for instance.
 
 Whether the web lens of Third Edition uses this or CEF is its own
 decision (see ``types/html``), which this bears on: sharing an engine
@@ -490,10 +610,13 @@ The Order of Work
 
 1. The kinds, and the Book card.  (Done.)
 2. The LibraryThing import.  (Done: see :doc:`librarything-import-tool`.)
-3. The add loop, and ISBN lookups.
+3. The add loop, and ISBN lookups.  (Done.)
 4. ``types/ebook``, ``lenses/ebook``, ``darq.ui.reader``, and the
    PDF lens's reading view, starting with a real lens under ``pyloader``.
-5. Importing e-books, from Calibre, then Dropbox, then Kindle.
+   (Done.)
+5. Importing e-books: Import File, and B, one at a time, which is
+   enough.  A Calibre library's links between formats, and its tidied
+   details, aren't used.
 
 The Complete Data
 -----------------
@@ -653,9 +776,9 @@ similarly implemented here.
 Open Questions
 --------------
 
-* How an old MOBI book's single part should be split, and whether that's
-  the type's job or the lens's.
-* What a book with DRM should show, which hasn't been tried.
+* What a book with DRM should show: it's kept, it says so, and B still
+  catalogues it, as ``tests/test_ebook_type.py`` has it, but a real one
+  hasn't been tried.
 * Whether MARC21 is worth supporting as an import or export format.
 * Whether location is free text, or a structure of its own.
 * Whether a collection browser belongs to the object selector, to a

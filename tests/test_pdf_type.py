@@ -110,6 +110,16 @@ def make_pdf(pages=("Hello",), title="", author="", outline=(), protected=False)
     return bytes(out)
 
 
+def test_a_first_version_blob_is_still_read():
+    blob = pdf_module.HEADER.pack(pdf_module.MAGIC, 1, 0) + b"%PDF"
+    assert pdf_module.decode_blob(blob) == (b"%PDF", 0, "")
+
+
+def test_a_position_goes_in_the_blob():
+    blob = pdf_module.encode_blob(b"%PDF", 0, "12")
+    assert pdf_module.decode_blob(blob) == (b"%PDF", 0, "12")
+
+
 # Reading PDFs
 
 
@@ -147,7 +157,7 @@ def test_protected(qt_app):
 
 def test_blob_round_trip():
     blob = pdf_module.encode_blob(b"%PDF", pdf_module.DESTROYED)
-    assert pdf_module.decode_blob(blob) == (b"%PDF", pdf_module.DESTROYED)
+    assert pdf_module.decode_blob(blob) == (b"%PDF", pdf_module.DESTROYED, "")
 
 
 @pytest.mark.parametrize("blob", [b"", b"DPD", b"XXXX\x00\x01\x00\x00", b"DPDF\x00\x09\x00\x00"])
@@ -215,7 +225,7 @@ def test_create_from(call, blobs, index, qt_app):
     stat = call(port, StatRequest())
     assert (stat.size, stat.pages) == (len(data), 2)
 
-    assert [pdf_module.decode_blob(value) for value, _ in blobs.blobs.values()] == [(data, 0)]
+    assert [pdf_module.decode_blob(value) for value, _ in blobs.blobs.values()] == [(data, 0, "")]
     assert index.names == [["A Title", "An Author"]]
     action, published, body = index.sent[0]
     assert (action, published) == ("publish", iid) and "One" in body and "Two" in body
@@ -271,7 +281,7 @@ def test_close_reopen_and_destroy(call, blobs, implementation, index, qt_app):
     assert call(IMPLEMENTATION_PORT, OpenRequest(item_id=iid)).status == Status.NOT_FOUND
     call(response.item, CloseRequest())
 
-    assert [pdf_module.decode_blob(value) for value, _ in blobs.blobs.values()] == [(data, pdf_module.DESTROYED)]
+    assert [pdf_module.decode_blob(value) for value, _ in blobs.blobs.values()] == [(data, pdf_module.DESTROYED, "")]
     for request in (OpenRequest(item_id=iid), IndexEntryRequest(item_id=iid), ExportRequest(item_id=iid),
                     DestroyRequest(item_id=iid)):
         assert call(IMPLEMENTATION_PORT, request).status == Status.NOT_FOUND

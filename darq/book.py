@@ -29,14 +29,15 @@ __all__ = [
     "Book",
     "BookError",
     "CONTRIBUTOR",
+    "CONTENT",
     "Copy",
     "DDC",
     "EDITION",
+    "EDITION_LABEL",
     "EDITOR",
     "EXEMPLAR_OF",
     "EXPRESSION_TYPE",
     "Edition",
-    "FILE",
     "FINISHED",
     "INVERSE_LABELS",
     "ACQUIRED",
@@ -60,8 +61,10 @@ __all__ = [
     "PHYSICAL_DESCRIPTION",
     "PRICE",
     "PUBLICATION_TEXT",
+    "RELABELLED",
     "SUBJECT_HEADING",
     "TAG",
+    "OPEN_LIBRARY",
     "ORGANISATION_TYPE",
     "PARTS",
     "PERSON_TYPE",
@@ -73,15 +76,41 @@ __all__ = [
     "STARTED",
     "SUBTITLE",
     "Store",
+    "TEXT_LABEL",
+    "TEXT_TITLE",
     "TRANSLATOR",
+    "Text",
     "VERSION_OF",
     "WORK_TYPE",
+    "NEW",
+    "ANOTHER_COPY",
+    "ANOTHER_EDITION",
+    "Match",
+    "add",
+    "add_copy",
+    "COVER",
+    "HAS_CHARACTERISTIC",
+    "PREFERENCE",
+    "move",
+    "prefer",
+    "preferred_content",
+    "set_cover",
+    "add_edition",
+    "add_text",
+    "date_of",
+    "language_name",
     "check",
+    "clean_isbn",
+    "content_format",
     "edition_label",
     "expression_label",
-    "file_format",
+    "find_match",
+    "find_isbn",
+    "isbn_10_of",
+    "isbn_13_of",
     "item_of",
     "read",
+    "remove",
     "save",
     "vocabulary",
 ]
@@ -116,10 +145,12 @@ LCC = "P1149"
 SUBJECT_HEADING = "8ca9ae0a-6fa2-449c-aa74-722e4b89e1d9"
 LIBRARYTHING_WORK = "P1085"
 
-# On an expression: its language, translators and editors, others who
+# On an expression: its title, if it has its own, as a translation does
+# (a Text), its language, translators and editors, others who
 # contributed, with their role as text (a qualifier), and when it was
 # started and finished, which are knowledge, unlike a place in a file
 # (see doc/book.rst).
+TEXT_TITLE = "P1476"
 LANGUAGE = "P407"
 TRANSLATOR = "P655"
 EDITOR = "P98"
@@ -139,18 +170,20 @@ ISBN_13 = "P212"
 ISBN_10 = "P957"
 PAGES = "P1104"
 ASIN = "P5749"
+OPEN_LIBRARY = "P648"
 LCCN = "P1144"
 PHYSICAL_DESCRIPTION = "8299e292-2411-498c-b34d-5536ba8b93b2"
 PUBLICATION_TEXT = "6cf68a4e-7257-43af-ad50-497c6e94833f"
+COVER = "c7ef4020-e876-4650-80b5-616cd386b717"
 IMPRINT = "2f20d2aa-65a0-4486-86c4-56facb477bf6"
 BINDING = "2eabea67-5f8d-4d35-aec1-878da88f077d"
 
-# On a copy: where it is, as text for now, or the item that's its file
+# On a copy: where it is, as text for now, or the item that's its content
 # (an identifier, a String, as URL snapshots are), and its printing, and
 # when it was printed, and where it came from: when, from where, and for
 # how much, as text.  Its identifier and tags on LibraryThing.
 LOCATION = "2cf1b758-7379-418f-9ea6-049d74518bbe"
-FILE = "0cd7fdd5-f6c8-4346-91b8-b5d674244ea4"
+CONTENT = "0cd7fdd5-f6c8-4346-91b8-b5d674244ea4"
 PRINTING = "20450dc5-a708-4ca1-8729-3db3e8d90836"
 PRINTED = "6e9db545-11e2-452b-a2ef-97ef7da9b182"
 
@@ -160,8 +193,17 @@ PRICE = "3fd7d449-6e7a-4e27-9070-289ad1edbd15"
 LIBRARYTHING_BOOK = "3467b6af-1d3a-4773-8b01-4ae3c208cbc5"
 TAG = "8b300fc8-4c53-4805-9390-63864dfdafe2"
 
+# Labels of the vocabulary that have changed, with what they were: what's
+# there's left alone by ensure, so an existing KB is told.
+RELABELLED = [(CONTENT, "file", "content")]
+
 # LibraryThing, as a source.
 LIBRARYTHING = "7659380e-57eb-4c0e-aba6-644f197824a7"
+
+# A copy that's the one to read, of a book's: has characteristic (P1552),
+# preference (Q908656).
+HAS_CHARACTERISTIC = "P1552"
+PREFERENCE = "Q908656"
 
 # Items with labels that read these properties backwards (see
 # darq.kb.INVERSE_LABEL): each property, its item, and the item's label.
@@ -176,8 +218,8 @@ INVERSE_LABELS = [
     (SERIES, "4493219b-a0f1-433b-869a-4133b2495471", "has part"),
 ]
 
-# File formats, by the type of a file's item.
-FILE_FORMATS = {
+# Formats, by the type of a copy's content.
+CONTENT_FORMATS = {
     "com.adobe.pdf": "PDF",
     "darq.book.epub": "EPUB",
     "darq.book.mobi": "MOBI",
@@ -227,6 +269,14 @@ class Store(typing.Protocol):
         label, or an empty string."""
         ...
 
+    def edition_with(self, property_id: str, isbn: str) -> str:
+        """Return the item of an edition with an ISBN, or an empty string."""
+        ...
+
+    def works_titled(self, title: str) -> list[str]:
+        """Return the items of the works with a title."""
+        ...
+
     def create(self, type_id: str, label: str) -> Entity:
         """Make an entity of a kind, with a label, and return it.
 
@@ -239,16 +289,29 @@ class Store(typing.Protocol):
         :raises BookError: if it can't be done."""
         ...
 
+    def destroy(self, item_id: str) -> None:
+        """Destroy an item.
+
+        :raises BookError: if it can't be done."""
+        ...
+
 
 @dataclasses.dataclass
 class Copy:
-    """A copy, on a shelf, or as a file: entity is None until it's saved."""
+    """A copy, on a shelf, or as an item: entity is None until it's saved."""
 
     entity: Entity | None = None
     location: str = ""
-    file: str = ""
+    content: str = ""
     printing: str = ""
     printed: str = ""
+
+    # Whether it's to be made with nothing known: a book you have, in no
+    # particular place yet.
+    wanted: bool = False
+
+    # Whether it's the one to read, of a book's formats.
+    preferred: bool = False
 
 
 @dataclasses.dataclass
@@ -264,13 +327,36 @@ class Edition:
     isbn_13: str = ""
     isbn_10: str = ""
     pages: str = ""
+    open_library: str = ""
     copies: list[Copy] = dataclasses.field(default_factory=list)
+
+    # The item of its cover, if it has one, and where one can be fetched
+    # from, which isn't kept.
+    cover: str = ""
+    cover_url: str = ""
+
+
+@dataclasses.dataclass
+class Text:
+    """An expression, as the card shows it."""
+
+    entity: Entity | None = None
+    language: str = ""
+    translators: list[str] = dataclasses.field(default_factory=list)
+    editors: list[str] = dataclasses.field(default_factory=list)
+    contributors: list[tuple[str, str]] = dataclasses.field(default_factory=list)
+    started: str = ""
+    finished: str = ""
+    editions: list[Edition] = dataclasses.field(default_factory=list)
+    title: str = ""
 
 
 @dataclasses.dataclass
 class Book:
     """A book, as the card shows it: the fields can be changed, and saved
-    with save().  It's centred on one expression: others is the rest."""
+    with save().  They're of one expression, which is the one it was opened
+    on, or its work's first: others is the rest, and texts shows them, to
+    be opened and changed on their own."""
 
     work: Entity | None = None
     expression: Entity | None = None
@@ -279,6 +365,7 @@ class Book:
     authors: list[str] = dataclasses.field(default_factory=list)
     series: str = ""
     volume: str = ""
+    text_title: str = ""
     language: str = ""
     translators: list[str] = dataclasses.field(default_factory=list)
     editors: list[str] = dataclasses.field(default_factory=list)
@@ -289,6 +376,7 @@ class Book:
     finished: str = ""
     editions: list[Edition] = dataclasses.field(default_factory=list)
     others: list[Entity] = dataclasses.field(default_factory=list)
+    texts: list[Text] = dataclasses.field(default_factory=list)
 
     # The entity it was opened on.
     opened: str = ""
@@ -358,8 +446,14 @@ def _parent(store: Store, entity: Entity, property_id: str, type_id: str) -> Ent
     return None
 
 
+def _preferred(entity: Entity) -> bool:
+    return any(isinstance(s.get_value(), EntityValue) and typing.cast(EntityValue, s.get_value()).entity_id
+               == PREFERENCE for s in _statements(entity, HAS_CHARACTERISTIC))
+
+
 def _read_copy(entity: Entity) -> Copy:
-    return Copy(entity, _text(entity, LOCATION), _text(entity, FILE), _text(entity, PRINTING), _text(entity, PRINTED))
+    return Copy(entity, _text(entity, LOCATION), _text(entity, CONTENT), _text(entity, PRINTING),
+                _text(entity, PRINTED), preferred=_preferred(entity))
 
 
 def _read_edition(store: Store, entity: Entity, links: dict[str, str]) -> Edition:
@@ -368,13 +462,31 @@ def _read_edition(store: Store, entity: Entity, links: dict[str, str]) -> Editio
     return Edition(entity, publisher[0] if publisher else "", _text(entity, IMPRINT),
                    _text(entity, PUBLICATION_DATE), _text(entity, EDITION),
                    _text(entity, BINDING), _text(entity, ISBN_13), _text(entity, ISBN_10), _text(entity, PAGES),
-                   [_read_copy(c) for c in copies])
+                   _text(entity, OPEN_LIBRARY), [_read_copy(c) for c in copies], _text(entity, COVER))
 
 
 def _edition_order(edition: Edition) -> tuple[bool, str]:
     """Return what orders editions: by date, with undated ones last.  A
     link's order means nothing."""
     return not edition.date, edition.date
+
+
+def _read_text(store: Store, expression: Entity, links: dict[str, str]) -> Text:
+    """Read an expression, and its editions."""
+    text = Text(expression)
+    text.title = _text(expression, TEXT_TITLE)
+    text.language = next(iter(_names(store, expression, LANGUAGE, links)), "")
+    text.translators = _names(store, expression, TRANSLATOR, links)
+    text.editors = _names(store, expression, EDITOR, links)
+    for statement, name in zip(_statements(expression, CONTRIBUTOR), _names(store, expression, CONTRIBUTOR, links)):
+        role = next((q.value.value for q in statement.qualifiers if q.property_id == CONTRIBUTOR_ROLE
+                     and isinstance(q.value, StringValue)), "")
+        text.contributors.append((name, role))
+    text.started = _text(expression, STARTED)
+    text.finished = _text(expression, FINISHED)
+    editions = store.children(model.item_id(expression.id, EXPRESSION_TYPE), VERSION_OF, MANIFESTATION_TYPE)
+    text.editions = sorted((_read_edition(store, e, links) for e in editions), key=_edition_order)
+    return text
 
 
 def read(store: Store, item_id: str) -> Book:
@@ -416,19 +528,13 @@ def read(store: Store, item_id: str) -> Book:
         expression = expressions[0]
     book.expression = expression
     book.others = [e for e in expressions if expression is None or e.id != expression.id]
+    book.texts = [_read_text(store, e, book.links) for e in book.others]
     if expression is not None:
-        book.language = next(iter(_names(store, expression, LANGUAGE, book.links)), "")
-        book.translators = _names(store, expression, TRANSLATOR, book.links)
-        book.editors = _names(store, expression, EDITOR, book.links)
-        for statement, name in zip(_statements(expression, CONTRIBUTOR),
-                                   _names(store, expression, CONTRIBUTOR, book.links)):
-            role = next((q.value.value for q in statement.qualifiers if q.property_id == CONTRIBUTOR_ROLE
-                         and isinstance(q.value, StringValue)), "")
-            book.contributors.append((name, role))
-        book.started = _text(expression, STARTED)
-        book.finished = _text(expression, FINISHED)
-        editions = store.children(model.item_id(expression.id, EXPRESSION_TYPE), VERSION_OF, MANIFESTATION_TYPE)
-        book.editions = sorted((_read_edition(store, e, book.links) for e in editions), key=_edition_order)
+        text = _read_text(store, expression, book.links)
+        book.text_title = text.title
+        book.language, book.translators, book.editors = text.language, text.translators, text.editors
+        book.contributors, book.started, book.finished = text.contributors, text.started, text.finished
+        book.editions = text.editions
     elif manifestation is not None:
         book.editions = [_read_edition(store, manifestation, book.links)]
     return book
@@ -439,13 +545,167 @@ def item_of(expression: Entity) -> str:
     return model.item_id(expression.id, EXPRESSION_TYPE)
 
 
-def file_format(copy: Copy) -> str:
-    """Return the name of the format of a copy's file, or an empty string
+def content_format(copy: Copy) -> str:
+    """Return the name of the format of a copy's content, or an empty string
     if it hasn't one."""
-    if not copy.file:
+    if not copy.content:
         return ""
-    type_id = copy.file.partition(":")[0]
-    return FILE_FORMATS.get(type_id, type_id)
+    type_id = copy.content.partition(":")[0]
+    return CONTENT_FORMATS.get(type_id, type_id)
+
+
+# ISBNs
+
+def _digit(value: int) -> str:
+    return "X" if value == 10 else str(value)
+
+
+def _check_10(digits: str) -> str:
+    return _digit((11 - sum((10 - n) * int(d) for n, d in enumerate(digits[:9])) % 11) % 11)
+
+
+def _check_13(digits: str) -> str:
+    return str((10 - sum((3 if n % 2 else 1) * int(d) for n, d in enumerate(digits[:12])) % 10) % 10)
+
+
+def clean_isbn(text: str) -> str:
+    """Return an ISBN, without spaces and hyphens, or an empty string if
+    it isn't a valid one.  One digit repeated passes its check, but is a
+    placeholder, and can find a stray record."""
+    isbn = re.sub(r"[\s-]", "", text).upper()
+    if len(set(isbn)) < 2:
+        return ""
+    if re.fullmatch(r"\d{9}[\dX]", isbn):
+        return isbn if isbn[-1] == _check_10(isbn) else ""
+    if re.fullmatch(r"97[89]\d{10}", isbn):
+        return isbn if isbn[-1] == _check_13(isbn) else ""
+    return ""
+
+
+def isbn_13_of(isbn: str) -> str:
+    """Return the ISBN-13 of an ISBN."""
+    if len(isbn) == 13:
+        return isbn
+    return "978" + isbn[:9] + _check_13("978" + isbn[:9]) if len(isbn) == 10 else ""
+
+
+def isbn_10_of(isbn: str) -> str:
+    """Return the ISBN-10 of an ISBN, or an empty string: only 978's have
+    one."""
+    if len(isbn) == 10:
+        return isbn
+    return isbn[3:12] + _check_10(isbn[3:12]) if isbn.startswith("978") and len(isbn) == 13 else ""
+
+
+# Languages, by the codes files give them in, for those likely here.
+LANGUAGES = {
+    "ar": "Arabic", "cs": "Czech", "cy": "Welsh", "da": "Danish", "de": "German", "el": "Greek", "en": "English",
+    "es": "Spanish", "fi": "Finnish", "fr": "French", "ga": "Irish", "he": "Hebrew", "hi": "Hindi", "hu": "Hungarian",
+    "it": "Italian", "ja": "Japanese", "ko": "Korean", "la": "Latin", "nl": "Dutch", "no": "Norwegian", "pl": "Polish",
+    "pt": "Portuguese", "ru": "Russian", "sv": "Swedish", "tr": "Turkish", "uk": "Ukrainian", "zh": "Chinese",
+}
+
+
+def language_name(code: str) -> str:
+    """Return the name of a language, by a code such as en-AU or the
+    English it says itself, or an empty string for one that isn't known."""
+    text = code.strip()
+    if text.title() in LANGUAGES.values():
+        return text.title()
+    return LANGUAGES.get(re.split(r"[-_]", text.lower())[0], "")
+
+
+def date_of(text: str) -> str:
+    """Return a file's date as a card's typed, or an empty string."""
+    found = re.match(r"\d{4}(-\d\d(-\d\d)?)?", text.strip())
+    return found.group() if found is not None and _valid_date(found.group()) else ""
+
+
+def find_isbn(text: str) -> str:
+    """Return the first valid ISBN in some text, such as a title page,
+    or an empty string: those labelled as one come first."""
+    labelled = re.findall(r"ISBN(?:[-\s]1[03])?[:\s]*([\dXx][\dXx\s-]{8,20})", text)
+    for candidate in (*labelled, *re.findall(r"\b97[89][\d\s-]{10,16}\b", text)):
+        isbn = clean_isbn(candidate.strip())
+        if isbn:
+            return isbn
+    return ""
+
+
+# Adding
+
+# What a book being added is to what's here.
+NEW = "new"
+ANOTHER_EDITION = "edition"
+ANOTHER_COPY = "copy"
+
+
+@dataclasses.dataclass
+class Match:
+    """What a book being added is: book is the one that's here, if it's
+    of one, and edition which of its editions, if it's a copy of one."""
+
+    kind: str = NEW
+    book: Book | None = None
+    edition: Edition | None = None
+
+    def language_differs(self, book: Book) -> bool:
+        """Return whether a book being added isn't in this one's language,
+        so it's a text of its own, which isn't for guessing."""
+        if self.book is None or not book.language.strip() or not self.book.language.strip():
+            return False
+        return book.language.strip().casefold() != self.book.language.strip().casefold()
+
+
+def _same_people(first: list[str], second: list[str]) -> bool:
+    """Return whether two lists of names overlap, or either's empty."""
+    return not first or not second or bool({n.casefold() for n in first} & {n.casefold() for n in second})
+
+
+def find_match(store: Store, book: Book) -> Match:
+    """Return what a book being added is, by ISBN, or by title and author:
+    formats often have ISBNs of their own, and older books have none."""
+    edition = book.editions[0] if book.editions else Edition()
+    isbns = [(ISBN_13, edition.isbn_13 or isbn_13_of(edition.isbn_10)),
+             (ISBN_10, edition.isbn_10 or isbn_10_of(edition.isbn_13))]
+    for property_id, isbn in isbns:
+        found = store.edition_with(property_id, isbn) if isbn else ""
+        if found:
+            here = read(store, found)
+            mine = identifier.split_item_id(found)[1]
+            target = next((e for e in here.editions if e.entity is not None and e.entity.id == mine), None)
+            return Match(ANOTHER_COPY, here, target)
+
+    title = book.title.strip()
+    for item_id in store.works_titled(title) if title else ():
+        here = read(store, item_id)
+        if here.title.casefold() == title.casefold() and _same_people(here.authors, book.authors):
+            return Match(ANOTHER_EDITION, here)
+    return Match()
+
+
+def add(store: Store, book: Book, match: Match) -> Book:
+    """Save a book being added, as a match says, and return it as saved.
+    The first of its editions and copies is what's added: what's here
+    otherwise stays as it is.
+
+    :raises BookError: if it can't be done."""
+    edition = book.editions[0] if book.editions else Edition(copies=[Copy()])
+    copies = [c for c in edition.copies if c.location.strip() or c.printing.strip() or c.printed.strip()
+              or c.content.strip()] or [Copy(wanted=True)]
+    if match.kind == ANOTHER_COPY and match.book is not None and match.edition is not None:
+        match.edition.copies.extend(copies)
+        target = match.book
+    elif match.kind == ANOTHER_EDITION and match.book is not None:
+        edition.copies = copies
+        match.book.editions.append(edition)
+        target = match.book
+    else:
+        edition.copies = copies
+        target = book
+        target.editions = [edition]
+    save(store, target)
+    return target
 
 
 # Saving
@@ -573,7 +833,8 @@ def edition_label(edition: Edition) -> str:
 def _save_copy(store: Store, copy: Copy, manifestation: Entity):
     label = copy.location.strip() or COPY_LABEL
     if copy.entity is None:
-        if not (copy.location.strip() or copy.file.strip() or copy.printing.strip() or copy.printed.strip()):
+        if not (copy.wanted or copy.location.strip() or copy.content.strip() or copy.printing.strip()
+                or copy.printed.strip()):
             return
         copy.entity = store.create(ITEM_TYPE, label)
         link = model.add_statement(copy.entity, EXEMPLAR_OF, EntityValue(manifestation.id), model.ENTITY_EDITOR)
@@ -584,18 +845,75 @@ def _save_copy(store: Store, copy: Copy, manifestation: Entity):
         *link,
         *_label_edits(entity, label),
         *_value_edits(entity, LOCATION, _string(copy.location)),
-        *_value_edits(entity, FILE, _string(copy.file)),
+        *_value_edits(entity, CONTENT, _string(copy.content)),
         *_value_edits(entity, PRINTING, _string(copy.printing)),
         *_value_edits(entity, PRINTED, _time(copy.printed)),
+        *_preference_edits(entity, copy.preferred),
     ])
+
+
+def _preference_edits(entity: Entity, preferred: bool) -> list[model.Edit]:
+    """Return the edits that make a copy preferred, or not, leaving any
+    other characteristic it has."""
+    have = [s for s in _statements(entity, HAS_CHARACTERISTIC) if isinstance(s.get_value(), EntityValue)
+            and typing.cast(EntityValue, s.get_value()).entity_id == PREFERENCE]
+    if preferred and not have:
+        return model.add_statement(entity, HAS_CHARACTERISTIC, EntityValue(PREFERENCE), model.ENTITY_EDITOR)
+    if not preferred and have:
+        return [e for s in have for e in model.remove_statement(entity, s.id)]
+    return []
+
+
+def _all_copies(book: Book) -> list[Copy]:
+    """Return every copy of a book, of every text."""
+    editions = [*book.editions, *(e for text in book.texts for e in text.editions)]
+    return [c for e in editions for c in e.copies]
+
+
+def preferred_content(book: Book) -> str:
+    """Return the item to read of a book: the preferred copy's, or the
+    first, or an empty string if there's none."""
+    copies = [c for c in _all_copies(book) if c.content]
+    return next((c.content for c in copies if c.preferred), copies[0].content if copies else "")
+
+
+def prefer(store: Store, book: Book, chosen: Copy) -> None:
+    """Make a copy the one to read, of all of a book's.
+
+    :raises BookError: if it can't be done."""
+    for copy in _all_copies(book):
+        if copy.entity is not None and copy.preferred != (copy is chosen):
+            copy.entity = store.change(copy.entity, _preference_edits(copy.entity, copy is chosen))
+            copy.preferred = copy is chosen
+
+
+def set_cover(store: Store, manifestation: Entity, item_id: str) -> Entity:
+    """Give a manifestation a cover.
+
+    :raises BookError: if it can't be done."""
+    return store.change(manifestation, _value_edits(manifestation, COVER, _string(item_id)))
+
+
+def move(store: Store, type_id: str, entity: Entity, parent: Entity) -> None:
+    """Move a level to another parent: an expression to another work, a
+    manifestation to another expression, or a copy to another manifestation.
+
+    :raises BookError: if it can't be done."""
+    property_id = EXEMPLAR_OF if type_id == ITEM_TYPE else VERSION_OF
+    statements = _statements(entity, property_id)
+    if statements:
+        edits = model.change_value(entity, statements[0].id, EntityValue(parent.id), model.ENTITY_EDITOR)
+    else:
+        edits = model.add_statement(entity, property_id, EntityValue(parent.id), model.ENTITY_EDITOR)
+    store.change(entity, edits)
 
 
 def _empty(edition: Edition) -> bool:
     fields = (edition.publisher, edition.imprint, edition.date, edition.edition, edition.binding, edition.isbn_13,
               edition.isbn_10, edition.pages)
-    return not any(f.strip() for f in fields) and not any(c.entity or c.location.strip() or c.file.strip()
-                                                          or c.printing.strip() or c.printed.strip()
-                                                          for c in edition.copies)
+    return not any(f.strip() for f in fields) and not any(c.entity or c.wanted or c.location.strip()
+                                                          or c.content.strip() or c.printing.strip()
+                                                          or c.printed.strip() for c in edition.copies)
 
 
 def _save_edition(store: Store, edition: Edition, expression: Entity | None):
@@ -620,13 +938,18 @@ def _save_edition(store: Store, edition: Edition, expression: Entity | None):
         *_value_edits(entity, ISBN_13, _string(edition.isbn_13)),
         *_value_edits(entity, ISBN_10, _string(edition.isbn_10)),
         *_value_edits(entity, PAGES, _quantity(edition.pages)),
+        *_value_edits(entity, OPEN_LIBRARY, _string(edition.open_library)),
+        *_value_edits(entity, COVER, _string(edition.cover)),
     ])
     for copy in edition.copies:
         _save_copy(store, copy, edition.entity)
 
 
-def expression_label(language: str) -> str:
-    """Return the label of an expression in a language."""
+def expression_label(language: str, title: str = "") -> str:
+    """Return the label of an expression: its own title, if it has one,
+    which isn't its work's, so that Search finds a book once."""
+    if title.strip():
+        return title.strip()
     return f"{language.strip()} text" if language.strip() else TEXT_LABEL
 
 
@@ -658,13 +981,14 @@ def save(store: Store, book: Book) -> None:
 
     link: list[model.Edit] = []
     if book.expression is None:
-        book.expression = store.create(EXPRESSION_TYPE, expression_label(book.language))
+        book.expression = store.create(EXPRESSION_TYPE, expression_label(book.language, book.text_title))
         link = model.add_statement(book.expression, VERSION_OF, EntityValue(book.work.id), model.ENTITY_EDITOR)
     expression = book.expression
     languages = [book.language] if book.language.strip() else []
     book.expression = store.change(expression, [
         *link,
-        *_label_edits(expression, expression_label(book.language)),
+        *_label_edits(expression, expression_label(book.language, book.text_title)),
+        *_value_edits(expression, TEXT_TITLE, _subtitle(book.text_title)),
         *_names_edits(store, expression, LANGUAGE, languages, model.ENTITY_TYPE),
         *_names_edits(store, expression, TRANSLATOR, book.translators, PERSON_TYPE),
         *_names_edits(store, expression, EDITOR, book.editors, PERSON_TYPE),
@@ -673,6 +997,87 @@ def save(store: Store, book: Book) -> None:
     ])
     for edition in book.editions:
         _save_edition(store, edition, book.expression)
+
+
+def add_text(store: Store, work: Entity, text: Text) -> Entity:
+    """Add an expression to a work, and return it.
+
+    :raises BookError: if it can't be done."""
+    if not (text.title.strip() or text.language.strip()):
+        raise BookError("An Expression needs a title or a language")
+    label = expression_label(text.language, text.title)
+    entity = store.create(EXPRESSION_TYPE, label)
+    languages = [text.language] if text.language.strip() else []
+    try:
+        return store.change(entity, [
+            *model.add_statement(entity, VERSION_OF, EntityValue(work.id), model.ENTITY_EDITOR),
+            *_value_edits(entity, TEXT_TITLE, _subtitle(text.title)),
+            *_names_edits(store, entity, LANGUAGE, languages, model.ENTITY_TYPE),
+            *_names_edits(store, entity, TRANSLATOR, text.translators, PERSON_TYPE),
+            *_names_edits(store, entity, EDITOR, text.editors, PERSON_TYPE),
+        ])
+    except BookError:
+        _clear_away(store, entity, EXPRESSION_TYPE)
+        raise
+
+
+def add_edition(store: Store, expression: Entity, edition: Edition) -> None:
+    """Add a manifestation to an expression, with no copies: having one
+    is said on its own.
+
+    :raises BookError: if it can't be done."""
+    edition.copies = []
+    if _empty(edition):
+        raise BookError("A Manifestation needs some details")
+    problem = check(Book(title="-", editions=[edition]))
+    if problem:
+        raise BookError(problem)
+    try:
+        _save_edition(store, edition, expression)
+    except BookError:
+        if edition.entity is not None:
+            _clear_away(store, edition.entity, MANIFESTATION_TYPE)
+        raise
+
+
+def add_copy(store: Store, manifestation: Entity, copy: Copy) -> None:
+    """Add a copy to a manifestation: one with nothing known is still one.
+
+    :raises BookError: if it can't be done."""
+    problem = check(Book(title="-", editions=[Edition(copies=[copy])]))
+    if problem:
+        raise BookError(problem)
+    copy.wanted = True
+    try:
+        _save_copy(store, copy, manifestation)
+    except BookError:
+        if copy.entity is not None:
+            _clear_away(store, copy.entity, ITEM_TYPE)
+        raise
+
+
+def _clear_away(store: Store, entity: Entity, type_id: str):
+    """Destroy what was made for something that failed, so that nothing's
+    left of it.  The failure's what matters if this can't be done."""
+    try:
+        store.destroy(model.item_id(entity.id, type_id))
+    except BookError:
+        pass
+
+
+def remove(store: Store, type_id: str, entity: Entity) -> None:
+    """Remove a level, if it has nothing under it: what's on the card is
+    what you'd expect to go, so nothing goes with it.  A copy's content
+    isn't touched: it's an item in its own right.
+
+    :raises BookError: if there's something under it, or it can't be done."""
+    item_id = model.item_id(entity.id, type_id)
+    below = {WORK_TYPE: (VERSION_OF, EXPRESSION_TYPE, "Expressions"),
+             EXPRESSION_TYPE: (VERSION_OF, MANIFESTATION_TYPE, "Manifestations"),
+             MANIFESTATION_TYPE: (EXEMPLAR_OF, ITEM_TYPE, "copies")}.get(type_id)
+    if below is not None and store.children(item_id, below[0], below[1]):
+        raise BookError(f"Remove its {below[2]} first")
+    store.destroy(item_id)
 
 
 def vocabulary() -> list[Entity]:
@@ -693,6 +1098,7 @@ def vocabulary() -> list[Entity]:
         prop(VERSION_OF, "version, edition or translation of", Datatype.Item),
         prop(EXEMPLAR_OF, "exemplar of", Datatype.Item),
         prop(SUBTITLE, "subtitle", Datatype.Text),
+        prop(TEXT_TITLE, "title", Datatype.Text),
         prop(AUTHOR, "author", Datatype.Item),
         prop(SERIES, "part of the series", Datatype.Item),
         prop(DDC, "Dewey Decimal Classification", Datatype.String),
@@ -707,6 +1113,7 @@ def vocabulary() -> list[Entity]:
         prop(PAGES, "number of pages", Datatype.Quantity),
         prop(CONTRIBUTOR, "contributor to the creative work or subject", Datatype.Item),
         prop(CONTRIBUTOR_ROLE, "contribution", Datatype.String, "What someone contributed to a book"),
+        prop(OPEN_LIBRARY, "Open Library ID", Datatype.String),
         prop(ASIN, "Amazon Standard Identification Number", Datatype.String),
         prop(LCCN, "Library of Congress item ID", Datatype.String),
         prop(LIBRARYTHING_WORK, "LibraryThing work ID", Datatype.String),
@@ -724,7 +1131,10 @@ def vocabulary() -> list[Entity]:
         prop(IMPRINT, "imprint", Datatype.String, "The imprint of a publisher an edition of a book is under"),
         prop(BINDING, "binding", Datatype.String, "The form an edition of a book takes"),
         prop(LOCATION, "location", Datatype.String, "Where a copy of a book is kept"),
-        prop(FILE, "file", Datatype.String, "The item that's a copy of a book, as an identifier"),
+        prop(HAS_CHARACTERISTIC, "has characteristic", Datatype.Item),
+        item(PREFERENCE, "preference"),
+        prop(COVER, "cover", Datatype.String, "The image item of an edition's cover, as an identifier"),
+        prop(CONTENT, "content", Datatype.String, "The item that's a copy of a book, as an identifier"),
         prop(PRINTING, "printing", Datatype.String, "Which printing a copy of a book is"),
         prop(PRINTED, "date of printing", Datatype.Time, "When a copy of a book was printed"),
         *(item(item_id, label) for _, item_id, label in INVERSE_LABELS),

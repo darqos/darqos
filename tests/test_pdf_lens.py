@@ -8,6 +8,8 @@ import importlib.util
 import pathlib
 
 import pytest
+from PyQt6 import QtCore
+from PyQt6.QtGui import QKeyEvent
 
 from darq.errors import DeadPortError
 from darq.protocols import pdf as wire
@@ -38,6 +40,7 @@ class FakePdf:
         self.data = data
         self.closed = False
         self.dead = False
+        self.position = ""
 
     def get(self):
         if self.dead:
@@ -48,6 +51,16 @@ class FakePdf:
         if self.dead:
             raise DeadPortError("item is gone")
         self.closed = True
+
+    def get_position(self):
+        if self.dead:
+            raise DeadPortError("item is gone")
+        return wire.GetPositionResponse(position=self.position)
+
+    def set_position(self, position):
+        if self.dead:
+            raise DeadPortError("item is gone")
+        self.position = position
 
 
 class FakeHistory:
@@ -378,13 +391,132 @@ def test_lens_use(qt_app, monkeypatch):
         def stop(self):
             stopped.append(True)
 
-    pdf_lens = lens.PdfLens(Loop(), history)  # pyright: ignore[reportArgumentType]
+    pdf_lens = lens.PdfLens(Loop(), history, lambda item_id: "")  # pyright: ignore[reportArgumentType]
     assert pdf_lens.use(UseRequest(item_id=ITEM_ID, item=5), 0).status == Status.OK
     assert pdf_lens.use(UseRequest(item_id=ITEM_ID, item=6), 0).status == Status.BUSY
     assert history.events == [(ITEM_ID, "opened", "pdf-lens")]
     assert pdf_lens.window is not None
     pdf_lens.window.close()
     assert client.closed and stopped == [True]
+
+
+def press(window, key, modifiers=None):
+    event = QKeyEvent(QtCore.QEvent.Type.KeyPress, key, modifiers or QtCore.Qt.KeyboardModifier.NoModifier)
+    window.keyPressEvent(event)
+
+
+def test_a_plain_pdf_opens_in_the_column(window):
+    view = window()
+    assert not view.reading
+    assert view.view.pageMode() == lens.QPdfView.PageMode.MultiPage
+
+
+def test_the_reading_view_is_a_page_at_a_time(window):
+    view = window()
+    view.set_reading(True)
+    assert view.view.pageMode() == lens.QPdfView.PageMode.SinglePage
+    assert view.view.zoomMode() == lens.QPdfView.ZoomMode.FitInView
+    view.set_reading(False)
+    assert view.view.pageMode() == lens.QPdfView.PageMode.MultiPage
+
+
+def test_the_reading_views_keys_turn_pages(window):
+    K = QtCore.Qt.Key
+    view = window()
+    view.set_reading(True)
+    press(view, K.Key_Space)
+    press(view, K.Key_PageDown)
+    press(view, K.Key_F, QtCore.Qt.KeyboardModifier.ControlModifier)
+    assert view.page == 3
+    press(view, K.Key_Space)
+    assert view.page == 3
+    press(view, K.Key_Backspace)
+    press(view, K.Key_B, QtCore.Qt.KeyboardModifier.ControlModifier)
+    assert view.page == 1
+    press(view, K.Key_End)
+    assert view.page == 3
+    press(view, K.Key_Home)
+    assert view.page == 0
+
+
+def test_control_f_finds_in_the_column(window):
+    view = window()
+    press(view, QtCore.Qt.Key.Key_F, QtCore.Qt.KeyboardModifier.ControlModifier)
+    assert view.find_bar.isVisibleTo(view) and view.page == 0
+
+
+def test_v_switches_views(window):
+    view = window()
+    press(view, QtCore.Qt.Key.Key_V)
+    assert view.reading
+
+
+def test_b_catalogues_in_either_view(window):
+    view = window()
+    asked = []
+    view.on_catalogue = lambda: asked.append(True)
+    press(view, QtCore.Qt.Key.Key_B)
+    view.set_reading(True)
+    press(view, QtCore.Qt.Key.Key_B)
+    assert len(asked) == 2
+
+
+def test_a_documents_details(window):
+    data = make_pdf(("ISBN 0-596-00712-4",), title="A Title", author="An Author")
+    details = window(data).details()
+    assert (details.title, details.authors, details.isbn) == ("A Title", ["An Author"], "0596007124")
+
+
+def test_closing_saves_the_page(window):
+    view = window()
+    view.go_to(2)
+    client = view.sync.client
+    view.close()
+    assert client.position == "2"
+
+
+def run_lens(monkeypatch, client, copy=""):
+    monkeypatch.setattr(lens.wire.Pdf, "Client", lambda port, timeout: client)
+
+    class Loop:
+        def post(self, job):
+            job()
+
+        def stop(self):
+            pass
+
+    pdf_lens = lens.PdfLens(Loop(), None, lambda item_id: copy)  # pyright: ignore[reportArgumentType]
+    assert pdf_lens.use(UseRequest(item_id=ITEM_ID, item=5), 0).status == Status.OK
+    assert pdf_lens.window is not None
+    return pdf_lens.window
+
+
+def test_it_reopens_where_it_was(qt_app, monkeypatch):
+    client = FakePdf(make_pdf(("One", "Two", "Three")))
+    client.position = "2"
+    window = run_lens(monkeypatch, client)
+    assert window.page == 2
+    window.close()
+
+
+def test_nonsense_in_a_position_is_the_start(qt_app, monkeypatch):
+    client = FakePdf(make_pdf(("One", "Two")))
+    client.position = "1:0.5"
+    window = run_lens(monkeypatch, client)
+    assert window.page == 0
+    window.close()
+
+
+def test_being_catalogued_is_the_mark(qt_app, monkeypatch):
+    window = run_lens(monkeypatch, FakePdf(make_pdf(("One",))), "darq.book.item:c")
+    assert window.reading
+    window.close()
+
+
+def test_a_pdf_not_catalogued_is_plain(qt_app, monkeypatch):
+    window = run_lens(monkeypatch, FakePdf(make_pdf(("One",))))
+    assert not window.reading
+    window.close()
 
 
 def test_lens_use_when_the_item_has_gone(qt_app, monkeypatch):

@@ -1,0 +1,37 @@
+{
+  "types": [
+    {
+      "id": "darq.ebook",
+      "name": "E-Book",
+      "description": "A book, as a file, for reading.",
+      "conforms_to": ["public.data", "public.composite-content"]
+    },
+    {
+      "id": "darq.book.epub",
+      "name": "EPUB Book",
+      "description": "An e-book in EPUB format.",
+      "conforms_to": ["darq.ebook"],
+      "mime_types": ["application/epub+zip"],
+      "extensions": ["epub"],
+      "implemented": true
+    },
+    {
+      "id": "darq.book.mobi",
+      "name": "Mobipocket Book",
+      "description": "An e-book in Mobipocket format.",
+      "conforms_to": ["darq.ebook"],
+      "mime_types": ["application/x-mobipocket-ebook"],
+      "extensions": ["mobi", "prc"],
+      "implemented": true
+    },
+    {
+      "id": "darq.book.azw",
+      "name": "Kindle Book",
+      "description": "An e-book in Kindle format.",
+      "conforms_to": ["darq.ebook"],
+      "mime_types": ["application/vnd.amazon.ebook", "application/x-mobi8-ebook"],
+      "extensions": ["azw", "azw3"],
+      "implemented": true
+    }
+  ]
+}
