@@ -320,15 +320,18 @@ class Importer:
         """Return a bot's entity, or that of someone who's not a member
         now, which is all that can be said of them."""
         entity_id = identifier(self.team, "bot", key)
-        if self.items.get(entity_id, follow=False) is None:
-            bot = model.Item(entity_id)
-            bot.set_label(self.user_name(key) or key)
-            bot.claim(model.INSTANCE_OF, model.EntityValue(SOFTWARE_AGENT)).add_reference(
-                model.Reference().add(model.STATED_IN, model.EntityValue(self.workspace)))
-            bot.claim(ACCOUNT, model.EntityValue(self.workspace)).add_qualifier(
-                MEMBER_ID, model.StringValue(key)).add_reference(
-                model.Reference().add(model.STATED_IN, model.EntityValue(self.workspace)))
-            self.items.create(model.ENTITY_TYPE, bot)
+        current = self.items.get(entity_id)
+        if current is not None:
+            # One that's been merged is what it was merged into.
+            return current.id
+        bot = model.Item(entity_id)
+        bot.set_label(self.user_name(key) or key)
+        bot.claim(model.INSTANCE_OF, model.EntityValue(SOFTWARE_AGENT)).add_reference(
+            model.Reference().add(model.STATED_IN, model.EntityValue(self.workspace)))
+        bot.claim(ACCOUNT, model.EntityValue(self.workspace)).add_qualifier(
+            MEMBER_ID, model.StringValue(key)).add_reference(
+            model.Reference().add(model.STATED_IN, model.EntityValue(self.workspace)))
+        self.items.create(model.ENTITY_TYPE, bot)
         return entity_id
 
     def conversation_label(self, conversation: dict) -> str:

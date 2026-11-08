@@ -85,7 +85,8 @@ class MemoryStore:
         return self.item(self.entities[entity_id]) if entity_id in self.entities else ""
 
     def find(self, label: str, type_id: str) -> str:
-        return next((e.id for e in self.of_kind(type_id) if e.get_label() == label), "")
+        kind = model.ENTITY_TYPE if type_id == darq.book.LANGUAGE_KIND else type_id
+        return next((e.id for e in self.of_kind(kind) if e.get_label() == label), "")
 
     def create(self, type_id: str, label: str) -> model.Entity:
         return self.add(type_id, label)

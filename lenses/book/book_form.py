@@ -55,7 +55,7 @@ COMPLETED = {
     "translators": darq.book.PERSON_TYPE,
     "editors": darq.book.PERSON_TYPE,
     "publisher": darq.book.ORGANISATION_TYPE,
-    "language": model.ENTITY_TYPE,
+    "language": darq.book.LANGUAGE_KIND,
     "series": model.ENTITY_TYPE,
 }
 

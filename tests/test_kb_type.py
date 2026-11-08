@@ -533,6 +533,24 @@ def test_get_entity(ada):
     }
 
 
+def test_a_link_to_a_merged_entity_names_what_it_was_merged_into(kb, ada):
+    """A merge relinks what links to the old identifier, but a statement
+    made after it, as by an import, can still name it, and it redirects:
+    it's listed by that, with the new one's name."""
+    other = model.Item("Q999")
+    other.set_label("Acme, from Wikidata")
+    other.claim(model.INSTANCE_OF, model.EntityValue("Q43229"))
+    kb.put(other)
+    kb.merge("acme", "Q999")
+    person = kb.get(ada.entity_id)
+    assert person.get_statements("P108")[0].get_value().entity_id == "Q999"
+    person.claim("P108", model.EntityValue("acme"))
+    kb.put(person)
+    response = ada.get_entity(GetEntityRequest(languages=["en"]), 0)
+    linked = {link.entity_id: link for link in response.linked}
+    assert (linked["acme"].label, linked["acme"].item_id) == ("Acme, from Wikidata", "darq.organisation:Q999")
+
+
 def test_linked_have_descriptions_and_datatypes(kb, ada):
     acme = kb.get("acme")
     acme.set_description("a company")

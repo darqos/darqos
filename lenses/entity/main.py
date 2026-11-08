@@ -43,13 +43,16 @@ import typing
 
 from PyQt6 import QtCore
 from PyQt6.QtGui import QKeyEvent, QMouseEvent
-from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea,
-                             QStackedWidget, QTextBrowser, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QInputDialog, QLabel, QMenu, QMessageBox, QPushButton,
+                             QScrollArea, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget)
 
 import darq
 import darq.history
+import darq.merging
+import darq.ui.kb_writer
 import darq.kb as model
 import darq.launch
+import darq.wikidata
 from darq.loop import QtEventLoop
 from darq.protocols.history import History
 from darq.protocols.kb import Changed, EntityItem, Kind, Linked, LinkGroup, Listener
@@ -57,7 +60,8 @@ from darq.protocols.kb import Status as KBStatus
 from darq.protocols.lens import Close, Lens, Ready, Status, UseRequest, UseResponse
 from darq.ui import links as grouped
 from darq.ui import style
-from darq.ui.launcher import Launcher
+from darq.ui import wikidata as wikidata_ui
+from darq.ui.launcher import Launcher, start_thread
 from darq.ui.style import CONTROLS
 
 # Its own modules are beside it.
@@ -89,6 +93,8 @@ Ctrl+click            Open a link in a new window
 E                     Edit, or finish editing
 D                     Show or hide deprecated statements
 F5                    Refresh
+W                     Find on Wikidata, or refresh from it
+M                     Merge into another entity
 F1                    Help
 Ctrl+W                Close
 
@@ -745,6 +751,10 @@ class EntityWindow(QWidget):
             deprecated.setCheckable(True)
             deprecated.setChecked(self.show_deprecated)
         menu.addAction("Refresh", self.refresh)
+        if self.shown is not None:
+            matched = darq.wikidata.is_wikidata(self.shown.entity.id)
+            menu.addAction("Refresh from Wikidata" if matched else "Find on Wikidata ...", self.wikidata)
+            menu.addAction("Merge into ...", self.merge)
         menu.addAction("Full screen", self.toggle_full_screen)
         menu.addAction("Help", self.toggle_help)
         menu.addSeparator()
@@ -801,12 +811,120 @@ class EntityWindow(QWidget):
             self.go_back()
         elif key == Key.Key_F5:
             self.refresh()
+        elif key == Key.Key_W and not control:
+            self.wikidata()
+        elif key == Key.Key_M and not control:
+            self.merge()
         elif key == Key.Key_F1:
             self.toggle_help()
         elif key == Key.Key_W and control:
             self.close()
         else:
             super().keyPressEvent(a0)
+
+    # Wikidata (see doc/wikidata.rst)
+
+    def wikidata(self):
+        """Find the entity shown on Wikidata, and make it Wikidata's, or, if
+        it is, give it Wikidata's facts as they are now.  What's asked of
+        Wikidata's done on another thread."""
+        shown = self.shown
+        if shown is None:
+            return
+        entity_id = shown.entity.id
+        if darq.wikidata.is_wikidata(entity_id):
+            self.show_status("Refreshing from Wikidata ...")
+            self.lens.in_background(lambda linker: linker.refresh(entity_id), self.wikidata_done)
+            return
+        label = render.best(shown.entity.labels, self.chain) or ""
+        if not label:
+            self.show_status("It needs a label to be found by")
+            return
+        self.show_status(f"Looking for {label} on Wikidata ...")
+        self.lens.in_background(lambda linker: darq.wikidata.search(label, linker.fetch, linker.agent),
+                                lambda found: self.found_on_wikidata(entity_id, found))
+
+    def found_on_wikidata(self, entity_id: str, found: typing.Any):
+        if isinstance(found, Exception):
+            self.show_status(str(found))
+            return
+        if not found:
+            self.show_status("Wikidata has nothing by that name")
+            return
+        chosen = self.lens.choose("Which is it?", [c.describe() for c in found] + ["None of these"])
+        if chosen is None or chosen >= len(found):
+            self.show_status("")
+            return
+        target = found[chosen].id
+        self.show_status(f"Making it {target} ...")
+        self.lens.in_background(lambda linker: linker.link(entity_id, target), self.wikidata_done)
+
+    def wikidata_done(self, outcome: typing.Any):
+        if isinstance(outcome, Exception):
+            self.show_status(str(outcome))
+            return
+        self.show_status("From Wikidata")
+        self.refresh()
+
+    # Merging (see doc/kb-service.rst)
+
+    def merge(self):
+        """Merge the entity shown into another, chosen by name, or, if only
+        it's Wikidata's, the other into it.  The KB's asked on another
+        thread."""
+        shown = self.shown
+        if shown is None:
+            return
+        entity = shown.entity
+        label = render.best(entity.labels, self.chain) or ""
+        text = self.lens.ask_text(f"Merge {label or entity.id} ({entity.id}) into the entity named:", label)
+        if not text:
+            return
+        self.show_status(f"Looking for {text} ...")
+        language = self.chain[0] if self.chain else "en"
+        self.lens.in_kb(lambda kb: darq.merging.candidates(kb, entity, text, language),
+                        lambda found: self.merge_found(entity, found))
+
+    def merge_found(self, entity: model.Entity, found: typing.Any):
+        if isinstance(found, Exception):
+            self.show_status(str(found))
+            return
+        if not found:
+            self.show_status("There's nothing else of its kind by that name")
+            return
+        chosen = self.lens.choose("Merge it into which?", [c.describe() for c in found], "Merge")
+        if chosen is None:
+            self.show_status("")
+            return
+        other = found[chosen].id
+        self.show_status("")
+        self.lens.in_kb(lambda kb: kb.get(other, follow=False), lambda got: self.merge_into(entity, got))
+
+    def merge_into(self, entity: model.Entity, other: typing.Any):
+        if isinstance(other, Exception) or other is None:
+            self.show_status(str(other) if other is not None else "It's gone")
+            return
+        try:
+            plan = darq.merging.plan(entity, other)
+        except darq.merging.MergeError as e:
+            self.show_status(str(e))
+            return
+        if not self.lens.confirm(plan.question(self.chain[0] if self.chain else "en")):
+            return
+        old, new = plan.old, plan.new
+        self.show_status("Merging ...")
+        self.lens.in_kb(lambda kb: self.lens.items(kb).merge(old.id, new.id),
+                        lambda done: self.merged(old, new, done))
+
+    def merged(self, old: model.Entity, new: model.Entity, outcome: typing.Any):
+        if isinstance(outcome, Exception):
+            self.show_status(str(outcome))
+            return
+        for entity in (old, new):
+            self.lens.record(model.item_id(entity.id, model.recorded_type(entity) or model.ENTITY_TYPE),
+                             darq.history.MERGED)
+        self.show_status(f"Merged {old.id} into {new.id}")
+        self.refresh()
 
     def mousePressEvent(self, a0: QMouseEvent | None):
         # Dragging the margin moves the window: the compositor does it,
@@ -879,6 +997,68 @@ class EntityLens(Lens.Handler):
         self.services = typing.cast(typing.Any, LensServices(history))
         self.launcher = Launcher(self, SOURCE, loop.post)
         self.opener: Opener = opener if opener is not None else LaunchOpener(self.launcher)
+
+        # How Wikidata's asked, on another thread, and how one of what it
+        # has is chosen: tests replace these.
+        self.make_linker: typing.Callable[[], darq.wikidata.Linker] = wikidata_ui.linker
+        self.run: typing.Callable[[typing.Callable[[], None]], None] = start_thread
+        self.choose: typing.Callable[..., int | None] = self.ask_to_choose
+
+        # How the KB's reached, for merging, on another thread, and what's
+        # asked: tests replace these.
+        self.connect_kb: typing.Callable[[], model.KB] = lambda: model.KB.connect(timeout=TIMEOUT)
+        self.items: typing.Callable[[model.KB], model.KB] = darq.ui.kb_writer.writer
+        self.ask_text: typing.Callable[[str, str], str] = self.ask_for_text
+        self.confirm: typing.Callable[[str], bool] = self.ask_to_confirm
+
+    def in_background(self, job: typing.Callable[[darq.wikidata.Linker], typing.Any],
+                      done: typing.Callable[[typing.Any], None]):
+        """Do something with Wikidata on another thread, and give what it
+        returned, or the exception it raised, to done, on this one."""
+        make_linker = self.make_linker
+
+        def run():
+            try:
+                outcome = job(make_linker())
+            except (darq.wikidata.WikidataError, darq.DarqError, TimeoutError, LookupError, ValueError,
+                    model.ConflictError) as e:
+                logging.warning(f"Wikidata: {e!r}")
+                outcome = e
+            if self.run is start_thread:
+                darq.release_reply_port()
+            self.loop.post(lambda: done(outcome))
+
+        self.run(run)
+
+    def in_kb(self, job: typing.Callable[[model.KB], typing.Any], done: typing.Callable[[typing.Any], None]):
+        """Do something with the KB on another thread, and give what it
+        returned, or the exception it raised, to done, on this one."""
+        connect = self.connect_kb
+
+        def run():
+            try:
+                outcome = job(connect())
+            except (darq.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError,
+                    darq.merging.MergeError) as e:
+                logging.warning(f"Merging: {e!r}")
+                outcome = e
+            if self.run is start_thread:
+                darq.release_reply_port()
+            self.loop.post(lambda: done(outcome))
+
+        self.run(run)
+
+    def ask_to_choose(self, question: str, choices: list[str], title: str = "Wikidata") -> int | None:
+        chosen, ok = QInputDialog.getItem(self.window, title, question, choices, 0, False)
+        return choices.index(chosen) if ok and chosen in choices else None
+
+    def ask_for_text(self, question: str, text: str) -> str:
+        answer, ok = QInputDialog.getText(self.window, "Merge", question, text=text)
+        return answer.strip() if ok else ""
+
+    def ask_to_confirm(self, question: str) -> bool:
+        answer = QMessageBox.question(self.window, "Merge", question)
+        return answer == QMessageBox.StandardButton.Yes
 
     def use(self, request: UseRequest, source: int) -> UseResponse:
         if self.window is not None:

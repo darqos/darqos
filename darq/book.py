@@ -49,6 +49,7 @@ __all__ = [
     "ISBN_13",
     "ITEM_TYPE",
     "LANGUAGE",
+    "LANGUAGE_KIND",
     "LCC",
     "LCCN",
     "LIBRARYTHING",
@@ -124,9 +125,11 @@ MANIFESTATION_TYPE = "darq.book.manifestation"
 ITEM_TYPE = "darq.book.item"
 PARTS = frozenset({EXPRESSION_TYPE, MANIFESTATION_TYPE, ITEM_TYPE})
 
-# The kinds of what a book's names refer to.
+# The kinds of what a book's names refer to.  A language is looked for
+# among Wikidata's, by its name or code, and then among those made here.
 PERSON_TYPE = "darq.person"
 ORGANISATION_TYPE = "darq.organisation"
+LANGUAGE_KIND = "language"
 
 # What ties the levels together: an expression to its work, and a
 # manifestation to its expression, are both Wikidata's version, edition
@@ -766,8 +769,10 @@ def _subtitle(text: str) -> model.Value | None:
 
 
 def _name_id(store: Store, name: str, type_id: str) -> str:
-    """Return the entity with a name, or make one."""
-    return store.find(name, type_id) or store.create(type_id, name).id
+    """Return the entity with a name, or make one: a language that isn't
+    one of Wikidata's is an entity like any other."""
+    made = model.ENTITY_TYPE if type_id == LANGUAGE_KIND else type_id
+    return store.find(name, type_id) or store.create(made, name).id
 
 
 def _names_edits(store: Store, entity: Entity, property_id: str, names: list[str], type_id: str) -> list[model.Edit]:
@@ -989,7 +994,7 @@ def save(store: Store, book: Book) -> None:
         *link,
         *_label_edits(expression, expression_label(book.language, book.text_title)),
         *_value_edits(expression, TEXT_TITLE, _subtitle(book.text_title)),
-        *_names_edits(store, expression, LANGUAGE, languages, model.ENTITY_TYPE),
+        *_names_edits(store, expression, LANGUAGE, languages, LANGUAGE_KIND),
         *_names_edits(store, expression, TRANSLATOR, book.translators, PERSON_TYPE),
         *_names_edits(store, expression, EDITOR, book.editors, PERSON_TYPE),
         *_value_edits(expression, STARTED, _time(book.started)),
@@ -1012,7 +1017,7 @@ def add_text(store: Store, work: Entity, text: Text) -> Entity:
         return store.change(entity, [
             *model.add_statement(entity, VERSION_OF, EntityValue(work.id), model.ENTITY_EDITOR),
             *_value_edits(entity, TEXT_TITLE, _subtitle(text.title)),
-            *_names_edits(store, entity, LANGUAGE, languages, model.ENTITY_TYPE),
+            *_names_edits(store, entity, LANGUAGE, languages, LANGUAGE_KIND),
             *_names_edits(store, entity, TRANSLATOR, text.translators, PERSON_TYPE),
             *_names_edits(store, entity, EDITOR, text.editors, PERSON_TYPE),
         ])

@@ -559,6 +559,9 @@ System
 
 * Some sort of conceptual support for USB storage / SD cards / etc in
   the storage system.
+* Make the Wikidata and Wikipedia URLs on an entity's page links, once
+  there's a web lens to follow them to: in Second Edition they're text
+  (see :doc:`wikidata`).
 
 Services
 

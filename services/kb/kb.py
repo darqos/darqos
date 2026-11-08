@@ -14,7 +14,7 @@ from typing import (TYPE_CHECKING, Dict, Iterable, Iterator, List, Optional,
                     Sequence, Set, Tuple)
 
 from darq.kb import (INSTANCE_OF, SUBCLASS_OF, VALUE_TYPES, ConflictError,
-                     Datatype, Entity, EntityValue, Item, Property, Query,
+                     Datatype, Entity, EntityValue, combine_statements, Item, Property, Query,
                      QuantityValue, Rank, Reference, Snak, Statement,
                      StringValue, TextValue, TimeValue, document,
                      entity_links, entity_strings, fold, normalise,
@@ -24,6 +24,27 @@ from query import TIME_LIMIT, QueryError, check, evaluate
 
 if TYPE_CHECKING:
     from store import Store
+
+
+def _retarget(entity: Entity, old_id: str, new_id: str) -> bool:
+    """Make an entity's references to one entity be to another, returning
+    whether there were any."""
+    def moved(snak: Snak) -> Snak:
+        if isinstance(snak.value, EntityValue) and snak.value.entity_id == old_id:
+            return Snak(snak.property_id, EntityValue(new_id))
+        return snak
+
+    found = False
+    for statement in entity.statements:
+        snaks = [statement.main_snak, *statement.qualifiers, *(a for r in statement.references for a in r.snaks)]
+        if not any(isinstance(s.value, EntityValue) and s.value.entity_id == old_id for s in snaks):
+            continue
+        found = True
+        statement.main_snak = moved(statement.main_snak)
+        statement.qualifiers = [moved(q) for q in statement.qualifiers]
+        for reference in statement.references:
+            reference.snaks = [moved(a) for a in reference.snaks]
+    return found
 
 
 def _live(entity: Optional[Entity]) -> bool:
@@ -302,9 +323,61 @@ class KnowledgeBase:
             old.remove_statement(s)
             new.add_statement(s)
 
+        # What both said is said once, cited to both.
+        combine_statements(new)
+
         old.redirect = new.id
         old.changed()
         return new
+
+    def relink(self, old_id: str, new_id: str) -> List[Entity]:
+        """Make what links to an entity that's been merged link to what it
+        was merged into, as Wikidata's bots do, and return what's changed.
+        Main values, qualifiers and references are all changed: what's
+        outside the KB, such as History, still finds it by its redirect.
+        A statement that comes to say what another does is left: it's
+        a source's, perhaps, and a re-import sorts it out."""
+        if self.store is not None:
+            self.flush()
+            ids = self.store.linking_to(old_id)
+        else:
+            ids = [e.id for e in self.entities() if any(t == old_id for _, _, t, _ in entity_links(e))]
+        changed = []
+        for entity_id in ids:
+            entity = self.get(entity_id, follow=False)
+            if entity is not None and _live(entity) and _retarget(entity, old_id, new_id):
+                # One that named both now says the same thing twice.
+                combine_statements(entity)
+                entity.changed()
+                changed.append(entity)
+        return changed
+
+    def relink_merged(self) -> List[Entity]:
+        """Relink what still links to any entity that's been merged, as
+        merges before relinking left, and combine what entities merged
+        into say twice, as merges before combining left: returns what's
+        changed."""
+        if self.store is not None:
+            self.flush()
+            merged = self.store.merged_ids()
+        else:
+            merged = sorted(e.id for e in (*self.items.values(), *self.properties.values())
+                            if e.redirect is not None)
+        changed: List[Entity] = []
+        targets: Dict[str, Entity] = {}
+        for old_id in merged:
+            target = self.get(old_id)
+            if target is not None and target.id != old_id:
+                changed += self.relink(old_id, target.id)
+                targets[target.id] = target
+
+        # And what merges before combining left said twice is said once.
+        seen = {e.id for e in changed}
+        for target in targets.values():
+            if target.id not in seen and combine_statements(target):
+                target.changed()
+                changed.append(target)
+        return changed
 
     def entities(self) -> Iterator[Entity]:
         """Return all entities, except destroyed and merged ones."""
@@ -413,10 +486,24 @@ class KnowledgeBase:
             self.flush()
             return self._entities(
                 self.store.find_links(target_id, property_id, role))
+        targets = self.merged_into(target_id)
         return [e for e in self.entities()
-                if any(t == target_id and r == role
+                if any(t in targets and r == role
                        and (property_id is None or p == property_id)
                        for _, p, t, r in entity_links(e))]
+
+    def merged_into(self, target_id: str) -> Set[str]:
+        """Return an entity, and those merged into it, at any depth: a
+        statement made before a merge still links to the old one."""
+        if self.store is not None:
+            self.flush()
+            return set(self.store.merged_into(target_id))
+        targets = {target_id}
+        while True:
+            more = {e.id for e in (*self.items.values(), *self.properties.values()) if e.redirect in targets} - targets
+            if not more:
+                return targets
+            targets |= more
 
     def instances(self, class_id: str) -> List[Entity]:
         """Find the instances of a class, or of any of its subclasses."""
@@ -492,8 +579,9 @@ class KnowledgeBase:
             self.flush()
             return self.store.link_counts(target_id)
         counts: Dict[Tuple[str, str, str], int] = {}
+        targets = self.merged_into(target_id)
         for entity in self.entities():
-            groups = {(p, r, recorded_type(entity)) for _, p, t, r in entity_links(entity) if t == target_id}
+            groups = {(p, r, recorded_type(entity)) for _, p, t, r in entity_links(entity) if t in targets}
             for group in groups:
                 counts[group] = counts.get(group, 0) + 1
         return [(*group, count) for group, count in sorted(counts.items())]

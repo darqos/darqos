@@ -14,6 +14,7 @@ import typing
 import darq.kb as model
 import darq.message
 import darq.url
+import darq.wikidata
 from darq.protocols.kb import LinkGroup, Linked
 from darq.ui import links as grouped
 from darq.ui import style
@@ -208,6 +209,10 @@ class Page:
         description = best(entity.descriptions, self.chain)
         if description:
             parts.append(f'<p class="description">{html.escape(description)}</p>')
+
+        # Wikidata's page, as text: there's no web lens to go to yet.
+        if darq.wikidata.is_wikidata(entity.id):
+            parts.append(f'<p class="detail">Wikidata: {html.escape(darq.wikidata.page_of(entity.id))}</p>')
         aliases = next((entity.aliases[lang] for lang in self.chain if entity.aliases.get(lang)), [])
         if aliases:
             parts.append(f'<p class="aliases">Also known as: {html.escape(", ".join(aliases))}</p>')

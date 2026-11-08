@@ -53,6 +53,7 @@ Services
 .. include:: history.rst
 .. include:: search-service.rst
 .. include:: kb-service.rst
+.. include:: wikidata.rst
 .. include:: extraction-service.rst
 .. include:: http-service.rst
 .. include:: network.rst

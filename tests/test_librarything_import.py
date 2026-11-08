@@ -311,6 +311,24 @@ def test_a_person_found_by_name_is_listed(target):
     assert [name for name, _ in result.matches] == ["Peter Carey"]
 
 
+def test_a_person_merged_into_wikidatas_is_wikidatas_on_reimport(target):
+    """After Peter Carey's made Wikidata's, by Find on Wikidata, the
+    import's books are his, and it doesn't make him again."""
+    client, adapter, _ = target
+    items = model.KB(client.client, Writer(adapter.handler))
+    run(target, record())
+    [local] = client.find_by_label("Peter Carey", "en")
+    carey = model.Item("Q313254")
+    carey.set_label("Peter Philip Carey")
+    carey.claim(model.INSTANCE_OF, model.EntityValue("Q5"))
+    client.put(carey)
+    items.merge(local, "Q313254")
+    assert target_of(one(client, darq.book.LIBRARYTHING_WORK, "w1"), darq.book.AUTHOR) == ["Q313254"]
+    run(target, record())
+    assert target_of(one(client, darq.book.LIBRARYTHING_WORK, "w1"), darq.book.AUTHOR) == ["Q313254"]
+    assert list(client.instances("Q5")) == ["Q313254"]
+
+
 def test_people_it_made_arent_news(target):
     run(target, record())
     assert run(target, record()).matches == []

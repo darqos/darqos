@@ -26,6 +26,7 @@ Each record consists of:
     * opened
     * edited
     * destroyed
+    * merged (an entity, into another, or another into it)
 
   * These events seem to be mostly verbs, representing some action
     that has occurred, so that's probably a decent guideline for

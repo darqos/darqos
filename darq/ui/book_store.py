@@ -19,6 +19,7 @@ import darq.book
 import darq.history
 import darq.kb as model
 import darq.launch
+import darq.wikidata
 from darq.book import BookError
 from darq.protocols.kb import EntityItem, Linked, Role
 from darq.protocols.kb import Status as KBStatus
@@ -36,8 +37,9 @@ SAVE_ATTEMPTS = 3
 # Most names to offer, as what's typed is completed.
 MAX_NAMES = 12
 
-# The classes of kinds, to find entities of.
-CLASSES = dict(model.KINDS)
+# The classes of kinds, to find entities of, and of languages: Wikidata's
+# language (see darq.wikidata).
+CLASSES = dict(model.KINDS) | {darq.book.LANGUAGE_KIND: darq.wikidata.LANGUAGE_CLASS}
 
 # Failures of a port.
 ERRORS = (darq.DarqError, TimeoutError, ValueError)
@@ -149,10 +151,17 @@ class ItemStore:
             found = []
             for start in range(0, len(ids), BATCH):
                 entities, _ = kb.get_entities(ids[start:start + BATCH], follow=False)
-                found += [e.id for e in entities if (e.get_label() or "").casefold() == label.casefold()]
+                found += [e.id for e in entities if label.casefold() in
+                          {n.casefold() for n in (e.get_label() or "", *self.codes(e, type_id))}]
         except ERRORS as e:
             raise BookError(f"Can't look up {label}: {e}") from None
         return sorted(found)
+
+    @staticmethod
+    def codes(entity: model.Entity, type_id: str) -> list[str]:
+        """Return what else a language's known by: its aliases, such as en,
+        and English language.  Other kinds go by their labels only."""
+        return entity.get_aliases() if type_id == darq.book.LANGUAGE_KIND else []
 
     def names_like(self, text: str, type_id: str, most: int = MAX_NAMES) -> list[str]:
         """Return the names of entities of a kind starting with some
@@ -168,6 +177,8 @@ class ItemStore:
             return []
         if type_id == model.ENTITY_TYPE:
             entities = [e for e in entities if model.recorded_type(e) == model.ENTITY_TYPE]
+        if not entities and type_id == darq.book.LANGUAGE_KIND:
+            return self.names_like(text, model.ENTITY_TYPE, most)
         names = (e.get_label() for e in entities if isinstance(e, model.Item) and not e.destroyed)
         return sorted(dict.fromkeys(n for n in names if n), key=str.casefold)[:most]
 
@@ -186,6 +197,11 @@ class ItemStore:
 
     def find(self, label: str, type_id: str) -> str:
         found = self.labelled(label, type_id)
+
+        # Before Wikidata's languages are brought, a language's one made here.
+        if not found and type_id == darq.book.LANGUAGE_KIND:
+            found = self.labelled(label, model.ENTITY_TYPE)
+            type_id = model.ENTITY_TYPE
         if not found:
             return ""
         self.linked[found[0]] = Linked(entity_id=found[0], item_id=model.item_id(found[0], type_id), label=label)

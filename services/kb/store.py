@@ -52,6 +52,10 @@ create table if not exists entities (
     destroyed integer not null default 0,
     modified text not null);
 
+-- What's been merged into an entity, to find what links to it: the few
+-- that redirect.
+create index if not exists entities_by_redirect on entities (redirect) where redirect is not null;
+
 create table if not exists revisions (
     id text not null,
     revision integer not null,
@@ -431,7 +435,8 @@ class Store:
                    limit: Optional[int] = None,
                    reverse: bool = False,
                    type_id: str = "") -> List[str]:
-        """Return the identifiers of entities linking to one, in order:
+        """Return the identifiers of entities linking to one, or to those
+        merged into it, in order:
         those after the identifier after, and at most limit, if given.
 
         With reverse, the order's descending, from the last, and those
@@ -444,6 +449,7 @@ class Store:
         entity."""
         groups = [(p, t) for p, r, t, _ in self.link_counts(target_id)
                   if r == role and (property_id is None or p == property_id) and (not type_id or t == type_id)]
+        targets = self.merged_into(target_id)
         conditions = ""
         if after or not reverse:
             conditions = f"and l.entity_id {'<' if reverse else '>'} ? "
@@ -453,9 +459,9 @@ class Store:
                              "where l.target_id = ? and l.property_id = ? and l.role = ? and l.type = ? "
                              f"{conditions}and {LIVE} group by l.entity_id "
                              f"order by l.entity_id {order} limit ?",
-                             target_id, p, role, self.link_types[t],
+                             target, p, role, self.link_types[t],
                              *([after] if conditions else []), -1 if limit is None else limit)
-                   for p, t in groups]
+                   for p, t in groups for target in targets]
         found: List[str] = []
         for entity_id in heapq.merge(*batches, reverse=reverse):
             if found and found[-1] == entity_id:
@@ -465,13 +471,34 @@ class Store:
             found.append(entity_id)
         return found
 
+    def linking_to(self, target_id: str) -> List[str]:
+        """Return the live entities with any link to one, in any role."""
+        return self._ids("select distinct l.entity_id from links l "
+                         "join entities e on e.id = l.entity_id "
+                         f"where l.target_id = ? and {LIVE} order by 1", target_id)
+
+    def merged_ids(self) -> List[str]:
+        """Return the entities that have been merged into others."""
+        return self._ids("select id from entities where redirect is not null order by 1")
+
+    def merged_into(self, target_id: str) -> List[str]:
+        """Return an entity, and those merged into it, at any depth: a
+        statement made before a merge still links to the old one."""
+        return self._ids("with recursive merged (id) as ("
+                         "  select ? union"
+                         "  select e.id from entities e join merged m on e.redirect = m.id) "
+                         "select id from merged order by 1", target_id)
+
     def link_counts(self, target_id: str) -> List[Tuple[str, str, str, int]]:
-        """Return how many entities link to one, by each property, role
-        and type, in order."""
-        return self.db.execute("select c.property_id, c.role, t.type_id, c.count from link_counts c "
+        """Return how many entities link to one, or to those merged into it,
+        by each property, role and type, in order."""
+        targets = self.merged_into(target_id)
+        marks = ", ".join("?" * len(targets))
+        return self.db.execute("select c.property_id, c.role, t.type_id, sum(c.count) from link_counts c "
                                "join link_types t on t.id = c.type "
-                               "where c.target_id = ? and c.count > 0 "
-                               "order by c.property_id, c.role, t.type_id", (target_id,)).fetchall()
+                               f"where c.target_id in ({marks}) and c.count > 0 "
+                               "group by c.property_id, c.role, t.type_id "
+                               "order by c.property_id, c.role, t.type_id", targets).fetchall()
 
     def subclasses(self, class_id: str) -> List[str]:
         """Return a class, and its subclasses, at any depth."""

@@ -43,6 +43,7 @@ import darq.kb as model
 import darq.message
 import darq.book
 import darq.url
+import darq.wikidata
 from darq.protocols import kb as wire
 from darq.protocols.kb import (
     Changed,
@@ -146,6 +147,7 @@ def vocabulary() -> list[model.Entity]:
         prop(model.REASON_FOR_PREFERRED_RANK, "reason for preferred rank", model.Datatype.Item),
         *darq.message.vocabulary(),
         *darq.url.vocabulary(), *darq.book.vocabulary(),
+        *darq.wikidata.vocabulary(),
         item(model.DARQOS, "DarqOS"),
         item(model.REPLACED, "replaced by hand"),
         item(model.REMOVED, "removed by hand"),
@@ -252,9 +254,26 @@ class EntityImplementation(Implementation.Handler, EntityWriter.Handler):
 
     def linked(self, ids: typing.Iterable[str], languages: list[str]) -> list[Linked]:
         """Return entities, by identifier, as Linked, with labels in a
-        chain of languages, in the order of the identifiers."""
-        entities, _ = self.kb.get_entities(list(dict.fromkeys(ids)))
-        return self.as_linked(entities, languages)
+        chain of languages, in the order of the identifiers.
+
+        One that's been merged is listed by the identifier asked for, as
+        that's what's linked to, with the label and item of what it
+        redirects to: a statement made before the merge still names it."""
+        wanted = list(dict.fromkeys(ids))
+        found, _ = self.kb.get_entities(wanted, follow=False)
+        resolved: list[tuple[str, model.Entity]] = []
+        for entity in found:
+            if entity.redirect is not None:
+                target = self.kb.get(entity.id)
+                if target is None:
+                    continue
+                resolved.append((entity.id, target))
+            else:
+                resolved.append((entity.id, entity))
+        linked = self.as_linked([entity for _, entity in resolved], languages)
+        for (asked, _), link in zip(resolved, linked):
+            link.entity_id = asked
+        return linked
 
     def as_linked(self, entities: typing.Iterable[model.Entity], languages: list[str]) -> list[Linked]:
         entities = list(entities)

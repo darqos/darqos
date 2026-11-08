@@ -525,6 +525,47 @@ def test_link_counts(links_kb):
     assert k.link_counts("a") == []
 
 
+def merged_world(k):
+    """Entities linking to one that's since been merged into another: a
+    statement made before the merge still names the old one."""
+    with k.transaction():
+        k.add_property("author", model.Datatype.Item, "author")
+        k.add_item("Peter Carey", "old")
+        k.add_item("Peter Carey, from Wikidata", "new")
+        k.add_item("P. Carey", "older")
+        for name, target in (("bliss", "old"), ("illywhacker", "new"), ("oscar", "older"), ("both", "old")):
+            item = k.add_item(name, name)
+            item.claim("author", model.EntityValue(target))
+            if name == "both":
+                item.claim("author", model.EntityValue("new"))
+    k.merge("older", "old")
+    k.merge("old", "new")
+
+
+def test_links_to_what_was_merged_count(links_kb):
+    k = links_kb
+    merged_world(k)
+    assert k.link_ids("new", "author") == ["bliss", "both", "illywhacker", "oscar"]
+    assert k.link_ids("new", "author", limit=2) == ["bliss", "both"]
+    assert k.link_ids("new", "author", after="both", limit=2) == ["illywhacker", "oscar"]
+    assert k.link_ids("new", "author", reverse=True) == ["oscar", "illywhacker", "both", "bliss"]
+    assert [e.id for e in k.find_links("new", "author")] == ["bliss", "both", "illywhacker", "oscar"]
+
+
+def test_link_counts_of_what_was_merged(links_kb):
+    k = links_kb
+    merged_world(k)
+    [(prop, role, _, count)] = k.link_counts("new")
+    assert (prop, role) == ("author", "main") and count >= 4
+
+
+def test_merged_into(links_kb):
+    k = links_kb
+    merged_world(k)
+    assert k.merged_into("new") == {"new", "old", "older"}
+    assert k.merged_into("bliss") == {"bliss"}
+
+
 def test_link_counts_are_of_entities_not_links(links_kb):
     # Every statement's reference to a source is one link: it's one entity.
     k = links_kb
@@ -605,3 +646,99 @@ def test_batch_from_the_end_uses_the_index(tmp_path):
         "and e.destroyed = 0 and e.redirect is null group by l.entity_id order by l.entity_id desc limit 2"
     ).fetchall()
     assert not any("TEMP B-TREE" in row[-1] for row in plan)
+
+
+def test_relinking_moves_every_reference(links_kb):
+    k = links_kb
+    with k.transaction():
+        k.add_property("author", model.Datatype.Item, "author")
+        k.add_property("stated in", model.Datatype.Item, model.STATED_IN)
+        k.add_property("about", model.Datatype.Item, "about")
+        k.add_item("Peter Carey", "old")
+        k.add_item("Peter Carey, from Wikidata", "new")
+        k.add_item("a source", "source")
+        book = k.add_item("Bliss", "bliss")
+        statement = book.claim("author", model.EntityValue("old"))
+        statement.add_qualifier("about", model.EntityValue("old"))
+        statement.add_reference(model.Reference().add(model.STATED_IN, model.EntityValue("old")))
+        book.claim("about", model.EntityValue("source"))
+    with k.transaction():
+        k.merge("old", "new")
+        changed = k.relink("old", "new")
+    assert [e.id for e in changed] == ["bliss"]
+    bliss = k.get("bliss")
+    [authored] = bliss.get_statements("author")
+    assert authored.get_value().entity_id == "new"
+    assert authored.qualifiers[0].value.entity_id == "new"
+    assert authored.references[0].snaks[0].value.entity_id == "new"
+    assert bliss.get_statements("about")[0].get_value().entity_id == "source"
+    assert k.link_ids("new", "author") == ["bliss"]
+    assert k.link_counts("new") == [(model.STATED_IN, "reference", "darq.entity", 1),
+                                    ("about", "qualifier", "darq.entity", 1), ("author", "main", "darq.entity", 1)]
+
+
+def test_relinking_whats_merged_already(links_kb):
+    """Merges made before relinking are relinked when it's asked for."""
+    k = links_kb
+    merged_world(k)
+    with k.transaction():
+        changed = k.relink_merged()
+    assert sorted(e.id for e in changed) == ["bliss", "both", "oscar"]
+    authors = {s.get_value().entity_id for e in ("bliss", "oscar") for s in k.get(e).get_statements("author")}
+    assert authors == {"new"}
+    with k.transaction():
+        assert k.relink_merged() == []
+
+
+def test_a_merge_says_what_both_said_once(links_kb):
+    """Both said they're organisations, from different sources: the merge
+    has one statement, cited to both."""
+    k = links_kb
+    with k.transaction():
+        k.add_property("instance of", model.Datatype.Item, model.INSTANCE_OF)
+        k.add_property("stated in", model.Datatype.Item, model.STATED_IN)
+        k.add_property("country", model.Datatype.Item, "country")
+        for name in ("org", "lt", "wd", "uk", "au"):
+            k.add_item(name, name)
+        old = k.add_item("Bloomsbury", "old")
+        old.claim(model.INSTANCE_OF, model.EntityValue("org")).add_reference(
+            model.Reference().add(model.STATED_IN, model.EntityValue("lt")))
+        old.claim("country", model.EntityValue("au"))
+        new = k.add_item("Bloomsbury Publishing", "new")
+        new.claim(model.INSTANCE_OF, model.EntityValue("org")).add_reference(
+            model.Reference().add(model.STATED_IN, model.EntityValue("wd")))
+        new.claim("country", model.EntityValue("uk"))
+    with k.transaction():
+        k.merge("old", "new")
+    merged = k.get("new")
+    [kind] = merged.get_statements(model.INSTANCE_OF)
+    assert sorted(r.snaks[0].value.entity_id for r in kind.references) == ["lt", "wd"]
+    assert sorted(s.get_value().entity_id for s in merged.get_statements("country")) == ["au", "uk"]
+
+
+def test_a_relinked_entity_that_named_both_names_one(links_kb):
+    k = links_kb
+    merged_world(k)
+    with k.transaction():
+        k.relink_merged()
+    assert [s.get_value().entity_id for s in k.get("both").get_statements("author")] == ["new"]
+
+
+def test_starting_tidies_what_earlier_merges_said_twice(links_kb):
+    k = links_kb
+    with k.transaction():
+        k.add_property("instance of", model.Datatype.Item, model.INSTANCE_OF)
+        k.add_item("org", "org")
+        k.add_item("old", "old").claim(model.INSTANCE_OF, model.EntityValue("org"))
+        k.add_item("new", "new").claim(model.INSTANCE_OF, model.EntityValue("org"))
+        k.add_item("gone", "gone")
+    with k.transaction():
+        # As a merge before combining did.
+        new = k.get("new")
+        new.claim(model.INSTANCE_OF, model.EntityValue("org"))
+        new.changed()
+        k.get("gone", follow=False).redirect = "new"
+        k.get("gone", follow=False).changed()
+    with k.transaction():
+        assert [e.id for e in k.relink_merged()] == ["new"]
+    assert len(k.get("new").get_statements(model.INSTANCE_OF)) == 1

@@ -1287,6 +1287,35 @@ class Restated:
         return self.changed
 
 
+def combine_statements(entity: Entity) -> bool:
+    """Make statements of an entity that say the same thing one statement,
+    with the references of each, and return whether there were any.
+
+    They say the same if they've the same value, the same qualifiers, and
+    the same rank, as a merge leaves when both entities said it: one of
+    each, cited to each of their sources."""
+    kept: Dict[Tuple[str, Tuple[str, ...], Rank], Statement] = {}
+    combined = False
+    for statement in list(entity.statements):
+        key = (_snak_key(statement.main_snak), tuple(_qualifiers_key(statement, None)), statement.rank)
+        first = kept.get(key)
+        if first is None:
+            kept[key] = statement
+            continue
+        cited = {_reference_key(r) for r in first.references}
+        for reference in statement.references:
+            if _reference_key(reference) not in cited:
+                first.references.append(reference)
+                cited.add(_reference_key(reference))
+        entity.remove_statement(statement)
+        combined = True
+    return combined
+
+
+def _reference_key(reference: Reference) -> Tuple[str, ...]:
+    return tuple(sorted(_snak_key(a) for a in reference.snaks))
+
+
 def restate(entity: Entity,
             source_id: str,
             statements: Iterable[Statement],

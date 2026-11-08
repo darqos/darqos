@@ -256,7 +256,8 @@ Entities
   identifier of the one that failed, and why.  An entity's redirect,
   and whether it's destroyed, are kept as they were: only these set
   them:
-* ``Merge(old_id, new_id)`` merges one entity into another, and
+* ``Merge(old_id, new_id)`` merges one entity into another, relinking
+  what linked to it (see below), and
 * ``Destroy(entity_id)`` marks one destroyed.
 
 Writing whole entities, rather than changes to their statements, keeps
@@ -580,7 +581,33 @@ making a new entity, and merging the old one into it.  Two entities
 merged into one, which isn't rare (it's how duplicate contacts are
 tidied up), are handled by *redirects*, as in Wikidata: the old entity
 redirects to the new one, so that opening its item opens the new
-item, and links to it still lead somewhere.
+item, and what's outside the KB, such as History, still finds it.
+
+What both entities said is said once: a statement with the same value,
+qualifiers and rank as one the new entity has is combined with it,
+keeping the references of each, so that "instance of organisation",
+from LibraryThing's import and from Wikidata, is one statement, cited
+to both.
+
+Within the KB, a merge *relinks* what linked to the old entity, as
+Wikidata's bots do after one: in the same transaction, each statement
+naming it, as its value, a qualifier, or a reference, comes to name the
+new one, so the KB reads as if it had always been the new one's.  Each
+entity relinked is a revision, and its watchers are told.  A busy entity's
+merge is slower for it: a person in thousands of messages takes seconds.
+One that comes to name the new entity twice says it once.  The KB
+service relinks, when it starts, what still links to any merged entity,
+which merges before relinking left, and combines what entities merged
+into say twice, which merges before combining left.
+
+A statement can still come to name a merged entity afterwards, as an
+importer's might, by an identifier it made.  So, as a safety net, what an
+item's entity refers to lists one by the identifier it names, with the
+new one's label and item, and what links to an entity, and how many do,
+include what links to those merged into it, which the store finds by an
+index of redirects.  An entity that links to both is found once, but
+counted twice.  The importers that find entities by identifiers they
+made, LibraryThing's people and Slack's bots, follow a redirect.
 
 Type Implementation
 ~~~~~~~~~~~~~~~~~~~
@@ -739,6 +766,26 @@ statements, DarqOS type, aren't shown, as they can't be changed.
   typed in is finished with.
 * The item's recorded in History as ``edited``, once each time edit
   mode's entered.
+
+M, or Merge into ... on the context menu, merges the entity shown into
+another, as two spellings of a publisher, from two imports, are one
+publisher (``darq.merging``).  W, for one on Wikidata, is described in
+:doc:`wikidata`.
+
+* It asks for the other's name, starting with this one's label, to be
+  shortened or changed, and lists the entities whose labels or aliases
+  have words starting with it: those of the same DarqOS type, or of
+  none, as one made minimally from Wikidata's has none.  Each has its
+  description, or else how many link to it, and its identifier, to look
+  it up, marked if it's Wikidata's.
+* It says what it'll do, with both identifiers, and does it only if
+  that's confirmed, as a merge can't be undone.  This one is merged into
+  the one chosen, unless only this one's Wikidata's: then it's the other
+  way round, so that Wikidata's identifier stays, and it says so.
+* Entities of different DarqOS types, two of Wikidata's, which it says
+  are different, and one already merged, aren't merged, and it says why.
+* Both items are recorded in History as ``merged``, and the page shows
+  the one that's left, with a note that the other was merged into it.
 
 Edits are operations: setting a label, description, or aliases, in a
 language; adding or removing a statement; and setting a statement's

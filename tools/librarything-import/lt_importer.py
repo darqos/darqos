@@ -248,6 +248,11 @@ class Importer:
                 made.set_label(text)
                 self.items.create(type_id, made)
                 self.record(model.item_id(entity_id, type_id), darq.history.CREATED)
+        # One that's been merged, as into Wikidata's, is what it was merged
+        # into, so that its links aren't to the old one.
+        current = self.items.get(entity_id)
+        if current is not None:
+            entity_id = current.id
         self.names[key] = entity_id
         return entity_id
 

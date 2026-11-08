@@ -118,6 +118,7 @@ further development, but were set aside.
 
   - SculptOS
 
+    
 Other Notes
 -----------
 
@@ -125,6 +126,23 @@ Other Notes
   a DMA buffer?
   https://www.kernel.org/doc/html/v5.11/driver-api/dma-buf.html
 - https://project-mage.org/
+
+  
+Design Requirements
+-------------------
+
+* Support for DIPC
+
+  * Use an efficient, shared-memory / register calling convention.
+    DIPC calls would ideally cost roughly the same as a function call.
+    Look to QNX/L4 for patterns here.
+
+* Thread scheduling
+
+  * Support a "background" thread scheduling class for tasks that
+    don't need interactive performance.  These would ideally be
+    scheduled on low-power cores.
+
 
 Kernel Roadmap
 --------------

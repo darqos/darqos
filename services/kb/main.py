@@ -109,6 +109,13 @@ class KBService(KB.Handler):
         self.port: int | None = None
         logging.info(f"Knowledge base {path}")
 
+        # What still links to what's been merged is relinked: merges before
+        # relinking were left that way.
+        with self.kb.transaction():
+            relinked = self.kb.relink_merged()
+        if relinked:
+            logging.info(f"Relinked or tidied {len(relinked)} entities after merges")
+
     def add(self, server: darq.Server, port: int):
         """Answer requests on a port, with a server."""
         self.port = port
@@ -187,7 +194,8 @@ class KBService(KB.Handler):
     def merge(self, request: MergeRequest, source: int) -> MergeResponse:
         try:
             self.change(lambda: [self.kb.get(request.old_id, follow=False),
-                                 self.kb.merge(request.old_id, request.new_id)])
+                                 self.kb.merge(request.old_id, request.new_id),
+                                 *self.kb.relink(request.old_id, request.new_id)])
         except Failed as e:
             return MergeResponse(status=e.status)
         return MergeResponse(status=Status.OK)

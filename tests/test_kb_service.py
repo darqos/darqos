@@ -521,3 +521,26 @@ def test_kb_service(live_pkernel, tmp_path):  # noqa: F811
     run_kernel_until(kernel, lambda: client.get_status() == zombie, "the client to exit")
     assert (client.get_exit_status(), client.get_exit_error()) == (0, None)
     assert (pathlib.Path(kernel.run_dir) / "kb.sqlite").exists()
+
+
+def test_starting_relinks_what_was_merged_before(tmp_path):
+    """Merges before relinking left what linked to the old entity: a
+    service relinks them when it starts."""
+    path = str(tmp_path / "kb.sqlite")
+    store = module.Store(path)
+    k = module.KnowledgeBase(store)
+    with k.transaction():
+        k.add_property("author", model.Datatype.Item, "author")
+        k.add_item("Peter Carey", "old")
+        k.add_item("Peter Carey, from Wikidata", "new")
+        k.add_item("Bliss", "bliss").claim("author", model.EntityValue("old"))
+    with k.transaction():
+        k.merge("old", "new")
+    store.close()
+
+    service = module.KBService(path)
+    try:
+        bliss = service.kb.get("bliss")
+        assert bliss.get_statements("author")[0].get_value().entity_id == "new"
+    finally:
+        service.close()

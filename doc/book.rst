@@ -121,7 +121,8 @@ LRM Item       Local *location* (Shelved at), *content*, *printing* and *date of
 =============  ==========================================================
 
 An imprint is text, for now, unlike a publisher.  People, publishers,
-languages and series are entities: a new name finds
+languages and series are entities, which can become Wikidata's, with a
+few of its facts (see :doc:`wikidata`): a new name finds
 an entity with exactly that label, or makes one, while a name that's
 already there keeps its entity, so two people with one name aren't
 confused.  A person's page then shows *author of*, through an inverse
