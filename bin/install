@@ -165,6 +165,12 @@ if step venv; then
     fi
     "$DARQ/env/bin/pip" install --quiet --upgrade pip
     "$DARQ/env/bin/pip" install --quiet --upgrade -r "$DARQ/requirements.txt"
+    # Upgrading PyQt6 from before 6.12 removes the QtPdf it had, which can
+    # take PyQt6-Pdf's, installed beside it, with it: put them back.
+    if ! "$DARQ/env/bin/python" -c "import PyQt6.QtPdf, PyQt6.QtPdfWidgets" 2>/dev/null; then
+        "$DARQ/env/bin/pip" install --quiet --force-reinstall --no-deps \
+            "$(grep '^PyQt6-Pdf==' "$DARQ/requirements.txt")"
+    fi
     # Compiled now, since darq can't write the code's __pycache__.
     "$DARQ/env/bin/python" -m compileall -q $(for dir in $CODE; do echo "$DARQ/$dir"; done) || true
     echo "Ok: updated the Python environment"

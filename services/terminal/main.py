@@ -55,6 +55,7 @@ from darq.protocols.compositor import (
     WindowRemoved,
     WindowRetitled,
 )
+import darq.ui.types
 from darq.ui import Services
 from darq.ui.launcher import Launcher
 
@@ -235,7 +236,14 @@ class Terminal:
             self.notice.show_message(error)
 
     def type_ids(self) -> list[str]:
-        return [entry.type_id for entry in self.new.types.entries]
+        """Return the types History's filter offers: every implemented one,
+        asked for each time it's opened, as the New panel's list is only
+        loaded when that's opened."""
+        try:
+            return darq.ui.types.implemented(self.services.types)
+        except (darq.DarqError, TimeoutError) as e:
+            logging.warning(f"Can't list types: {e}")
+            return []
 
     # The compositor
 

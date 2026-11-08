@@ -55,6 +55,13 @@ class TypeEntry(typing.NamedTuple):
     usable: bool
 
 
+def implemented(types: Type.Client) -> list[str]:
+    """Return every implemented type's identifier, sorted, as History's
+    filter offers them: a book's levels too, which load_types leaves out,
+    since they aren't made alone, but have History."""
+    return sorted(types.list_types(implemented=True).type_ids)
+
+
 def load_types(types: Type.Client) -> list[TypeEntry]:
     """Return the implemented types, sorted by name."""
     entries = []

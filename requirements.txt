@@ -1,5 +1,8 @@
-PyQt6
-PyQt6-WebEngine
+# Pinned together: from 6.12, Qt PDF's bindings (QtPdf, QtPdfWidgets) are
+# in PyQt6-Pdf, not PyQt6, and PyQt6-Pdf doesn't say which PyQt6 it needs.
+PyQt6==6.12.0
+PyQt6-WebEngine==6.140.0
+PyQt6-Pdf==6.140.0
 
 ada-url
 pillow

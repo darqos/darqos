@@ -371,6 +371,16 @@ def test_one_panel_at_a_time(terminal):
     assert visible(terminal) == []
 
 
+def test_history_offers_every_type_before_new_is_opened(terminal):
+    """Its types are asked for when it opens, not borrowed from New's list,
+    which is loaded when that's opened, and leaves out a book's levels."""
+    unlock(terminal)
+    terminal.fake_services.types.types["darq.book.item"] = ("Copy", True)
+    hotkey(terminal, main.XK_h)
+    types = terminal.history.view.types
+    assert [types.item(n).text() for n in range(types.count())] == ["darq.book.item", "public.png", TEXT]
+
+
 def test_new_creates_and_uses(terminal):
     unlock(terminal)
     hotkey(terminal, main.XK_n)

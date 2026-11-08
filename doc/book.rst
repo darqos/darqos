@@ -597,9 +597,12 @@ It takes about 290 MB of Python packages, and 10 small Debian packages
 for the dist, some of them X11 libraries (``libnspr4``, ``libnss3``,
 ``libxcomposite1``, ``libxdamage1``, ``libxfixes3``, ``libxrandr2``,
 ``libxtst6``, ``libxkbfile1``, ``libxi6`` and ``libxrender1``), and
-``libmobi0t64``, all in ``bin/install``.  A development environment
-may have an older Qt than the dist, which is fine as long as
-``PyQt6-WebEngine`` matches it: 6.9.0 with Qt 6.9, for instance.
+``libmobi0t64``, all in ``bin/install``.  ``requirements.txt`` pins
+``PyQt6``, ``PyQt6-WebEngine`` and ``PyQt6-Pdf`` together, so a
+development environment has the dist's Qt: from 6.12, Qt PDF's bindings
+are ``PyQt6-Pdf``'s, not ``PyQt6``'s.  Upgrading from before 6.12 can
+lose them, as the old ``PyQt6`` takes its own with it, so
+``bin/install`` reinstalls ``PyQt6-Pdf`` if they're missing.
 
 Whether the web lens of Third Edition uses this or CEF is its own
 decision (see ``types/html``), which this bears on: sharing an engine

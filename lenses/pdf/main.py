@@ -497,10 +497,19 @@ class PdfWindow(QWidget):
 
     def matches_changed(self):
         """Go to the first match, as soon as there is one.  The model
-        searches a page at a time, so more can come."""
+        searches a page at a time, so more can come.
+
+        It's gone to after the model's signal, not in it: from Qt 6.12,
+        jumping the view while the model's adding matches crashes it, in
+        QPdfView's paintEvent."""
+        if self.search.count() > 0 and self.view.currentSearchResultIndex() < 0:
+            QtCore.QTimer.singleShot(0, self.first_match)
+        self.show_match_count()
+
+    def first_match(self):
         if self.search.count() > 0 and self.view.currentSearchResultIndex() < 0:
             self.go_to_match(0)
-        self.show_match_count()
+            self.show_match_count()
 
     def go_to_match(self, index: int):
         assert self.navigator is not None

@@ -37,7 +37,7 @@ from darq.ui import Services, wait_for_display
 from darq.ui.history import HistoryView
 from darq.ui.launcher import Launcher
 from darq.ui.search import SearchView
-from darq.ui.types import TypeList
+from darq.ui.types import TypeList, implemented
 
 
 # History source for the events it records.
@@ -112,7 +112,10 @@ class DevTerminal(QMainWindow):
         """Load the types, trying again until the type sync has run."""
         if self.factory.refresh():
             self.retry.stop()
-            self.history.set_types([entry.type_id for entry in self.factory.entries])
+            try:
+                self.history.set_types(implemented(self.services.types))
+            except (darq.DarqError, TimeoutError) as e:
+                logging.warning(f"Can't list types: {e}")
             self.show_status(f"{len(self.factory.entries)} implemented types")
         elif not self.retry.isActive():
             self.retry.start()
