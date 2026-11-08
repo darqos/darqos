@@ -564,6 +564,14 @@ along.  Without a doctype, the body's width is the viewport's, which
 changes with the transform, so it's measured without one.  Paging's in
 ``ebook_pages.py``, which uses no Qt, so it's tested without Chromium.
 
+A part's laid out, and moved to its page, once it's loaded, but
+Chromium can paint it before that: as the book styles it, light, and at
+its first page, even when it's arrived at backwards, at its last.  So
+the ``book:`` scheme serves each document with the layout and the mode's
+colours already in its head, and its text hidden, which keeps its
+layout, until it's at its page, when the style goes.  The page's own
+background is the mode's, for the moment between parts.
+
 ``QTextBrowser`` was considered, and needs no dependency, but it has
 only part of HTML and CSS, with no SVG or MathML, and a page break must
 be worked out by hand, as Lector does.  That's poor for computer science

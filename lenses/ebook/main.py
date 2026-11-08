@@ -27,7 +27,7 @@ import typing
 
 from PyQt6 import QtCore
 from PyQt6.QtCore import QBuffer, QByteArray, QEvent, QIODevice, QObject, QUrl
-from PyQt6.QtGui import QKeyEvent, QWheelEvent
+from PyQt6.QtGui import QColor, QKeyEvent, QWheelEvent
 from PyQt6.QtWebEngineCore import (
     QWebEnginePage,
     QWebEngineProfile,
@@ -106,9 +106,13 @@ QWebEngineUrlScheme.registerScheme(_scheme)
 class Parts(QWebEngineUrlSchemeHandler):
     """Answers book: URLs, from the item."""
 
-    def __init__(self, item: Ebook.Client, parent: QObject):
+    def __init__(self, item: Ebook.Client, parent: QObject, mode: typing.Callable[[], str]):
+        """Constructor.
+
+        :param mode: Returns the reader's mode, which a part's styled in."""
         super().__init__(parent)
         self.item = item
+        self.mode = mode
 
     def requestStarted(self, a0: QWebEngineUrlRequestJob | None):
         job = a0
@@ -125,7 +129,7 @@ class Parts(QWebEngineUrlSchemeHandler):
             job.fail(QWebEngineUrlRequestJob.Error.UrlNotFound)
             return
         buffer = QBuffer(job)
-        buffer.setData(QByteArray(response.data))
+        buffer.setData(QByteArray(ebook_pages.styled(response.data, response.media_type, self.mode())))
         buffer.open(QIODevice.OpenModeFlag.ReadOnly)
         job.reply(response.media_type.encode(), buffer)
 
@@ -179,7 +183,7 @@ class ReaderWindow(QWidget):
         self.resize(900, 760)
 
         self.profile = QWebEngineProfile(self)
-        self.parts = Parts(item, self)
+        self.parts = Parts(item, self, lambda: self.mode)
         self.blocker = BookOnly(self)
         self.profile.installUrlSchemeHandler(SCHEME, self.parts)
         self.profile.setUrlRequestInterceptor(self.blocker)
@@ -191,6 +195,7 @@ class ReaderWindow(QWidget):
         settings.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, False)
         self.view = QWebEngineView(self)
         self.view.setPage(self.page_)
+        self.paint_background()
         self.view.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.NoContextMenu)
         self.page_.loadFinished.connect(self.loaded)
 
@@ -235,6 +240,12 @@ class ReaderWindow(QWidget):
         self.relay.setSingleShot(True)
         self.relay.setInterval(RELAY_DELAY)
         self.relay.timeout.connect(self.relaid)
+
+    def paint_background(self):
+        """Give the page its mode's background, which shows while a part's
+        loading, before it's painted."""
+        background = next(m[1] for m in reader.MODES if m[0] == self.mode)
+        self.page_.setBackgroundColor(QColor(background))
 
     # As ebook_pages.Page
 
@@ -321,6 +332,7 @@ class ReaderWindow(QWidget):
                 self.contents.setFocus()
         elif action == reader.MODE:
             self.mode = reader.next_mode(self.mode)
+            self.paint_background()
             pager.set_mode(self.mode)
             self.show_status(f"{self.mode.capitalize()} mode")
         elif action == reader.FIND:

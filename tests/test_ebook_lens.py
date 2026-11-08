@@ -208,6 +208,34 @@ def test_a_fragment_stays_in_a_url():
     assert pages.url_of("a.html#x").endswith("a.html#x")
 
 
+def test_a_part_is_served_laid_out_in_its_mode_and_hidden():
+    """So it's never painted as the book has it, or at the wrong page,
+    before it's set up and at its page: see styled."""
+    served = pages.styled(b'<html><head lang="en"><title>One</title></head><body>Hi</body></html>',
+                          "application/xhtml+xml", "dark")
+    assert served.startswith(b'<html><head lang="en"><style id="darq-first">')
+    style = served.decode()
+    assert "column-width" in style and "#1f1f1f" in style and "visibility: hidden" in style
+    assert served.endswith(b"</style><title>One</title></head><body>Hi</body></html>")
+
+
+@pytest.mark.parametrize("document, start", [
+    (b"<HTML><BODY>Hi</BODY></HTML>", b'<HTML><style id="darq-first">'),
+    (b"<p>Hi</p>", b'<style id="darq-first">'),
+    (b"<html><body><header>Hi</header></body></html>", b'<html><style id="darq-first">'),
+])
+def test_a_part_without_a_head_is_styled_at_its_start(document, start):
+    assert pages.styled(document, "text/html; charset=utf-8", "sepia").startswith(start)
+
+
+def test_what_isnt_a_document_is_served_as_it_is():
+    assert pages.styled(b"\x89PNG<head>", "image/png", "dark") == b"\x89PNG<head>"
+
+
+def test_showing_a_page_shows_the_part():
+    assert 'getElementById("darq-first")' in pages.set_up("dark") and pages.FIRST_STYLE == "darq-first"
+
+
 def test_the_layout_measures_without_the_transform():
     """A part with no doctype's width is the viewport's: see SET_UP."""
     assert 'style.transform = ""' in pages.set_up("dark")

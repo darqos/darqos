@@ -13,6 +13,7 @@
 
 import dataclasses
 import json
+import re
 import typing
 import urllib.parse
 
@@ -50,6 +51,38 @@ def theme(name: str) -> str:
     return style
 
 
+# A part's documents, which are styled as they're served.
+DOCUMENT_TYPES = ("text/html", "application/xhtml+xml")
+
+# The element of the style a part's served with, and what keeps its text
+# hidden until it's at the page it's arrived at.
+FIRST_STYLE = "darq-first"
+HIDDEN = "body { visibility: hidden !important; }"
+
+_HEAD = re.compile(rb"<head(\s[^>]*)?>", re.IGNORECASE)
+_HTML = re.compile(rb"<html(\s[^>]*)?>", re.IGNORECASE)
+
+
+def first_style(mode: str) -> str:
+    """Return the style a part's served with: laid out, in its mode, and
+    hidden till it's arrived at its page, so that it's never painted
+    otherwise, as it would be, between loading and being laid out."""
+    return LAYOUT + theme(mode) + HIDDEN
+
+
+def styled(data: bytes, media_type: str, mode: str) -> bytes:
+    """Return a part as it's served: a document with the first style at
+    the start of its head, or else of its html, or else at its start."""
+    if media_type.split(";")[0].strip().lower() not in DOCUMENT_TYPES:
+        return data
+    element = f'<style id="{FIRST_STYLE}">{first_style(mode)}</style>'.encode()
+    for pattern in (_HEAD, _HTML):
+        found = pattern.search(data)
+        if found is not None:
+            return data[:found.end()] + element + data[found.end():]
+    return element + data
+
+
 # Set up a part, in the lens's world.  It's run once a part's loaded, and
 # the functions stay there.
 SET_UP = """
@@ -75,6 +108,11 @@ SET_UP = """
         document.documentElement.scrollLeft = 0;
         document.body.scrollLeft = 0;
         document.body.style.transform = "translateX(" + (-page * window.innerWidth) + "px)";
+        // Shown at last, at its page: the style it was served with goes.
+        var first = document.getElementById("darq-first");
+        if (first) {
+            first.remove();
+        }
         return window.darqPages();
     };
     window.darqPageOf = function (element, page) {
