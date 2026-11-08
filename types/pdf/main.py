@@ -52,6 +52,8 @@ from darq.protocols.type import (
     IndexEntryRequest,
     IndexEntryResponse,
     Implementation,
+    OpenEntityRequest,
+    OpenEntityResponse,
     OpenRequest,
     OpenResponse,
     Ready,
@@ -269,6 +271,10 @@ class PdfImplementation(Implementation.Handler):
         if document is None:
             return OpenResponse(status=status)
         return OpenResponse(item=self.attach(document), status=Status.OK)
+
+    def open_entity(self, request: OpenEntityRequest, source: int) -> OpenEntityResponse:
+        # Its items aren't entities yet (see doc/entity-vs-item.rst).
+        return OpenEntityResponse(status=Status.UNSUPPORTED)
 
     def index_entry(self, request: IndexEntryRequest, source: int) -> IndexEntryResponse:
         document, status = self.find(request.item_id)

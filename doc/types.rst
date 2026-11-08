@@ -187,7 +187,21 @@ implementation's protocols.  So the implementation sees every change
 to its items, and can act on each one, as by publishing it to the
 Index.  A text item's blob is written only by ``types/text``, and an
 entity of one of the Knowledge Base's kinds only by ``types/kb``, with
-its ``EntityWriter`` protocol (see :doc:`kb-service`).  Other
+its ``EntityWriter`` protocol (see :doc:`kb-service`).
+
+Every item is a KB entity (see :doc:`entity-vs-item`), and everything
+about it, its content and its entity, is written through its type
+implementation, so that it keeps the item's Index entry up to date:
+
+* every implementation inherits the entity type's: it serves the
+  ``EntityItem`` protocol for each of its items, on a port from
+  ``OpenEntity``, with ``darq.entity_type``'s ``EntityType`` as its
+  base class, whose hooks it overrides to publish what's changed; and
+* it makes and destroys its items' entities, and only it changes their
+  kinds, their DarqOS type statements.
+
+``types/kb`` is the plain implementation, for the KB's own kinds, whose
+content is all knowledge.  Other
 entities, such as properties, classes, and plain ``darq.entity``
 entities, can be written to the KB directly.  For now this is a
 convention: Storage and the KB service will enforce it, once DIPC
@@ -268,6 +282,12 @@ Every implementation serves the `Implementation` protocol (also in
   each item as it saves it; this is for a reindex.  A destroyed item is
   `NOT_FOUND`, and a type that isn't indexed answers `UNSUPPORTED`,
   as `darq.entity` does.
+* `OpenEntity(item_id)` returns a port for an item's entity, serving the
+  `EntityItem` protocol (see :doc:`kb-service`), as every item is an
+  entity (see :doc:`entity-vs-item`): it's inherited from
+  `darq.entity_type`'s `EntityType`.  An item that has no entity yet is
+  `NOT_FOUND`, and a type whose items aren't entities yet answers
+  `UNSUPPORTED`.
 
 `darq.launch` has `create_item_from(type_id, data)`,
 `export_item(item_id)` and `find_types(mime_type, extension)` for

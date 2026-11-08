@@ -528,6 +528,28 @@ An item identifier is the type identifier and the entity's identifier,
 as it is: ``darq.place:Q408`` is Australia, and ``darq.person:``
 followed by a UUID is someone from an address book.
 
+Content Items
+~~~~~~~~~~~~~
+
+Every item is an entity (see :doc:`entity-vs-item`), including those of
+the types that keep their content in Storage: text, images, PDFs and
+e-books.  ``darq.items`` makes, reads, names and destroys their
+entities, for their type implementations:
+
+* A content item's entity is identified by its blob's Storage key, in
+  hex, which is its item specifier, so ``public.jpeg:03d1824d…`` is the
+  image, and ``03d1824d…`` its entity, and each is found from the other.
+* Its kind is its DarqOS type statement, stamped as the KB's kinds' are
+  (``darq.kb.stamp``), with a class from Wikidata: text file (Q86920),
+  image file (Q860625), or, for PDFs and e-books, computer file (Q82753).
+  These kinds aren't the KB type implementation's: they're served by
+  their own, and their entities are written to the KB service by it.
+* It has a label, its name, where it has one, and two local
+  properties: *created*, when it was made, in DarqOS, to the second, and
+  *file name*, the file it was made from, stated in what imported it.
+* The kinds' names, such as JPEG Image, are in ``darq.items``, and so
+  their items are listed by them on an entity's page.
+
 Kinds
 ~~~~~
 
@@ -631,6 +653,18 @@ the default instance types (see ``darq.kb.KB.state``).
   its kind, and a destroyed one's is ``NOT_FOUND``.
 * ``Destroy(item_id)`` marks an entity destroyed, keeping its
   statements and the links to it.
+* ``OpenEntity(item_id)`` is the same as ``Open``, for these kinds,
+  whose item is their entity.
+
+It's the plain implementation of the entity type, which every type
+implementation inherits (see :doc:`entity-vs-item`): ``darq.entity_type``'s
+``EntityType`` is its base class, and serves the ``EntityItem``
+protocol for each item, the entity lens's, below.  It calls a hook,
+``entity_changed``, after each change made through an item's port,
+which ``types/kb`` overrides to publish the entity to the Index.  The
+types that keep their content in Storage will inherit it too, and serve
+their items' entities with ``OpenEntity``; until they do, they answer
+it ``UNSUPPORTED``.
 
 Entities of its kinds are written only through it, not to the KB
 service directly (see :doc:`types`), so it sees every change to its

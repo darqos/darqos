@@ -17,6 +17,7 @@ import dataclasses
 import html
 import typing
 
+import darq.items
 from darq.protocols.kb import LinkGroup, Linked, Role
 
 
@@ -42,6 +43,7 @@ TYPE_NAMES = {
     "darq.book.expression": ("Text", "Texts"),
     "darq.book.manifestation": ("Edition", "Editions"),
     "darq.book.item": ("Copy", "Copies"),
+    **{kind: (k.name, k.plural) for kind, k in darq.items.KINDS.items()},
 }
 
 # Said after a heading, for a link that isn't from a statement's value.

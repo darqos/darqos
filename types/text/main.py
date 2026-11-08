@@ -53,6 +53,8 @@ from darq.protocols.type import (
     IndexEntryRequest,
     IndexEntryResponse,
     Implementation,
+    OpenEntityRequest,
+    OpenEntityResponse,
     OpenRequest,
     OpenResponse,
     Ready,
@@ -295,6 +297,10 @@ class TextImplementation(Implementation.Handler):
         if buffer is None:
             return ExportResponse(status=Status.NOT_FOUND)
         return ExportResponse(data=buffer.text.encode("utf-8"), mime_type=MIME_TYPE, status=Status.OK)
+
+    def open_entity(self, request: OpenEntityRequest, source: int) -> OpenEntityResponse:
+        # Its items aren't entities yet (see doc/entity-vs-item.rst).
+        return OpenEntityResponse(status=Status.UNSUPPORTED)
 
     def index_entry(self, request: IndexEntryRequest, source: int) -> IndexEntryResponse:
         try:

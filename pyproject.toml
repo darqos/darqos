@@ -89,6 +89,8 @@ include = [
     "darq/url.py",
     "darq/wikidata.py",
     "darq/merging.py",
+    "darq/items.py",
+    "darq/entity_type.py",
     "darq/pcall.py",
     "darq/process.py",
     "darq/protocols",

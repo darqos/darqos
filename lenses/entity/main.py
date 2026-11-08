@@ -110,7 +110,8 @@ class Opener(typing.Protocol):
     Launcher, or fakes in tests."""
 
     def open(self, item_id: str) -> int:
-        """Return a port for an item: raises DarqError if it can't."""
+        """Return a port for an item's entity, from its type
+        implementation: raises DarqError if it can't."""
         ...
 
     def use(self, item_id: str) -> None:
@@ -961,7 +962,7 @@ class LaunchOpener:
         self.lenses: dict[str, bool] = {}
 
     def open(self, item_id: str) -> int:
-        return darq.launch.open_item(item_id)
+        return darq.launch.open_entity(item_id)
 
     def use(self, item_id: str):
         self.launcher.use(item_id)

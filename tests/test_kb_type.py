@@ -816,6 +816,23 @@ def test_kb_type(live_pkernel, tmp_path):  # noqa: F811
             if model.entity_from_wire(again.entity).get_label() != "Ada Lovelace" or labels["Q5"] != "human":
                 return f"reopened: {labels!r}"
 
+            # Its entity, as every item's, from OpenEntity: the same, here.
+            entity_port = implementation.open_entity(item_id=created.item_id)
+            if entity_port.status != Status.OK:
+                return f"open_entity: {entity_port!r}"
+            got = EntityItem.Client(entity_port.item, timeout=30).get_entity(languages=["en"])
+            if model.entity_from_wire(got.entity).get_label() != "Ada Lovelace":
+                return f"open_entity's entity: {got!r}"
+
+            # A text's isn't an entity yet: its implementation says so.
+            text = types.activate(type_id="public.utf8-plain-text")
+            if text.status != Status.OK:
+                return f"activate text: {text!r}"
+            answer = Implementation.Client(text.implementation, timeout=30).open_entity(
+                item_id="public.utf8-plain-text:03d1824dc667bb6b343e27a5a610b06b")
+            if answer.status != Status.UNSUPPORTED:
+                return f"text's open_entity: {answer!r}"
+
             # A message, created with the identifier it's given.
             kb = model.KB.connect(30, wire.EntityWriter.Client(person.implementation, timeout=30))
             if types.describe(type_id="darq.message").status != Status.OK:

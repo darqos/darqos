@@ -1,7 +1,8 @@
 Entities and Items
 ==================
 
-*An open design question: not yet decided.*
+*Decided, on 8 November 2026: everything is an entity (B, below).  The
+review that led to it, and the plan for getting there, are at the end.*
 
 DarqOS has two kinds of thing that can be named and linked:
 
@@ -190,3 +191,187 @@ Consequences
   tag*), as well as names and facts, under B or C, leaving only what
   isn't knowledge, such as view state, which each type implementation
   could keep.
+
+The Decision
+------------
+
+B: every item is an entity.  Working on books, e-books, and the
+people, organisations and languages they refer to showed what the KB
+gives an item, and where its absence hurts:
+
+* a Copy's content, an Edition's cover, a URL's snapshot, and a
+  message's attachment are content items, so they're referred to by
+  identifier strings (``CONTENT``, ``COVER``, ``SNAPSHOT``,
+  ``ATTACHMENT``), not links: nothing can be followed back from a PDF
+  to the Copy it is, or from an image to the Edition it's the cover of;
+* a content item has no name of its own: it's found by what its type
+  reads from its content, such as a PDF's title, and nothing more can be
+  said of it, such as a name when its content has none, or who an image
+  depicts; and
+* merging, relinking, Wikidata, and the entity lens's page and editing
+  work for entities, and would work for every item.
+
+Most of DarqOS works this way already.  People, places, organisations,
+conversations, messages, URLs, and the book levels are entities with
+kinds, served by ``types/kb``: 71,000 of them, of which 66,000 are
+Slack messages.  What isn't is the four types that keep their content
+in Storage: text, images, PDFs and e-books, a few hundred items.
+
+Review
+~~~~~~
+
+The costs listed under B, above, as they look now:
+
+* **Scale.**  ``bench/kb_scale.py`` grew a store to a million
+  entities, mostly emails, shaped like B.  Getting an entity took
+  0.04 ms, finding one by label 0.02 ms, a write about 0.9 ms, a
+  two-word search 32 ms, and the first batch of a large group of
+  links about 1 ms.  What's slow is a query of several links, emails
+  from an organisation's staff, at 6 seconds, and listing hundreds of
+  thousands of entities in full, at 3 to 9 seconds; and its size,
+  8.5 KB an entity, of which documents and revisions are 40%.  The
+  first is answered, should it matter, by a SPARQL engine alongside the
+  KB, as a derived index for costly queries, such as QLever, which is
+  built for Wikidata's model, as the KB is.  The second, by
+  compressing or pruning revisions.  Neither is needed for B.
+* **The KB as a dependency of every item.**  It's already one for
+  every item that isn't text, an image, a PDF or an e-book, and for B,
+  the Book card and Search.  The p-kernel spawns it early.  Creating a
+  content item is a Storage write and a KB write, about a millisecond
+  more.
+* **Two stores in step.**  A content item's bytes stay in Storage, and
+  its entity says what it is.  Its type implementation creates the blob
+  first, and the entity second, so a failure leaves at worst a blob with
+  no entity, which a tidy can find; and destroying marks the entity
+  destroyed, as now.
+* **Identity.**  An item identifier stays a type and a specifier (see
+  :doc:`item`), and an item's specifier is its entity's identifier, as
+  it is for the KB's kinds.  So a JPEG converted to a PNG is a new item,
+  as now: changing that is a separate question (see Open Questions).
+* **Short-lived items**, such as calculations, are entities too, and
+  are destroyed like any other.  Their numbers are small.
+
+Rules
+~~~~~
+
+* Every item has an entity.  Its item identifier is its kind and its
+  entity's identifier: ``public.jpeg:03d1824d…``, as
+  ``darq.person:0028db09-…`` is.
+* A content item's entity's identifier is its Storage key, in hex, which
+  is already its specifier.  So the identifiers of the items there are
+  don't change, and nor do History's events, the Index's entries, or
+  what refers to them.  It's how an item's bytes are found from its
+  entity, and its entity from its bytes: no statement says it.  So every
+  type that keeps its content in Storage does this, for its new items as
+  well as its old: the blob's created first, so its key is there before
+  the entity is.  Only a type whose content is all knowledge, as the
+  KB's kinds' is, uses a UUID, as ``types/kb`` does.
+* An item's entity records its kind with its DarqOS type statement, as
+  the KB's kinds do, and has a label, its name, where it has one: a
+  text's first line, an image's or PDF's file name, an e-book's title.
+* Everything about an item, its content and its knowledge, is written
+  through its type implementation, so it's what keeps the item's Index
+  entry and History up to date, and nothing's done twice (see
+  :doc:`types`).
+* Every type implementation *inherits* the entity type's methods, as
+  every type conforms to ``darq.entity``:
+
+  * its interface: it serves the ``EntityItem`` protocol, on a second
+    port for an item, from ``OpenEntity``, beside its own, from
+    ``Open``.  A port speaks one protocol, and DIDL has no inheritance,
+    so it's a second port, as COM's ``QueryInterface`` gives another of
+    an object's interfaces.  DIDL may come to compose protocols, so that
+    one port serves both, as every COM interface extends ``IUnknown``;
+  * its implementation: ``darq.entity_type``'s ``EntityType``, a base
+    class, with what was ``types/kb``'s: reading and writing an item's
+    entity, the names of what it links to, its links, found a batch at
+    a time, and searching for entities to link to.  It calls hooks after
+    each change, which each implementation overrides, to publish its
+    Index entry; and
+  * ``types/kb`` is the plain implementation, for the kinds whose whole
+    content is knowledge: its hooks publish their names and
+    descriptions.  ``types/text``, ``types/image``, ``types/pdf`` and
+    ``types/ebook`` add their content's protocols, and publish what's
+    in it too.
+
+  So the entity lens opens any item's entity with ``OpenEntity``, on
+  the item's own implementation, which sees what's changed.
+* An entity refers to an item with an entity value, a link, so it's
+  followed, and found backwards, as any link is.  The Item identifier
+  datatype (see above) isn't needed.
+* What isn't knowledge, such as a reader's position, stays with the
+  content, in its blob's header, kept by its type implementation.
+
+The Plan
+--------
+
+In steps, each of which leaves the system working, and is tested,
+measured, and documented as it's built.
+
+1. **Foundations** (built).  A module, ``darq.items``, for type
+   implementations:
+   making a content item's entity, with its kind, label and source,
+   alongside its blob; reading it; renaming it; and destroying it.
+   The KB vocabulary for content items: a local *created* time, and
+   *file name*, as imports had it, and Wikidata's classes of files.
+   The kinds of the content types (``public.utf8-plain-text``,
+   ``public.jpeg`` and the others, ``com.adobe.pdf``,
+   ``darq.book.epub`` and the others) known to the KB, so ``kind_of``
+   and the entity lens know them (see :doc:`kb-service`), and the write
+   rule recorded in :doc:`types`.
+2. **The entity type, inherited.**  ``darq.entity_type``, the lower
+   layer, taken from ``types/kb``, which becomes a layer above it;
+   ``OpenEntity`` in the ``Implementation`` protocol; and the entity
+   lens opening entities with it.  Then ``types/text``, ``types/image``,
+   ``types/pdf`` and ``types/ebook`` inherit it, make an entity for each
+   item they create, and name it.  Their items' pages, in the entity lens, show
+   it, and what links to it.  Imports, from the filesystem, by URL, and
+   from Slack, give it its file name.
+3. **Existing items are entities.**  A migration, run once at start, as
+   relinking is, makes an entity for each content item there is,
+   identified by its Storage key, and named from what's known of it:
+   its file name, from History's ``imported`` events or what imported
+   it; an e-book's title, from its own metadata; a text's first line.
+   It's a tool too, to be run again, and reports what it couldn't
+   name.
+4. **Links, not strings.**  ``CONTENT``, ``COVER``, ``SNAPSHOT`` and
+   ``ATTACHMENT`` become item properties, and their values links,
+   rewritten by a migration, as merges are relinked.  So an image's
+   page shows it's the cover of an Edition, a PDF's that it's a Copy,
+   and a file's the message it was attached to, and B's catalogue
+   finds a Copy by a link, not a string.
+5. **Names everywhere.**  History, Search and the switcher show an
+   item's label, not its identifier, and the Index publishes labels as
+   names.  A lens shows its item's name, and renames it: the image lens,
+   the PDF and e-book readers, and the text lens.  A key in each opens
+   the item's page, its entity, in the entity lens, to say more of it.
+6. **Facts about items.**  *Depicts* (P180) on an image's entity, and
+   the vCard import's PHOTO as image items, linked from their people, as
+   *image* (P18).  Tags as statements, *has tag*, brought forward from
+   Third Edition's Metadata question.
+7. **What it replaces.**  The Item identifier datatype's design, in the
+   plan doc, and the Metadata service, in Third Edition (see
+   :doc:`metadata`): names and tags are statements, and view state is
+   each type's.  :doc:`item`, :doc:`types`, :doc:`kb-service`,
+   :doc:`metadata` and :doc:`roadmap` say so.
+
+Steps 1 and 2 are the bulk of it; 3 and 4 are migrations of the kind
+already done for merges; 5 and 6 are per lens and per import; and 7 is
+documentation.
+
+Open Questions
+~~~~~~~~~~~~~~
+
+* **Identity across formats.**  Whether a converted item keeps its
+  identity: the entity could, with a new kind, if an item identifier
+  didn't include its type, but History, the Index, and the Type
+  service's activation all use the type in it.  Left as it is, for now.
+  Books already answer the commoner case, one book as a PDF, an EPUB
+  and a paper copy: they're three items, each a Copy of an Edition of
+  the same Work (see :doc:`book`).
+* **Which properties a content item has.**  Beyond its name, kind and
+  created time: size, dimensions, page count, and an image's EXIF, or
+  only what's said of it by a person, or a source such as Wikidata?
+  Each type's, decided as it's built.
+* **Events and the REPL**, still to be designed, should assume B: an
+  event, and a REPL's object, can be about any item, as an entity.

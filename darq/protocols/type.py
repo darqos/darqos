@@ -44,6 +44,8 @@ __all__ = [
     "Item",
     "ListTypesRequest",
     "ListTypesResponse",
+    "OpenEntityRequest",
+    "OpenEntityResponse",
     "OpenRequest",
     "OpenResponse",
     "Ready",
@@ -1207,6 +1209,70 @@ class IndexEntryRequest(Message):
         return
 
 
+class OpenEntityResponse(Message):
+    """Implementation.OpenEntity response."""
+
+    METHOD = 7
+    BODY_FORMAT = "<H2xI"
+    BODY_START = 8
+    LENGTH = 16
+
+    def __init__(self, txid: int = 0, item: int | None = None, status: Status = Status.OK):
+        super().__init__(txid)
+        self.item = item
+        self.status = status
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        buf += struct.pack(self.BODY_FORMAT,
+                           self.encode_port(handles, self.item),
+                           self.status)
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        self.item = self.decode_port(handles, bits[0])
+        self.status = self.decode_enum(Status, bits[1])
+        return
+
+
+class OpenEntityRequest(Message):
+    """Implementation.OpenEntity request."""
+
+    METHOD = 7
+    RESPONSE = OpenEntityResponse
+    BODY_FORMAT = "<II"
+    BODY_START = 8
+    LENGTH = 16
+    DATA_START = 16
+
+    def __init__(self, txid: int = 0, item_id: str = ''):
+        super().__init__(txid)
+        self.item_id = item_id
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.item_id))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.item_id = inp.string(bits[0], bits[1])
+        return
+
+
 class CloseResponse(Message):
     """Item.Close response."""
 
@@ -1439,6 +1505,7 @@ class Implementation:
         4: CreateFromRequest,
         5: ExportRequest,
         6: IndexEntryRequest,
+        7: OpenEntityRequest,
     }
 
     RESPONSES = {
@@ -1448,6 +1515,7 @@ class Implementation:
         4: CreateFromResponse,
         5: ExportResponse,
         6: IndexEntryResponse,
+        7: OpenEntityResponse,
     }
 
     class Client(system.Client):
@@ -1477,6 +1545,10 @@ class Implementation:
             """Implementation.IndexEntry."""
             return self.call(IndexEntryRequest(item_id=item_id), IndexEntryResponse)
 
+        def open_entity(self, item_id: str = '') -> OpenEntityResponse:
+            """Implementation.OpenEntity."""
+            return self.call(OpenEntityRequest(item_id=item_id), OpenEntityResponse)
+
     class Handler(system.Handler):
         """protocol Implementation: base class for a service's handler."""
 
@@ -1487,6 +1559,7 @@ class Implementation:
             4: (CreateFromRequest, "create_from"),
             5: (ExportRequest, "export"),
             6: (IndexEntryRequest, "index_entry"),
+            7: (OpenEntityRequest, "open_entity"),
         }
 
         def create(self, request: CreateRequest, source: int) -> CreateResponse | system.Deferred:
@@ -1517,6 +1590,12 @@ class Implementation:
                         request: IndexEntryRequest,
                         source: int) -> IndexEntryResponse | system.Deferred:
             """Handle Implementation.IndexEntry."""
+            raise NotImplementedError
+
+        def open_entity(self,
+                        request: OpenEntityRequest,
+                        source: int) -> OpenEntityResponse | system.Deferred:
+            """Handle Implementation.OpenEntity."""
             raise NotImplementedError
 
 

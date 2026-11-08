@@ -1072,6 +1072,24 @@ def kind_of(entity: Entity, get: Callable[[str], Optional[Entity]]) -> str:
     return ENTITY_TYPE
 
 
+def stamp(entity: Entity, type_id: str, class_id: Optional[str] = None):
+    """Make an entity an item of a kind: its only DarqOS type is that,
+    with a class, the kind's, if it's one of the KB's, or one given.
+
+    These statements are DarqOS's: an import that says the same adds its
+    own reference to them (see restate)."""
+    for statement in entity.get_statements(DARQOS_TYPE):
+        entity.remove_statement(statement)
+    claims: List[Tuple[str, Value]] = [(DARQOS_TYPE, StringValue(type_id))]
+    cls = dict(KINDS).get(type_id, class_id)
+    if cls is not None and not any(isinstance(value := s.get_value(), EntityValue) and value.entity_id == cls
+                                   for s in entity.get_statements(INSTANCE_OF)):
+        claims.insert(0, (INSTANCE_OF, EntityValue(cls)))
+    for property_id, value in claims:
+        entity.claim(property_id, value).add_reference(
+            Reference().add(STATED_IN, EntityValue(DARQOS)))
+
+
 def item_id(entity_id: str, kind: str) -> str:
     """Return the item identifier of an entity of a kind."""
     return identifier.make_item_id(kind, entity_id)

@@ -60,6 +60,8 @@ from darq.protocols.type import (
     IndexEntryRequest,
     IndexEntryResponse,
     Implementation,
+    OpenEntityRequest,
+    OpenEntityResponse,
     OpenRequest,
     OpenResponse,
     Ready,
@@ -393,6 +395,10 @@ class ImageImplementation(Implementation.Handler):
         if picture is None:
             return OpenResponse(status=status)
         return OpenResponse(item=self.attach(picture), status=Status.OK)
+
+    def open_entity(self, request: OpenEntityRequest, source: int) -> OpenEntityResponse:
+        # Its items aren't entities yet (see doc/entity-vs-item.rst).
+        return OpenEntityResponse(status=Status.UNSUPPORTED)
 
     def index_entry(self, request: IndexEntryRequest, source: int) -> IndexEntryResponse:
         picture, status = self.find(request.item_id)

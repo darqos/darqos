@@ -123,6 +123,13 @@ protocol Implementation {
     // aliases, and its body.  A destroyed item is NOT_FOUND, and one
     // whose type isn't indexed UNSUPPORTED.
     6: IndexEntry(string item_id) -> (sequence<string> names, string body, Status status);
+
+    // Open an item's entity, returning a port for it that serves the
+    // EntityItem protocol (lib/didl/kb.didl), as every item's an entity
+    // (see doc/entity-vs-item.rst).  Its own port, from Open, serves its
+    // type's protocol.  An item of another type is NOT_FOUND, and one
+    // that has no entity yet NOT_FOUND too.
+    7: OpenEntity(string item_id) -> (port item, Status status);
 }
 
 // The methods every item port serves.  Each type's own item protocol

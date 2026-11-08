@@ -113,6 +113,20 @@ def open_item(item_id: str) -> int:
     return response.item
 
 
+def open_entity(item_id: str) -> int:
+    """Open an item's entity, through the item's type implementation, as
+    every item's an entity (see doc/entity-vs-item.rst).
+
+    :returns: A port for it, serving the EntityItem protocol, which the
+              caller must close (or pass to a lens, with use_item).
+    :raises LaunchError: if it couldn't be opened."""
+    type_id, _ = split_item_id(item_id)
+    response = _activate(type_id).open_entity(item_id=item_id)
+    if response.status != type_protocol.Status.OK or response.item is None:
+        raise LaunchError(f"Can't open {item_id}'s entity: {response.status.name}")
+    return response.item
+
+
 def find_lens(type_id: str, context: str = "terminal") -> str:
     """Return the lens to use items of a type in a context: the first of
     those the Type service finds.
