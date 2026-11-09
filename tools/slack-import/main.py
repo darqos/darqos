@@ -46,8 +46,8 @@ ENTITY_TYPE = model.ENTITY_TYPE
 class LaunchFiles:
     """Makes items from files' data, with darq.launch."""
 
-    def create(self, media_type: str, extension: str, data: bytes) -> str | None:
-        return darq.launch.import_data(media_type, extension, data)
+    def create(self, media_type: str, extension: str, data: bytes, name: str) -> str | None:
+        return darq.launch.import_data(media_type, extension, data, name)
 
 
 def run_import(path: str, name: str, progress: typing.Callable[[str, int, int], None]) -> slack_importer.Result:

@@ -8,6 +8,7 @@
 
 import importlib.util
 import pathlib
+import typing
 import sys
 
 import pytest
@@ -21,10 +22,12 @@ from darq.protocols.type import (
     DestroyRequest,
     ExportRequest,
     IndexEntryRequest,
+    OpenEntityRequest,
     OpenRequest,
     Status,
 )
 
+from fake_kb import FakeKB, file_name, rename
 from test_pkernel import live_pkernel, pkernel, run_kernel_until, write_app  # noqa: F401
 from test_text_type import CLIENT, Caller, FakeHandles, FakePublisher, FakeStorage, fake_ports, handles  # noqa: F401
 
@@ -189,8 +192,13 @@ def index():
 
 
 @pytest.fixture
-def implementation(blobs, index):
-    return pdf_module.PdfImplementation(blobs, index)
+def kb():
+    return FakeKB()
+
+
+@pytest.fixture
+def implementation(blobs, index, kb):
+    return pdf_module.PdfImplementation(blobs, index, typing.cast(typing.Any, kb))
 
 
 @pytest.fixture
@@ -360,3 +368,40 @@ def test_pdf_type(live_pkernel, tmp_path):  # noqa: F811
     zombie = kernel.module.KernelProcessStatus.ZOMBIE
     run_kernel_until(kernel, lambda: client.get_status() == zombie, "the client to exit")
     assert (client.get_exit_status(), client.get_exit_error()) == (0, None)
+
+
+################################################################
+# Its entity (see doc/entity-vs-item.rst)
+################################################################
+
+def test_a_new_pdf_is_named_by_its_title(call, kb, qt_app):
+    response = call(IMPLEMENTATION_PORT, CreateFromRequest(type_id=pdf_module.TYPE_ID,
+                                                           data=make_pdf(title="A Title"), name="scan0001.pdf"))
+    entity = kb.get(darq.split_item_id(response.item_id)[1])
+    assert entity.get_label() == "A Title" and file_name(entity) == "scan0001.pdf"
+
+
+def test_one_without_a_title_is_named_from_its_file(call, kb, qt_app):
+    response = call(IMPLEMENTATION_PORT, CreateFromRequest(type_id=pdf_module.TYPE_ID, data=make_pdf(),
+                                                           name="Tax return 2025.pdf"))
+    assert kb.label(darq.split_item_id(response.item_id)[1]) == "Tax return 2025"
+
+
+def test_renaming_a_pdf_publishes_its_new_name_with_its_own(call, kb, index, implementation, qt_app):
+    iid, _ = create_from(call, make_pdf(("One",), title="A Title", author="An Author"))
+    rename(call, implementation, IMPLEMENTATION_PORT, iid, "My Thesis")
+    assert index.names[-1] == ["My Thesis", "A Title", "An Author"] and "One" in index.sent[-1][2]
+
+
+def test_destroying_a_pdf_destroys_its_entity(call, kb, qt_app):
+    iid, _ = create_from(call, make_pdf())
+    assert call(IMPLEMENTATION_PORT, DestroyRequest(item_id=iid)).status == Status.OK
+    assert kb.entities[darq.split_item_id(iid)[1]].destroyed
+
+
+def test_an_old_pdf_is_given_its_entity_named_by_its_title(call, kb, qt_app):
+    kb.failing = darq.DarqError("no KB")
+    iid, _ = create_from(call, make_pdf(title="A Title"))
+    kb.failing = None
+    assert call(IMPLEMENTATION_PORT, OpenEntityRequest(item_id=iid)).status == Status.OK
+    assert kb.label(darq.split_item_id(iid)[1]) == "A Title"

@@ -41,7 +41,7 @@ class History(typing.Protocol):
 
 
 class MakeItem(typing.Protocol):
-    def __call__(self, media_type: str, extension: str, data: bytes) -> str | None: ...
+    def __call__(self, media_type: str, extension: str, data: bytes, name: str) -> str | None: ...
 
 
 class Fetch(typing.Protocol):
@@ -69,6 +69,12 @@ def file_hash(path: pathlib.Path) -> str:
 def extension_of(url: str) -> str:
     """Return the extension of a URL's path, without its dot."""
     return pathlib.PurePosixPath(urllib.parse.urlsplit(url).path).suffix.removeprefix(".")
+
+
+def name_of(url: str) -> str:
+    """Return the name of what's at a URL: the last part of its path, or
+    empty, if it's a directory's."""
+    return urllib.parse.unquote(pathlib.PurePosixPath(urllib.parse.urlsplit(url).path).name)
 
 
 def header(response: fetcher.Response, name: str) -> str:
@@ -169,7 +175,8 @@ class Snapshots:
         if same is not None:
             item_id, changed = same.item_id, False
         else:
-            made = self.make_item(media_type, extension_of(response.final_url), path.read_bytes())
+            made = self.make_item(media_type, extension_of(response.final_url), path.read_bytes(),
+                                  name_of(response.final_url))
             if made is None:
                 raise fetcher.FetchError(NO_TYPE, media_type or "no media type")
             item_id, changed = made, True

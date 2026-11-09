@@ -111,8 +111,10 @@ protocol Implementation {
     // Create an item of a type from data in the type's own format, such
     // as a PNG file's bytes, returning its identifier and a port for
     // it, as Create does.  Data that isn't of the type is INVALID_DATA,
-    // and nothing is created: it isn't converted.
-    4: CreateFrom(string type_id, opaque data) -> (string item_id, port item, Status status);
+    // and nothing is created: it isn't converted.  Its name is the name
+    // of the file it came from, or empty: its entity's named from it, if
+    // the data doesn't give one (see doc/entity-vs-item.rst).
+    4: CreateFrom(string type_id, opaque data, string name) -> (string item_id, port item, Status status);
 
     // Return an item's content as data in its type's format, with its
     // MIME type.

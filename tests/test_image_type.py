@@ -17,6 +17,7 @@ import pytest
 from PIL import ExifTags, Image
 
 import darq
+import darq.kb as model
 from darq.protocols import image as wire
 from darq.protocols.image import CloseRequest, GetMetadataRequest, GetRequest, SetEditsRequest, StatRequest
 from darq.protocols.type import (
@@ -25,10 +26,12 @@ from darq.protocols.type import (
     DestroyRequest,
     ExportRequest,
     IndexEntryRequest,
+    OpenEntityRequest,
     OpenRequest,
     Status,
 )
 
+from fake_kb import FakeKB, file_name, rename
 from test_pkernel import live_pkernel, pkernel, run_kernel_until, write_app  # noqa: F401
 from test_text_type import CLIENT, Caller, FakeHandles, FakePublisher, FakeStorage, fake_ports, handles  # noqa: F401
 
@@ -365,8 +368,13 @@ def index():
 
 
 @pytest.fixture
-def implementation(blobs, index):
-    return image_module.ImageImplementation(blobs, index)
+def kb():
+    return FakeKB()
+
+
+@pytest.fixture
+def implementation(blobs, index, kb):
+    return image_module.ImageImplementation(blobs, index, typing.cast(typing.Any, kb))
 
 
 @pytest.fixture
@@ -646,3 +654,36 @@ def test_image_type(live_pkernel, tmp_path):  # noqa: F811
     zombie = kernel.module.KernelProcessStatus.ZOMBIE
     run_kernel_until(kernel, lambda: client.get_status() == zombie, "the client to exit")
     assert (client.get_exit_status(), client.get_exit_error()) == (0, None)
+
+
+################################################################
+# Its entity (see doc/entity-vs-item.rst)
+################################################################
+
+def test_a_new_image_is_an_entity_named_from_its_file(call, kb, index):
+    response = call(IMPLEMENTATION_PORT, CreateFromRequest(type_id="public.png", data=encode(pixels(), "PNG"),
+                                                           name="IMG_0001.png"))
+    entity = kb.get(darq.split_item_id(response.item_id)[1])
+    assert entity.get_label() == "IMG_0001" and file_name(entity) == "IMG_0001.png"
+    assert model.recorded_type(entity) == "public.png"
+    assert index.names[-1][0] == "IMG_0001"
+
+
+def test_renaming_an_image_publishes_its_new_name(call, kb, index, implementation):
+    iid, _ = create_from(call, encode(pixels(), "PNG"))
+    rename(call, implementation, IMPLEMENTATION_PORT, iid, "Uluru at dusk")
+    assert index.names[-1][0] == "Uluru at dusk" and index.sent[-1][:2] == ("publish", iid)
+
+
+def test_destroying_an_image_destroys_its_entity(call, kb):
+    iid, _ = create_from(call, encode(pixels(), "PNG"))
+    assert call(IMPLEMENTATION_PORT, DestroyRequest(item_id=iid)).status == Status.OK
+    assert kb.entities[darq.split_item_id(iid)[1]].destroyed
+
+
+def test_an_old_image_is_given_its_entity(call, kb):
+    kb.failing = darq.DarqError("no KB")
+    iid, _ = create_from(call, encode(pixels(), "PNG"))
+    kb.failing = None
+    assert call(IMPLEMENTATION_PORT, OpenEntityRequest(item_id=iid)).status == Status.OK
+    assert model.recorded_type(kb.get(darq.split_item_id(iid)[1])) == "public.png"

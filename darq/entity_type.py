@@ -29,6 +29,7 @@ import logging
 import typing
 
 import darq
+import darq.items
 import darq.kb as model
 import darq.message
 from darq.protocols import kb as wire
@@ -101,7 +102,7 @@ class EntityType(Implementation.Handler):
         self.classes: dict[str, model.Entity | None] = {}
 
         # Entity ports, by port.
-        self.items: dict[int, "EntityItemHandler"] = {}
+        self.entity_ports: dict[int, "EntityItemHandler"] = {}
 
     def add(self, server: darq.Server, port: int):
         """Answer requests on a port, with a server, and watch the KB for
@@ -117,6 +118,58 @@ class EntityType(Implementation.Handler):
         """An item's entity has been changed through its port: publish what's
         changed.  It's an implementation's to override: here, nothing's
         done."""
+
+    # For an implementation whose items' content is in Storage, which
+    # makes its entities, beside their blobs (see darq.items).  A blob's
+    # the item: if the KB won't write its entity, that's logged, and it's
+    # made later, as it is for an item made before there were entities.
+
+    def make_entity(self, kind: str, entity_id: str, title: str = "", file_name: str = ""):
+        """Make a new item's entity, named by its content's title, or else
+        its file's name."""
+        try:
+            darq.items.create(self.kb, kind, entity_id, darq.items.label_for(title, file_name), file_name)
+        except KB_ERRORS as e:
+            logging.error(f"Can't make {model.item_id(entity_id, kind)}'s entity: {e}")
+
+    def adopt(self, item_id: str) -> bool:
+        """Give an item made before there were entities its entity, if it
+        has none, and return whether it has one now.  It's an
+        implementation's to override, for its items: here, there's none
+        to give."""
+        return False
+
+    def adopt_entity(self, kind: str, entity_id: str, title: str = "") -> bool:
+        """Make an item's entity, as adopt does, if it has none, named by
+        its content's title: return whether it has one now."""
+        try:
+            if darq.items.read(self.kb, entity_id) is not None:
+                return True
+            if self.kb.get(entity_id, follow=False) is not None:
+                # Destroyed, so the item's gone, as it would have been.
+                return False
+            darq.items.create(self.kb, kind, entity_id, darq.items.label_for(title))
+        except KB_ERRORS as e:
+            logging.error(f"Can't make {model.item_id(entity_id, kind)}'s entity: {e}")
+            return False
+        logging.info(f"Made an entity for {model.item_id(entity_id, kind)}")
+        return True
+
+    def entity_names(self, entity_id: str) -> list[str]:
+        """Return an item's names, from its entity, for the Index: none if
+        it has no entity, or it can't be read."""
+        try:
+            return darq.items.names(darq.items.read(self.kb, entity_id))
+        except KB_ERRORS as e:
+            logging.error(f"Can't read {entity_id}'s names: {e}")
+            return []
+
+    def destroy_item_entity(self, entity_id: str):
+        """Mark an item's entity destroyed, as its blob has been."""
+        try:
+            darq.items.destroy(self.kb, entity_id)
+        except KB_ERRORS as e:
+            logging.error(f"Can't destroy {entity_id}'s entity: {e}")
 
     # Kinds
 
@@ -135,7 +188,7 @@ class EntityType(Implementation.Handler):
             return ""
         return model.item_id(entity.id, self.kind_of(entity))
 
-    def find(self, item_id: str) -> tuple[model.Entity | None, Status]:
+    def find_entity(self, item_id: str) -> tuple[model.Entity | None, Status]:
         """Return an item's entity, following a merge, or why there's none.
 
         It's NOT_FOUND if it doesn't exist, is destroyed, or is of
@@ -254,17 +307,17 @@ class EntityType(Implementation.Handler):
 
     # Entity ports
 
-    def attach(self, server: darq.Server, entity_id: str) -> int:
+    def attach_entity(self, server: darq.Server, entity_id: str) -> int:
         """Return a new port for an item's entity."""
         port = darq.open_port()
         handler = EntityItemHandler(self, entity_id, port)
-        self.items[port] = handler
+        self.entity_ports[port] = handler
         server.add(port, handler)
         return port
 
-    def detach(self, port: int):
+    def detach_entity(self, port: int):
         """Forget an entity port, once its client has closed it."""
-        del self.items[port]
+        del self.entity_ports[port]
         assert self.server is not None
         self.server.remove(port)
 
@@ -272,15 +325,19 @@ class EntityType(Implementation.Handler):
         self.server.call_later(0, lambda: darq.close_port(port))
 
     def open_entity(self, request: OpenEntityRequest, source: int) -> OpenEntityResponse:
+        """Open an item's entity, giving it one first if it was made before
+        there were entities (see adopt)."""
         try:
-            entity, status = self.find(request.item_id)
+            entity, status = self.find_entity(request.item_id)
+            if entity is None and status == Status.NOT_FOUND and self.adopt(request.item_id):
+                entity, status = self.find_entity(request.item_id)
         except KB_ERRORS as e:
             logging.error(f"Can't open {request.item_id}'s entity: {e}")
             return OpenEntityResponse(status=Status.FAILED)
         if entity is None:
             return OpenEntityResponse(status=status)
         assert self.server is not None
-        return OpenEntityResponse(item=self.attach(self.server, entity.id), status=Status.OK)
+        return OpenEntityResponse(item=self.attach_entity(self.server, entity.id), status=Status.OK)
 
 
 class ClassListener(Listener.Handler):
@@ -307,7 +364,7 @@ class EntityItemHandler(EntityItem.Handler):
         self.port = port
 
     def close(self, request: CloseRequest, source: int) -> CloseResponse:
-        self.implementation.detach(self.port)
+        self.implementation.detach_entity(self.port)
         return CloseResponse()
 
     def get_entity(self, request: GetEntityRequest, source: int) -> GetEntityResponse:

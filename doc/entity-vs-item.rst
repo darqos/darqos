@@ -319,7 +319,7 @@ measured, and documented as it's built.
    ``darq.book.epub`` and the others) known to the KB, so ``kind_of``
    and the entity lens know them (see :doc:`kb-service`), and the write
    rule recorded in :doc:`types`.
-2. **The entity type, inherited.**  ``darq.entity_type``, the lower
+2. **The entity type, inherited** (built).  ``darq.entity_type``, the lower
    layer, taken from ``types/kb``, which becomes a layer above it;
    ``OpenEntity`` in the ``Implementation`` protocol; and the entity
    lens opening entities with it.  Then ``types/text``, ``types/image``,
@@ -327,13 +327,20 @@ measured, and documented as it's built.
    item they create, and name it.  Their items' pages, in the entity lens, show
    it, and what links to it.  Imports, from the filesystem, by URL, and
    from Slack, give it its file name.
-3. **Existing items are entities.**  A migration, run once at start, as
-   relinking is, makes an entity for each content item there is,
-   identified by its Storage key, and named from what's known of it:
-   its file name, from History's ``imported`` events or what imported
-   it; an e-book's title, from its own metadata; a text's first line.
-   It's a tool too, to be run again, and reports what it couldn't
-   name.
+3. **Existing items are entities** (built).  An item made before there
+   were entities is given its entity when it's opened, or its entity
+   is, by its type implementation (``adopt``), named by its content's
+   title, if it has one: a PDF's, an e-book's, or an image's.  For the
+   rest, a tool, Give Items Entities (``tools/item-entities``), started
+   from the development Terminal's Tools menu, opens the entity of each
+   content item History has events for, and each the KB refers to: as a
+   message's attachment, a URL's snapshot, a copy's content, or an
+   edition's cover.  Storage can't list its blobs, so those are what's
+   known of.  It names those that are still unnamed from what referred
+   to them, an attachment's file name, or a snapshot's URL's, and logs
+   how many it made, named, left unnamed, and found gone.  History never
+   recorded file names, so most old images and notes are left unnamed:
+   step 5 shows them by what they are.  It can be run again.
 4. **Links, not strings.**  ``CONTENT``, ``COVER``, ``SNAPSHOT`` and
    ``ATTACHMENT`` become item properties, and their values links,
    rewritten by a migration, as merges are relinked.  So an image's

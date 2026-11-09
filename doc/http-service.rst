@@ -227,7 +227,9 @@ for what it shows, so this choice doesn't commit it.
   nothing of Darq, so it's tested alone.  ``snapshots.py`` keeps a
   snapshot, and ``main.py`` is the service.  ``darq.url`` has the
   vocabulary, and ``darq.launch.import_data`` makes an item of data, as
-  the Slack import does too.
+  the Slack import does too, named by the last part of its URL's path,
+  ``paper.pdf``, which its entity's named from, if it has no title of
+  its own (see :doc:`entity-vs-item`).
 
 The tests are in ``tests/test_http_service.py``, with a web server of
 their own.

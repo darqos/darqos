@@ -18,8 +18,15 @@
 # client closes it.
 #
 # Each time an item's saved, its text is published to the Index (see
-# doc/search-service.rst), and it's withdrawn when it's destroyed; its
-# entry's also given by IndexEntry, for a reindex.
+# doc/search-service.rst), with its entity's names, and it's withdrawn
+# when it's destroyed; its entry's also given by IndexEntry, for a
+# reindex.
+#
+# Every item's an entity (see doc/entity-vs-item.rst): it inherits the
+# entity type, darq.entity_type's EntityType, which serves an item's
+# entity on a port from OpenEntity.  An item's entity is made with it,
+# identified by its specifier, and named from the file it came from, if
+# it did; a change to it is published to the Index.
 
 import logging
 import re
@@ -28,6 +35,8 @@ import time
 
 import darq
 import darq.index
+import darq.kb as model
+from darq.entity_type import EntityType
 from darq.protocols import storage
 from darq.protocols.text import (
     CloseRequest,
@@ -52,9 +61,6 @@ from darq.protocols.type import (
     ExportResponse,
     IndexEntryRequest,
     IndexEntryResponse,
-    Implementation,
-    OpenEntityRequest,
-    OpenEntityResponse,
     OpenRequest,
     OpenResponse,
     Ready,
@@ -108,8 +114,13 @@ def decode_blob(value: bytes) -> tuple[str, int]:
         raise FormatError(str(e)) from None
 
 
+def specifier(key: storage.Key) -> str:
+    """Return an item's specifier, which is its entity's identifier too."""
+    return f"{key.high:016x}{key.low:016x}"
+
+
 def item_id(key: storage.Key) -> str:
-    return f"{TYPE_ID}:{key.high:016x}{key.low:016x}"
+    return f"{TYPE_ID}:{specifier(key)}"
 
 
 def parse_item_id(iid: str) -> storage.Key | None:
@@ -150,10 +161,11 @@ class Buffer:
         return self.key.high, self.key.low
 
 
-class TextImplementation(Implementation.Handler):
+class TextImplementation(EntityType):
     """Answers the Implementation protocol, and keeps the open items."""
 
-    def __init__(self, client: storage.Storage.Client, index: darq.index.Publisher):
+    def __init__(self, client: storage.Storage.Client, index: darq.index.Publisher, kb: model.KB):
+        super().__init__(kb, [TYPE_ID])
         self.storage = client
         self.index = index
         self.buffers: dict[tuple[int, int], Buffer] = {}
@@ -246,12 +258,33 @@ class TextImplementation(Implementation.Handler):
         return True
 
     def publish(self, buffer: Buffer):
-        """Publish an item's text to the Index, as saved, or withdraw it
-        if it's destroyed."""
+        """Publish an item's text to the Index, as saved, with its entity's
+        names, or withdraw it if it's destroyed."""
         if buffer.flags & DESTROYED:
             self.index.withdraw(item_id(buffer.key))
         else:
-            self.index.publish(item_id(buffer.key), body=buffer.text)
+            self.index.publish(item_id(buffer.key), self.entity_names(specifier(buffer.key)), buffer.text)
+
+    def adopt(self, item_id: str) -> bool:
+        """Give an item made before there were entities its entity: a text
+        has no title, so it's unnamed."""
+        try:
+            key = parse_item_id(item_id)
+            buffer = self.load(key) if key is not None else None
+        except (darq.InvalidIdentifierError, FormatError):
+            return False
+        return buffer is not None and self.adopt_entity(TYPE_ID, specifier(buffer.key))
+
+    def entity_changed(self, before: model.Entity, after: model.Entity):
+        """Its entity's names may have changed: publish it again."""
+        key = parse_item_id(model.item_id(after.id, TYPE_ID))
+        try:
+            buffer = self.load(key) if key is not None else None
+        except FormatError as e:
+            logging.error(f"Can't publish {after.id}: {e}")
+            return
+        if buffer is not None:
+            self.publish(buffer)
 
     # Requests
 
@@ -277,7 +310,7 @@ class TextImplementation(Implementation.Handler):
         # DIDL's strings can't hold one, so it's binary, not text.
         if "\0" in text:
             return CreateFromResponse(status=Status.INVALID_DATA)
-        buffer = self.new(text)
+        buffer = self.new(text, request.name)
         if buffer is None:
             return CreateFromResponse(status=Status.FAILED)
         return CreateFromResponse(item_id=item_id(buffer.key), item=self.attach(buffer), status=Status.OK)
@@ -298,10 +331,6 @@ class TextImplementation(Implementation.Handler):
             return ExportResponse(status=Status.NOT_FOUND)
         return ExportResponse(data=buffer.text.encode("utf-8"), mime_type=MIME_TYPE, status=Status.OK)
 
-    def open_entity(self, request: OpenEntityRequest, source: int) -> OpenEntityResponse:
-        # Its items aren't entities yet (see doc/entity-vs-item.rst).
-        return OpenEntityResponse(status=Status.UNSUPPORTED)
-
     def index_entry(self, request: IndexEntryRequest, source: int) -> IndexEntryResponse:
         try:
             key = parse_item_id(request.item_id)
@@ -316,7 +345,7 @@ class TextImplementation(Implementation.Handler):
             return IndexEntryResponse(status=Status.FAILED)
         if buffer is None:
             return IndexEntryResponse(status=Status.NOT_FOUND)
-        return IndexEntryResponse(body=buffer.text, status=Status.OK)
+        return IndexEntryResponse(names=self.entity_names(specifier(key)), body=buffer.text, status=Status.OK)
 
     @staticmethod
     def check_type(type_id: str) -> Status:
@@ -325,15 +354,16 @@ class TextImplementation(Implementation.Handler):
         except darq.InvalidIdentifierError:
             return Status.INVALID_ID
 
-    def new(self, text: str) -> Buffer | None:
-        """Create an item's blob, and return its buffer, or None if it
-        can't be."""
+    def new(self, text: str, name: str = "") -> Buffer | None:
+        """Create an item's blob, and its entity, named from the file it came
+        from, and return its buffer, or None if it can't be."""
         response = self.storage.create(value=encode_blob(text))
         if response.status != storage.Status.OK:
             logging.error(f"Can't create a text blob: {response.status.name}")
             return None
         buffer = Buffer(response.key, response.generation, text)
         logging.info(f"Created {item_id(buffer.key)}")
+        self.make_entity(TYPE_ID, specifier(buffer.key), file_name=name)
         self.publish(buffer)
         return buffer
 
@@ -352,6 +382,7 @@ class TextImplementation(Implementation.Handler):
             return OpenResponse(status=Status.FAILED)
         if buffer is None:
             return OpenResponse(status=Status.NOT_FOUND)
+        self.adopt_entity(TYPE_ID, specifier(buffer.key))
         return OpenResponse(item=self.attach(buffer), status=Status.OK)
 
     def destroy(self, request: DestroyRequest, source: int) -> DestroyResponse:
@@ -376,6 +407,7 @@ class TextImplementation(Implementation.Handler):
         if not self.save(buffer):
             buffer.flags &= ~DESTROYED
             return DestroyResponse(status=Status.FAILED)
+        self.destroy_item_entity(specifier(key))
         logging.info(f"Destroyed {request.item_id}")
         return DestroyResponse(status=Status.OK)
 
@@ -418,11 +450,11 @@ def darq_main():
         return 1
 
     implementation = TextImplementation(storage.Storage.Client(darq.connect("darq.storage"), timeout=10),
-                                        darq.index.Publisher())
+                                        darq.index.Publisher(), model.KB.connect(timeout=10))
 
     port = darq.open_port()
     server = darq.Server()
-    server.add(port, implementation)
+    implementation.add(server, port)
     darq.send(bootstrap, Ready(implementation=port))
     logging.info(f"Serving {TYPE_ID} on port {port}")
     server.run()

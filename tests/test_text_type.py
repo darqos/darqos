@@ -9,18 +9,21 @@
 import importlib.util
 import logging
 import pathlib
+import typing
 
 import pytest
 
 import darq
+import darq.kb as model
 from darq import dipc, system
 from darq.protocols import storage
 from darq.protocols.text import CloseRequest, GetRequest, ReplaceRequest, StatRequest
 from darq.protocols.text import Status as TextStatus
 from darq.protocols.type import (CreateFromRequest, CreateRequest, DestroyRequest, ExportRequest,
-                                 IndexEntryRequest, OpenRequest, Status)
+                                 IndexEntryRequest, OpenEntityRequest, OpenRequest, Status)
 
 from test_pkernel import live_pkernel, pkernel, run_kernel_until, write_app  # noqa: F401
+from fake_kb import FakeKB, file_name, rename
 from test_rpc import FakePorts
 
 
@@ -133,8 +136,13 @@ def index():
 
 
 @pytest.fixture
-def implementation(blobs, index):
-    return text_module.TextImplementation(blobs, index)
+def kb():
+    return FakeKB()
+
+
+@pytest.fixture
+def implementation(blobs, index, kb):
+    return text_module.TextImplementation(blobs, index, typing.cast(typing.Any, kb))
 
 
 @pytest.fixture
@@ -591,3 +599,77 @@ def test_text_type(live_pkernel, tmp_path):  # noqa: F811
     zombie = kernel.module.KernelProcessStatus.ZOMBIE
     run_kernel_until(kernel, lambda: client.get_status() == zombie, "the client to exit")
     assert (client.get_exit_status(), client.get_exit_error()) == (0, None)
+
+
+################################################################
+# Its entity (see doc/entity-vs-item.rst)
+################################################################
+
+def specifier_of(iid):
+    return darq.split_item_id(iid)[1]
+
+
+def test_a_new_item_is_an_entity_named_from_its_file(call, kb, index):
+    response = call(IMPLEMENTATION_PORT, CreateFromRequest(type_id=text_module.TYPE_ID, data=b"Eggs, milk",
+                                                           name="Shopping list.txt"))
+    entity = kb.get(specifier_of(response.item_id))
+    assert entity.get_label() == "Shopping list" and file_name(entity) == "Shopping list.txt"
+    assert model.recorded_type(entity) == text_module.TYPE_ID
+    assert index.names[-1] == ["Shopping list"] and index.sent[-1] == ("publish", response.item_id, "Eggs, milk")
+
+
+def test_a_new_empty_note_has_an_unnamed_entity(call, kb):
+    iid, _ = create(call)
+    entity = kb.get(specifier_of(iid))
+    assert entity is not None and entity.labels == {} and file_name(entity) == ""
+
+
+def test_renaming_it_publishes_its_new_name(call, kb, index, implementation):
+    iid, _ = create(call)
+    rename(call, implementation, IMPLEMENTATION_PORT, iid, "Ideas")
+    assert kb.label(specifier_of(iid)) == "Ideas"
+    assert index.names[-1] == ["Ideas"] and index.sent[-1][:2] == ("publish", iid)
+    assert call(IMPLEMENTATION_PORT, IndexEntryRequest(item_id=iid)).names == ["Ideas"]
+
+
+def test_destroying_it_destroys_its_entity(call, kb):
+    iid, _ = create(call)
+    assert call(IMPLEMENTATION_PORT, DestroyRequest(item_id=iid)).status == Status.OK
+    assert kb.entities[specifier_of(iid)].destroyed
+
+
+def test_its_made_without_the_kb(call, kb, blobs):
+    """Its blob's the item: its entity's made later (see darq.entity_type)."""
+    kb.failing = darq.DarqError("no KB")
+    response = call(IMPLEMENTATION_PORT, CreateFromRequest(type_id=text_module.TYPE_ID, data=b"Hi", name="a.txt"))
+    assert response.status == Status.OK and kb.entities == {}
+    assert blobs.text(response.item_id) == ("Hi", 0)
+
+
+def made_before_entities(call, kb, data=b"Hi"):
+    """An item with no entity, as one made before there were entities."""
+    kb.failing = darq.DarqError("no KB")
+    response = call(IMPLEMENTATION_PORT, CreateFromRequest(type_id=text_module.TYPE_ID, data=data))
+    kb.failing = None
+    assert kb.entities == {}
+    return response.item_id
+
+
+def test_an_old_item_is_given_its_entity_when_its_entity_is_opened(call, kb):
+    iid = made_before_entities(call, kb)
+    assert call(IMPLEMENTATION_PORT, OpenEntityRequest(item_id=iid)).status == Status.OK
+    entity = kb.get(specifier_of(iid))
+    assert model.recorded_type(entity) == text_module.TYPE_ID and entity.labels == {}
+
+
+def test_an_old_item_is_given_its_entity_when_its_opened(call, kb):
+    iid = made_before_entities(call, kb)
+    assert call(IMPLEMENTATION_PORT, OpenRequest(item_id=iid)).status == Status.OK
+    assert kb.get(specifier_of(iid)) is not None
+
+
+def test_one_thats_gone_isnt_given_one(call, kb):
+    iid = made_before_entities(call, kb)
+    assert call(IMPLEMENTATION_PORT, DestroyRequest(item_id=iid)).status == Status.OK
+    assert call(IMPLEMENTATION_PORT, OpenEntityRequest(item_id=iid)).status == Status.NOT_FOUND
+    assert kb.entities == {}

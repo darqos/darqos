@@ -21,8 +21,15 @@
 #
 # Each time an item's saved, and when it's created, its metadata fields
 # are published to the Index (see doc/search-service.rst), and it's
-# withdrawn when it's destroyed: its title, artist and copyright as
-# names, and its comment, date taken, and format as its body.
+# withdrawn when it's destroyed: its entity's names, and its title, artist
+# and copyright, as names, and its comment, date taken, and format as its
+# body.
+#
+# Every item's an entity (see doc/entity-vs-item.rst): it inherits the
+# entity type, darq.entity_type's EntityType, which serves an item's
+# entity on a port from OpenEntity.  An item's entity is made with it,
+# identified by its specifier, and named by the image's title, or else the
+# file it came from; a change to it is published to the Index.
 
 import json
 import logging
@@ -32,6 +39,8 @@ import time
 
 import darq
 import darq.index
+import darq.kb as model
+from darq.entity_type import EntityType
 from darq.protocols import image as wire
 from darq.protocols import storage
 from darq.protocols.image import (
@@ -59,9 +68,6 @@ from darq.protocols.type import (
     ExportResponse,
     IndexEntryRequest,
     IndexEntryResponse,
-    Implementation,
-    OpenEntityRequest,
-    OpenEntityResponse,
     OpenRequest,
     OpenResponse,
     Ready,
@@ -133,8 +139,21 @@ def decode_blob(value: bytes) -> tuple[bytes, list[imaging.Edit], int]:
     return value[start + length:], edits, flags
 
 
+def specifier(key: storage.Key) -> str:
+    """Return an item's specifier, which is its entity's identifier too."""
+    return f"{key.high:016x}{key.low:016x}"
+
+
 def item_id(type_id: str, key: storage.Key) -> str:
-    return f"{type_id}:{key.high:016x}{key.low:016x}"
+    return f"{type_id}:{specifier(key)}"
+
+
+def title_of(type_id: str, original: bytes) -> str:
+    """Return an image's own title, from its metadata, or empty."""
+    try:
+        return imaging.field_values(type_id, original, []).get(imaging.TITLE, "") if original else ""
+    except imaging.ImageError:
+        return ""
 
 
 def parse_item_id(iid: str) -> tuple[str, storage.Key] | None:
@@ -223,10 +242,11 @@ class Picture:
         return self.rendered, self.info
 
 
-class ImageImplementation(Implementation.Handler):
+class ImageImplementation(EntityType):
     """Answers the Implementation protocol, and keeps the open items."""
 
-    def __init__(self, client: storage.Storage.Client, index: darq.index.Publisher):
+    def __init__(self, client: storage.Storage.Client, index: darq.index.Publisher, kb: model.KB):
+        super().__init__(kb, imaging.FORMATS)
         self.storage = client
         self.index = index
         self.pictures: dict[tuple[int, int], Picture] = {}
@@ -333,25 +353,43 @@ class ImageImplementation(Implementation.Handler):
         if picture.flags & DESTROYED:
             self.index.withdraw(picture.iid)
             return
+        names = self.entity_names(specifier(picture.key))
         if not picture.original:
-            # Empty: there's nothing to find it by.
-            self.index.publish(picture.iid)
+            # Empty: there's nothing to find it by but its entity's names.
+            self.index.publish(picture.iid, names)
             return
         try:
-            names, body = index_entry(picture)
+            own, body = index_entry(picture)
         except imaging.ImageError as e:
             logging.error(f"Can't index {picture.iid}: {e}")
             return
-        self.index.publish(picture.iid, names, body)
+        self.index.publish(picture.iid, list(dict.fromkeys([*names, *own])), body)
 
-    def new(self, type_id: str, original: bytes) -> Picture | None:
-        """Create an item's blob, and return it, or None if it can't be."""
+    def adopt(self, item_id: str) -> bool:
+        """Give an item made before there were entities its entity, named by
+        the image's title, if it has one."""
+        picture, _ = self.find(item_id)
+        if picture is None:
+            return False
+        return self.adopt_entity(picture.type_id, specifier(picture.key), title_of(picture.type_id, picture.original))
+
+    def entity_changed(self, before: model.Entity, after: model.Entity):
+        """Its entity's names may have changed: publish it again."""
+        picture, _ = self.find(model.item_id(after.id, model.recorded_type(after)))
+        if picture is not None:
+            self.publish(picture)
+
+    def new(self, type_id: str, original: bytes, name: str = "") -> Picture | None:
+        """Create an item's blob, and its entity, named by the image's
+        title, or else the file it came from, and return it, or None if it
+        can't be."""
         response = self.storage.create(value=encode_blob(original, []))
         if response.status != storage.Status.OK:
             logging.error(f"Can't create an image blob: {response.status.name}")
             return None
         picture = Picture(type_id, response.key, response.generation, original, [])
         logging.info(f"Created {picture.iid}")
+        self.make_entity(type_id, specifier(picture.key), title_of(type_id, original), name)
         self.publish(picture)
         return picture
 
@@ -385,7 +423,7 @@ class ImageImplementation(Implementation.Handler):
         except imaging.ImageError as e:
             logging.info(f"Not a {type_id} image: {e}")
             return CreateFromResponse(status=Status.INVALID_DATA)
-        picture = self.new(type_id, request.data)
+        picture = self.new(type_id, request.data, request.name)
         if picture is None:
             return CreateFromResponse(status=Status.FAILED)
         return CreateFromResponse(item_id=picture.iid, item=self.attach(picture), status=Status.OK)
@@ -394,24 +432,22 @@ class ImageImplementation(Implementation.Handler):
         picture, status = self.find(request.item_id)
         if picture is None:
             return OpenResponse(status=status)
+        self.adopt_entity(picture.type_id, specifier(picture.key), title_of(picture.type_id, picture.original))
         return OpenResponse(item=self.attach(picture), status=Status.OK)
-
-    def open_entity(self, request: OpenEntityRequest, source: int) -> OpenEntityResponse:
-        # Its items aren't entities yet (see doc/entity-vs-item.rst).
-        return OpenEntityResponse(status=Status.UNSUPPORTED)
 
     def index_entry(self, request: IndexEntryRequest, source: int) -> IndexEntryResponse:
         picture, status = self.find(request.item_id)
         if picture is None:
             return IndexEntryResponse(status=status)
+        names = self.entity_names(specifier(picture.key))
         if not picture.original:
-            return IndexEntryResponse(status=Status.OK)
+            return IndexEntryResponse(names=names, status=Status.OK)
         try:
-            names, body = index_entry(picture)
+            own, body = index_entry(picture)
         except imaging.ImageError as e:
             logging.error(f"Can't index {request.item_id}: {e}")
             return IndexEntryResponse(status=Status.FAILED)
-        return IndexEntryResponse(names=names, body=body, status=Status.OK)
+        return IndexEntryResponse(names=list(dict.fromkeys([*names, *own])), body=body, status=Status.OK)
 
     def export(self, request: ExportRequest, source: int) -> ExportResponse:
         picture, status = self.find(request.item_id)
@@ -437,6 +473,7 @@ class ImageImplementation(Implementation.Handler):
         if not self.save(picture):
             picture.flags &= ~DESTROYED
             return DestroyResponse(status=Status.FAILED)
+        self.destroy_item_entity(specifier(picture.key))
         logging.info(f"Destroyed {request.item_id}")
         return DestroyResponse(status=Status.OK)
 
@@ -528,11 +565,11 @@ def darq_main():
         return 1
 
     implementation = ImageImplementation(storage.Storage.Client(darq.connect("darq.storage"), timeout=10),
-                                         darq.index.Publisher())
+                                         darq.index.Publisher(), model.KB.connect(timeout=10))
 
     port = darq.open_port()
     server = darq.Server()
-    server.add(port, implementation)
+    implementation.add(server, port)
     darq.send(bootstrap, Ready(implementation=port))
     logging.info(f"Serving the image types on port {port}")
     server.run()

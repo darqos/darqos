@@ -196,7 +196,7 @@ def vocabulary() -> typing.List[Entity]:
         prop(LAST_EDITED, "last edited", Datatype.Time, "When a message was last edited"),
         prop(ATTACHMENT, "attachment", Datatype.String,
              "An item attached to a message, by its identifier: empty for a file that isn't an item"),
-        prop(FILE_NAME, "file name", Datatype.String, "The name of an attached file"),
+        prop(FILE_NAME, "file name", Datatype.String, "The name of a file: an item's, or an attachment's"),
         prop(MEDIA_TYPE, "media type", Datatype.String, "The media type of an attached file"),
         prop(FILE_SIZE, "file size", Datatype.String, "The size of an attached file, in bytes"),
         *(inverse(item_id, label) for _, item_id, label in INVERSE_LABELS),

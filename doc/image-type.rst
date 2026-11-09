@@ -172,12 +172,14 @@ Searching
 ---------
 
 Each time an item's saved, and when it's created, it's published to
-the Index (see :doc:`search-service`): its title, artist and
-copyright as names, and its comment, date taken, and format (*JPEG
+the Index (see :doc:`search-service`): its entity's names, and its
+title, artist and copyright, as names, and its comment, date taken, and format (*JPEG
 image*) as its body.  They're read from the original's metadata, with
 the field edits made, without decoding its pixels, so publishing
-doesn't render the image.  An empty item is published with nothing,
-and a destroyed one is withdrawn.  `IndexEntry` gives the same, for a
+doesn't render the image.  An empty item is published with its entity's
+names alone, and a destroyed one is withdrawn.  It's published again
+when its entity's changed.  Its entity's named by its title, or else by
+the file it came from (see :doc:`entity-vs-item`).  `IndexEntry` gives the same, for a
 reindex.
 
 Implementation

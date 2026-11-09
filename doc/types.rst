@@ -261,12 +261,14 @@ Every implementation serves the `Implementation` protocol (also in
   must check that the identifier's type is its own: an item of another
   type, including a conforming subtype, is `NOT_FOUND`.
 * `Destroy(item_id)` marks it destroyed (see Item Destruction, below).
-* `CreateFrom(type_id, data)` creates an item of a type from data in the
-  type's own format, such as a PNG file's bytes, and returns its
+* `CreateFrom(type_id, data, name)` creates an item of a type from data
+  in the type's own format, such as a PNG file's bytes, and returns its
   identifier and a port, as `Create` does.  Data that isn't of the type
   is `INVALID_DATA`, and nothing is created: it isn't converted.  This
   is how items come in from outside: from a file, a web page, or an
-  email's attachment.
+  email's attachment.  Its name is the name of the file it came from,
+  as its caller knows it, or empty: the item's entity is named from it,
+  when the data has no title of its own (see :doc:`entity-vs-item`).
 * `Export(item_id)` returns an item's content as data in its type's
   format, with its MIME type: for attaching it to an email, saving it
   to a file, or uploading it.
@@ -285,9 +287,10 @@ Every implementation serves the `Implementation` protocol (also in
 * `OpenEntity(item_id)` returns a port for an item's entity, serving the
   `EntityItem` protocol (see :doc:`kb-service`), as every item is an
   entity (see :doc:`entity-vs-item`): it's inherited from
-  `darq.entity_type`'s `EntityType`.  An item that has no entity yet is
-  `NOT_FOUND`, and a type whose items aren't entities yet answers
-  `UNSUPPORTED`.
+  `darq.entity_type`'s `EntityType`.  An item that has no entity yet,
+  as one made before there were entities hasn't, is given one first, by
+  its implementation (`EntityType.adopt`); an item that isn't there is
+  `NOT_FOUND`.
 
 `darq.launch` has `create_item_from(type_id, data)`,
 `export_item(item_id)` and `find_types(mime_type, extension)` for

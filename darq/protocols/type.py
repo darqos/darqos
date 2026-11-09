@@ -1025,22 +1025,24 @@ class CreateFromRequest(Message):
 
     METHOD = 4
     RESPONSE = CreateFromResponse
-    BODY_FORMAT = "<IIII"
+    BODY_FORMAT = "<IIIIII"
     BODY_START = 8
-    LENGTH = 24
-    DATA_START = 24
+    LENGTH = 32
+    DATA_START = 32
 
-    def __init__(self, txid: int = 0, type_id: str = '', data: bytes = b''):
+    def __init__(self, txid: int = 0, type_id: str = '', data: bytes = b'', name: str = ''):
         super().__init__(txid)
         self.type_id = type_id
         self.data = data
+        self.name = name
 
     def encode(self) -> tuple[bytes, list[int]]:
         buf, handles = super().encode()
         out = Encoder(self.DATA_START, handles)
         buf += struct.pack(self.BODY_FORMAT,
                            *out.string(self.type_id),
-                           *out.opaque(self.data))
+                           *out.opaque(self.data),
+                           *out.string(self.name))
         buf += out.data
         return buf, handles
 
@@ -1053,6 +1055,7 @@ class CreateFromRequest(Message):
         inp = Decoder(buffer, self.DATA_START, handles)
         self.type_id = inp.string(bits[0], bits[1])
         self.data = inp.opaque(bits[2], bits[3])
+        self.name = inp.string(bits[4], bits[5])
         return
 
 
@@ -1533,9 +1536,13 @@ class Implementation:
             """Implementation.Destroy."""
             return self.call(DestroyRequest(item_id=item_id), DestroyResponse)
 
-        def create_from(self, type_id: str = '', data: bytes = b'') -> CreateFromResponse:
+        def create_from(self,
+                        type_id: str = '',
+                        data: bytes = b'',
+                        name: str = '') -> CreateFromResponse:
             """Implementation.CreateFrom."""
-            return self.call(CreateFromRequest(type_id=type_id, data=data), CreateFromResponse)
+            request = CreateFromRequest(type_id=type_id, data=data, name=name)
+            return self.call(request, CreateFromResponse)
 
         def export(self, item_id: str = '') -> ExportResponse:
             """Implementation.Export."""

@@ -350,11 +350,13 @@ class Items:
 
     def __init__(self):
         self.made: list[tuple[str, str, bytes]] = []
+        self.names: list[str] = []
 
-    def __call__(self, media_type, extension, data):
+    def __call__(self, media_type, extension, data, name):
         if media_type not in ("application/pdf", "text/plain") and extension != "pdf":
             return None
         self.made.append((media_type, extension, data))
+        self.names.append(name)
         return f"com.adobe.pdf:{len(self.made):032x}"
 
 
@@ -375,11 +377,18 @@ def take(keeper, web, tmp_path, path):
     return keeper[0].take(web.base + path, fetch, tmp_path / "body", NOW)
 
 
+@pytest.mark.parametrize("url, name", [("https://a.example/papers/On%20Computable.pdf?x=1", "On Computable.pdf"),
+                                       ("https://a.example/", ""), ("https://a.example", "")])
+def test_a_snapshots_name(url, name):
+    assert snapshots.name_of(url) == name
+
+
 def test_a_snapshot(keeper, web, tmp_path, kb):  # noqa: F811
     outcome = take(keeper, web, tmp_path, "/paper.pdf")
     assert outcome.changed and outcome.http_status == 200
     assert outcome.url_item == darq.url.item_id(web.base + "/paper.pdf")
     assert keeper[1].made == [("application/pdf", "pdf", PDF)]
+    assert keeper[1].names == ["paper.pdf"]
 
     entity = kb.get(darq.url.entity_id(web.base + "/paper.pdf"))
     assert model.recorded_type(entity) == "public.url"

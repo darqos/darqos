@@ -19,20 +19,22 @@ anyone, through the KB (see doc/types.rst)."""
 
 import dataclasses
 import datetime
+import pathlib
 
 from . import kb as model
+from . import message
 from .kb import Datatype, Entity, EntityValue, Item, Property, Reference, StringValue, TimePrecision, TimeValue
 
 
 # Control exports
-__all__ = ["CREATED", "FILE_NAME", "KINDS", "Kind", "create", "destroy", "is_content", "made", "read", "rename",
-           "vocabulary"]
+__all__ = ["CREATED", "FILE_NAME", "KINDS", "Kind", "create", "destroy", "is_content", "label_for", "made", "names",
+           "read", "rename", "vocabulary"]
 
 
 # Properties: when an item was made, in DarqOS, and the name of the file
-# it was made from, where it was.
+# it was made from, where it was: the same as a message's attachment's.
 CREATED = "4ef65274-cfb1-4d05-8789-f7575e03f5cc"
-FILE_NAME = "48adae83-63e6-4a50-8170-d23476ef84ad"
+FILE_NAME = message.FILE_NAME
 
 # Wikidata's classes of files: text file, image file, and computer file.
 TEXT_FILE = "Q86920"
@@ -82,6 +84,25 @@ KINDS: dict[str, Kind] = {
 def is_content(kind: str) -> bool:
     """Return whether a kind's items keep their content in Storage."""
     return kind in KINDS
+
+
+def label_for(title: str = "", file_name: str = "") -> str:
+    """Return a new item's label: the title its content gives, such as a
+    PDF's, or else the name of the file it came from, without its
+    extension, or else none."""
+    if title.strip():
+        return " ".join(title.split())
+    stem = pathlib.PurePath(file_name.strip()).stem if file_name.strip() else ""
+    return stem.strip()
+
+
+def names(entity: Entity | None) -> list[str]:
+    """Return what an item's found by, from its entity, for the Index: its
+    labels and aliases, in every language, each once."""
+    if entity is None:
+        return []
+    return list(dict.fromkeys([*entity.labels.values(),
+                               *(a for aliases in entity.aliases.values() for a in aliases)]))
 
 
 def time_value(moment: datetime.datetime) -> TimeValue:
@@ -185,7 +206,6 @@ def vocabulary() -> list[Entity]:
 
     return [
         prop(CREATED, "created", Datatype.Time, "When an item was made, in DarqOS"),
-        prop(FILE_NAME, "file name", Datatype.String, "The name of the file an item was made from"),
         item(TEXT_FILE, "text file"),
         item(IMAGE_FILE, "image file"),
         item(COMPUTER_FILE, "computer file"),

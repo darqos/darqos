@@ -200,7 +200,7 @@ class EntityImplementation(EntityType, EntityWriter.Handler):
         assert self.server is not None
         iid = model.item_id(entity.id, type_id)
         logging.info(f"Created {iid}")
-        return CreateResponse(item_id=iid, item=self.attach(self.server, entity.id), status=Status.OK)
+        return CreateResponse(item_id=iid, item=self.attach_entity(self.server, entity.id), status=Status.OK)
 
     def create_from(self, request: CreateFromRequest, source: int) -> CreateFromResponse:
         # An entity has no form as data: a vCard file, say, makes many,
@@ -212,7 +212,7 @@ class EntityImplementation(EntityType, EntityWriter.Handler):
 
     def index_entry(self, request: IndexEntryRequest, source: int) -> IndexEntryResponse:
         try:
-            entity, status = self.find(request.item_id)
+            entity, status = self.find_entity(request.item_id)
         except KB_ERRORS as e:
             logging.error(f"Can't index {request.item_id}: {e}")
             return IndexEntryResponse(status=Status.FAILED)
@@ -229,18 +229,18 @@ class EntityImplementation(EntityType, EntityWriter.Handler):
 
     def open(self, request: OpenRequest, source: int) -> OpenResponse:
         try:
-            entity, status = self.find(request.item_id)
+            entity, status = self.find_entity(request.item_id)
         except KB_ERRORS as e:
             logging.error(f"Can't open {request.item_id}: {e}")
             return OpenResponse(status=Status.FAILED)
         if entity is None:
             return OpenResponse(status=status)
         assert self.server is not None
-        return OpenResponse(item=self.attach(self.server, entity.id), status=Status.OK)
+        return OpenResponse(item=self.attach_entity(self.server, entity.id), status=Status.OK)
 
     def destroy(self, request: DestroyRequest, source: int) -> DestroyResponse:
         try:
-            entity, status = self.find(request.item_id)
+            entity, status = self.find_entity(request.item_id)
             if entity is None:
                 return DestroyResponse(status=status)
             kind = self.indexed_kind(entity)

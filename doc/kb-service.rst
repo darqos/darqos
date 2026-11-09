@@ -546,9 +546,24 @@ entities, for their type implementations:
   their own, and their entities are written to the KB service by it.
 * It has a label, its name, where it has one, and two local
   properties: *created*, when it was made, in DarqOS, to the second, and
-  *file name*, the file it was made from, stated in what imported it.
+  *file name*, the file it was made from, the same property as a
+  message's attachment's file name.
+* An item made before there were entities is given its entity when it,
+  or its entity, is opened, by its type implementation, which overrides
+  ``EntityType.adopt``: so ``OpenEntity`` finds every content item that's
+  there.  The rest are given theirs by Give Items Entities (see
+  :doc:`entity-vs-item`).
 * The kinds' names, such as JPEG Image, are in ``darq.items``, and so
   their items are listed by them on an entity's page.
+* A new item's entity is made by its type implementation, after its
+  blob, named by its content's title (a PDF's, an e-book's, or an
+  image's), or else by the file it came from, without its extension, as
+  ``CreateFrom`` is given it: an empty note has none.  If the KB won't
+  write it, that's logged, and the item's made all the same: an item
+  that has no entity is given one later (see :doc:`entity-vs-item`).
+* Its names, its entity's labels and aliases, are published to the
+  Index with what the type reads from its content, and again when its
+  entity's changed through its port.  It's destroyed with the item.
 
 Kinds
 ~~~~~
@@ -662,9 +677,10 @@ implementation inherits (see :doc:`entity-vs-item`): ``darq.entity_type``'s
 protocol for each item, the entity lens's, below.  It calls a hook,
 ``entity_changed``, after each change made through an item's port,
 which ``types/kb`` overrides to publish the entity to the Index.  The
-types that keep their content in Storage will inherit it too, and serve
-their items' entities with ``OpenEntity``; until they do, they answer
-it ``UNSUPPORTED``.
+types that keep their content in Storage inherit it too, and serve their
+items' entities with ``OpenEntity``: they make an item's entity with it,
+and override the hook to publish the item's names, with what's in it
+(see Content Items, above).
 
 Entities of its kinds are written only through it, not to the KB
 service directly (see :doc:`types`), so it sees every change to its

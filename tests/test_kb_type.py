@@ -239,7 +239,7 @@ def open_item(implementation, item_id):
 
 
 def item(implementation, port):
-    return implementation.items[port]
+    return implementation.entity_ports[port]
 
 
 def entity(entity_id, label, *classes):
@@ -619,7 +619,7 @@ def test_put_entity(kb, ada):
 
 
 def test_get_links(kb, implementation, ada):
-    acme = implementation.items[open_item(implementation, "darq.organisation:acme")]
+    acme = implementation.entity_ports[open_item(implementation, "darq.organisation:acme")]
     response = acme.get_links(GetLinksRequest(property_id="P108", role=Role.MAIN, languages=["en"]), 0)
     assert response.status == wire.Status.OK
     assert [(link.entity_id, link.item_id, link.label) for link in response.linked] == [
@@ -738,7 +738,7 @@ def test_watch_entity_and_close(kb, implementation, ports, ada):
 
     port = ada.port
     ada.close(CloseRequest(), 0)
-    assert port not in implementation.items
+    assert port not in implementation.entity_ports
     assert port not in ports.closed
     for timer in implementation.server._timers:
         timer.fire()
@@ -824,14 +824,21 @@ def test_kb_type(live_pkernel, tmp_path):  # noqa: F811
             if model.entity_from_wire(got.entity).get_label() != "Ada Lovelace":
                 return f"open_entity's entity: {got!r}"
 
-            # A text's isn't an entity yet: its implementation says so.
+            # A text's an entity too, made with it, and named from its file.
             text = types.activate(type_id="public.utf8-plain-text")
             if text.status != Status.OK:
                 return f"activate text: {text!r}"
-            answer = Implementation.Client(text.implementation, timeout=30).open_entity(
-                item_id="public.utf8-plain-text:03d1824dc667bb6b343e27a5a610b06b")
-            if answer.status != Status.UNSUPPORTED:
+            texts = Implementation.Client(text.implementation, timeout=30)
+            note = texts.create_from(type_id="public.utf8-plain-text", data=b"Hello", name="Shopping list.txt")
+            if note.status != Status.OK:
+                return f"text's create_from: {note!r}"
+            darq.close_port(note.item)
+            answer = texts.open_entity(item_id=note.item_id)
+            if answer.status != Status.OK:
                 return f"text's open_entity: {answer!r}"
+            got = EntityItem.Client(answer.item, timeout=30).get_entity(languages=["en"])
+            if model.entity_from_wire(got.entity).get_label() != "Shopping list":
+                return f"text's entity: {got!r}"
 
             # A message, created with the identifier it's given.
             kb = model.KB.connect(30, wire.EntityWriter.Client(person.implementation, timeout=30))

@@ -35,9 +35,11 @@ decision (see :doc:`entity-vs-item`).
 Indexing
 --------
 
-When an item's created, its title and author, if it has them, are
-published to the Index (see :doc:`search-service`) as names, and the
-text of its pages as its body.  Few PDFs have a title: of 44 from one
+When an item's created, its entity's names, and its title and author, if
+it has them, are published to the Index (see :doc:`search-service`) as
+names, and the text of its pages as its body: and again when its entity's
+changed, as when it's renamed.  Its entity's named by its title, or else
+by the file it came from (see :doc:`entity-vs-item`).  Few PDFs have a title: of 44 from one
 Slack workspace, 15 did.  So most are found by their text.  A
 destroyed item is withdrawn.  ``IndexEntry`` gives the same, for a
 reindex.

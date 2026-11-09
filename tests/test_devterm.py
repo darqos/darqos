@@ -88,6 +88,7 @@ class FakeHistory:
 class FakeLaunch:
     def __init__(self):
         self.created = []
+        self.names: list[str] = []
         self.used = []
         self.fail = False
 
@@ -111,10 +112,11 @@ class FakeLaunch:
     def find_types(self, mime_type="", extension=""):
         return self.extensions.get(extension, [])
 
-    def create_item_from(self, type_id, data):
+    def create_item_from(self, type_id, data, name=""):
         if type_id in self.refuses:
             raise LaunchError(f"Can't create a {type_id} item from data: INVALID_DATA")
         self.created.append((type_id, data))
+        self.names.append(name)
         return DOC, 43
 
 
@@ -255,6 +257,7 @@ def test_import_file(terminal, tmp_path, monkeypatch):
     monkeypatch.setattr(window.factory, "choose_file", lambda: str(path))
     window.factory.import_button.click()
     assert services.launch.created == [(TEXT, b"Hello")]
+    assert services.launch.names == ["notes.txt"]
     assert services.history.added == [(DOC, "imported", "devterm")]
     assert services.launch.used == [(DOC, 43)]
     assert window.status.text() == f"Using {DOC}"

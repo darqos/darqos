@@ -120,7 +120,7 @@ class Launcher:
 
             for type_id in type_ids:
                 try:
-                    item_id, item = services.launch.create_item_from(type_id, data)
+                    item_id, item = services.launch.create_item_from(type_id, data, name)
                 except (darq.DarqError, TimeoutError) as e:
                     logging.info(f"{type_id} didn't take {name}: {e}")
                     continue

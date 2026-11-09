@@ -16,7 +16,14 @@
 # When an item's created, its title and author are published to the
 # Index as names, and its text as its body, and it's withdrawn when it's
 # destroyed.  Reading a long PDF's text takes up to a second or so, which
-# holds up other requests, but it's only done then, and for a reindex.
+# holds up other requests, but it's only done then, when its entity's
+# changed, and for a reindex.
+#
+# Every item's an entity (see doc/entity-vs-item.rst): it inherits the
+# entity type, darq.entity_type's EntityType, which serves an item's
+# entity on a port from OpenEntity.  An item's entity is made with it,
+# identified by its specifier, and named by the PDF's title, or else the
+# file it came from; its names are published to the Index with its own.
 
 import logging
 import re
@@ -26,6 +33,8 @@ from PyQt6.QtCore import QCoreApplication
 
 import darq
 import darq.index
+import darq.kb as model
+from darq.entity_type import EntityType
 from darq.protocols import storage
 from darq.protocols.pdf import (
     CloseRequest,
@@ -51,9 +60,6 @@ from darq.protocols.type import (
     ExportResponse,
     IndexEntryRequest,
     IndexEntryResponse,
-    Implementation,
-    OpenEntityRequest,
-    OpenEntityResponse,
     OpenRequest,
     OpenResponse,
     Ready,
@@ -111,8 +117,13 @@ def decode_blob(value: bytes) -> tuple[bytes, int, str]:
     return value[start + length:], flags, value[start:start + length].decode("utf-8", "replace")
 
 
+def specifier(key: storage.Key) -> str:
+    """Return an item's specifier, which is its entity's identifier too."""
+    return f"{key.high:016x}{key.low:016x}"
+
+
 def item_id(key: storage.Key) -> str:
-    return f"{TYPE_ID}:{key.high:016x}{key.low:016x}"
+    return f"{TYPE_ID}:{specifier(key)}"
 
 
 def parse_item_id(iid: str) -> storage.Key | None:
@@ -156,10 +167,11 @@ class Document:
         return item_id(self.key)
 
 
-class PdfImplementation(Implementation.Handler):
+class PdfImplementation(EntityType):
     """Answers the Implementation protocol, and keeps the open items."""
 
-    def __init__(self, client: storage.Storage.Client, index: darq.index.Publisher):
+    def __init__(self, client: storage.Storage.Client, index: darq.index.Publisher, kb: model.KB):
+        super().__init__(kb, [TYPE_ID])
         self.storage = client
         self.index = index
         self.documents: dict[tuple[int, int], Document] = {}
@@ -254,34 +266,54 @@ class PdfImplementation(Implementation.Handler):
             return CreateFromResponse(status=Status.FAILED)
         document = Document(response.key, response.generation, request.data, info)
         logging.info(f"Created {document.iid}")
+        self.make_entity(TYPE_ID, specifier(document.key), info.title, request.name)
         self.publish(document)
         return CreateFromResponse(item_id=document.iid, item=self.attach(document), status=Status.OK)
+
+    def entry(self, document: Document) -> tuple[list[str], str]:
+        """Return an item's entry for the Index: its entity's names, with
+        its own, and its text.
+
+        :raises pdfdoc.PdfError: if its data can't be read."""
+        own, body = index_entry(document.data, document.info)
+        return list(dict.fromkeys([*self.entity_names(specifier(document.key)), *own])), body
 
     def publish(self, document: Document):
         """Publish an item's entry to the Index."""
         try:
-            names, body = index_entry(document.data, document.info)
+            names, body = self.entry(document)
         except pdfdoc.PdfError as e:
             logging.error(f"Can't index {document.iid}: {e}")
             return
         self.index.publish(document.iid, names, body)
 
+    def adopt(self, item_id: str) -> bool:
+        """Give an item made before there were entities its entity, named by
+        the PDF's title, if it has one."""
+        document, _ = self.find(item_id)
+        if document is None:
+            return False
+        return self.adopt_entity(TYPE_ID, specifier(document.key), document.info.title)
+
+    def entity_changed(self, before: model.Entity, after: model.Entity):
+        """Its entity's names may have changed: publish it again."""
+        document, _ = self.find(model.item_id(after.id, TYPE_ID))
+        if document is not None:
+            self.publish(document)
+
     def open(self, request: OpenRequest, source: int) -> OpenResponse:
         document, status = self.find(request.item_id)
         if document is None:
             return OpenResponse(status=status)
+        self.adopt_entity(TYPE_ID, specifier(document.key), document.info.title)
         return OpenResponse(item=self.attach(document), status=Status.OK)
-
-    def open_entity(self, request: OpenEntityRequest, source: int) -> OpenEntityResponse:
-        # Its items aren't entities yet (see doc/entity-vs-item.rst).
-        return OpenEntityResponse(status=Status.UNSUPPORTED)
 
     def index_entry(self, request: IndexEntryRequest, source: int) -> IndexEntryResponse:
         document, status = self.find(request.item_id)
         if document is None:
             return IndexEntryResponse(status=status)
         try:
-            names, body = index_entry(document.data, document.info)
+            names, body = self.entry(document)
         except pdfdoc.PdfError as e:
             logging.error(f"Can't index {request.item_id}: {e}")
             return IndexEntryResponse(status=Status.FAILED)
@@ -312,6 +344,7 @@ class PdfImplementation(Implementation.Handler):
         document.flags = flags
         document.generation = response.generation
         self.index.withdraw(document.iid)
+        self.destroy_item_entity(specifier(document.key))
         logging.info(f"Destroyed {request.item_id}")
         return DestroyResponse(status=Status.OK)
 
@@ -370,11 +403,11 @@ def darq_main():
     app = QCoreApplication([])
 
     implementation = PdfImplementation(storage.Storage.Client(darq.connect("darq.storage"), timeout=10),
-                                       darq.index.Publisher())
+                                       darq.index.Publisher(), model.KB.connect(timeout=10))
 
     port = darq.open_port()
     server = darq.Server()
-    server.add(port, implementation)
+    implementation.add(server, port)
     darq.send(bootstrap, Ready(implementation=port))
     logging.info(f"Serving {TYPE_ID} on port {port}")
     server.run()

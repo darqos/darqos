@@ -43,31 +43,34 @@ def create_item(type_id: str) -> tuple[str, int]:
     return response.item_id, response.item
 
 
-def create_item_from(type_id: str, data: bytes) -> tuple[str, int]:
+def create_item_from(type_id: str, data: bytes, name: str = "") -> tuple[str, int]:
     """Create an item of a type from data in the type's format, such as a
     PNG file's bytes.
+
+    :param name: The name of the file it came from, if it did.
 
     :returns: Its identifier, and a port for it, as create_item does.
     :raises LaunchError: if it couldn't be created: if the data isn't of
                          the type, nothing is."""
-    response = _activate(type_id).create_from(type_id=type_id, data=data)
+    response = _activate(type_id).create_from(type_id=type_id, data=data, name=name)
     if response.status != type_protocol.Status.OK or response.item is None:
         raise LaunchError(f"Can't create a {type_id} item from data: {response.status.name}")
     return response.item_id, response.item
 
 
-def import_data(media_type: str, extension: str, data: bytes) -> str | None:
+def import_data(media_type: str, extension: str, data: bytes, name: str = "") -> str | None:
     """Create an item from data that's come from somewhere else, of the
     first type for its media type, or else its extension, that takes it.
 
     :param extension: The extension of its name, without its dot.
+    :param name: The name of the file it came from, if it did.
     :returns: The item's identifier, or None if no type takes it."""
     types = find_types(mime_type=media_type) if media_type else []
     if extension:
         types += find_types(extension=extension)
     for type_id in dict.fromkeys(types):
         try:
-            item_id, port = create_item_from(type_id, data)
+            item_id, port = create_item_from(type_id, data, name)
         except LaunchError:
             continue
         try:

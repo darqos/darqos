@@ -111,7 +111,7 @@ def target(kb, implementation, monkeypatch):  # noqa: F811
             self.port = port
 
         def close(self):
-            implementation.items[self.port].close(None, 0)
+            implementation.entity_ports[self.port].close(None, 0)
 
     monkeypatch.setattr(importer, "EntityItem", type("EntityItem", (), {"Client": ItemClient}))
     return kb, adapter, History()

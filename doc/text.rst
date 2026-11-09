@@ -78,8 +78,11 @@ Not Yet
 * If it's killed, changes not yet saved, up to 30 seconds' worth
   while typing goes on, are lost: it isn't told it's being killed.
 * Each time an item's saved, and when it's created, its whole text is
-  published to the Index as its body, replacing what was indexed for
-  it; it's withdrawn when it's destroyed (see :doc:`search-service`).
+  published to the Index as its body, with its entity's names, replacing
+  what was indexed for it; it's withdrawn when it's destroyed (see
+  :doc:`search-service`).  Its entity's made with it, named from the
+  file it came from, if it did, and it's published again when its entity
+  changes (see :doc:`entity-vs-item`).
   The Index finds the words itself, and where they are, so the
   implementation doesn't track them, and a lost publish is put right
   by the next save.

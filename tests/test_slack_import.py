@@ -218,13 +218,15 @@ class Files:
 
     def __init__(self):
         self.made: list[str] = []
+        self.names: list[str] = []
         self.types = {"application/pdf": "com.adobe.pdf"}
 
-    def create(self, media_type, extension, data):
+    def create(self, media_type, extension, data, name):
         type_id = self.types.get(media_type)
         if type_id is None:
             return None
         self.made.append(media_type)
+        self.names.append(name)
         return f"{type_id}:{len(self.made):032x}"
 
 
@@ -237,7 +239,7 @@ def target(kb, implementation, monkeypatch):  # noqa: F811
             self.port = port
 
         def close(self):
-            implementation.items[self.port].close(None, 0)
+            implementation.entity_ports[self.port].close(None, 0)
 
     monkeypatch.setattr(slack_importer, "EntityItem", type("EntityItem", (), {"Client": ItemClient}))
     return kb, adapter, History(), Files()
@@ -364,7 +366,7 @@ def test_attachments(target, export):
 def test_a_file_shared_twice_is_one_item(target, export):
     run(target, export)
     client, _, _, files = target
-    assert files.made == ["application/pdf"]
+    assert files.made == ["application/pdf"] and files.names == ["a.pdf"]
     first = message_at(client, "C1", "1009.000100").get_statements(darq.message.ATTACHMENT)[0]
     second = message_at(client, "C1", "1010.000100").get_statements(darq.message.ATTACHMENT)[0]
     assert first.get_value().value == second.get_value().value

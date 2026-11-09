@@ -10,6 +10,7 @@ import importlib
 import importlib.util
 import io
 import pathlib
+import typing
 import struct
 import sys
 import zipfile
@@ -17,6 +18,7 @@ import zipfile
 import pytest
 
 import darq
+import darq.kb as model
 from darq.protocols.ebook import (
     CloseRequest,
     ContentsRequest,
@@ -36,6 +38,7 @@ from darq.protocols.type import (
     Status,
 )
 
+from fake_kb import FakeKB, file_name, rename
 from test_pkernel import live_pkernel, pkernel, run_kernel_until, write_app  # noqa: F401
 from test_text_type import Caller, FakePublisher, FakeStorage, fake_ports, handles  # noqa: F401
 
@@ -341,8 +344,13 @@ def index():
 
 
 @pytest.fixture
-def implementation(blobs, index):
-    return ebook_module.EbookImplementation(blobs, index)
+def kb():
+    return FakeKB()
+
+
+@pytest.fixture
+def implementation(blobs, index, kb):
+    return ebook_module.EbookImplementation(blobs, index, typing.cast(typing.Any, kb))
 
 
 @pytest.fixture
@@ -529,3 +537,34 @@ def test_ebook_type(live_pkernel, tmp_path):  # noqa: F811
     zombie = kernel.module.KernelProcessStatus.ZOMBIE
     run_kernel_until(kernel, lambda: client.get_status() == zombie, "the client to exit")
     assert (client.get_exit_status(), client.get_exit_error()) == (0, None)
+
+
+################################################################
+# Its entity (see doc/entity-vs-item.rst)
+################################################################
+
+def test_a_new_book_is_named_by_its_title(call, kb):
+    response = call(IMPLEMENTATION_PORT, CreateFromRequest(type_id=EPUB, data=make_epub(), name="book.epub"))
+    entity = kb.get(darq.split_item_id(response.item_id)[1])
+    assert entity.get_label() == "A Book" and file_name(entity) == "book.epub"
+    assert model.recorded_type(entity) == EPUB
+
+
+def test_renaming_a_book_publishes_its_new_name(call, kb, index, implementation):
+    iid, _ = create_from(call, make_epub())
+    rename(call, implementation, IMPLEMENTATION_PORT, iid, "Notes on the Analytical Engine")
+    assert index.names[-1][0] == "Notes on the Analytical Engine" and index.sent[-1][:2] == ("publish", iid)
+
+
+def test_destroying_a_book_destroys_its_entity(call, kb):
+    iid, _ = create_from(call, make_epub())
+    assert call(IMPLEMENTATION_PORT, DestroyRequest(item_id=iid)).status == Status.OK
+    assert kb.entities[darq.split_item_id(iid)[1]].destroyed
+
+
+def test_an_old_book_is_given_its_entity_named_by_its_title(call, kb):
+    kb.failing = darq.DarqError("no KB")
+    iid, _ = create_from(call, make_epub())
+    kb.failing = None
+    assert call(IMPLEMENTATION_PORT, OpenRequest(item_id=iid)).status == Status.OK
+    assert kb.label(darq.split_item_id(iid)[1]) == "A Book"

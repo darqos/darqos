@@ -20,6 +20,12 @@
 # one with DRM can still be catalogued.  When an item's created, its
 # title and author are published to the Index as names, and its text as
 # its body, and it's withdrawn when it's destroyed.
+#
+# Every item's an entity (see doc/entity-vs-item.rst): it inherits the
+# entity type, darq.entity_type's EntityType, which serves an item's
+# entity on a port from OpenEntity.  An item's entity is made with it,
+# identified by its specifier, and named by the book's title, or else the
+# file it came from; its names are published to the Index with its own.
 
 import logging
 import re
@@ -27,6 +33,8 @@ import struct
 
 import darq
 import darq.index
+import darq.kb as model
+from darq.entity_type import EntityType
 from darq.protocols import storage
 from darq.protocols.ebook import (
     CloseRequest,
@@ -56,9 +64,6 @@ from darq.protocols.type import (
     ExportResponse,
     IndexEntryRequest,
     IndexEntryResponse,
-    Implementation,
-    OpenEntityRequest,
-    OpenEntityResponse,
     OpenRequest,
     OpenResponse,
     Ready,
@@ -112,8 +117,13 @@ def decode_blob(value: bytes) -> tuple[bytes, str, int]:
     return value[start:], value[HEADER.size:start].decode("utf-8", "replace"), flags
 
 
+def specifier(key: storage.Key) -> str:
+    """Return an item's specifier, which is its entity's identifier too."""
+    return f"{key.high:016x}{key.low:016x}"
+
+
 def item_id(type_id: str, key: storage.Key) -> str:
-    return f"{type_id}:{key.high:016x}{key.low:016x}"
+    return f"{type_id}:{specifier(key)}"
 
 
 def parse_item_id(iid: str) -> tuple[str, storage.Key] | None:
@@ -184,10 +194,11 @@ def index_entry(document: Document) -> tuple[list[str], str]:
     return [name for name in (book.title, *book.authors) if name], bookfile.text_of(book)
 
 
-class EbookImplementation(Implementation.Handler):
+class EbookImplementation(EntityType):
     """Answers the Implementation protocol, and keeps the open items."""
 
-    def __init__(self, client: storage.Storage.Client, index: darq.index.Publisher):
+    def __init__(self, client: storage.Storage.Client, index: darq.index.Publisher, kb: model.KB):
+        super().__init__(kb, [t for t in TYPES])
         self.storage = client
         self.index = index
         self.documents: dict[tuple[int, int], Document] = {}
@@ -291,29 +302,50 @@ class EbookImplementation(Implementation.Handler):
             return CreateFromResponse(status=Status.FAILED)
         document = Document(type_id, response.key, response.generation, request.data)
         logging.info(f"Created {document.iid}")
+        book = document.book()
+        self.make_entity(type_id, specifier(document.key), book.title if book is not None else "", request.name)
         self.publish(document)
         return CreateFromResponse(item_id=document.iid, item=self.attach(document), status=Status.OK)
 
+    def entry(self, document: Document) -> tuple[list[str], str]:
+        """Return an item's entry for the Index: its entity's names, with
+        its own, and its text."""
+        own, body = index_entry(document)
+        return list(dict.fromkeys([*self.entity_names(specifier(document.key)), *own])), body
+
     def publish(self, document: Document):
         """Publish an item's entry to the Index."""
-        names, body = index_entry(document)
+        names, body = self.entry(document)
         self.index.publish(document.iid, names, body)
+
+    def adopt(self, item_id: str) -> bool:
+        """Give an item made before there were entities its entity, named by
+        the book's title, if it can be read."""
+        document, _ = self.find(item_id)
+        if document is None:
+            return False
+        book = document.book()
+        return self.adopt_entity(document.type_id, specifier(document.key), book.title if book is not None else "")
+
+    def entity_changed(self, before: model.Entity, after: model.Entity):
+        """Its entity's names may have changed: publish it again."""
+        document, _ = self.find(model.item_id(after.id, model.recorded_type(after)))
+        if document is not None:
+            self.publish(document)
 
     def open(self, request: OpenRequest, source: int) -> OpenResponse:
         document, status = self.find(request.item_id)
         if document is None:
             return OpenResponse(status=status)
+        book = document.book()
+        self.adopt_entity(document.type_id, specifier(document.key), book.title if book is not None else "")
         return OpenResponse(item=self.attach(document), status=Status.OK)
-
-    def open_entity(self, request: OpenEntityRequest, source: int) -> OpenEntityResponse:
-        # Its items aren't entities yet (see doc/entity-vs-item.rst).
-        return OpenEntityResponse(status=Status.UNSUPPORTED)
 
     def index_entry(self, request: IndexEntryRequest, source: int) -> IndexEntryResponse:
         document, status = self.find(request.item_id)
         if document is None:
             return IndexEntryResponse(status=status)
-        names, body = index_entry(document)
+        names, body = self.entry(document)
         return IndexEntryResponse(names=names, body=body, status=Status.OK)
 
     def export(self, request: ExportRequest, source: int) -> ExportResponse:
@@ -337,6 +369,7 @@ class EbookImplementation(Implementation.Handler):
             logging.error(f"Can't destroy {request.item_id}: {written.name}")
             return DestroyResponse(status=Status.FAILED)
         self.index.withdraw(document.iid)
+        self.destroy_item_entity(specifier(document.key))
         logging.info(f"Destroyed {request.item_id}")
         return DestroyResponse(status=Status.OK)
 
@@ -408,11 +441,11 @@ def darq_main():
         return 1
 
     implementation = EbookImplementation(storage.Storage.Client(darq.connect("darq.storage"), timeout=10),
-                                         darq.index.Publisher())
+                                         darq.index.Publisher(), model.KB.connect(timeout=10))
 
     port = darq.open_port()
     server = darq.Server()
-    server.add(port, implementation)
+    implementation.add(server, port)
     darq.send(bootstrap, Ready(implementation=port))
     logging.info(f"Serving {', '.join(TYPES)} on port {port}")
     server.run()

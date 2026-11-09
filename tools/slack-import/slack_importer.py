@@ -80,7 +80,7 @@ SLACKBOT = "USLACKBOT"
 class Files(typing.Protocol):
     """Makes items from files' data: darq.launch, or a fake in tests."""
 
-    def create(self, media_type: str, extension: str, data: bytes) -> str | None:
+    def create(self, media_type: str, extension: str, data: bytes, name: str) -> str | None:
         """Create an item, and return its identifier, or None if there's
         no type with an implementation that takes the data."""
         ...
@@ -408,7 +408,7 @@ class Importer:
         media_type = record.get("mimetype", "")
         extension = path.suffix.removeprefix(".")
         try:
-            item_id = self.files.create(media_type, extension, path.read_bytes())
+            item_id = self.files.create(media_type, extension, path.read_bytes(), record.get("name") or path.name)
         except (OSError, darq.DarqError, TimeoutError) as e:
             log.warning(f"Can't make an item of {record['id']}: {e!r}")
             return ""

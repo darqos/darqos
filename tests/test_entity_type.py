@@ -8,9 +8,7 @@
 # implementation, opening its items' entities; and the entity lens
 # opening them with OpenEntity.
 
-import importlib.util
 import pathlib
-import sys
 import typing
 
 import darq
@@ -59,7 +57,7 @@ def open_entity(implementer: EntityType, item_id: str) -> typing.Any:
     if response.status != Status.OK:
         return response.status
     assert response.item is not None
-    return implementer.items[response.item]
+    return implementer.entity_ports[response.item]
 
 
 ################################################################
@@ -119,7 +117,7 @@ def test_closing_it_forgets_the_port(kb, images, ports):  # noqa: F811
     items.create(kb, "public.jpeg", KEY)
     handler = open_entity(images, f"public.jpeg:{KEY}")
     handler.close(None, 0)
-    assert handler.port not in images.items
+    assert handler.port not in images.entity_ports
 
 
 ################################################################
@@ -131,12 +129,12 @@ def test_a_kb_items_entity_is_opened_as_the_item_is(kb, implementation):  # noqa
     opened = implementation.open(OpenRequest(item_id=item_id), 0)
     entity = implementation.open_entity(OpenEntityRequest(item_id=item_id), 0)
     assert opened.status == entity.status == Status.OK
-    assert type(implementation.items[opened.item]) is type(implementation.items[entity.item])
+    assert type(implementation.entity_ports[opened.item]) is type(implementation.entity_ports[entity.item])
 
 
 def test_a_kb_item_changed_through_its_entity_is_published(kb, implementation, index):  # noqa: F811
     item_id, _ = test_kb_type.create(implementation, "darq.person")
-    handler = implementation.items[implementation.open_entity(OpenEntityRequest(item_id=item_id), 0).item]
+    handler = implementation.entity_ports[implementation.open_entity(OpenEntityRequest(item_id=item_id), 0).item]
     entity = kb.get(darq.split_item_id(item_id)[1])
     entity.set_label("Ada Lovelace")
     handler.put_entity(PutEntityRequest(entity=model.entity_to_wire(entity)), 0)
@@ -154,23 +152,6 @@ def test_the_kb_implementation_doesnt_open_content_items(kb, implementation):  #
 ################################################################
 
 ROOT = pathlib.Path(__file__).parent.parent
-
-
-@pytest.mark.parametrize("name, cls", [("text", "TextImplementation"), ("image", "ImageImplementation"),
-                                       ("pdf", "PdfImplementation"), ("ebook", "EbookImplementation")])
-def test_a_content_type_answers_for_now(name, cls):
-    """Its items aren't entities yet: it says so, and doesn't fail."""
-    directory = str(ROOT / "types" / name)
-    sys.path.insert(0, directory)
-    try:
-        spec = importlib.util.spec_from_file_location(f"{name}_type_for_entity", ROOT / "types" / name / "main.py")
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-    finally:
-        sys.path.remove(directory)
-    response = getattr(module, cls).open_entity(None, OpenEntityRequest(item_id=f"public.jpeg:{KEY}"), 0)
-    assert response.status == Status.UNSUPPORTED
 
 
 class FakeImplementation:
