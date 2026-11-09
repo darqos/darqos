@@ -127,11 +127,6 @@ That's a lot of work on the Metadata service though. I guess maybe the
   scripts several migrations down the line. +
   (2026-10-28)
 
-* The need for build numbers for migration scripts kinda implies a
-  `+uname(2)+` equivalent API. And `+mkdist+` will need to populate it
-  somehow. +
-  (2026-10-28)
-
 * In the history panel, the display of items matching the filter
   should display the event time in a more operator-friendly way. I
   think "today", "yesterday", "last week", and then month name and
@@ -230,6 +225,77 @@ When should the help file be built?+
 * All the Terminal windows needs a style and layout makeover.+
   (2026-11-06)
 
+* I need a system control panel thing: volume, screen brightness,
+  WiFi, Bluetooth, battery, airplane mode, multi-head display config,
+  safe eject, etc.+
+  (2026-11-09)
+
+* I need a system configuration thing: network, printers, etc.+
+  (2026-11-09)
+
+* The compositor needs to turn the screen off after a while, and turn
+  it back on with mouse/keyboard events.+
+  (2026-11-09)
+
+* Books need to make their ISBNs, and other non-item properties,
+  indexed (and so searchable).+
+  (2026-11-09)
+
+* When adding an additional LRM Item for a Book, after you answer Y to
+  the Y/N question, the status line thing said "Added a copy of
+  <title>: 6 so far", but I only have two copies of that book.  I did
+  have 6 books total registered at that moment.+
+  (2026-11-09)
+
+* LRM Items need a _Notes_ section, which would allow my to
+  distinguish copies.  In the motivating example, one belongs to Luba,
+  one to me.+
+  (2026-11-09)
+
+* LRM Items need acquisition date, place, and price fields too.+
+  (2026-11-09)
+
+* LRM Works (Book) need a better entry for contributors to the work.
+  Not just "author" but all the "foreword", "editor", etc, list.  So
+  person and role.  And any number.  And a set of pre-defined roles
+  that can be added to when entering a book, and then it's available
+  in future.+
+  (2026-11-09)
+
+* LRM Manifestations need to have LCCN, Dewey, etc.+
+  (2026-11-09)
+
+* Publishers should be an item reference on a book card.+
+  (2026-11-09)
+
+* Shelving locations should be an item reference on a book card.+
+  (2026-11-09)
+
+* Add given name(s), family name, image, country of citizenship,
+  educated at, during Wikidata Person imports.+
+  (2026-11-09)
+
+* Drop-down widget to select a person from Wikidata's list has light
+  background making it basically unreadable.+
+  (2026-11-09)
+
+* The Ok/Cancel buttons on the Wikidata person selection thing are
+  awful too.  Replace them with something nice.+
+  (2026-11-09)
+
+* The default two-finger scroll on the touchpad for Debian13 is
+  backwards.  There must be a way to configure this without all of
+  GNOME.+
+  (2026-11-09)
+
+* I have an example (Viv Albertine) who was created by entering a
+  book, and subsequently updated from Wikidata.  The original record
+  claims "<id> was merged into this", except the id is it's own.  It
+  appears to have the Wikidate statements.  I can access it via
+  history.  I don't understand what it is.+
+  (2026-11-09)
+
+
 
 
 === Closed
@@ -248,4 +314,9 @@ When should the help file be built?+
 So ... maybe just a cron job in the host Linux that snapshots the
   volume and runs rsync to the backup to my NAS? +
   ([line-through]#2026-10-28# 2026-11-03)
+
+* The need for build numbers for migration scripts kinda implies a
+  `+uname(2)+` equivalent API. And `+mkdist+` will need to populate it
+  somehow. +
+  ([line-through]#2026-10-28# 2026-11-07)
 
