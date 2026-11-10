@@ -69,8 +69,10 @@ updates.  Install:
 3. creates the ``darq`` user;
 4. copies the code into ``/darq``, as source, owned by root and
    writable only by root (whatever its modes in the distribution), with
-   ``rsync --delete``, so what's gone from the distribution goes; and
-   the manual pages, by section;
+   ``rsync --delete``, so what's gone from the distribution goes, with
+   its compiled ``__pycache__`` too (a perishable exclusion), while the
+   caches of what's still there are kept; and the manual pages, by
+   section;
 5. builds the compositor, in ``/darq/compositor/build``;
 6. makes, or updates, the Python environment, ``/darq/env``, from
    ``requirements.txt`` (PyQt6 included);

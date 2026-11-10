@@ -124,8 +124,11 @@ chmod 0755 "$DARQ"
 if [ "$(cd "$DIST" && pwd -P)" = "$(cd "$DARQ" && pwd -P)" ]; then
     echo "Ok: installing in place: the code isn't copied"
 else
+    # Compiled caches are left where they are, but go with a directory
+    # that's gone from the distribution: an excluded file isn't deleted,
+    # unless it's perishable, and a cache alone would keep its directory.
     for dir in $CODE; do
-        rsync -rlptD --chmod=go-w --delete --exclude /build/ --exclude __pycache__/ "$DIST/$dir/" "$DARQ/$dir/"
+        rsync -rlptD --chmod=go-w --delete --exclude /build/ --filter='-p __pycache__/' "$DIST/$dir/" "$DARQ/$dir/"
     done
     for file in $FILES; do
         if [ -f "$DIST/$file" ]; then

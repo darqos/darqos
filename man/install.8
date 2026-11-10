@@ -51,8 +51,10 @@ Copy the code into
 as source, owned by root and writable only by root, whatever its
 modes in the distribution, with
 .BR "rsync \-\-delete" ,
-so what's gone from the distribution goes; and the manual pages, by
-section.
+so what's gone from the distribution goes, with its compiled
+.I __pycache__
+too, while the caches of what's still there are kept; and the manual
+pages, by section.
 .IP 5.
 Build the compositor, in
 .IR /darq/compositor/build .

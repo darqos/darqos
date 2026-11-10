@@ -214,6 +214,23 @@ def test_update(dist, tmp_path):
     assert (root / "run" / "kb.sqlite").read_text() == "data\n"
 
 
+def test_update_takes_a_gone_directorys_cache_with_it(dist, tmp_path):
+    """A directory that's gone from the distribution goes, though it has
+    a compiled cache, which isn't copied: a directory that's still there
+    keeps its cache."""
+    root = tmp_path / "darq"
+    install(dist, root)
+    (root / "tools" / "old" / "__pycache__").mkdir(parents=True)
+    (root / "tools" / "old" / "__pycache__" / "main.cpython-313.pyc").write_bytes(b"compiled")
+    kept = next(d for d in (root / "services").iterdir() if d.is_dir()) / "__pycache__" / "kept.pyc"
+    kept.parent.mkdir(exist_ok=True)
+    kept.write_bytes(b"compiled")
+
+    install(dist, root)
+    assert not (root / "tools" / "old").exists()
+    assert kept.read_bytes() == b"compiled"
+
+
 def test_install_in_place(dist, tmp_path):
     # "/darq/bin/install --boot": run from the installation, it copies
     # nothing, and does the rest.
