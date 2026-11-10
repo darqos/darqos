@@ -295,6 +295,24 @@ When should the help file be built?+
   history.  I don't understand what it is.+
   (2026-11-09)
 
+* Need a translation widget.+
+  (2026-11-10)
+
+* Need international times in clock widget.+
+  (2026-11-10)
+
+* Import Olsen timezone data info KB entities.  Link Places to
+  timezones.  Importer should be able to be run repeatedly, making
+  corrections and additions.+
+  (2026-11-10)
+
+* It'd be nice to have the ability to run tools on a schedule.
+  Whether a cron-like facility is the right solution, I don't yet
+  know.  But something, so that we can sync with eg. Wikidata or
+  LinkedIn or whatever on a regular basis.+
+  (2026-11-10)
+
+
 
 
 

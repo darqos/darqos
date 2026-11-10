@@ -80,7 +80,7 @@ Type Implementations
 .. include:: calculation.rst
 .. include:: document-types.rst
 .. include:: text.rst
-.. include:: rst-type.tst
+.. include:: rst-type.rst
 .. include:: image-type.rst
 .. include:: pdf-type.rst
 .. include:: data-type.rst
