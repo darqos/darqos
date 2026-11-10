@@ -199,11 +199,12 @@ Person                   The standard ``darq.person``, with their
                          qualified by ``service``.
 Bot                      A ``darq.entity``, not a person, which can
                          still be a message's sender.
-Attachment               An item, of its own type, referred to by its
-                         item identifier, as a string, until the Item
-                         identifier datatype exists.  A file of a type
-                         without an implementation is recorded by its
-                         name, type and size only.
+Attachment               An item, of its own type, linked to: a file
+                         of a type without an implementation is kept as
+                         data (see :doc:`data-type`).  A file that
+                         isn't an item, as one too big to keep isn't,
+                         is recorded by its name, type and size only,
+                         as an *attached file*.
 =======================  =============================================
 
 A message's statements are its sender, conversation, time, body,
@@ -235,8 +236,12 @@ Body              local                            Text
 Mentions          local                            Item
 Reaction          local, with *reacted by*         String
 Last edited       local                            Time
-Attachment        local, with *file name*,         String
+Attachment        local, with *file name*,         Item
                   *media type*, and *file size*
+Attached file     local, as *attachment*, for one  String: empty, or,
+                  that isn't an item               from before links,
+                                                   its item's
+                                                   identifier
 ================  ===============================  ===================
 
 The point-in-time property (P585) isn't used for a message's time,

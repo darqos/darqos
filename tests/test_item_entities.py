@@ -67,17 +67,17 @@ def entity_id(item_id: str) -> str:
 
 def test_what_the_kb_refers_to(store):
     message = model.Item("message")
-    message.claim(darq.message.ATTACHMENT, model.StringValue(JPEG)).add_qualifier(
+    message.claim(darq.message.OLD_ATTACHMENT, model.StringValue(JPEG)).add_qualifier(
         darq.message.FILE_NAME, model.StringValue("IMG_0001.JPG"))
-    message.claim(darq.message.ATTACHMENT, model.StringValue("")).add_qualifier(
+    message.claim(darq.message.OLD_ATTACHMENT, model.StringValue("")).add_qualifier(
         darq.message.FILE_NAME, model.StringValue("too big.mov"))
     url = model.Item(darq.url.entity_id("https://example.com/papers/On%20Computable.pdf"))
     url.claim(darq.url.URL, model.StringValue("https://example.com/papers/On%20Computable.pdf"))
-    url.claim(darq.url.SNAPSHOT, model.StringValue(PDF))
+    url.claim(darq.url.OLD_SNAPSHOT, model.StringValue(PDF))
     copy = model.Item("copy")
-    copy.claim(darq.book.CONTENT, model.StringValue(TEXT))
+    copy.claim(darq.book.OLD_CONTENT, model.StringValue(TEXT))
     edition = model.Item("edition")
-    edition.claim(darq.book.COVER, model.StringValue(PNG))
+    edition.claim(darq.book.OLD_COVER, model.StringValue(PNG))
     store.put(message, url, copy, edition)
     assert tool.referred(store) == {JPEG: "IMG_0001.JPG", PDF: "On Computable.pdf", TEXT: "", PNG: ""}
 
@@ -85,7 +85,7 @@ def test_what_the_kb_refers_to(store):
 def test_a_snapshots_name_is_where_it_ended_up(store):
     url = model.Item("url")
     url.claim(darq.url.URL, model.StringValue("https://example.com/latest"))
-    url.claim(darq.url.SNAPSHOT, model.StringValue(PDF)).add_qualifier(
+    url.claim(darq.url.OLD_SNAPSHOT, model.StringValue(PDF)).add_qualifier(
         darq.url.FINAL_URL, model.StringValue("https://example.com/v2/paper.pdf"))
     store.put(url)
     assert tool.referred(store) == {PDF: "paper.pdf"}
@@ -200,3 +200,53 @@ def test_it_can_be_run_again(store):
 
 def test_only_content_items_are_given_them(store):
     assert give(store, {"darq.person:ada": ""}) == tool.Counts()
+
+
+################################################################
+# Linking to them
+################################################################
+
+def test_what_referred_to_an_item_links_to_it(store):
+    items.create(store, "public.jpeg", entity_id(JPEG))
+    message = model.Item("message")
+    message.claim(darq.message.OLD_ATTACHMENT, model.StringValue(JPEG), rank=model.Rank.Preferred).add_qualifier(
+        darq.message.FILE_NAME, model.StringValue("IMG_0001.JPG")).add_reference(
+        model.Reference().add(model.STATED_IN, model.EntityValue(model.DARQOS)))
+    store.put(message)
+    assert tool.relink(store, store) == tool.Relinked(1, 0)
+
+    message = store.get("message")
+    assert message.get_statements(darq.message.OLD_ATTACHMENT) == []
+    [attachment] = message.get_statements(darq.message.ATTACHMENT)
+    assert attachment.get_value().entity_id == entity_id(JPEG) and attachment.rank == model.Rank.Preferred
+    assert attachment.qualifiers[0].value.value == "IMG_0001.JPG"
+    assert model.is_sourced(attachment, model.DARQOS)
+    assert list(store.find_links(entity_id(JPEG), darq.message.ATTACHMENT)) == ["message"]
+
+
+def test_what_cant_be_linked_is_left(store):
+    """An item that's gone, and a file that isn't an item."""
+    message = model.Item("message")
+    message.claim(darq.message.OLD_ATTACHMENT, model.StringValue(JPEG))
+    message.claim(darq.message.OLD_ATTACHMENT, model.StringValue("")).add_qualifier(
+        darq.message.FILE_NAME, model.StringValue("too big.mov"))
+    store.put(message)
+    assert tool.relink(store, store) == tool.Relinked(0, 2)
+    assert len(store.get("message").get_statements(darq.message.OLD_ATTACHMENT)) == 2
+
+
+def test_each_kind_of_reference_is_linked(store):
+    for item_id in (PDF, TEXT, PNG):
+        items.create(store, item_id.partition(":")[0], entity_id(item_id))
+    url = model.Item("url")
+    url.claim(darq.url.OLD_SNAPSHOT, model.StringValue(PDF))
+    copy = model.Item("copy")
+    copy.claim(darq.book.OLD_CONTENT, model.StringValue(TEXT))
+    edition = model.Item("edition")
+    edition.claim(darq.book.OLD_COVER, model.StringValue(PNG))
+    store.put(url, copy, edition)
+    assert tool.relink(store, store).linked == 3
+    assert [s.get_value().entity_id for s in store.get("url").get_statements(darq.url.SNAPSHOT)] == [entity_id(PDF)]
+    assert [s.get_value().entity_id for s in store.get("copy").get_statements(darq.book.CONTENT)] == [entity_id(TEXT)]
+    assert [s.get_value().entity_id for s in store.get("edition").get_statements(darq.book.COVER)] == [entity_id(PNG)]
+    assert tool.relink(store, store) == tool.Relinked(0, 0)

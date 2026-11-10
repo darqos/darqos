@@ -341,12 +341,20 @@ measured, and documented as it's built.
    how many it made, named, left unnamed, and found gone.  History never
    recorded file names, so most old images and notes are left unnamed:
    step 5 shows them by what they are.  It can be run again.
-4. **Links, not strings.**  ``CONTENT``, ``COVER``, ``SNAPSHOT`` and
-   ``ATTACHMENT`` become item properties, and their values links,
-   rewritten by a migration, as merges are relinked.  So an image's
-   page shows it's the cover of an Edition, a PDF's that it's a Copy,
-   and a file's the message it was attached to, and B's catalogue
-   finds a Copy by a link, not a string.
+4. **Links, not strings** (built).  ``CONTENT``, ``COVER``, ``SNAPSHOT`` and
+   ``ATTACHMENT`` are new properties, whose values link to items'
+   entities, with inverse labels: so an image's page shows it's the
+   *cover of* an Edition, a PDF's that it's the *content of* a Copy, and
+   a file's the message it's an *attachment of*, and B's catalogue finds
+   a Copy by what links to its file.  A property's datatype can't
+   change, so the old ones, String-valued, are kept, relabelled
+   *(identifier, old)*, or, for an attachment, *attached file*, and
+   read, as well, for what's not linked yet.  Give Items Entities links
+   what refers to an item that has its entity, after giving them their
+   entities; what refers to an item that's gone, or a file that isn't an
+   item, is left.  New references are links: the book card and B, HTTP
+   snapshots, and the Slack import, which keeps a file of no type as
+   data (see :doc:`data-type`), rather than leaving it out.
 5. **Names everywhere.**  History, Search and the switcher show an
    item's label, not its identifier, and the Index publishes labels as
    names.  A lens shows its item's name, and renames it: the image lens,

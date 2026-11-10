@@ -292,7 +292,8 @@ def test_size_text(value, expected):
 
 
 def page_for(*messages, **options):
-    page = render.Page({"ada": Linked("ada", "darq.person:ada", "en", "Ada <L>")}, **options)
+    page = render.Page({"ada": Linked("ada", "darq.person:ada", "en", "Ada <L>"),
+                        "abc": Linked("abc", "com.adobe.pdf:abc", "en", "Report")}, **options)
     return page, page.render(list(messages), False, False)
 
 
@@ -347,17 +348,23 @@ def test_render_a_reply_to_something_unknown():
     assert "A message" in page_for(message)[1]
 
 
-def attached(item_id, name="report.pdf", media_type="application/pdf", size="1500"):
+def attached(item_id, name="report.pdf", media_type="application/pdf", size="1500", linked=True):
+    """A message with an attachment: linked to its item, or as it was,
+    by its identifier, or empty, for a file that isn't an item."""
     message = make_message(1)
-    statement = message.claim(darq.message.ATTACHMENT, model.StringValue(item_id))
+    if linked and item_id:
+        statement = message.claim(darq.message.ATTACHMENT, model.EntityValue(darq.split_item_id(item_id)[1]))
+    else:
+        statement = message.claim(darq.message.OLD_ATTACHMENT, model.StringValue(item_id))
     statement.add_qualifier(darq.message.FILE_NAME, model.StringValue(name))
     statement.add_qualifier(darq.message.MEDIA_TYPE, model.StringValue(media_type))
     statement.add_qualifier(darq.message.FILE_SIZE, model.StringValue(size))
     return message
 
 
-def test_render_an_attachment_opens_its_item():
-    page, html = page_for(attached("com.adobe.pdf:abc"))
+@pytest.mark.parametrize("linked", [True, False])
+def test_render_an_attachment_opens_its_item(linked):
+    page, html = page_for(attached("com.adobe.pdf:abc", linked=linked))
     assert "report.pdf</a>" in html and "application/pdf, 1.5 KB" in html
     assert render.Open("com.adobe.pdf:abc") in page.targets
     assert "not imported" not in html

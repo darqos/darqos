@@ -1025,16 +1025,22 @@ class CreateFromRequest(Message):
 
     METHOD = 4
     RESPONSE = CreateFromResponse
-    BODY_FORMAT = "<IIIIII"
+    BODY_FORMAT = "<IIIIIIII"
     BODY_START = 8
-    LENGTH = 32
-    DATA_START = 32
+    LENGTH = 40
+    DATA_START = 40
 
-    def __init__(self, txid: int = 0, type_id: str = '', data: bytes = b'', name: str = ''):
+    def __init__(self,
+                 txid: int = 0,
+                 type_id: str = '',
+                 data: bytes = b'',
+                 name: str = '',
+                 media_type: str = ''):
         super().__init__(txid)
         self.type_id = type_id
         self.data = data
         self.name = name
+        self.media_type = media_type
 
     def encode(self) -> tuple[bytes, list[int]]:
         buf, handles = super().encode()
@@ -1042,7 +1048,8 @@ class CreateFromRequest(Message):
         buf += struct.pack(self.BODY_FORMAT,
                            *out.string(self.type_id),
                            *out.opaque(self.data),
-                           *out.string(self.name))
+                           *out.string(self.name),
+                           *out.string(self.media_type))
         buf += out.data
         return buf, handles
 
@@ -1056,6 +1063,7 @@ class CreateFromRequest(Message):
         self.type_id = inp.string(bits[0], bits[1])
         self.data = inp.opaque(bits[2], bits[3])
         self.name = inp.string(bits[4], bits[5])
+        self.media_type = inp.string(bits[6], bits[7])
         return
 
 
@@ -1539,9 +1547,13 @@ class Implementation:
         def create_from(self,
                         type_id: str = '',
                         data: bytes = b'',
-                        name: str = '') -> CreateFromResponse:
+                        name: str = '',
+                        media_type: str = '') -> CreateFromResponse:
             """Implementation.CreateFrom."""
-            request = CreateFromRequest(type_id=type_id, data=data, name=name)
+            request = CreateFromRequest(type_id=type_id,
+                                        data=data,
+                                        name=name,
+                                        media_type=media_type)
             return self.call(request, CreateFromResponse)
 
         def export(self, item_id: str = '') -> ExportResponse:

@@ -62,6 +62,14 @@ class MemoryStore:
         self.kinds[entity.id] = type_id
         return entity
 
+    def content(self, *item_ids: str) -> "MemoryStore":
+        """Make items whose content's elsewhere, as e-books and covers are,
+        by their identifiers: a link's to an entity that's there."""
+        for item_id in item_ids:
+            kind, entity_id = darq.split_item_id(item_id)
+            self.add(kind, "", entity_id)
+        return self
+
     def item(self, entity: typing.Any) -> str:
         return model.item_id(entity.id, self.kinds[entity.id])
 
@@ -215,6 +223,7 @@ def test_two_copies_of_one_printing():
 
 def test_a_second_format():
     store, book = saved()
+    store.content("darq.book.epub:abc")
     book.editions.append(Edition(binding="EPUB", copies=[Copy(content="darq.book.epub:abc")]))
     darq.book.save(store, book)
     read = read_book(store, store.item(book.work))
@@ -590,7 +599,7 @@ def test_card_links_add_each_level():
 
 
 def test_a_digital_copy_has_no_add_copy():
-    store = MemoryStore()
+    store = MemoryStore().content("darq.book.epub:a")
     book = Book(title="T", editions=[Edition(binding="EPUB", copies=[Copy(content="darq.book.epub:a")])])
     darq.book.save(store, book)
     _, targets = page(read_book(store, store.item(book.work)))
@@ -1166,12 +1175,18 @@ def test_book_lens(live_pkernel, tmp_path):  # noqa: F811
             top.adopt(work_item, darq.launch.open_item(work_item))
             card = darq.book.read(top, work_item)
             darq.book.prefer(top, card, card.editions[0].copies[0])
-            darq.book.set_cover(top, card.editions[0].entity, "public.png:" + "0" * 32)
+            import io
+            from PIL import Image
+            png = io.BytesIO()
+            Image.new("RGB", (2, 2)).save(png, "PNG")
+            cover, cover_port = darq.launch.create_item_from("public.png", png.getvalue(), "cover.png")
+            darq.close_port(cover_port)
+            darq.book.set_cover(top, card.editions[0].entity, cover)
             darq.book.move(top, darq.book.ITEM_TYPE, card.editions[0].copies[0].entity, card.editions[1].entity)
             top.settled()
             card = darq.book.read(top, work_item)
             moved = [c for e in card.editions for c in e.copies if c.preferred]
-            if len(moved) != 1 or card.editions[0].cover != "public.png:" + "0" * 32:
+            if len(moved) != 1 or card.editions[0].cover != cover:
                 return f"preferred, covered and moved {card.editions!r}"
             if top.names_like("Pet", "darq.person") != ["Peter Carey"]:
                 return f"names {top.names_like('Pet', 'darq.person')!r}"
@@ -1225,9 +1240,10 @@ def test_book_lens(live_pkernel, tmp_path):  # noqa: F811
 ################################################################
 
 def test_a_renamed_property_is_relabelled():
-    assert (darq.book.CONTENT, "file", "content") in darq.book.RELABELLED
+    assert (darq.book.OLD_CONTENT, "file", "content (identifier, old)") in darq.book.RELABELLED
+    assert (darq.book.OLD_CONTENT, "content", "content (identifier, old)") in darq.book.RELABELLED
     labels = {e.id: e.get_label() for e in darq.book.vocabulary()}
-    assert labels[darq.book.CONTENT] == "content"
+    assert labels[darq.book.CONTENT] == "content" and labels[darq.book.OLD_CONTENT] == "content (identifier, old)"
 
 
 ################################################################
@@ -1235,7 +1251,7 @@ def test_a_renamed_property_is_relabelled():
 ################################################################
 
 def formats() -> tuple[MemoryStore, typing.Any]:
-    store = MemoryStore()
+    store = MemoryStore().content("darq.book.epub:a", "com.adobe.pdf:b")
     book = Book(title="T", editions=[Edition(binding="EPUB", copies=[Copy(content="darq.book.epub:a")]),
                                      Edition(binding="PDF", copies=[Copy(content="com.adobe.pdf:b")])])
     darq.book.save(store, book)
@@ -1308,7 +1324,7 @@ def test_the_lens_prefers_and_reads_it(qt_app):
 ################################################################
 
 def test_a_cover_is_on_its_manifestation():
-    store = MemoryStore()
+    store = MemoryStore().content("public.jpeg:c")
     book = Book(title="T", editions=[Edition(publisher="P", cover="public.jpeg:c")])
     darq.book.save(store, book)
     read = read_book(store, store.item(book.work))
@@ -1320,12 +1336,13 @@ def test_a_cover_is_on_its_manifestation():
 
 def test_set_cover():
     store, book = saved()
+    store.content("public.png:x")
     darq.book.set_cover(store, book.editions[0].entity, "public.png:x")
     assert read_book(store, store.item(book.work)).editions[0].cover == "public.png:x"
 
 
 def test_the_lens_shows_a_cover(qt_app):
-    store = MemoryStore()
+    store = MemoryStore().content("public.png:c")
     book = Book(title="T", editions=[Edition(publisher="P", cover="public.png:c")])
     darq.book.save(store, book)
     store.__class__ = LensStore
@@ -1350,7 +1367,7 @@ def test_the_lens_shows_a_cover(qt_app):
 
 
 def test_a_looked_up_cover_is_fetched_after_adding(qt_app):
-    store = MemoryStore()
+    store = MemoryStore().content("public.jpeg:fetched")
     work = store.add(darq.book.WORK_TYPE, "x")
     del work.labels["en"]
     store.__class__ = LensStore
@@ -1365,7 +1382,7 @@ def test_a_looked_up_cover_is_fetched_after_adding(qt_app):
     view.cover_url = "https://covers.openlibrary.org/b/id/1-L.jpg"
     used.add_shown()
     [edition] = store.of_kind(darq.book.MANIFESTATION_TYPE)
-    assert values(edition, darq.book.COVER)[0].value == "public.jpeg:fetched"
+    assert values(edition, darq.book.COVER)[0].entity_id == "fetched"
     used.window.close()
 
 
@@ -1477,3 +1494,38 @@ def test_a_work_has_no_move(opened):
     used.start_edit(find_edit(used, card.MANIFESTATION))
     assert used.window.level.move_button.isVisibleTo(used.window.level)
     assert used.window.level.cover_button.isVisibleTo(used.window.level)
+
+
+################################################################
+# Links to items (see doc/entity-vs-item.rst, step 4)
+################################################################
+
+def test_content_and_a_cover_are_links():
+    store = MemoryStore().content("darq.book.epub:a", "public.png:c")
+    book = Book(title="T", editions=[Edition(cover="public.png:c", copies=[Copy(content="darq.book.epub:a")])])
+    darq.book.save(store, book)
+    edition = store.of_kind(darq.book.MANIFESTATION_TYPE)[0]
+    copy = store.of_kind(darq.book.ITEM_TYPE)[0]
+    assert [v.entity_id for v in values(edition, darq.book.COVER)] == ["c"]
+    assert [v.entity_id for v in values(copy, darq.book.CONTENT)] == ["a"]
+
+
+def test_an_old_identifier_is_read_and_made_a_link_when_saved():
+    store = MemoryStore().content("darq.book.epub:a")
+    book = Book(title="T", editions=[Edition(copies=[Copy(location="here")])])
+    darq.book.save(store, book)
+    copy = store.of_kind(darq.book.ITEM_TYPE)[0]
+    copy.claim(darq.book.OLD_CONTENT, model.StringValue("darq.book.epub:a"))
+    read = read_book(store, store.item(book.work))
+    assert read.editions[0].copies[0].content == "darq.book.epub:a"
+
+    darq.book.save(store, read)
+    copy = store.of_kind(darq.book.ITEM_TYPE)[0]
+    assert values(copy, darq.book.OLD_CONTENT) == [] and [v.entity_id for v in values(copy, darq.book.CONTENT)] == ["a"]
+
+
+def test_content_thats_not_an_item_is_refused():
+    store, book = saved()
+    book.editions[0].copies[0].content = "not an item"
+    with pytest.raises(BookError, match="isn't an item"):
+        darq.book.save(store, book)

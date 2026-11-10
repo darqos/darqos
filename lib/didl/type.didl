@@ -113,8 +113,10 @@ protocol Implementation {
     // it, as Create does.  Data that isn't of the type is INVALID_DATA,
     // and nothing is created: it isn't converted.  Its name is the name
     // of the file it came from, or empty: its entity's named from it, if
-    // the data doesn't give one (see doc/entity-vs-item.rst).
-    4: CreateFrom(string type_id, opaque data, string name) -> (string item_id, port item, Status status);
+    // the data doesn't give one (see doc/entity-vs-item.rst).  Its media
+    // type is the one it came with, if it came with one, such as a
+    // server's Content-Type: a type that knows its own ignores it.
+    4: CreateFrom(string type_id, opaque data, string name, string media_type) -> (string item_id, port item, Status status);
 
     // Return an item's content as data in its type's format, with its
     // MIME type.

@@ -30,6 +30,8 @@ __all__ = [
     "BookError",
     "CONTRIBUTOR",
     "CONTENT",
+    "OLD_CONTENT",
+    "OLD_COVER",
     "Copy",
     "DDC",
     "EDITION",
@@ -177,16 +179,16 @@ OPEN_LIBRARY = "P648"
 LCCN = "P1144"
 PHYSICAL_DESCRIPTION = "8299e292-2411-498c-b34d-5536ba8b93b2"
 PUBLICATION_TEXT = "6cf68a4e-7257-43af-ad50-497c6e94833f"
-COVER = "c7ef4020-e876-4650-80b5-616cd386b717"
+COVER = "5d15b0b4-c1ea-4451-a55b-eab35224899f"
 IMPRINT = "2f20d2aa-65a0-4486-86c4-56facb477bf6"
 BINDING = "2eabea67-5f8d-4d35-aec1-878da88f077d"
 
-# On a copy: where it is, as text for now, or the item that's its content
-# (an identifier, a String, as URL snapshots are), and its printing, and
+# On a copy: where it is, as text for now, or the item that's its content,
+# a link to its entity, as every item's an entity, and its printing, and
 # when it was printed, and where it came from: when, from where, and for
 # how much, as text.  Its identifier and tags on LibraryThing.
 LOCATION = "2cf1b758-7379-418f-9ea6-049d74518bbe"
-CONTENT = "0cd7fdd5-f6c8-4346-91b8-b5d674244ea4"
+CONTENT = "5a75f2fa-b42e-4da9-9987-f1dddbe7671f"
 PRINTING = "20450dc5-a708-4ca1-8729-3db3e8d90836"
 PRINTED = "6e9db545-11e2-452b-a2ef-97ef7da9b182"
 
@@ -196,9 +198,17 @@ PRICE = "3fd7d449-6e7a-4e27-9070-289ad1edbd15"
 LIBRARYTHING_BOOK = "3467b6af-1d3a-4773-8b01-4ae3c208cbc5"
 TAG = "8b300fc8-4c53-4805-9390-63864dfdafe2"
 
+# A copy's content, and an edition's cover, as they were, by an item's
+# identifier, a String, before every item was an entity: kept for what
+# can't be linked, as an item that's gone (see doc/entity-vs-item.rst).
+OLD_CONTENT = "0cd7fdd5-f6c8-4346-91b8-b5d674244ea4"
+OLD_COVER = "c7ef4020-e876-4650-80b5-616cd386b717"
+
 # Labels of the vocabulary that have changed, with what they were: what's
 # there's left alone by ensure, so an existing KB is told.
-RELABELLED = [(CONTENT, "file", "content")]
+RELABELLED = [(OLD_CONTENT, "file", "content (identifier, old)"),
+              (OLD_CONTENT, "content", "content (identifier, old)"),
+              (OLD_COVER, "cover", "cover (identifier, old)")]
 
 # LibraryThing, as a source.
 LIBRARYTHING = "7659380e-57eb-4c0e-aba6-644f197824a7"
@@ -219,6 +229,8 @@ INVERSE_LABELS = [
     (PUBLISHER, "b0790383-2b4a-402d-9937-e5cf37932076", "publisher of"),
     (CONTRIBUTOR, "b8874f9d-1089-48bd-9232-472086c67a9c", "contributor to"),
     (SERIES, "4493219b-a0f1-433b-869a-4133b2495471", "has part"),
+    (CONTENT, "521b74f9-0acd-489c-8bdd-251a2da7aa8b", "content of"),
+    (COVER, "0d815ad0-dc98-441a-bb62-dd3984dbde7a", "cover of"),
 ]
 
 # Formats, by the type of a copy's content.
@@ -454,8 +466,20 @@ def _preferred(entity: Entity) -> bool:
                == PREFERENCE for s in _statements(entity, HAS_CHARACTERISTIC))
 
 
-def _read_copy(entity: Entity) -> Copy:
-    return Copy(entity, _text(entity, LOCATION), _text(entity, CONTENT), _text(entity, PRINTING),
+def _item(store: Store, entity: Entity | None, property_id: str, old: str) -> str:
+    """Return the item a property links to, by its identifier, or else its
+    old String's, from before every item was an entity, or empty."""
+    for statement in _statements(entity, property_id) if entity is not None else []:
+        value = statement.get_value()
+        if isinstance(value, EntityValue):
+            item_id = store.item_of(value.entity_id)
+            if item_id:
+                return item_id
+    return _text(entity, old)
+
+
+def _read_copy(store: Store, entity: Entity) -> Copy:
+    return Copy(entity, _text(entity, LOCATION), _item(store, entity, CONTENT, OLD_CONTENT), _text(entity, PRINTING),
                 _text(entity, PRINTED), preferred=_preferred(entity))
 
 
@@ -465,7 +489,8 @@ def _read_edition(store: Store, entity: Entity, links: dict[str, str]) -> Editio
     return Edition(entity, publisher[0] if publisher else "", _text(entity, IMPRINT),
                    _text(entity, PUBLICATION_DATE), _text(entity, EDITION),
                    _text(entity, BINDING), _text(entity, ISBN_13), _text(entity, ISBN_10), _text(entity, PAGES),
-                   _text(entity, OPEN_LIBRARY), [_read_copy(c) for c in copies], _text(entity, COVER))
+                   _text(entity, OPEN_LIBRARY), [_read_copy(store, c) for c in copies],
+                   _item(store, entity, COVER, OLD_COVER))
 
 
 def _edition_order(edition: Edition) -> tuple[bool, str]:
@@ -752,6 +777,24 @@ def _value_edits(entity: Entity, property_id: str, value: model.Value | None) ->
     return model.add_statement(entity, property_id, value, model.ENTITY_EDITOR)
 
 
+def _link_edits(entity: Entity, property_id: str, old: str, item_id: str) -> list[model.Edit]:
+    """Return the edits that make a property link to an item, by its
+    identifier, or to none, if it's empty, and take away the old String
+    of it, from before every item was an entity.
+
+    :raises BookError: if it isn't an item's identifier."""
+    value = None
+    if item_id.strip():
+        try:
+            value = EntityValue(identifier.split_item_id(item_id.strip())[1])
+        except ValueError:
+            raise BookError(f"{item_id.strip()} isn't an item") from None
+    edits = []
+    for statement in _statements(entity, old):
+        edits += model.remove_statement(entity, statement.id)
+    return edits + _value_edits(entity, property_id, value)
+
+
 def _string(text: str) -> model.Value | None:
     return StringValue(text.strip()) if text.strip() else None
 
@@ -850,7 +893,7 @@ def _save_copy(store: Store, copy: Copy, manifestation: Entity):
         *link,
         *_label_edits(entity, label),
         *_value_edits(entity, LOCATION, _string(copy.location)),
-        *_value_edits(entity, CONTENT, _string(copy.content)),
+        *_link_edits(entity, CONTENT, OLD_CONTENT, copy.content),
         *_value_edits(entity, PRINTING, _string(copy.printing)),
         *_value_edits(entity, PRINTED, _time(copy.printed)),
         *_preference_edits(entity, copy.preferred),
@@ -896,7 +939,7 @@ def set_cover(store: Store, manifestation: Entity, item_id: str) -> Entity:
     """Give a manifestation a cover.
 
     :raises BookError: if it can't be done."""
-    return store.change(manifestation, _value_edits(manifestation, COVER, _string(item_id)))
+    return store.change(manifestation, _link_edits(manifestation, COVER, OLD_COVER, item_id))
 
 
 def move(store: Store, type_id: str, entity: Entity, parent: Entity) -> None:
@@ -944,7 +987,7 @@ def _save_edition(store: Store, edition: Edition, expression: Entity | None):
         *_value_edits(entity, ISBN_10, _string(edition.isbn_10)),
         *_value_edits(entity, PAGES, _quantity(edition.pages)),
         *_value_edits(entity, OPEN_LIBRARY, _string(edition.open_library)),
-        *_value_edits(entity, COVER, _string(edition.cover)),
+        *_link_edits(entity, COVER, OLD_COVER, edition.cover),
     ])
     for copy in edition.copies:
         _save_copy(store, copy, edition.entity)
@@ -1138,8 +1181,12 @@ def vocabulary() -> list[Entity]:
         prop(LOCATION, "location", Datatype.String, "Where a copy of a book is kept"),
         prop(HAS_CHARACTERISTIC, "has characteristic", Datatype.Item),
         item(PREFERENCE, "preference"),
-        prop(COVER, "cover", Datatype.String, "The image item of an edition's cover, as an identifier"),
-        prop(CONTENT, "content", Datatype.String, "The item that's a copy of a book, as an identifier"),
+        prop(COVER, "cover", Datatype.Item, "The image item of an edition's cover"),
+        prop(CONTENT, "content", Datatype.Item, "The item that's a copy of a book, such as an e-book"),
+        prop(OLD_COVER, "cover (identifier, old)", Datatype.String,
+             "An edition's cover, by its item's identifier, before every item was an entity"),
+        prop(OLD_CONTENT, "content (identifier, old)", Datatype.String,
+             "A copy's content, by its item's identifier, before every item was an entity"),
         prop(PRINTING, "printing", Datatype.String, "Which printing a copy of a book is"),
         prop(PRINTED, "date of printing", Datatype.Time, "When a copy of a book was printed"),
         *(item(item_id, label) for _, item_id, label in INVERSE_LABELS),

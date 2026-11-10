@@ -11,7 +11,7 @@ there is recorded on it, as snapshots: this is that vocabulary."""
 import typing
 import uuid
 
-from .identifier import serialize_url
+from .identifier import serialize_url, split_item_id
 from .kb import (END_TIME, Datatype, Entity, EntityValue, Item, Property, Snak, Statement, StringValue, TimeValue,
                  Value)
 from .kb import item_id as make_item_id
@@ -23,6 +23,7 @@ __all__ = [
     "ETAG",
     "FINAL_URL",
     "HASH",
+    "OLD_SNAPSHOT",
     "HTTP_SERVICE",
     "HTTP_STATUS",
     "INVERSE_LABELS",
@@ -52,7 +53,14 @@ RETRIEVED = "P813"
 # A snapshot: its item's identifier (a String), with when it was
 # retrieved, its media type, and these, as qualifiers: its SHA-256, and
 # what the server said to ask about it next time.
-SNAPSHOT = "dd17dc90-4f1c-4e36-9ef6-2c1b4d8f1c7a"
+SNAPSHOT = "ea1842e2-f4e6-4a66-911b-427c623e6b10"
+
+# A snapshot as it was, by its item's identifier, a String, before every
+# item was an entity: kept for what can't be linked.
+OLD_SNAPSHOT = "dd17dc90-4f1c-4e36-9ef6-2c1b4d8f1c7a"
+
+# Labels that have changed, with what they were (see darq.book).
+RELABELLED = [(OLD_SNAPSHOT, "snapshot", "snapshot (identifier, old)")]
 HASH = "0a4d6a1e-6d3b-4d3c-8b7e-5b2f7c0b9e11"
 ETAG = "3f9f6c52-8f7d-4f26-9e3f-7a1d2b6e4c55"
 LAST_MODIFIED = "6b1e2d44-2c8a-4b11-a7d6-9c3e8f5a1d02"
@@ -69,7 +77,8 @@ MOVED_TO = "4a005e23-c460-4b4d-8abe-cfa984fe6638"
 HTTP_STATUS = "9e0c6d3b-2c6f-4c58-8f0e-5d1a7b3c2e41"
 
 # Labels that read these backwards (see darq.kb.INVERSE_LABEL).
-INVERSE_LABELS = [(MOVED_TO, "624977dd-f503-4da7-9dbb-6bae1d050049", "moved from")]
+INVERSE_LABELS = [(MOVED_TO, "624977dd-f503-4da7-9dbb-6bae1d050049", "moved from"),
+                  (SNAPSHOT, "4bb78e25-0c18-45eb-9c6c-f48c6e6e8b11", "snapshot of")]
 
 # The HTTP service, as the source of what's stated here.
 HTTP_SERVICE = "c2a84b1e-77e0-4a55-8d21-0e6f3b9d4a18"
@@ -105,13 +114,19 @@ def qualifier(statement: Statement, property_id: str) -> str:
     return ""
 
 
-def latest_snapshot(entity: Entity) -> Snapshot | None:
-    """Return a URL's latest snapshot, the last recorded, or None."""
-    for statement in reversed(entity.get_statements(SNAPSHOT)):
-        value = statement.get_value()
-        if isinstance(value, StringValue):
-            return Snapshot(value.value, qualifier(statement, HASH), qualifier(statement, ETAG),
-                            qualifier(statement, LAST_MODIFIED))
+def latest_snapshot(entity: Entity, item_of: typing.Callable[[str], str]) -> Snapshot | None:
+    """Return a URL's latest snapshot, the last recorded, or None: linked
+    to, or else, from before every item was an entity, by its identifier.
+
+    :param item_of: Returns an entity's item's identifier, or empty."""
+    for property_id in (SNAPSHOT, OLD_SNAPSHOT):
+        for statement in reversed(entity.get_statements(property_id)):
+            value = statement.get_value()
+            item_id = (item_of(value.entity_id) if isinstance(value, EntityValue)
+                       else value.value if isinstance(value, StringValue) else "")
+            if item_id:
+                return Snapshot(item_id, qualifier(statement, HASH), qualifier(statement, ETAG),
+                                qualifier(statement, LAST_MODIFIED))
     return None
 
 
@@ -127,7 +142,7 @@ def moved_to(entity: Entity) -> str:
 
 def snapshot_statement(snapshot: Snapshot, retrieved: TimeValue, media_type: str, final_url: str = "") -> Statement:
     """Return the statement of a snapshot."""
-    made = Statement(Snak(SNAPSHOT, StringValue(snapshot.item_id)))
+    made = Statement(Snak(SNAPSHOT, EntityValue(split_item_id(snapshot.item_id)[1])))
     qualifiers: list[tuple[str, Value]] = [(RETRIEVED, retrieved), (HASH, StringValue(snapshot.hash))]
     for property_id, text in ((MEDIA_TYPE, media_type), (ETAG, snapshot.etag),
                               (LAST_MODIFIED, snapshot.last_modified), (FINAL_URL, final_url)):
@@ -155,7 +170,9 @@ def vocabulary() -> list[Entity]:
     return [
         prop(URL, "URL", Datatype.Url),
         prop(RETRIEVED, "retrieved", Datatype.Time),
-        prop(SNAPSHOT, "snapshot", Datatype.String, "An item holding what was at a URL, by its identifier"),
+        prop(SNAPSHOT, "snapshot", Datatype.Item, "An item holding what was at a URL"),
+        prop(OLD_SNAPSHOT, "snapshot (identifier, old)", Datatype.String,
+             "A snapshot, by its item's identifier, before every item was an entity"),
         prop(HASH, "SHA-256 hash", Datatype.String, "The SHA-256 of a snapshot"),
         prop(ETAG, "ETag", Datatype.String, "The ETag of a snapshot, from the server"),
         prop(LAST_MODIFIED, "Last-Modified", Datatype.String, "The Last-Modified of a snapshot, from the server"),

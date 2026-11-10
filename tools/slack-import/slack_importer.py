@@ -30,6 +30,7 @@ import uuid
 
 import darq
 import darq.history
+import darq.items
 import darq.kb as model
 import darq.message
 from darq.protocols.kb import EntityItem
@@ -380,11 +381,14 @@ class Importer:
         entity = self.kb.get(self.message_id(*self.file_messages[file_id]), follow=False)
         if entity is None:
             return None
-        for s in entity.get_statements(darq.message.ATTACHMENT):
+        for s in [*entity.get_statements(darq.message.ATTACHMENT), *entity.get_statements(darq.message.OLD_ATTACHMENT)]:
+            if not any(q.property_id == FILE_ID and isinstance(q.value, model.StringValue) and q.value.value == file_id
+                       for q in s.qualifiers):
+                continue
             value = s.get_value()
-            if isinstance(value, model.StringValue) and any(
-                    q.property_id == FILE_ID and isinstance(q.value, model.StringValue)
-                    and q.value.value == file_id for q in s.qualifiers):
+            if isinstance(value, model.EntityValue):
+                return darq.items.item_of(self.kb, value.entity_id)
+            if isinstance(value, model.StringValue):
                 return value.value
         return None
 
@@ -426,7 +430,12 @@ class Importer:
                                    (darq.message.FILE_SIZE, details.get("size_on_disk") or details.get("size"))):
             if value:
                 qualifiers.append((property_id, model.StringValue(str(value))))
-        return statement(darq.message.ATTACHMENT, model.StringValue(self.attachments.get(file_id, "")), *qualifiers)
+        # A file that's an item is linked to; one that isn't, as one over
+        # MAX_FILE isn't, is what's known of it.
+        item_id = self.attachments.get(file_id, "")
+        if item_id:
+            return statement(darq.message.ATTACHMENT, model.EntityValue(darq.split_item_id(item_id)[1]), *qualifiers)
+        return statement(darq.message.OLD_ATTACHMENT, model.StringValue(""), *qualifiers)
 
     def message_statements(self, channel: str, message: dict, said: set[str]) -> list[model.Statement]:
         """Return what a message's statements should be."""

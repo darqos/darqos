@@ -56,8 +56,7 @@ Statements
 Meaning           Identifier                        Value
 ================  ================================  ====================
 The URL           URL (P2699)                       URL
-A snapshot        local                             String: the item's
-                                                    identifier
+A snapshot        local                             Item
 When              retrieved (P813)                  Time, a qualifier
 Its type          local *media type*                String, a qualifier
 Its hash          local                             SHA-256, a qualifier
@@ -71,9 +70,11 @@ Moved to          local, with *retrieved*, and      The URL's item it
                                                     (P582) if it's over
 ================  ================================  ====================
 
-A snapshot's a string, until the Item identifier datatype exists, as a
-message's attachment is (see :doc:`message-type`).  The latest is the
-last.  Wikidata's closest to *moved to*, replaced by (P1366), is for
+A snapshot's a link to its item's entity, as a message's attachment is
+(see :doc:`message-type`), with *snapshot of* as its inverse label: one
+from before links is a String, its item's identifier, on *snapshot
+(identifier, old)*, until Give Items Entities links it (see
+:doc:`entity-vs-item`).  The latest is the last.  Wikidata's closest to *moved to*, replaced by (P1366), is for
 people and offices, so it's local, with *moved from* as its inverse
 label.  The item's label is its URL, so Search finds it by that: a
 document's title would be better, once something can tell what it is.
@@ -83,7 +84,7 @@ Opening
 -------
 
 Its lens is the entity lens: its URL, and its snapshots, shown as links
-that open in their own lenses, by their identifiers, for now.  A small lens could later open the latest snapshot
+that open in their own lenses.  A small lens could later open the latest snapshot
 directly, without changing the item.
 
 Fetching from Search

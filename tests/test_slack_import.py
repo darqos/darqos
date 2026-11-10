@@ -16,6 +16,7 @@ import sys
 import pytest
 
 import darq
+import darq.items
 import darq.kb as model
 import darq.message
 
@@ -216,18 +217,24 @@ def test_microseconds():
 class Files:
     """Makes items of PDFs, and no others."""
 
-    def __init__(self):
+    def __init__(self, store=None):
+        self.kb = store
         self.made: list[str] = []
         self.names: list[str] = []
         self.types = {"application/pdf": "com.adobe.pdf"}
 
     def create(self, media_type, extension, data, name):
+        """Make an item, with its entity, as its type does, so that a
+        message can link to it."""
         type_id = self.types.get(media_type)
         if type_id is None:
             return None
         self.made.append(media_type)
         self.names.append(name)
-        return f"{type_id}:{len(self.made):032x}"
+        specifier = f"{len(self.made):032x}"
+        if self.kb is not None:
+            darq.items.create(self.kb, type_id, specifier, file_name=name)
+        return f"{type_id}:{specifier}"
 
 
 @pytest.fixture
@@ -242,7 +249,7 @@ def target(kb, implementation, monkeypatch):  # noqa: F811
             implementation.entity_ports[self.port].close(None, 0)
 
     monkeypatch.setattr(slack_importer, "EntityItem", type("EntityItem", (), {"Client": ItemClient}))
-    return kb, adapter, History(), Files()
+    return kb, adapter, History(), Files(kb)
 
 
 def run(target, export):
@@ -352,15 +359,21 @@ def test_conversations_with_nothing_said_are_left_out(target, export):
 def test_attachments(target, export):
     run(target, export)
     message = message_at(target[0], "C1", "1009.000100")
-    attachments = message.get_statements(darq.message.ATTACHMENT)
-    assert [s.get_value().value[:14] for s in attachments] == ["com.adobe.pdf:", "", ""]
+
+    # A file that's an item is linked to; those that aren't are what's
+    # known of them.
+    [linked] = message.get_statements(darq.message.ATTACHMENT)
+    entity = target[0].get(linked.get_value().entity_id)
+    assert model.recorded_type(entity) == "com.adobe.pdf"
+    attachments = message.get_statements(darq.message.OLD_ATTACHMENT)
+    assert [s.get_value().value for s in attachments] == ["", ""]
 
     def qualifier(statement, property_id):
         return next(q.value.value for q in statement.qualifiers if q.property_id == property_id)
 
-    assert qualifier(attachments[1], darq.message.FILE_NAME) == "b.mov"
-    assert qualifier(attachments[1], darq.message.MEDIA_TYPE) == "video/quicktime"
-    assert qualifier(attachments[1], darq.message.FILE_SIZE) == "4"
+    assert qualifier(attachments[0], darq.message.FILE_NAME) == "b.mov"
+    assert qualifier(attachments[0], darq.message.MEDIA_TYPE) == "video/quicktime"
+    assert qualifier(attachments[0], darq.message.FILE_SIZE) == "4"
 
 
 def test_a_file_shared_twice_is_one_item(target, export):
@@ -369,7 +382,7 @@ def test_a_file_shared_twice_is_one_item(target, export):
     assert files.made == ["application/pdf"] and files.names == ["a.pdf"]
     first = message_at(client, "C1", "1009.000100").get_statements(darq.message.ATTACHMENT)[0]
     second = message_at(client, "C1", "1010.000100").get_statements(darq.message.ATTACHMENT)[0]
-    assert first.get_value().value == second.get_value().value
+    assert first.get_value().entity_id == second.get_value().entity_id
 
 
 def test_a_message_of_only_a_file_has_no_body(target, export):
@@ -401,12 +414,13 @@ def test_reimport_changes_nothing(target, export, kb_service):  # noqa: F811
 def test_reimport_picks_up_files_with_new_types(target, export):
     run(target, export)
     client, _, _, files = target
-    files.types["video/quicktime"] = "public.mpeg-4"
+    files.types["video/quicktime"] = darq.items.DATA_TYPE
     result = run(target, export)
     assert result.updated == 1 and result.files == 2
-    attachments = message_at(client, "C1", "1009.000100").get_statements(darq.message.ATTACHMENT)
-    assert len(attachments) == 3
-    assert any(s.get_value().value.startswith("public.mpeg-4:") for s in attachments)
+    message = message_at(client, "C1", "1009.000100")
+    attachments = message.get_statements(darq.message.ATTACHMENT)
+    assert len(attachments) == 2 and len(message.get_statements(darq.message.OLD_ATTACHMENT)) == 1
+    assert any(model.recorded_type(client.get(s.get_value().entity_id)) == darq.items.DATA_TYPE for s in attachments)
 
 
 def test_someone_in_the_kb_is_found_by_name(target, export):

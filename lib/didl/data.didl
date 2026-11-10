@@ -1,0 +1,19 @@
+// darqos
+// Copyright (C) 2026 David Arnold
+//
+// Data item protocol: see doc/data-type.rst.
+//
+// An item of public.data is a file's bytes, of a type DarqOS has no
+// implementation for, kept as they came, with their media type.  Its
+// implementation serves this on a port for each client of an item.
+library darq.data;
+
+protocol Data {
+    1: Close() -> ();
+
+    // Return the item's bytes, and their media type.
+    16: Get() -> (opaque data, string media_type);
+
+    // Return the item's size, in bytes, and its media type.
+    17: Stat() -> (uint64 size, string media_type);
+}

@@ -2,7 +2,8 @@
 # Copyright (C) 2026 David Arnold
 
 # Give Items Entities: give the items made before every item was an
-# entity theirs (see doc/entity-vs-item.rst, step 3).
+# entity theirs, and make what refers to them by identifier link to them
+# (see doc/entity-vs-item.rst, steps 3 and 4).
 #
 # An item of a type whose content is in Storage, text, an image, a PDF or
 # an e-book, is given its entity by its type implementation when it's
@@ -15,9 +16,15 @@
 # unnamed is named from what referred to it, if it can be: an
 # attachment's file name, or the last part of a snapshot's URL.
 #
+# Then what referred to an item by its identifier, a String, links to its
+# entity: the statement's made again, with the property that links, and
+# the same qualifiers, references and rank, written through the KB type
+# implementation.  One whose item's gone, or that's of a file that isn't
+# an item, is left as it is.
+#
 # It's a tool (see tool.json), started from the development Terminal's
 # Tools menu, and can be run again: an item that has its entity is left
-# as it is.  It logs what it did, as counts, and exits.
+# as it is, as is a link.  It logs what it did, as counts, and exits.
 
 import logging
 import pathlib
@@ -35,6 +42,7 @@ from darq.protocols.history import History
 from darq.protocols.history import Status as HistoryStatus
 from darq.protocols.kb import EntityItem
 from darq.protocols.type import Implementation, Status, Type
+from darq.ui import kb_writer
 
 
 # Seconds to wait for services' replies.
@@ -44,8 +52,11 @@ TIMEOUT = 30
 PAGE = 1000
 BATCH = 100
 
-# The properties whose values are items, by identifier.
-REFERENCES = [darq.message.ATTACHMENT, darq.url.SNAPSHOT, darq.book.CONTENT, darq.book.COVER]
+# The properties whose values were items, by identifier, with those that
+# link to them now.
+LINKS = {darq.message.OLD_ATTACHMENT: darq.message.ATTACHMENT, darq.url.OLD_SNAPSHOT: darq.url.SNAPSHOT,
+         darq.book.OLD_CONTENT: darq.book.CONTENT, darq.book.OLD_COVER: darq.book.COVER}
+REFERENCES = list(LINKS)
 
 
 class Counts(typing.NamedTuple):
@@ -107,9 +118,9 @@ def referred(kb: model.KB) -> dict[str, str]:
                     if not is_content(item_id):
                         continue
                     name = ""
-                    if property_id == darq.message.ATTACHMENT:
+                    if property_id == darq.message.OLD_ATTACHMENT:
                         name = darq.url.qualifier(statement, darq.message.FILE_NAME)
-                    elif property_id == darq.url.SNAPSHOT:
+                    elif property_id == darq.url.OLD_SNAPSHOT:
                         at = darq.url.qualifier(statement, darq.url.FINAL_URL) or next(
                             (string(s.get_value()) for s in entity.get_statements(darq.url.URL)), "")
                         name = name_of(at) if at else ""
@@ -193,6 +204,46 @@ def name_from(item: EntityItem.Client, name: str) -> bool:
         item.close()
 
 
+class Relinked(typing.NamedTuple):
+    linked: int = 0
+    left: int = 0
+
+
+def relink(kb: model.KB, writer: model.KB) -> Relinked:
+    """Make what refers to an item by its identifier link to its entity, if
+    it has one, and return how many were, and were left.
+
+    :param writer: The KB, written through the KB type implementation."""
+    linked = left = 0
+    for old, new in LINKS.items():
+        query = model.Query()
+        subject = query.variable()
+        query.match(subject, old, model.ANY)
+        query.select(subject)
+        ids = sorted({row[0] for row in kb.query(query)})
+        for start in range(0, len(ids), BATCH):
+            entities, _ = kb.get_entities(ids[start:start + BATCH], follow=False)
+            changed = []
+            for entity in entities:
+                touched = False
+                for statement in list(entity.get_statements(old)):
+                    item_id = string(statement.get_value())
+                    target = darq.split_item_id(item_id)[1] if is_content(item_id) else ""
+                    if not target or darq.items.read(kb, target) is None:
+                        left += 1
+                        continue
+                    entity.remove_statement(statement)
+                    entity.add_statement(model.Statement(model.Snak(new, model.EntityValue(target)),
+                                                         statement.qualifiers, statement.references, statement.rank))
+                    linked += 1
+                    touched = True
+                if touched:
+                    changed.append(entity)
+            if changed:
+                writer.put(*changed)
+    return Relinked(linked, left)
+
+
 def darq_main():
     history = History.Client(darq.connect("darq.history"), timeout=TIMEOUT)
     types = Type.Client(darq.connect("darq.type"), timeout=TIMEOUT)
@@ -204,4 +255,7 @@ def darq_main():
     counts = give(items, kb, types)
     logging.info(f"Gave items entities: {counts.made} made, {counts.had} had one, {counts.named} named from what "
                  f"refers to them, {counts.unnamed} unnamed, {counts.gone} gone, {counts.failed} failed")
+    relinked = relink(kb, kb_writer.writer(kb))
+    logging.info(f"Linked to items: {relinked.linked} linked, {relinked.left} left, as their items are gone, "
+                 f"or they're of files that aren't items")
     return 0

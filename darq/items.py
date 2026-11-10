@@ -20,6 +20,7 @@ anyone, through the KB (see doc/types.rst)."""
 import dataclasses
 import datetime
 import pathlib
+import typing
 
 from . import kb as model
 from . import message
@@ -27,14 +28,22 @@ from .kb import Datatype, Entity, EntityValue, Item, Property, Reference, String
 
 
 # Control exports
-__all__ = ["CREATED", "FILE_NAME", "KINDS", "Kind", "create", "destroy", "is_content", "label_for", "made", "names",
-           "read", "rename", "vocabulary"]
+__all__ = ["CREATED", "DATA_TYPE", "FILE_EXTENSION", "FILE_NAME", "KINDS", "MEDIA_TYPE", "Kind", "create", "destroy",
+           "is_content", "item_of", "label_for", "made", "names", "read", "rename", "vocabulary"]
 
 
 # Properties: when an item was made, in DarqOS, and the name of the file
 # it was made from, where it was: the same as a message's attachment's.
 CREATED = "4ef65274-cfb1-4d05-8789-f7575e03f5cc"
 FILE_NAME = message.FILE_NAME
+
+# The type of a file that's of no type there's an implementation for: its
+# bytes, kept as they came (see doc/data-type.rst).
+DATA_TYPE = "public.data"
+
+# Wikidata's properties of a file: its media type, and its extension.
+MEDIA_TYPE = "P1163"
+FILE_EXTENSION = "P1195"
 
 # Wikidata's classes of files: text file, image file, and computer file.
 TEXT_FILE = "Q86920"
@@ -78,6 +87,7 @@ KINDS: dict[str, Kind] = {
     "darq.book.epub": _ebook("EPUB"),
     "darq.book.mobi": _ebook("MOBI"),
     "darq.book.azw": _ebook("AZW"),
+    DATA_TYPE: Kind(COMPUTER_FILE, "File", "Files"),
 }
 
 
@@ -94,6 +104,13 @@ def label_for(title: str = "", file_name: str = "") -> str:
         return " ".join(title.split())
     stem = pathlib.PurePath(file_name.strip()).stem if file_name.strip() else ""
     return stem.strip()
+
+
+def item_of(kb: model.KB, entity_id: str) -> str:
+    """Return the identifier of an entity's item, from its recorded kind,
+    as a link to one gives only the entity's: empty if there's none."""
+    entity = kb.get(entity_id)
+    return model.item_id(entity.id, model.recorded_type(entity)) if entity is not None else ""
 
 
 def names(entity: Entity | None) -> list[str]:
@@ -113,9 +130,11 @@ def time_value(moment: datetime.datetime) -> TimeValue:
 
 
 def made(kind: str, entity_id: str, label: str = "", file_name: str = "",
-         created: datetime.datetime | None = None, source: str = model.DARQOS) -> Item:
+         created: datetime.datetime | None = None, source: str = model.DARQOS,
+         statements: typing.Iterable[tuple[str, model.Value]] = ()) -> Item:
     """Return a new item's entity, not yet written: its kind, its label,
-    in English, when it was made, and the file it was made from.
+    in English, when it was made, the file it was made from, and any other
+    statements its type implementation makes, such as its media type.
 
     :param source: What the file name's stated in: DarqOS, or an import.
     :raises ValueError: if the kind's items aren't kept in Storage."""
@@ -131,11 +150,14 @@ def made(kind: str, entity_id: str, label: str = "", file_name: str = "",
     if file_name.strip():
         entity.claim(FILE_NAME, StringValue(file_name.strip())).add_reference(
             Reference().add(model.STATED_IN, EntityValue(source)))
+    for property_id, value in statements:
+        entity.claim(property_id, value).add_reference(Reference().add(model.STATED_IN, EntityValue(model.DARQOS)))
     return entity
 
 
 def create(kb: model.KB, kind: str, entity_id: str, label: str = "", file_name: str = "",
-           created: datetime.datetime | None = None, source: str = model.DARQOS) -> Entity:
+           created: datetime.datetime | None = None, source: str = model.DARQOS,
+           statements: typing.Iterable[tuple[str, model.Value]] = ()) -> Entity:
     """Make an item's entity, after its blob, and return it.  If it's there
     already, as it is when it's made again after a failure, it's returned
     as it is.
@@ -146,7 +168,7 @@ def create(kb: model.KB, kind: str, entity_id: str, label: str = "", file_name: 
     existing = kb.get(entity_id, follow=False)
     if existing is not None:
         return existing
-    return kb.put(made(kind, entity_id, label, file_name, created, source))[0]
+    return kb.put(made(kind, entity_id, label, file_name, created, source, statements))[0]
 
 
 def read(kb: model.KB, entity_id: str) -> Entity | None:
@@ -206,6 +228,9 @@ def vocabulary() -> list[Entity]:
 
     return [
         prop(CREATED, "created", Datatype.Time, "When an item was made, in DarqOS"),
+        prop(MEDIA_TYPE, "media type", Datatype.String, "IANA-registered identifier for a file type"),
+        prop(FILE_EXTENSION, "file extension", Datatype.String,
+             "filename suffix that indicates the format of the file's contents"),
         item(TEXT_FILE, "text file"),
         item(IMAGE_FILE, "image file"),
         item(COMPUTER_FILE, "computer file"),

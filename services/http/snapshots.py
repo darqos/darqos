@@ -16,6 +16,7 @@ import urllib.parse
 
 import darq
 import darq.history
+import darq.items
 import darq.kb as model
 import darq.message
 import darq.url
@@ -116,6 +117,10 @@ class Snapshots:
         self.make_item = make_item
         self.history = history
 
+    def item_of(self, entity_id: str) -> str:
+        """Return the identifier of a snapshot's item, from its entity's."""
+        return darq.items.item_of(self.kb, entity_id)
+
     def known_latest(self, url: str) -> list[darq.url.Snapshot]:
         """Return the latest snapshots of a URL, and of where it's known
         to have moved, last first."""
@@ -124,7 +129,7 @@ class Snapshots:
         seen = set()
         while entity is not None and entity.id not in seen:
             seen.add(entity.id)
-            latest = darq.url.latest_snapshot(entity)
+            latest = darq.url.latest_snapshot(entity, self.item_of)
             if latest is not None:
                 found.insert(0, latest)
             moved = darq.url.moved_to(entity)
@@ -183,7 +188,7 @@ class Snapshots:
 
         # What's kept goes on the URL it's at, unless that's its latest.
         here_entity = self.kb.get(darq.url.entity_id(here), follow=False)
-        here_latest = darq.url.latest_snapshot(here_entity) if here_entity is not None else None
+        here_latest = darq.url.latest_snapshot(here_entity, self.item_of) if here_entity is not None else None
         if here_latest is None or here_latest.item_id != item_id:
             kept = same if same is not None and unmodified else None
             snapshot = darq.url.Snapshot(item_id, digest, (kept.etag if kept else header(response, "ETag")),

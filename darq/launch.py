@@ -17,6 +17,9 @@ from .protocols import type as type_protocol
 from .system import close_port, connect, decode_port_destroyed, open_port, receive_message, spawn_process
 
 
+# Data's type, which takes anything: as darq.items.DATA_TYPE.
+DATA_TYPE = "public.data"
+
 # Seconds to wait for a service's reply, and for a lens to report Ready.
 TIMEOUT = 10.0
 READY_TIMEOUT = 30.0
@@ -43,16 +46,17 @@ def create_item(type_id: str) -> tuple[str, int]:
     return response.item_id, response.item
 
 
-def create_item_from(type_id: str, data: bytes, name: str = "") -> tuple[str, int]:
+def create_item_from(type_id: str, data: bytes, name: str = "", media_type: str = "") -> tuple[str, int]:
     """Create an item of a type from data in the type's format, such as a
     PNG file's bytes.
 
     :param name: The name of the file it came from, if it did.
+    :param media_type: The media type it came with, if it did.
 
     :returns: Its identifier, and a port for it, as create_item does.
     :raises LaunchError: if it couldn't be created: if the data isn't of
                          the type, nothing is."""
-    response = _activate(type_id).create_from(type_id=type_id, data=data, name=name)
+    response = _activate(type_id).create_from(type_id=type_id, data=data, name=name, media_type=media_type)
     if response.status != type_protocol.Status.OK or response.item is None:
         raise LaunchError(f"Can't create a {type_id} item from data: {response.status.name}")
     return response.item_id, response.item
@@ -60,17 +64,20 @@ def create_item_from(type_id: str, data: bytes, name: str = "") -> tuple[str, in
 
 def import_data(media_type: str, extension: str, data: bytes, name: str = "") -> str | None:
     """Create an item from data that's come from somewhere else, of the
-    first type for its media type, or else its extension, that takes it.
+    first type for its media type, or else its extension, that takes it,
+    or else as data, public.data, which takes anything (see
+    doc/data-type.rst).
 
     :param extension: The extension of its name, without its dot.
     :param name: The name of the file it came from, if it did.
-    :returns: The item's identifier, or None if no type takes it."""
+    :returns: The item's identifier, or None if it can't be made, as
+              data, too, isn't implemented."""
     types = find_types(mime_type=media_type) if media_type else []
     if extension:
         types += find_types(extension=extension)
-    for type_id in dict.fromkeys(types):
+    for type_id in [*dict.fromkeys(types), DATA_TYPE]:
         try:
-            item_id, port = create_item_from(type_id, data, name)
+            item_id, port = create_item_from(type_id, data, name, media_type)
         except LaunchError:
             continue
         try:

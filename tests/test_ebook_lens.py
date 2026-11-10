@@ -245,6 +245,12 @@ def test_the_layout_measures_without_the_transform():
 # Cataloguing a file
 ################################################################
 
+def files() -> MemoryStore:
+    """A store with the files these tests catalogue: a link's to an entity
+    that's there."""
+    return MemoryStore().content("darq.book.epub:a", "com.adobe.pdf:b", "public.jpeg:c")
+
+
 def add_content(store, content="darq.book.epub:a", title="Bliss", authors=("Peter Carey",), isbn="", answer=True,
                 **details):
     return catalogue.add_content(store, content, catalogue.Details(title, list(authors), isbn, **details),
@@ -252,7 +258,7 @@ def add_content(store, content="darq.book.epub:a", title="Bliss", authors=("Pete
 
 
 def test_a_new_file_is_a_new_book():
-    store = MemoryStore()
+    store = files()
     item = add_content(store)
     book = read_book(store, item)
     assert (book.title, book.authors) == ("Bliss", ["Peter Carey"])
@@ -261,7 +267,7 @@ def test_a_new_file_is_a_new_book():
 
 
 def test_a_second_format_goes_on_the_same_book():
-    store = MemoryStore()
+    store = files()
     first = add_content(store)
     second = add_content(store, "com.adobe.pdf:b")
     assert first == second
@@ -271,14 +277,14 @@ def test_a_second_format_goes_on_the_same_book():
 
 
 def test_saying_its_not_that_book_makes_a_new_one():
-    store = MemoryStore()
+    store = files()
     first = add_content(store)
     assert add_content(store, "com.adobe.pdf:b", answer=False) != first
     assert len(store.of_kind(darq.book.WORK_TYPE)) == 2
 
 
 def test_it_asks_only_if_theres_a_match():
-    store = MemoryStore()
+    store = files()
     asked = []
     catalogue.add_content(store, "darq.book.epub:a", catalogue.Details("Bliss"),
                           lambda match: asked.append(match) or True)
@@ -286,7 +292,7 @@ def test_it_asks_only_if_theres_a_match():
 
 
 def test_an_isbn_finds_the_paper_edition():
-    store = MemoryStore()
+    store = files()
     add_content(store, isbn="0596007124")
     add_content(store, "com.adobe.pdf:b", title="Something Else", isbn="9780596007126")
     assert len(store.of_kind(darq.book.WORK_TYPE)) == 1
@@ -294,13 +300,13 @@ def test_an_isbn_finds_the_paper_edition():
 
 
 def test_a_files_cover_goes_on_its_manifestation():
-    store = MemoryStore()
+    store = files()
     item = add_content(store, cover="public.jpeg:c")
     assert read_book(store, item).editions[0].cover == "public.jpeg:c"
 
 
 def test_a_files_details_go_to_their_levels():
-    store = MemoryStore()
+    store = files()
     item = add_content(store, publisher="O'Reilly", date="2009-08", language="English")
     book = read_book(store, item)
     assert book.language == "English"
@@ -316,18 +322,26 @@ def test_finding_an_isbn(text, isbn):
     assert darq.book.find_isbn(text) == isbn
 
 
-def test_find_copy():
-    class Reader:
-        def find_by_value(self, property_id, value):
-            return ["c"] if (property_id, value) == (darq.book.CONTENT, "com.adobe.pdf:a") else []
+class Reader:
+    """A KB: copy c links to item a, and, from before links, copy d has
+    item e's identifier."""
 
+    def find_links(self, target_id, property_id):
+        return ["c"] if (target_id, property_id) == ("a", darq.book.CONTENT) else []
+
+    def find_by_value(self, property_id, value):
+        return ["d"] if (property_id, value) == (darq.book.OLD_CONTENT, "com.adobe.pdf:e") else []
+
+
+def test_find_copy():
     assert catalogue.find_copy("com.adobe.pdf:a", Reader()) == model.item_id("c", darq.book.ITEM_TYPE)
+    assert catalogue.find_copy("com.adobe.pdf:e", Reader()) == model.item_id("d", darq.book.ITEM_TYPE)
     assert catalogue.find_copy("com.adobe.pdf:b", Reader()) == ""
 
 
 def test_find_copy_with_no_kb():
     class Reader:
-        def find_by_value(self, property_id, value):
+        def find_links(self, target_id, property_id):
             raise TimeoutError
 
     assert catalogue.find_copy("com.adobe.pdf:a", Reader()) == ""

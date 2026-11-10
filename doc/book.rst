@@ -475,7 +475,12 @@ edition catalogued is one you have.  A digital copy comes from its item,
 by B, so a Manifestation with one has no Add Copy link.
 
 A Manifestation can have a cover, an image item (a local *cover*
-property), shown small with it.  B takes an EPUB's own; an ISBN lookup
+property, which links to its entity, so the image's page says it's the
+*cover of* the Manifestation), shown small with it.  A copy's *content*
+links to its item in the same way, as *content of*.  One from before
+links, a String of the item's identifier, on a property relabelled
+*(identifier, old)*, is still read, and made a link when it's saved, or
+by Give Items Entities (see :doc:`entity-vs-item`).  B takes an EPUB's own; an ISBN lookup
 fetches Open Library's, through ``darq.http``, after it's added; and a
 Manifestation's Edit form can take one from an image file on the host.
 A cover that can't be had isn't a failure.  MOBI and AZW files don't say

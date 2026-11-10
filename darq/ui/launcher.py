@@ -15,6 +15,7 @@ import threading
 import typing
 
 import darq
+import darq.items
 import darq.history
 from darq.protocols.http import Status as HttpStatus
 
@@ -96,8 +97,9 @@ class Launcher:
         and use it.
 
         Its type is found from its name's extension: the first that
-        takes its data.  This stands in for the filesystem type, which
-        will map files to types itself.
+        takes its data, or else data, public.data, which takes anything.
+        This stands in for the filesystem type, which will map files to
+        types itself.
 
         :param done: As for create."""
         name = os.path.basename(path)
@@ -115,10 +117,8 @@ class Launcher:
                 type_ids = services.launch.find_types(extension=extension)
             except (darq.DarqError, TimeoutError) as e:
                 return None, f"Can't find a type for {name}: {e}"
-            if not type_ids:
-                return None, f"No type takes .{extension} files" if extension else f"No type for {name}"
-
-            for type_id in type_ids:
+            # What no type takes is kept as data (see doc/data-type.rst).
+            for type_id in [*dict.fromkeys(type_ids), darq.items.DATA_TYPE]:
                 try:
                     item_id, item = services.launch.create_item_from(type_id, data, name)
                 except (darq.DarqError, TimeoutError) as e:
@@ -129,7 +129,7 @@ class Launcher:
                 except darq.DarqError as e:
                     logging.warning(f"Can't record imported for {item_id}: {e!r}")
                 return item_id, self.use_item(item_id, item)
-            return None, f"Can't import {name}: it isn't a {' or '.join(type_ids)}"
+            return None, f"Can't import {name}: it isn't a {' or '.join([*type_ids, darq.items.DATA_TYPE])}"
 
         self.start(job, context, done)
 

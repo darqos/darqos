@@ -134,8 +134,9 @@ def test_failures(fail_in, error):
     ("notes.txt", [(TEXT, b"Hello")], None),
     # The first type to take it.
     ("photo.dat", [("public.jpeg", b"Hello")], None),
-    ("photo.png", [], "No type takes .png files"),
-    ("README", [], "No type for README"),
+    # What no type takes is kept as data.
+    ("archive.zip", [("public.data", b"Hello")], None),
+    ("README", [("public.data", b"Hello")], None),
 ])
 def test_create_from_file(tmp_path, name, created, error):
     path = tmp_path / name
@@ -157,14 +158,24 @@ def test_create_from_file(tmp_path, name, created, error):
         assert services.history.added == []
 
 
-def test_create_from_file_refused_and_missing(tmp_path, monkeypatch):
+def test_data_thats_refused_by_its_type_is_kept_as_data(tmp_path, monkeypatch):
     services = FakeServices()
     host = FakeHost(services)
     monkeypatch.setattr(services.launch, "refuses", {"public.png", "public.jpeg"})
     path = tmp_path / "photo.dat"
     path.write_bytes(b"junk")
     Launcher(host, "test", inline, inline).create_from_file(str(path))
-    assert host.results[-1][2] == "Can't import photo.dat: it isn't a public.png or public.jpeg"
+    assert services.launch.created == [("public.data", b"junk")] and services.launch.names == ["photo.dat"]
+
+
+def test_create_from_file_refused_and_missing(tmp_path, monkeypatch):
+    services = FakeServices()
+    host = FakeHost(services)
+    monkeypatch.setattr(services.launch, "refuses", {"public.png", "public.jpeg", "public.data"})
+    path = tmp_path / "photo.dat"
+    path.write_bytes(b"junk")
+    Launcher(host, "test", inline, inline).create_from_file(str(path))
+    assert host.results[-1][2] == "Can't import photo.dat: it isn't a public.png or public.jpeg or public.data"
 
     Launcher(host, "test", inline, inline).create_from_file(str(tmp_path / "gone.txt"))
     assert host.results[-1][2] == "Can't read gone.txt: No such file or directory"

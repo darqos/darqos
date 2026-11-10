@@ -18,6 +18,7 @@ import time
 import pytest
 
 import darq
+import darq.items
 import darq.kb as model
 import darq.message
 import darq.url
@@ -346,9 +347,11 @@ def test_libcurl_has_what_the_design_expects():
 ################################################################
 
 class Items:
-    """Makes items of PDFs and text."""
+    """Makes items of PDFs and text, with their entities, as their types
+    do, so that a snapshot can link to one."""
 
-    def __init__(self):
+    def __init__(self, store=None):
+        self.kb = store
         self.made: list[tuple[str, str, bytes]] = []
         self.names: list[str] = []
 
@@ -357,13 +360,16 @@ class Items:
             return None
         self.made.append((media_type, extension, data))
         self.names.append(name)
-        return f"com.adobe.pdf:{len(self.made):032x}"
+        item_id = f"com.adobe.pdf:{len(self.made):032x}"
+        if self.kb is not None:
+            darq.items.create(self.kb, "com.adobe.pdf", item_id.partition(":")[2], file_name=name)
+        return item_id
 
 
 @pytest.fixture
 def keeper(kb, implementation):  # noqa: F811
     items = model.KB(kb.client, Writer(implementation))
-    made = Items()
+    made = Items(kb)
     return snapshots.Snapshots(items, made, History()), made
 
 
@@ -394,7 +400,7 @@ def test_a_snapshot(keeper, web, tmp_path, kb):  # noqa: F811
     assert model.recorded_type(entity) == "public.url"
     assert entity.get_label() == web.base + "/paper.pdf"
     assert entity.get_statements(darq.url.URL)[0].get_value().value == web.base + "/paper.pdf"
-    latest = darq.url.latest_snapshot(entity)
+    latest = darq.url.latest_snapshot(entity, lambda e: darq.items.item_of(kb, e))
     assert latest is not None
     assert latest.item_id == outcome.item
     assert latest.hash == hashlib.sha256(PDF).hexdigest()
@@ -444,7 +450,7 @@ def test_a_failure_with_no_item_records_nothing(keeper, web, tmp_path):
 
 def test_history_not_running(kb, implementation, web, tmp_path):  # noqa: F811
     items = model.KB(kb.client, Writer(implementation))
-    assert take((snapshots.Snapshots(items, Items(), None),), web, tmp_path, "/paper.pdf").changed
+    assert take((snapshots.Snapshots(items, Items(kb), None),), web, tmp_path, "/paper.pdf").changed
 
 
 def test_not_modified_keeps_the_latest(keeper, web, tmp_path):
@@ -470,7 +476,7 @@ def test_changed_content_is_a_new_snapshot(keeper, web, tmp_path, kb):  # noqa: 
     assert second.changed and second.item != first.item
     entity = kb.get(darq.url.entity_id(web.base + "/noetag.txt"))
     assert len(entity.get_statements(darq.url.SNAPSHOT)) == 2
-    latest = darq.url.latest_snapshot(entity)
+    latest = darq.url.latest_snapshot(entity, lambda e: darq.items.item_of(kb, e))
     assert latest is not None and latest.item_id == second.item
 
 
@@ -521,7 +527,8 @@ def entity_of(kb, web, path):  # noqa: F811
 
 
 def snapshot_items(entity) -> list[str]:
-    return [s.get_value().value for s in entity.get_statements(darq.url.SNAPSHOT)]
+    """Return the items a URL's snapshots link to: Items makes PDFs."""
+    return ["com.adobe.pdf:" + s.get_value().entity_id for s in entity.get_statements(darq.url.SNAPSHOT)]
 
 
 def moved_a_page(web, status=301):
@@ -721,7 +728,14 @@ def test_entity_id_is_the_same_for_the_same_url():
 
 
 def test_no_snapshot():
-    assert darq.url.latest_snapshot(model.Item("u")) is None
+    assert darq.url.latest_snapshot(model.Item("u"), lambda e: "") is None
+
+
+def test_a_snapshot_from_before_links_is_still_found():
+    url = model.Item("u")
+    url.claim(darq.url.OLD_SNAPSHOT, model.StringValue("com.adobe.pdf:" + "1" * 32))
+    latest = darq.url.latest_snapshot(url, lambda e: "")
+    assert latest is not None and latest.item_id == "com.adobe.pdf:" + "1" * 32
 
 
 def test_prepare_spool_clears_what_a_crash_left(tmp_path):
@@ -742,6 +756,7 @@ def test_http_service(live_pkernel, web, tmp_path):  # noqa: F811
     client_path = write_app(tmp_path / "client", f"""
         import time
         import darq
+        import darq.items
         import darq.kb as model
         import darq.launch
         import darq.url
@@ -791,7 +806,7 @@ def test_http_service(live_pkernel, web, tmp_path):  # noqa: F811
 
             kb = model.KB.connect(timeout=30)
             entity = kb.get(darq.split_item_id(first.url_item)[1])
-            if darq.url.latest_snapshot(entity).item_id != first.item:
+            if darq.url.latest_snapshot(entity, lambda e: darq.items.item_of(kb, e)).item_id != first.item:
                 return "not recorded"
             if darq.launch.find_lens("public.url").rsplit("/", 1)[1] != "entity":
                 return "no lens"
@@ -802,8 +817,10 @@ def test_http_service(live_pkernel, web, tmp_path):  # noqa: F811
             if moved.url_item != first.url_item:
                 return f"moved to {{moved.url_item}}"
 
-            if http.snapshot(url=BASE + "/unknown.bin").status != Status.NO_TYPE:
-                return "took something with no type"
+            # What no type takes is kept as data.
+            unknown = http.snapshot(url=BASE + "/unknown.bin")
+            if unknown.status != Status.OK or not unknown.item.startswith("public.data:"):
+                return f"something with no type: {{unknown!r}}"
             return 0
         """)
 
@@ -879,8 +896,9 @@ def test_fetching_from_search(live_pkernel, web, tmp_path):  # noqa: F811
             if item_id not in [hit.item_id for hit in hits]:
                 return f"not indexed: {{hits!r}}"
 
+            # What no type takes is kept as data, which has no lens yet.
             host.launcher.fetch({web.base + "/unknown.bin"!r})
-            if host.results[-1][1] != "No type can hold {web.base}/unknown.bin":
+            if not (host.results[-1][0] or "").startswith("public.data:"):
                 return f"no type: {{host.results[-1]!r}}"
             return 0
         """)

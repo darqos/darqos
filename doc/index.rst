@@ -82,6 +82,7 @@ Type Implementations
 .. include:: text.rst
 .. include:: image-type.rst
 .. include:: pdf-type.rst
+.. include:: data-type.rst
 .. include:: email.rst
 .. include:: message-type.rst
 .. include:: audio.rst

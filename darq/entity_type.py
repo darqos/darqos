@@ -124,11 +124,14 @@ class EntityType(Implementation.Handler):
     # the item: if the KB won't write its entity, that's logged, and it's
     # made later, as it is for an item made before there were entities.
 
-    def make_entity(self, kind: str, entity_id: str, title: str = "", file_name: str = ""):
+    def make_entity(self, kind: str, entity_id: str, title: str = "", file_name: str = "",
+                    statements: typing.Iterable[tuple[str, model.Value]] = ()):
         """Make a new item's entity, named by its content's title, or else
-        its file's name."""
+        its file's name, with any other statements, such as its media
+        type."""
         try:
-            darq.items.create(self.kb, kind, entity_id, darq.items.label_for(title, file_name), file_name)
+            darq.items.create(self.kb, kind, entity_id, darq.items.label_for(title, file_name), file_name,
+                              statements=statements)
         except KB_ERRORS as e:
             logging.error(f"Can't make {model.item_id(entity_id, kind)}'s entity: {e}")
 
@@ -139,7 +142,8 @@ class EntityType(Implementation.Handler):
         to give."""
         return False
 
-    def adopt_entity(self, kind: str, entity_id: str, title: str = "") -> bool:
+    def adopt_entity(self, kind: str, entity_id: str, title: str = "",
+                     statements: typing.Iterable[tuple[str, model.Value]] = ()) -> bool:
         """Make an item's entity, as adopt does, if it has none, named by
         its content's title: return whether it has one now."""
         try:
@@ -148,7 +152,7 @@ class EntityType(Implementation.Handler):
             if self.kb.get(entity_id, follow=False) is not None:
                 # Destroyed, so the item's gone, as it would have been.
                 return False
-            darq.items.create(self.kb, kind, entity_id, darq.items.label_for(title))
+            darq.items.create(self.kb, kind, entity_id, darq.items.label_for(title), statements=statements)
         except KB_ERRORS as e:
             logging.error(f"Can't make {model.item_id(entity_id, kind)}'s entity: {e}")
             return False

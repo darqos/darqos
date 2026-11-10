@@ -149,7 +149,12 @@ class Page:
         """Return an attachment: a link to its item, or, for a file that
         isn't one, what's known of it."""
         value = statement.get_value()
-        item_id = value.value if isinstance(value, model.StringValue) else ""
+        if isinstance(value, model.EntityValue):
+            link = self.linked.get(value.entity_id)
+            item_id = link.item_id if link is not None else ""
+        else:
+            # From before every item was an entity: its item's identifier.
+            item_id = value.value if isinstance(value, model.StringValue) else ""
         name = qualifier(statement, darq.message.FILE_NAME) or item_id or "A file"
         media_type = qualifier(statement, darq.message.MEDIA_TYPE)
         size = qualifier(statement, darq.message.FILE_SIZE)
@@ -193,7 +198,8 @@ class Page:
             edited = " (edited)" if message.get_statements(darq.message.LAST_EDITED) else ""
             parts.append(f'<p class="sender">{sender} <span class="time">{when}{edited}</span></p>')
         parts.append(body_html(darq.message.body_of(message)))
-        parts += [self.attachment(s) for s in message.get_statements(darq.message.ATTACHMENT)]
+        parts += [self.attachment(s) for s in (*message.get_statements(darq.message.ATTACHMENT),
+                                               *message.get_statements(darq.message.OLD_ATTACHMENT))]
         parts.append(self.reactions(message))
         block = "\n".join(filter(None, parts))
         if message.id == self.highlight:

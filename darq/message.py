@@ -23,6 +23,7 @@ from .kb import Datatype, Entity, EntityValue, Item, Property, TextValue, TimePr
 # Control exports
 __all__ = [
     "ATTACHMENT",
+    "OLD_ATTACHMENT",
     "BODY",
     "CONVERSATION",
     "FILE_NAME",
@@ -78,7 +79,15 @@ LAST_EDITED = "04fe322a-5920-46e3-a805-d600cb20904c"
 
 # An attachment: an item's identifier (a String), or empty if the file
 # isn't an item, with the file's name, media type and size (qualifiers).
-ATTACHMENT = "b3373473-423f-4977-8290-6667f4e1ca7a"
+ATTACHMENT = "33bbe5a6-6d94-48ea-9f7f-0e5af78f4e0b"
+
+# An attachment as it was, by its item's identifier, a String, before
+# every item was an entity, or empty for a file that isn't an item: kept
+# for what can't be linked, as a file over the size an import keeps.
+OLD_ATTACHMENT = "b3373473-423f-4977-8290-6667f4e1ca7a"
+
+# Labels that have changed, with what they were (see darq.book).
+RELABELLED = [(OLD_ATTACHMENT, "attachment", "attached file")]
 FILE_NAME = "f5bad6df-d25d-4243-846f-f71f50e71f26"
 MEDIA_TYPE = "53825878-ddc3-4ae6-93f7-cfb5bffc63ab"
 FILE_SIZE = "776f7074-8e35-45f4-98f8-d2169f1ad9c4"
@@ -92,6 +101,7 @@ INVERSE_LABELS = [
     (REPLY_TO, "a2c7dc7a-30b6-4cfa-9c0b-8f9433e7def8", "replied to by"),
     (PARTICIPANT, "aa2efa6b-bc87-4247-9c53-386faca819ff", "participant in"),
     (PLATFORM, "bb5ca2e4-94b4-41bf-9a4a-dbe407785038", "platform of"),
+    (ATTACHMENT, "ad9667ba-fde2-4e50-979e-95d9f2ca6679", "attachment of"),
 ]
 
 # Most characters of a message's text in its summary.
@@ -194,8 +204,10 @@ def vocabulary() -> typing.List[Entity]:
         prop(REACTION, "reaction", Datatype.String, "A reaction to a message, by its emoji's name"),
         prop(REACTED_BY, "reacted by", Datatype.Item, "Who reacted to a message"),
         prop(LAST_EDITED, "last edited", Datatype.Time, "When a message was last edited"),
-        prop(ATTACHMENT, "attachment", Datatype.String,
-             "An item attached to a message, by its identifier: empty for a file that isn't an item"),
+        prop(ATTACHMENT, "attachment", Datatype.Item, "An item attached to a message"),
+        prop(OLD_ATTACHMENT, "attached file", Datatype.String,
+             "A file attached to a message, by its item's identifier, before every item was an entity, "
+             "or empty, for one that isn't an item"),
         prop(FILE_NAME, "file name", Datatype.String, "The name of a file: an item's, or an attachment's"),
         prop(MEDIA_TYPE, "media type", Datatype.String, "The media type of an attached file"),
         prop(FILE_SIZE, "file size", Datatype.String, "The size of an attached file, in bytes"),

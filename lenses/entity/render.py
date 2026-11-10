@@ -12,6 +12,7 @@ import html
 import typing
 
 import darq.kb as model
+import darq.book
 import darq.message
 import darq.url
 import darq.wikidata
@@ -20,10 +21,11 @@ from darq.ui import links as grouped
 from darq.ui import style
 
 
-# Properties whose values are items' identifiers, as strings, until the
-# Item identifier datatype exists (see doc/entity-vs-item.rst): shown as
-# links to the items.
-ITEM_VALUES = frozenset({darq.message.ATTACHMENT, darq.url.SNAPSHOT})
+# Properties whose values are items' identifiers, as strings, from before
+# every item was an entity, and so linked to (see doc/entity-vs-item.rst):
+# what can't be linked yet is shown as links to the items.
+ITEM_VALUES = frozenset({darq.message.OLD_ATTACHMENT, darq.url.OLD_SNAPSHOT, darq.book.OLD_CONTENT,
+                         darq.book.OLD_COVER})
 
 # What a page's link can lead to: an item, or, in what links to the item
 # shown, one of those in grouped.

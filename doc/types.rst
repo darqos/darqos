@@ -261,14 +261,18 @@ Every implementation serves the `Implementation` protocol (also in
   must check that the identifier's type is its own: an item of another
   type, including a conforming subtype, is `NOT_FOUND`.
 * `Destroy(item_id)` marks it destroyed (see Item Destruction, below).
-* `CreateFrom(type_id, data, name)` creates an item of a type from data
-  in the type's own format, such as a PNG file's bytes, and returns its
+* `CreateFrom(type_id, data, name, media_type)` creates an item of a
+  type from data in the type's own format, such as a PNG file's bytes,
+  and returns its
   identifier and a port, as `Create` does.  Data that isn't of the type
   is `INVALID_DATA`, and nothing is created: it isn't converted.  This
   is how items come in from outside: from a file, a web page, or an
   email's attachment.  Its name is the name of the file it came from,
   as its caller knows it, or empty: the item's entity is named from it,
   when the data has no title of its own (see :doc:`entity-vs-item`).
+  Its media type is the one it came with, if it did, such as a server's
+  `Content-Type`: a type that knows its own ignores it, but data's kept
+  with it (see :doc:`data-type`).
 * `Export(item_id)` returns an item's content as data in its type's
   format, with its MIME type: for attaching it to an email, saving it
   to a file, or uploading it.

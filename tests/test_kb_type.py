@@ -17,6 +17,7 @@ import darq
 import darq.book
 import darq.kb as model
 import darq.message
+import darq.url
 from darq.protocols import kb as wire
 from darq.protocols.kb import (
     Changed,
@@ -266,20 +267,26 @@ def test_start_states_the_defaults_once(kb, implementation, kb_service):
     assert kb_service.store.writes == writes
 
 
-def test_a_renamed_property_gets_its_new_label(kb, implementation):
-    entity = kb.get(darq.book.CONTENT)
-    entity.set_label("file")
+@pytest.mark.parametrize("property_id, before, after", [
+    (darq.book.OLD_CONTENT, "file", "content (identifier, old)"),
+    (darq.book.OLD_CONTENT, "content", "content (identifier, old)"),
+    (darq.url.OLD_SNAPSHOT, "snapshot", "snapshot (identifier, old)"),
+    (darq.message.OLD_ATTACHMENT, "attachment", "attached file"),
+])
+def test_a_renamed_property_gets_its_new_label(kb, implementation, property_id, before, after):
+    entity = kb.get(property_id)
+    entity.set_label(before)
     kb.put(entity)
     implementation.start()
-    assert kb.get(darq.book.CONTENT).get_label() == "content"
+    assert kb.get(property_id).get_label() == after
 
 
 def test_a_label_changed_by_hand_isnt_renamed(kb, implementation):
-    entity = kb.get(darq.book.CONTENT)
+    entity = kb.get(darq.book.OLD_CONTENT)
     entity.set_label("mine")
     kb.put(entity)
     implementation.start()
-    assert kb.get(darq.book.CONTENT).get_label() == "mine"
+    assert kb.get(darq.book.OLD_CONTENT).get_label() == "mine"
 
 
 def test_kind_of(kb, implementation):

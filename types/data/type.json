@@ -1,0 +1,12 @@
+{
+  "types": [
+    {
+      "id": "public.data",
+      "name": "Data",
+      "description": "A file of a type DarqOS has no implementation for: its bytes, kept as they came.",
+      "conforms_to": ["public.item"],
+      "mime_types": ["application/octet-stream"],
+      "implemented": true
+    }
+  ]
+}

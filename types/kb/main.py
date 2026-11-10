@@ -147,7 +147,7 @@ class EntityImplementation(EntityType, EntityWriter.Handler):
     def relabel(self):
         """Give vocabulary that's been renamed its new label, unless it's
         been changed by hand."""
-        for entity_id, old, new in darq.book.RELABELLED:
+        for entity_id, old, new in (*darq.book.RELABELLED, *darq.url.RELABELLED, *darq.message.RELABELLED):
             entity = self.kb.get(entity_id, follow=False)
             if entity is not None and entity.get_label() == old:
                 entity.set_label(new)

@@ -94,7 +94,7 @@ def test_a_kind_thats_not_in_storage_is_refused():
 def test_the_kinds_are_the_storage_types_implementations():
     """Every type text, images, PDFs and e-books implement, and no other."""
     implemented = set()
-    for name in ("text", "image", "pdf", "ebook"):
+    for name in ("text", "image", "pdf", "ebook", "data"):
         manifest = json.loads((ROOT / "types" / name / "type.json").read_text())
         implemented |= {t["id"] for t in manifest["types"] if t.get("implemented")}
     assert implemented == set(items.KINDS)
