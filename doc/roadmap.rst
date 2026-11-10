@@ -452,7 +452,7 @@ Types
     * https://github.com/Zain-Bin-Arshad/PDF-Viewer
     * https://github.com/pymupdf/PyMuPDF
 
-* AsciiDoc
+* ReStructured Text
 
   * View
   * Edit
@@ -460,10 +460,10 @@ Types
     papers, books, man pages, online help.  This type should
     facilitate self-hosting of the documentation chain.
     
-* BookRecord
+* Book
 
   * Could be for an eBook or a physical book
-  * Bunch of metadata, but mostly stored in KB
+  * Stored in KB
   * Some similarities to music and video: there can be physical
     entities that are cataloged with their metadata, but don’t have a
     stored object underneath them.  They then have a collective
@@ -489,6 +489,12 @@ Types
 * File
 
   * Maybe?  As a part of the Filesystem support?
+  * ``public.data`` UTI
+  * Basically a KB entity, with a blob in storage
+
+    * Keep file name
+    * Keep extension
+    * Keep any MIME / Content-Type information we get from the source.
 
 * Internet Host
 
