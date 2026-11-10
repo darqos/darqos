@@ -6,13 +6,17 @@ An audio player is an interesting exploration of some modelling issues.
 * A simple player application (play, pause, ffw, rew, etc) for a
   single mp3 or similar format object is relatively easy to conceive.
   This fits will with the model of Type and a Lens for that type.
-* Sound files often have built-in metadata in the form of ID3 tags,
-  which describe the track's genre, creation date, length, and other
-  properties.
-* Music, however, often exists within the context of an album: a sequence
-  of individual sound objects with eg. shared cover art.  It's reasonable
-  to play an album, in which case the individual tracks should be played
-  sequentially.
+* Sound files sometimes have built-in metadata in the form of ID3
+  tags, which describe the track's genre, creation date, length, and
+  other properties.  These tags should be extracted, and added to the
+  KB item for the audio data.
+* Music, however, often exists within the context of an album: a
+  sequence of individual sound objects with eg. shared cover art.
+  It's reasonable to play an album, in which case the individual
+  tracks should be played sequentially.  An album is a specialised
+  form of collection, with its own properties distinct from those of
+  the individual tracks.  A distinct lens for playing albums is
+  probably worthwhile.
 * Selecting music if often done by searching a collection of albums,
   ordered either by artist, by album title, by genre, or other scheme.
 * Playlists are objects that represent a sequence of tracks independent
@@ -36,7 +40,7 @@ Sinks
     devices can be connected via a built-in DAC, USB, an analog jack,
     or a network eg. AirPlay, Chromecast, or Bluetooth.
 
-    An sink accepts a stream of input data in a negotiated audio
+    A sink accepts a stream of input data in a negotiated audio
     format.  It should probably use a simple IPC interface for this,
     perhaps with each packet including format info, rather than having
     stateful negotiation of the format up front?
@@ -56,6 +60,10 @@ Mixers
     The input streams are mixed together, with each input stream
     having its own volume control.
 
+    For multi-channel output (source), a mixer might spacially
+    position an input stream with respect to others by means of
+    amplitude and phase adjustments.
+
     Stuff that also could reasonably be built into the mixer might be
     equalization and synchronisation delays, a global mute, etc.
 
@@ -68,11 +76,12 @@ Source
     streamer for stored objects, a translator for a network stream, or
     a physical input device, eg. a line-in, or a microphone.
 
-In general, a terminal device will have an input-side mixer, and an
-output side sink.  The sink might be a local analog jack, USB
-soundcard, or nearby AirPlay device (for example): it doesn't matter
-what it is.  The mixer is always configured; the output device might
-not always be available.
+In general, a Terminal Service should provide multiple (flexible
+number of) sinks leading into a mixer, and sourcing a two-channel
+stream (for downstream speakers). The sink might be a local analog
+jack, USB soundcard, or nearby AirPlay device (for example): it
+doesn't matter what it is.  The mixer is always configured; the output
+device might not always be available.
 
 This raises the need for configuration.
 
@@ -93,9 +102,9 @@ Sources and Sinks are Device instances, a restricted class of Service.
 Hardware Support
 ----------------
 
-First edition supports the mini PC's built-in audio, or a USB
-soundcard, via ALSA, providing a stereo sink and mono source, both
-using a standard 3.5mm analog jack.
+Early editions support the PC's built-in audio, or a USB soundcard,
+via Pipewire, providing a stereo sink and mono source, both using a
+standard 3.5mm analog jack.
 
 It's possible that the HDMI audio sink could also be supported.
 
@@ -108,38 +117,28 @@ SystemConfigService.
 Albums
 ------
 
-An album could be derived completely from metadata, with each track
-simply duplicating the album's properties, and relying on the metadata
-system to record and find the tracks.  Album name, year, publisher,
-cover art, etc, could all be properties, plus a index property giving
-the sequential number of the track within the album.
+An album is a KB entity with no associated blob storage.  It collects
+and orders a set of Track items.  Album name, year, publisher, cover
+art, etc, could all be properties, plus an ordinal property giving the
+sequential number of the track within the album.  Singles, EPs, LPs,
+etc, could all be variants of the basic "track collection" type.
 
-Alternatively, an album could be a distinct object type, with its own
-implementation and metadata, and links to the comprising tracks.  In
-this mddel, it would be somewhat like a Project type, in that it is
-basically a collection type within minimal behaviour beyond grouping
-its constituents.  Singles, EPs, LPs, etc, could all be variants of the
-basic "track collection" type.
-
-I *think* I lean towards making albums a distinct type: that kinda
-models the reality most closely, I think.  And having a Type means that
-there's an implementation that can cleanly implement any useful
-behaviour (ie. "viewer" logic).
+The "track collection" lens offers sequential play of the tracks
+within the collection, probably display of cover art, maybe lyrics,
+etc.
 
 Playlists
 ---------
 
-Similarly to albums, I think it makes sense to have playlists as a
-Type within the system.  A basic playlist is just a list of tracks,
-but it'd be relatively simple to have algorithmic generators provide
-a similar API too.
+A playlist is a simpler ordered set of tracks than an album: it has
+very few additional properties.  Play could be sequential or shuffle.
 
 Its possible that albums and playlists are the same type: they're both
 a collection of audio objects, together with some metadata (fairly
 minimal for playlists to be fair).
 
-In practice, queuing up a bunch of tracks to be played creates a
-transient playlist.
+In practice, queuing up a bunch of tracks to be played effectively
+creates a transient playlist.
 
 Searching for Music
 -------------------
@@ -149,9 +148,9 @@ to play is fairly well established: you can typically browse by
 artist, album, or track, with a particular visual experience tied to
 each variant of the process.
 
-In Darq, the standard system search and timeline UX could be used for
-music: you could filter by type and/or metadata attributes in a way
-that might be a reasonable equivakent?
+In Darq, the standard system search and history UX can be used for
+music: you can filter by type and/or attributes in a way that might be
+a reasonable equivakent?
 
 Alternatively, it might be that a specific UI is needed.  This could
 perhaps be selected if a music type filter were chosen, and would look
@@ -231,7 +230,8 @@ Scenarios
 Single file import
 ~~~~~~~~~~~~~~~~~~
 
-* Install USB soundcard and connect output to speakers
+* Install USB soundcard if required
+* Connect output to speakers
 * Boot
 * Log in
 
@@ -278,6 +278,9 @@ Single file import
   new music object using the file data.
 
   * Do we manually choose "music" over "audio" or "podcast", etc?
+
+    * That's the easiest way, yes.
+
   * How do we choose to use the file data to initialise the new
     object?
 
