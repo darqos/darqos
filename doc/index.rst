@@ -83,6 +83,7 @@ Type Implementations
 .. include:: rst-type.rst
 .. include:: image-type.rst
 .. include:: pdf-type.rst
+.. include:: markdown-type.rst
 .. include:: data-type.rst
 .. include:: email.rst
 .. include:: message-type.rst
