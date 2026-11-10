@@ -103,11 +103,6 @@ TERMINAL_FAILURES = "DARQ_TERMINAL_FAILURES"
 COMPOSITOR_DISPLAY = "darq-0"
 HOST_DISPLAY = "DARQ_HOST_WAYLAND_DISPLAY"
 
-# Development Terminal, started after them if DARQ_DEV_TERMINAL is set
-# (to anything but 0), for trying types and lenses in a window on the
-# host's desktop.
-DEV_TERMINAL = "tools/devterm"
-
 # Directory containing the darq package this p-kernel is using, so the
 # loader can import the same one.
 DARQ_PYTHON_PATH = os.path.dirname(os.path.dirname(os.path.abspath(darq.__file__)))
@@ -1225,8 +1220,6 @@ class PseudoKernel(SocketListener, TimerListener):
         paths = BOOT_PROCESSES
         if terminal_enabled():
             paths += (TERMINAL,)
-        if enabled("DARQ_DEV_TERMINAL"):
-            paths += (DEV_TERMINAL,)
         for path in paths:
             exec_path = os.path.join(DARQ_ROOT, path)
             if not os.path.isfile(os.path.join(exec_path, "main.py")):

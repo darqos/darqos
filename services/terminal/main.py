@@ -13,13 +13,13 @@
 #   boot, it asks for one, to set.
 # - Sys-n New, Sys-h History, Sys-Tab the switcher, Sys-b shut down or
 #   reboot, Sys-x close the focused window, Sys-l lock, Sys-space
-#   Search, with the clock; Sys-e and Sys-i show a TBD panel
-#   (panels.py); and, for now, Sys-t
-#   starts the vCard import (tools/vcard-import).  While it's locked,
-#   only Sys-b works, on the lock screen.
+#   Search, with the clock; Sys-t the Tools panel, which runs the
+#   installed tools (darq.ui.tools); Sys-e and Sys-i show a TBD panel
+#   (panels.py).  While it's locked, only Sys-b works, on the lock
+#   screen.
 #
-# Its calls to services are synchronous, on Qt's thread, as devterm's
-# are, but for creating and using items, which its Launcher does on other
+# Its calls to services are synchronous, on Qt's thread, but for creating
+# and using items, and running tools, which its Launcher does on other
 # threads (see darq.ui.launcher).
 
 import logging
@@ -59,7 +59,8 @@ import darq.ui.types
 from darq.ui import Services
 from darq.ui.launcher import Launcher
 
-from panels import HistoryPanel, NewPanel, NoticePanel, Panel, PowerPanel, SearchPanel, SwitcherPanel, TbdPanel
+from panels import (HistoryPanel, NewPanel, NoticePanel, Panel, PowerPanel, SearchPanel, SwitcherPanel, TbdPanel,
+                    ToolsPanel)
 from screens import CHOOSE, ENTER, UNAVAILABLE, WAITING, Screens
 
 
@@ -93,16 +94,11 @@ HOTKEYS: dict[tuple[int, int], str] = {
     (XK_space, 0): "show_search",
     (XK_e, 0): "show_events",
     (XK_i, 0): "show_item_info",
-
-    # Temporary, until tools have a place in the Terminal.
-    (XK_t, 0): "start_vcard_import",
+    (XK_t, 0): "show_tools",
 }
 
-# Where the tools are, under DARQ_ROOT, as devterm finds them.
+# Where the tools are, under DARQ_ROOT (see darq.ui.tools).
 DEFAULT_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
-
-# The vCard import, under the root.
-VCARD_IMPORT = "tools/vcard-import"
 
 
 class Terminal:
@@ -138,8 +134,9 @@ class Terminal:
         self.power_panel = PowerPanel(self.power)
         self.tbd = TbdPanel()
         self.notice = NoticePanel()
+        self.tools = ToolsPanel(self, pathlib.Path(os.environ.get("DARQ_ROOT", DEFAULT_ROOT)))
         self.panels: list[Panel] = [self.new, self.history, self.search, self.switcher, self.power_panel,
-                                    self.tbd, self.notice]
+                                    self.tbd, self.notice, self.tools]
 
         self.notifier = QtCore.QSocketNotifier(voidptr(channel.fileno()), QtCore.QSocketNotifier.Type.Read)
         self.notifier.activated.connect(self.read_channel)
@@ -330,26 +327,18 @@ class Terminal:
         self.hide_panels(but=self.tbd)
         self.tbd.show_for("Item info")
 
-    def start_vcard_import(self):
-        """Start the vCard import: temporarily, Sys-t.  Spawning waits for
-        it to run, so it's done off Qt's thread."""
-        root = pathlib.Path(os.environ.get("DARQ_ROOT", DEFAULT_ROOT))
-        path = str(root / VCARD_IMPORT)
-        self.show_status("Starting the vCard import ...")
+    def show_tools(self):
+        self.show_panel(self.tools)
 
-        def started(dpid: int | None, error: Exception | None):
-            if error is None:
-                logging.info(f"Started the vCard import, dpid {dpid}")
-                return
-            message = f"Can't start the vCard import: {error}"
-            logging.warning(message)
+    def tool_finished(self, message: str):
+        """A tool's finished: say how, in the Tools panel, or, if it's
+        closed, as a tool that opens windows of its own closes it, a
+        notice."""
+        if self.tools.isVisible():
+            self.tools.set_status(message)
+        else:
             self.hide_panels(but=self.notice)
             self.notice.show_message(message)
-
-        self.launcher.background(lambda: darq.spawn_process(path), started)
-
-    # The switcher
-
     def switch_forward(self):
         self.switch(1)
 

@@ -38,53 +38,30 @@ option as well, because eg. an SSH session has different needs to a
 GUI session.
 
 
-Development Terminal
---------------------
+Trying It on a Desktop
+----------------------
 
-`tools/devterm` is a development tool: an ordinary window for
-creating items, browsing History, starting tools, and shutting down or
-rebooting.  It was written to try types and lenses before the
-compositor existed, and is kept alongside the real Terminal, sharing
-its New, History and Search parts (``darq.ui``).  It's started at boot, last,
-when `DARQ_DEV_TERMINAL=1` is set.  Its Tools menu lists the
-installed tools, those under `tools/` with a `tool.json` manifest,
-`{"name": ...}`, such as the vCard import (see :doc:`kb-service`),
-and starts the one chosen.
-
-The real Terminal is started at boot, unless `DARQ_TERMINAL=0` is set.
-Run the p-kernel from the desktop session: with the Terminal, the
-compositor is then a window on the host's desktop, and devterm and
-the lenses are windows in it; without it, they're windows on the
-host's desktop.  Build the compositor first (see Building and Trying
-It, below).  From the top of the tree, with the virtual environment's
-Python first on the path (the p-kernel and its loaders run `python`),
-and the tree on `PYTHONPATH` (for the p-kernel's own `import
-darq`)::
+DarqOS can be run from its source tree, without installing it, on a
+Wayland desktop: the compositor's then a window there, with the Terminal
+and the lenses in it.  Build the compositor first (see Building and
+Trying It, below).  From the top of the tree, with the virtual
+environment's Python first on the path (the p-kernel and its loaders
+run `python`), and the tree on `PYTHONPATH` (for the p-kernel's own
+`import darq`), ``devboot.sh`` runs it::
 
     . venv313/bin/activate
-    PYTHONPATH=$PWD DARQ_RUN=./run DARQ_DEV_TERMINAL=1 kernel/pkernel
+    PYTHONPATH=$PWD DARQ_RUN=./run kernel/pkernel
 
-Add `DARQ_TERMINAL=0` for devterm alone, on the host's desktop.  With
-the Terminal, devterm waits (up to 10 seconds) for the compositor's
-socket before it starts: it may not be listening yet.
+The Terminal is started at boot, unless `DARQ_TERMINAL=0` is set: then
+there's no user interface, which is for tests.  Everything's done with
+its hotkeys: New (*Sys-n*), History (*Sys-h*), Search (*Sys-space*),
+Tools (*Sys-t*), and shutting down or rebooting (*Sys-b*).
 
-It has:
-
-* New: the implemented types (`ListTypes`), greyed out if they have no
-  Terminal lens.  Create makes an item, records `created` (source
-  `devterm`), and starts its lens (`darq.launch`).  Import File...
-  makes one from a host file, and records `imported` (see
-  :doc:`types`).
-* History: events between two times, filtered by type, event, and
-  source, newest first, a page at a time.  Double-clicking one starts
-  a lens for its item.
-* Search: items found by the Index, as the Terminal's Search panel
-  finds them (below), but without the clock.
-* System: Shutdown and Reboot (it's a system process, so it may), and
-  Quit, which closes just this window.
-
-It creates and uses items with the Terminal's launcher, so it doesn't
-freeze while a lens starts (see Architecture, below).
+First Edition had a development Terminal, ``tools/devterm``, an ordinary
+window with New, History, Search and Tools, written to try types and
+lenses before the compositor existed.  It was removed in Second Edition,
+once the Terminal had a Tools panel, as the Terminal did everything it
+did.
 
 
 First Edition Graphical Terminal
@@ -383,8 +360,7 @@ DarqOS down, as Ctrl-C does: systemd sends ``SIGTERM`` to the p-kernel
 alone (``KillMode=mixed``), which shuts its processes down.
 
 The unit sets ``DARQ_MACHINE=1``: the p-kernel is the machine's
-session, so a shutdown asked for in DarqOS (*Sys-b*, or the
-development Terminal's) powers the machine off, and a reboot reboots
+session, so a shutdown asked for in DarqOS (*Sys-b*) powers the machine off, and a reboot reboots
 it, once every process has exited.  It asks systemd
 (``systemctl poweroff`` or ``reboot``), through logind, which polkit
 allows the active local session, even with others logged in (over
@@ -466,6 +442,25 @@ through them, and Enter creates an item of the selected one, records
 creates an item from a file on the host, of the type its extension
 finds, records `imported`, and starts its lens: it stands in for a
 filesystem type, until there is one.
+
+Tools
+~~~~~
+
+The tools panel, invoked with *Sys-t*, runs the installed tools: the
+programs under `tools/` with a `tool.json` manifest, their name and
+description, `{"name": ..., "description": ...}`, such as the
+imports, Reindex, and Give Items Entities (``darq.ui.tools``).  Typing
+filters them, by name or description, the arrow keys move through
+them, and Enter, or a double-click, runs the selected one.
+
+A tool's run as the Terminal's child, and waited for, off the UI's
+thread, so how it finished is known: it says so in the panel, or, if
+the panel's closed, as one that opens a window of its own, such as an
+import's, closes it, in a notice.  That's that it finished, or why it
+failed, from its error's last line, or that it was stopped.  What it
+did is only in its log, for now: telling the operator is a job for
+Second Edition's Events.  A tool that's running is marked so, and isn't
+started again till it's finished.
 
 History
 ~~~~~~~
@@ -620,7 +615,7 @@ its messages and the hotkeys; ``screens.py`` has the background and
 lock windows, one of each on every screen; and ``panels.py`` the
 panels.  The panels are overlay windows, one shown at a time: Escape
 closes one, and so does losing the focus, but for the switcher's.
-New and History are shared with devterm, in ``darq.ui``.
+New, History, Search and Tools are in ``darq.ui``.
 
 If the compositor isn't built, or isn't ready within 10 seconds, or
 closes the policy channel, the Terminal exits with status 1: the

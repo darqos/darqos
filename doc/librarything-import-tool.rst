@@ -6,8 +6,8 @@ book's four levels (see :doc:`book`).  It's not a Service: it's a
 one-shot tool, that can be run again, and it does *not* export anything
 from Darq to LibraryThing.
 
-It's in ``tools/librarything-import``, started from the development
-Terminal's Tools menu: choose the export, and press Import.  Its summary
+It's in ``tools/librarything-import``, started from the Terminal's
+Tools panel (*Sys-t*): choose the export, and press Import.  Its summary
 says what was made, and what's to be checked.
 
 What It Imports

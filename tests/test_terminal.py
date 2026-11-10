@@ -7,6 +7,7 @@
 # boot through a real p-kernel, with the compositor headless.
 
 import importlib.util
+import json
 import os
 import pathlib
 import socket
@@ -46,7 +47,7 @@ from darq.protocols.http import SnapshotResponse
 from darq.protocols.http import Status as HttpStatus
 from darq.ui.search import is_url
 
-from test_devterm import DOC, PDF, TEXT, FakeServices, inline
+from ui_fakes import DOC, PDF, TEXT, FakeServices, inline
 from test_pkernel import live_pkernel, pkernel, run_kernel_until  # noqa: F401
 
 
@@ -692,31 +693,82 @@ def test_clock_text():
     assert panels.clock_text(datetime.datetime(2026, 11, 2, 9, 5)) == ("09:05", "Monday 2 November 2026")
 
 
-def test_vcard_import(terminal, monkeypatch):
+def installed(root: pathlib.Path, *tools: tuple[str, str, str]) -> pathlib.Path:
+    """Install tools, by directory, name and description, under a root."""
+    for directory, name, description in tools:
+        (root / "tools" / directory).mkdir(parents=True)
+        (root / "tools" / directory / "tool.json").write_text(json.dumps({"name": name, "description": description}))
+    return root
+
+
+def tools_at(terminal, root, finishes=None):
+    """Point the Tools panel at a root, with tools that spawn as dpid 7,
+    and finish as given, as darq.wait reports."""
     spawned = []
+    tools = terminal.tools.tools
+    tools.root = root
 
     def spawn(path):
         spawned.append(path)
-        if len(spawned) == 2:
+        if finishes is None:
             raise main.darq.SpawnError(1, "no such program")
         return 7
 
-    monkeypatch.setattr(main.darq, "spawn_process", spawn)
-    monkeypatch.setenv("DARQ_ROOT", "/darq")
+    tools.spawn = spawn
+    tools.wait = lambda dpid: finishes
+    return spawned
+
+
+def test_the_tools_panel_lists_and_runs_tools(terminal, tmp_path):
+    root = installed(tmp_path, ("vcard-import", "Import vCards", "Import an address book"),
+                     ("reindex", "Reindex", "Publish every item's entry again"))
+    spawned = tools_at(terminal, root, main.darq.ChildStatus(7, main.darq.ExitReason.EXITED, 0, None))
 
     # Not while it's locked.
     hotkey(terminal, main.XK_t)
-    assert spawned == []
+    assert visible(terminal) == []
 
     unlock(terminal)
     hotkey(terminal, main.XK_t)
-    assert spawned == ["/darq/tools/vcard-import"]
-    assert visible(terminal) == []
+    assert visible(terminal) == [terminal.tools]
+    table = terminal.tools.tools.table
+    assert [table.item(row, 0).text() for row in range(table.rowCount())] == ["Import vCards", "Reindex"]
 
+    terminal.tools.tools.filter.setText("index")
+    terminal.tools.tools.filter.returnPressed.emit()
+    assert spawned == [str(root / "tools" / "reindex")]
+    assert terminal.tools.status.text() == "Reindex finished"
+
+
+def test_a_tool_that_fails_says_why(terminal, tmp_path):
+    root = installed(tmp_path, ("slack-import", "Import Slack", ""))
+    tools_at(terminal, root, main.darq.ChildStatus(
+        7, main.darq.ExitReason.EXITED, 1, "Traceback (most recent call last):\n  ...\nValueError: no export\n"))
+    unlock(terminal)
     hotkey(terminal, main.XK_t)
+    terminal.tools.tools.run_selected()
+    assert terminal.tools.status.text() == "Import Slack failed: ValueError: no export"
+
+
+def test_a_tool_that_finishes_once_the_panels_closed_says_so_in_a_notice(terminal, tmp_path):
+    root = installed(tmp_path, ("reindex", "Reindex", ""))
+    tools_at(terminal, root, main.darq.ChildStatus(7, main.darq.ExitReason.KILLED, -1, None))
+    unlock(terminal)
+    hotkey(terminal, main.XK_t)
+    terminal.tools.hide()
+    terminal.tools.tools.run_selected()
     assert visible(terminal) == [terminal.notice]
-    message = terminal.notice.message.text()
-    assert message.startswith("Can't start the vCard import:") and "no such program" in message
+    assert terminal.notice.message.text() == "Reindex was stopped"
+
+
+def test_a_tool_that_cant_be_started_says_so(terminal, tmp_path):
+    root = installed(tmp_path, ("reindex", "Reindex", ""))
+    tools_at(terminal, root, None)
+    unlock(terminal)
+    hotkey(terminal, main.XK_t)
+    terminal.tools.tools.run_selected()
+    message = terminal.tools.status.text()
+    assert message.startswith("Can't run Reindex:") and "no such program" in message
 
 
 def test_lock(terminal):
@@ -851,7 +903,6 @@ def test_terminal_at_boot(live_pkernel, monkeypatch):  # noqa: F811
     runtime.mkdir(mode=0o700)
     socket_path = runtime / "darq-0"
     monkeypatch.setenv("DARQ_TERMINAL", "1")
-    monkeypatch.setenv("DARQ_DEV_TERMINAL", "0")
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
     monkeypatch.setenv("WLR_BACKENDS", "headless")

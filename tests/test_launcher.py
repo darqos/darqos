@@ -14,7 +14,7 @@ from darq.errors import LaunchError
 from darq.loop import QtEventLoop
 from darq.ui.launcher import Launcher
 
-from test_devterm import DOC, TEXT, FakeServices, inline
+from ui_fakes import DOC, TEXT, FakeServices, inline
 
 
 class FakeHost:

@@ -379,7 +379,7 @@ than as text: the DIDL verifier checks every query, the service needs
 no parser, nothing can be injected into it, and every language with a
 DIDL generator can build queries.  ``darq.kb.Query`` builds them in
 Python.  DIDL has no recursive types, so a query is a flat list of
-patterns.  A text syntax, for the shell or the development Terminal,
+patterns.  A text syntax, for the shell or the REPL,
 can be a client library that builds them.
 
 A query that can't be answered is ``INVALID_ARGUMENT``: one with no
@@ -938,8 +938,8 @@ None, for now.  These were settled:
 vCard Import
 ------------
 
-``tools/vcard-import`` is a tool, started from the development
-Terminal's Tools menu, with a window: choose a vCard file, and the
+``tools/vcard-import`` is a tool, started from the Terminal's Tools
+panel (*Sys-t*), with a window: choose a vCard file, and the
 address book's name, and import it.  The address book is an item, the
 source its statements are stated in, so it can be imported again,
 updating what it imported before; other address books are imported

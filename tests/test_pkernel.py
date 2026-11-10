@@ -308,33 +308,15 @@ def test_boot_starts_services_in_order(pkernel, fake_popen):
         assert args[4] == "0"
 
 
-@pytest.mark.parametrize("value, started", [(None, False), ("0", False), ("", False), ("1", True), ("yes", True)])
-def test_boot_dev_terminal(pkernel, fake_popen, monkeypatch, value, started):
-    module = pkernel.module
-    if value is None:
-        monkeypatch.delenv("DARQ_DEV_TERMINAL", raising=False)
-    else:
-        monkeypatch.setenv("DARQ_DEV_TERMINAL", value)
-    pkernel.do_boot()
-
-    # It's started last, after the services it uses.
-    paths = [args[-1] for args in fake_popen.calls]
-    expected = module.BOOT_PROCESSES + ((module.DEV_TERMINAL,) if started else ())
-    assert paths == [os.path.join(module.DARQ_ROOT, path) for path in expected]
-
-
 @pytest.mark.parametrize("terminal", [False, True])
-@pytest.mark.parametrize("dev_terminal", [False, True])
-def test_boot_terminal(pkernel, fake_popen, monkeypatch, terminal, dev_terminal):
+def test_boot_terminal(pkernel, fake_popen, monkeypatch, terminal):
     module = pkernel.module
     monkeypatch.setenv("DARQ_TERMINAL", "1" if terminal else "0")
-    monkeypatch.setenv("DARQ_DEV_TERMINAL", "1" if dev_terminal else "0")
     pkernel.do_boot()
 
-    # After the services, and before the development Terminal.
+    # After the services.
     paths = [args[-1] for args in fake_popen.calls]
-    expected = (module.BOOT_PROCESSES + ((module.TERMINAL,) if terminal else ())
-                + ((module.DEV_TERMINAL,) if dev_terminal else ()))
+    expected = module.BOOT_PROCESSES + ((module.TERMINAL,) if terminal else ())
     assert paths == [os.path.join(module.DARQ_ROOT, path) for path in expected]
     assert (pkernel._terminal is not None) == terminal
 
@@ -431,7 +413,6 @@ def test_terminal_missing_reboots(pkernel, fake_popen, tmp_path, monkeypatch):
     module = pkernel.module
     monkeypatch.delenv("DARQ_TERMINAL_FAILURES", raising=False)
     monkeypatch.setenv("DARQ_TERMINAL", "1")
-    monkeypatch.setenv("DARQ_DEV_TERMINAL", "0")
     monkeypatch.setattr(module, "DARQ_ROOT", str(tmp_path))
     monkeypatch.setattr(module, "BOOT_PROCESSES", ())
     pkernel.do_boot()
@@ -451,7 +432,6 @@ def test_terminal_exiting_before_running_reboots(live_pkernel, executable, monke
     module = kernel.module
     monkeypatch.delenv("DARQ_TERMINAL_FAILURES", raising=False)
     monkeypatch.setenv("DARQ_TERMINAL", "1")
-    monkeypatch.setenv("DARQ_DEV_TERMINAL", "0")
     monkeypatch.setattr(module, "DARQ_ROOT", os.path.dirname(executable))
     monkeypatch.setattr(module, "TERMINAL", os.path.basename(executable))
     monkeypatch.setattr(module, "BOOT_PROCESSES", ())

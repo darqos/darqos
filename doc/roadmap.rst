@@ -774,15 +774,30 @@ Services
   * Pluggable models, local or remote
   * First used by the LinkedIn import, for pasted profile pages
 
-* People
+* CardDAV Sync
 
-  * Repository of data about people
-  * Able to sync with external services (Exchange, Google, CardDAV,
-    vCard, LinkedIn, etc)
-  * Index and History providers
-  * Needs better name, since it can be businesses or groups etc also
+  * Synchronise a CardDAV server with the local item store
 
-* Calendar
+    * New or altered cards from CardDAV update local Person, Group,
+      and Organisation Items.
+    * New or altered Person, Grouop, and Organisation Items update
+      remote CardDAV items
+    * Major issue is that KB contains records for many people and
+      organisations that don't beloing in your addressbook.  How is
+      the synchronised set decided?
+
+      * Persons with a contact method? (IM, phone, email?)
+
+    * Synchronisation should be near-instant, sub-minute timescale.  I
+      should be able to make a change on my phone and have it appear
+      in Darq in under 60s, and ideally quicker than that.
+    * The sync server should be always-on
+
+      * This might have implications for concurrent updates
+
+	* Are we ready to start on a CRDT solution yet?
+
+* CalDAV Sync
 
   * Repository of calendar events
   * Able to sync with external services (Exchange, Google, CalDAV,

@@ -7,8 +7,8 @@ files in JSON, as ``experiments/slack/extract.py`` writes them.  It's
 not a Service: it's a one-shot tool, that can be run again if
 necessary, and it does *not* export anything from Darq to Slack.
 
-It's in ``tools/slack-import``, started from the development
-Terminal's Tools menu: choose the export's directory, and name the
+It's in ``tools/slack-import``, started from the Terminal's Tools
+panel (*Sys-t*): choose the export's directory, and name the
 workspace.  The Message type and Conversation lens are in
 :doc:`message-type`.
 

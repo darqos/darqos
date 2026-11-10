@@ -7,6 +7,7 @@
 # which closes when System is released).
 
 import datetime
+import pathlib
 import typing
 
 from PyQt6 import QtCore
@@ -16,6 +17,7 @@ from PyQt6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QVBoxLayout, QWidg
 from darq.ui import Host
 from darq.ui.history import HistoryView
 from darq.ui.search import SearchView
+from darq.ui.tools import ToolList
 from darq.ui.types import TypeList
 
 from screens import POWER_TEXT, is_modifier, power_choice
@@ -100,6 +102,21 @@ class NewPanel(Panel):
         self.types.filter.clear()
         self.types.refresh()
         self.types.filter.setFocus()
+
+
+class ToolsPanel(Panel):
+    """Sys-t: run an installed tool, such as an import, and see how it
+    finished."""
+
+    def __init__(self, host: typing.Any, root: pathlib.Path):
+        super().__init__("Tools", 800, 420)
+        self.tools = ToolList(host, root)
+        self.contents.addWidget(self.tools)
+
+    def refresh(self):
+        self.tools.filter.clear()
+        self.tools.refresh()
+        self.tools.filter.setFocus()
 
 
 class HistoryPanel(Panel):

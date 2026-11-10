@@ -332,7 +332,7 @@ measured, and documented as it's built.
    is, by its type implementation (``adopt``), named by its content's
    title, if it has one: a PDF's, an e-book's, or an image's.  For the
    rest, a tool, Give Items Entities (``tools/item-entities``), started
-   from the development Terminal's Tools menu, opens the entity of each
+   from the Terminal's Tools panel (*Sys-t*), opens the entity of each
    content item History has events for, and each the KB refers to: as a
    message's attachment, a URL's snapshot, a copy's content, or an
    edition's cover.  Storage can't list its blobs, so those are what's

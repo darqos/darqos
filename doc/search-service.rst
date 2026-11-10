@@ -112,7 +112,7 @@ running.  ``tools/reindex`` publishes every item's entry again:
   implementation can't be started or doesn't answer, is skipped.
 
 It logs how many it published, withdrew and skipped, and exits.  It's
-a tool, in the development Terminal's Tools menu, and the Index starts
+a tool, in the Terminal's Tools panel (*Sys-t*), and the Index starts
 it itself when it starts with a new database (on its own thread, which
 collects it when it's finished): so deleting ``index.sqlite`` and
 rebooting rebuilds the index.

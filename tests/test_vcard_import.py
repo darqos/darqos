@@ -10,7 +10,6 @@
 
 import importlib
 import importlib.util
-import json
 import logging
 import pathlib
 import sys
@@ -26,7 +25,6 @@ from test_pkernel import live_pkernel, pkernel, run_kernel_until, write_app  # n
 
 
 TOOL_PATH = pathlib.Path(__file__).parent.parent / "tools" / "vcard-import"
-DEVTERM_PATH = pathlib.Path(__file__).parent.parent / "tools" / "devterm"
 
 def load():
     # Its modules import each other, as they do run by pyloader, which
@@ -578,28 +576,6 @@ def test_window(qt_app, monkeypatch, tmp_path):
     window.begin()
     assert window.status.text() == "Import failed: unreadable"
     window.close()
-
-
-def test_tools_menu(tmp_path):
-    sys.path.insert(0, str(DEVTERM_PATH))
-    try:
-        spec = importlib.util.spec_from_file_location("devterm_main", DEVTERM_PATH / "main.py")
-        assert spec is not None and spec.loader is not None
-        devterm = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(devterm)
-    finally:
-        sys.path.remove(str(DEVTERM_PATH))
-
-    for name, manifest in [("b", {"name": "Beta"}), ("a", {"name": "Alpha"}), ("c", None)]:
-        (tmp_path / "tools" / name).mkdir(parents=True)
-        if manifest is not None:
-            (tmp_path / "tools" / name / "tool.json").write_text(json.dumps(manifest))
-    (tmp_path / "tools" / "bad").mkdir()
-    (tmp_path / "tools" / "bad" / "tool.json").write_text("not json")
-    assert devterm.find_tools(tmp_path) == [("Alpha", str(tmp_path / "tools" / "a")),
-                                            ("Beta", str(tmp_path / "tools" / "b"))]
-    names = [name for name, _ in devterm.find_tools(TOOL_PATH.parent.parent)]
-    assert "Import vCards" in names
 
 
 ################################################################

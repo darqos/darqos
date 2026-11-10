@@ -1,12 +1,11 @@
 # darqos
 # Copyright (C) 2026 David Arnold
 
-# User interface parts shared by the Terminal (services/terminal) and the
-# development Terminal (tools/devterm): New's type list (darq.ui.types),
-# History's event browser (darq.ui.history), Search (darq.ui.search),
-# and the launcher that creates and uses items without blocking them
-# (darq.ui.launcher); and, for the lenses, their shared look
-# (darq.ui.lens).
+# User interface parts of the Terminal (services/terminal): New's type
+# list (darq.ui.types), History's event browser (darq.ui.history), Search
+# (darq.ui.search), Tools (darq.ui.tools), and the launcher that creates
+# and uses items without blocking them (darq.ui.launcher); and, for the
+# lenses, their shared look (darq.ui.lens).
 #
 # Their widgets talk to the window holding them through a Host: the
 # services it uses, its status line, and its launcher.

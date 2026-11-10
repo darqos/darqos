@@ -218,4 +218,4 @@ Log in over SSH.  Then:
 * Install's own logs are in ``/var/log/darqos``.
 
 For trying DarqOS on a desktop, from its source tree, without
-installing it, see :doc:`terminal` (Development Terminal).
+installing it, see :doc:`terminal` (Trying It on a Desktop).

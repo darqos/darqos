@@ -155,16 +155,12 @@ System
 +------------+----------------------+
 | Sys-n      | New item             |
 +------------+----------------------+
-| Sys-t      | vCard import (for    |
-|            | now)                 |
+| Sys-t      | Tools                |
 +------------+----------------------+
 | Sys-w      | Move/resize window   |
 +------------+----------------------+
 | Sys-x      | Close focused window |
 +------------+----------------------+
-
-Sys-t is temporary: it starts the vCard import (see
-:doc:`kb-service`), until tools have a place in the Terminal.
 
 Application
 ~~~~~~~~~~~
