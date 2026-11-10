@@ -51,9 +51,10 @@ import darq.history
 from darq.loop import QtEventLoop
 from darq.protocols import image as wire
 from darq.protocols.history import History
-from darq.protocols.lens import Close, Lens, Ready, Status, UseRequest, UseResponse
+from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
 from darq.ui import style
-from darq.ui.lens import MESSAGE_SHOWN, overlay, show_over
+from darq.ui.names import item_name
+from darq.ui.lens import MESSAGE_SHOWN, LensHandler, announce, overlay, show_over
 from darq.ui.style import CONTROLS
 
 pillow_heif.register_heif_opener()
@@ -551,7 +552,7 @@ class ImageWindow(QWidget):
         super().__init__()
         self.sync = sync
         self.on_closed = on_closed
-        self.setWindowTitle(sync.item_id)
+        self.set_name(sync.item_id)
         self.setWindowFlags(QtCore.Qt.WindowType.FramelessWindowHint)
         self.setStyleSheet(STYLE)
 
@@ -586,6 +587,12 @@ class ImageWindow(QWidget):
         self.setLayout(layout)
         self.resize(1024, 768)
         self.show_image()
+
+    def set_name(self, name: str):
+        """Title the window with its item's name, which the switcher shows:
+        its identifier, until its name's known."""
+        self.name = name
+        self.setWindowTitle(name)
 
     # Showing
 
@@ -821,10 +828,12 @@ class ImageWindow(QWidget):
             on_closed()
 
 
-class ImageLens(Lens.Handler):
+class ImageLens(LensHandler):
     """Answers the Lens protocol: uses one item, in a window."""
 
     def __init__(self, loop: QtEventLoop, history: History.Client | None):
+        # Looks up an item's name, for its window's title: tests replace it.
+        self.name_of: typing.Callable[[str], str] = item_name
         self.loop = loop
         self.history = history
         self.window: ImageWindow | None = None
@@ -839,9 +848,11 @@ class ImageLens(Lens.Handler):
         if not sync.reload():
             return UseResponse(status=Status.FAILED)
         self.window = ImageWindow(sync, on_closed=self.finished)
+        self.window.set_name(self.name_of(request.item_id))
         self.window.show()
         sync.record(darq.history.OPENED)
         logging.info(f"Using {request.item_id}")
+        self.shown_item = request.item_id
         return UseResponse(status=Status.OK)
 
     def close(self, request: Close, source: int) -> None:
@@ -876,6 +887,7 @@ def darq_main():
 
     lens = ImageLens(loop, history)
     port = darq.open_port()
+    announce(port)
     server = darq.Server()
     server.add(port, lens)
     server.attach(loop)

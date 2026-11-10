@@ -532,6 +532,7 @@ def handler(qt_app, monkeypatch):
     loop = FakeLoop()
     history = FakeHistory()
     handler = lens.TextLens(loop, history)
+    handler.name_of = lambda item_id: "A name"
     yield handler, items, loop, history
     if handler.window is not None:
         handler.window.on_closed = None
@@ -606,7 +607,8 @@ def test_text_lens(live_pkernel, tmp_path):  # noqa: F811
 
             # Wait for the sync to register the implementation and lens.
             deadline = time.monotonic() + 30
-            while not types.find_lenses(type_id="public.utf8-plain-text", context="terminal").lenses:
+            while not any(lens.endswith("/text")
+                          for lens in types.find_lenses(type_id="public.utf8-plain-text", context="terminal").lenses):
                 if time.monotonic() > deadline:
                     return "no text lens registered"
                 time.sleep(0.05)
@@ -627,6 +629,17 @@ def test_text_lens(live_pkernel, tmp_path):  # noqa: F811
             events = [(e.event, e.source) for e in history.get_events(item_ids=[item_id]).events]
             if events != [("opened", "text-lens")]:
                 return f"events are {events!r}"
+
+            # It says what it's showing, through the port it registered as
+            # lens.<dpid>, as the Terminal's Sys-i asks.
+            shown = lens.shown()
+            if (shown.item_id, shown.page) != (item_id, False):
+                return f"shown {shown!r}"
+            named = [h for h in (darq.lookup_name(f"lens.{n}", blocking=False) for n in range(1, 64)) if h]
+            if len(named) != 1:
+                return f"{len(named)} lenses registered"
+            if Lens.Client(named[0], timeout=10).shown().item_id != item_id:
+                return "its registered port says otherwise"
 
             # It uses one item.
             other_id, other = darq.launch.create_item("public.utf8-plain-text")
@@ -683,7 +696,8 @@ def test_launch_doesnt_block(live_pkernel, tmp_path):  # noqa: F811
         def darq_main():
             types = Type.Client(darq.connect("darq.type"), timeout=30)
             deadline = time.monotonic() + 30
-            while not types.find_lenses(type_id=TEXT, context="terminal").lenses:
+            while not any(lens.endswith("/text")
+                          for lens in types.find_lenses(type_id=TEXT, context="terminal").lenses):
                 if time.monotonic() > deadline:
                     return "no text lens registered"
                 time.sleep(0.05)

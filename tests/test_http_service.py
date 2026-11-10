@@ -861,7 +861,8 @@ def test_fetching_from_search(live_pkernel, web, tmp_path):  # noqa: F811
         def darq_main():
             types = Type.Client(darq.connect("darq.type"), timeout=30)
             deadline = time.monotonic() + 30
-            while not types.find_lenses(type_id="com.adobe.pdf", context="terminal").lenses \\
+            while not any(lens.endswith("/pdf")
+                          for lens in types.find_lenses(type_id="com.adobe.pdf", context="terminal").lenses) \\
                     or not types.describe(type_id="public.url").implementation:
                 if time.monotonic() > deadline:
                     return "never registered"

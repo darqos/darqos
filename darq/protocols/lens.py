@@ -18,6 +18,8 @@ __all__ = [
     "Close",
     "Lens",
     "Ready",
+    "ShownRequest",
+    "ShownResponse",
     "Status",
     "UseRequest",
     "UseResponse",
@@ -153,6 +155,61 @@ class Close(Message):
         return
 
 
+class ShownResponse(Message):
+    """Lens.Shown response."""
+
+    METHOD = 3
+    BODY_FORMAT = "<IIB3x"
+    BODY_START = 8
+    LENGTH = 20
+    DATA_START = 24
+
+    def __init__(self, txid: int = 0, item_id: str = '', page: bool = False):
+        super().__init__(txid)
+        self.item_id = item_id
+        self.page = page
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.item_id),
+                           self.page)
+        buf += b'\0' * 4
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.item_id = inp.string(bits[0], bits[1])
+        self.page = self.decode_bool(bits[2])
+        return
+
+
+class ShownRequest(Message):
+    """Lens.Shown request."""
+
+    METHOD = 3
+    RESPONSE = ShownResponse
+    LENGTH = 8
+
+    def __init__(self, txid: int = 0):
+        super().__init__(txid)
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        return
+
+
 ################################################################
 # Protocols
 ################################################################
@@ -192,10 +249,12 @@ class Lens:
     REQUESTS = {
         1: UseRequest,
         2: Close,
+        3: ShownRequest,
     }
 
     RESPONSES = {
         1: UseResponse,
+        3: ShownResponse,
     }
 
     class Client(system.Client):
@@ -209,12 +268,17 @@ class Lens:
             """Lens.Close, one-way."""
             self.send(Close())
 
+        def shown(self) -> ShownResponse:
+            """Lens.Shown."""
+            return self.call(ShownRequest(), ShownResponse)
+
     class Handler(system.Handler):
         """protocol Lens: base class for a service's handler."""
 
         METHODS = {
             1: (UseRequest, "use"),
             2: (Close, "close"),
+            3: (ShownRequest, "shown"),
         }
 
         def use(self, request: UseRequest, source: int) -> UseResponse | system.Deferred:
@@ -223,4 +287,8 @@ class Lens:
 
         def close(self, request: Close, source: int) -> None:
             """Handle Lens.Close, one-way."""
+            raise NotImplementedError
+
+        def shown(self, request: ShownRequest, source: int) -> ShownResponse | system.Deferred:
+            """Handle Lens.Shown."""
             raise NotImplementedError

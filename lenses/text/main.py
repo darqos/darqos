@@ -30,11 +30,12 @@ import darq
 import darq.history
 from darq.loop import QtEventLoop
 from darq.protocols.history import History
-from darq.protocols.lens import Close, Lens, Ready, Status, UseRequest, UseResponse
+from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
 from darq.protocols.text import Status as TextStatus
 from darq.protocols.text import Text
 from darq.ui import style
-from darq.ui.lens import MESSAGE_SHOWN, overlay, show_over
+from darq.ui.names import item_name
+from darq.ui.lens import MESSAGE_SHOWN, LensHandler, announce, overlay, show_over
 from darq.ui.style import CONTROLS, SCROLL_BARS
 
 
@@ -470,7 +471,7 @@ class TextWindow(QWidget):
         # Set while the editor's text is changed here, not by typing.
         self._loading = False
 
-        self.setWindowTitle(sync.item_id)
+        self.set_name(sync.item_id)
         self.setWindowFlags(QtCore.Qt.WindowType.FramelessWindowHint)
         self.setStyleSheet(f"TextWindow {{ background-color: {style.SURFACE}; }}" + CONTROLS)
         self.resize(1024, 768)
@@ -497,6 +498,12 @@ class TextWindow(QWidget):
         assert document is not None
         document.contentsChanged.connect(self.on_changed)
         self.load(sync.text)
+
+    def set_name(self, name: str):
+        """Title the window with its item's name, which the switcher shows:
+        its identifier, until its name's known."""
+        self.name = name
+        self.setWindowTitle(name)
 
     def document_text(self) -> str:
         """The editor's text, as the item would have it.
@@ -617,10 +624,12 @@ class TextWindow(QWidget):
             on_closed()
 
 
-class TextLens(Lens.Handler):
+class TextLens(LensHandler):
     """Answers the Lens protocol: uses one item, in a window."""
 
     def __init__(self, loop: QtEventLoop, history: History.Client | None):
+        # Looks up an item's name, for its window's title: tests replace it.
+        self.name_of: typing.Callable[[str], str] = item_name
         self.loop = loop
         self.history = history
         self.window: TextWindow | None = None
@@ -640,9 +649,11 @@ class TextLens(Lens.Handler):
 
         sync = TextSync(client, request.item_id, response.text, response.version, self.history)
         self.window = TextWindow(sync, on_closed=self.finished)
+        self.window.set_name(self.name_of(request.item_id))
         self.window.show()
         sync.record(darq.history.OPENED)
         logging.info(f"Using {request.item_id}")
+        self.shown_item = request.item_id
         return UseResponse(status=Status.OK)
 
     def close(self, request: Close, source: int) -> None:
@@ -677,6 +688,7 @@ def darq_main():
 
     lens = TextLens(loop, history)
     port = darq.open_port()
+    announce(port)
     server = darq.Server()
     server.add(port, lens)
     server.attach(loop)

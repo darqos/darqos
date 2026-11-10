@@ -29,6 +29,7 @@ from darq.protocols.index import Result
 from darq.protocols.type import Status as TypeStatus
 
 from . import Host
+from .names import item_names
 
 
 # Control exports
@@ -99,8 +100,8 @@ class SearchView(QWidget):
         self.timer.setInterval(DELAY)
         self.timer.timeout.connect(self.search)
 
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(("Type", "Found", "Updated"))
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(("Name", "Type", "Found", "Updated"))
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -158,16 +159,18 @@ class SearchView(QWidget):
     def show_results(self, results: list[Result]):
         self.shown = list(results)
         self.table.setRowCount(len(self.shown))
+        names = item_names(self.host.services.kb(), {r.item_id for r in self.shown})
         for row, result in enumerate(self.shown):
-            type_id, _, _ = result.item_id.partition(":")
+            type_id, _, specifier = result.item_id.partition(":")
             snippet = " ".join(result.snippet.split())
-            for column, text in enumerate((self.type_name(type_id), snippet, format_updated(result.updated))):
+            for column, text in enumerate((names.get(result.item_id, specifier), self.type_name(type_id), snippet,
+                                           format_updated(result.updated))):
                 cell = QTableWidgetItem(text)
-                if column == 1:
+                if column in (0, 2):
                     cell.setToolTip(result.item_id)
                 self.table.setItem(row, column, cell)
-        self.table.resizeColumnToContents(0)
-        self.table.resizeColumnToContents(2)
+        for column in (0, 1, 3):
+            self.table.resizeColumnToContents(column)
         if self.shown:
             self.table.selectRow(0)
 

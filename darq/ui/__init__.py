@@ -17,7 +17,9 @@ import typing
 
 import darq
 import darq.index
+import darq.kb as model
 import darq.launch
+from darq.protocols.kb import KB
 from darq.protocols.history import History
 from darq.protocols.http import Http
 from darq.protocols.security import Security
@@ -45,8 +47,9 @@ FETCH_TIMEOUT = 600.0
 
 
 class Services:
-    """What the Terminals use: the Type, History and Security services,
-    darq.index's search, darq.launch, and shutting down and rebooting.
+    """What the Terminal uses: the Type, History and Security services,
+    darq.index's search, darq.launch, the Knowledge Base, for items'
+    names, and shutting down and rebooting.
     Tests replace them."""
 
     def __init__(self):
@@ -55,6 +58,7 @@ class Services:
         self.security = Security.Client(darq.connect("darq.security"), timeout=SECURITY_TIMEOUT)
         self.index = darq.index
         self.launch = darq.launch
+        self.kb_client: model.KB | None = None
 
     def http(self) -> Http.Client | None:
         """Return a client of the HTTP service, or None if it's not
@@ -63,6 +67,16 @@ class Services:
         work without."""
         handle = darq.lookup_name("darq.http", blocking=False)
         return Http.Client(handle, timeout=FETCH_TIMEOUT) if handle is not None else None
+
+    def kb(self) -> model.KB | None:
+        """Return a client of the Knowledge Base, or None if it's not
+        running: looked for only when it's wanted, as the HTTP service is,
+        and kept."""
+        if self.kb_client is None:
+            handle = darq.lookup_name("darq.kb", blocking=False)
+            if handle is not None:
+                self.kb_client = model.KB(KB.Client(handle, timeout=TIMEOUT))
+        return self.kb_client
 
     def shutdown(self):
         darq.shutdown()

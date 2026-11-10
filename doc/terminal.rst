@@ -416,12 +416,17 @@ Functions
 
 The Terminal Service is responsible for providing several crucial
 functions of the user interface, each invoked by a hotkey (see
-:doc:`ux`).  In 1st Edition, *Sys-e* (Events) and *Sys-i* (Item info)
-show a "TBD" panel, for now: Events needs an events source.  The
-Search panel (*Sys-space*) shows the time and date: there's no clock
-elsewhere, and no status bar.  Item info needed the Metadata service,
-which is deferred to Third Edition, and may not be needed (see
-:doc:`roadmap`); the REPL (*Sys-s*) is in Second Edition.
+:doc:`ux`).  *Sys-e* (Events) shows a "TBD" panel, for now: Events
+needs an events source.  The Search panel (*Sys-space*) shows the time
+and date: there's no clock elsewhere, and no status bar.  The REPL
+(*Sys-s*) is in Second Edition.
+
+Every item's shown by its name (``darq.ui.names``): its entity's label,
+or, if it has none, its kind and when it was made, such as *Text File,
+8 Nov 2026* (see :doc:`entity-vs-item`).  History and Search list items
+by their names, with their identifiers as tooltips, and the lenses
+title their windows with them, which the switcher shows: windows have
+no title bars.  An item's renamed on its page (see Item's Page, below).
 
 New
 ~~~
@@ -467,7 +472,8 @@ History
 
 The history panel, invoked with *Sys-h*, lists History events between
 two times (the last hour, when it's opened), filtered by type, event,
-and source, newest first.  Choosing one (Enter, or double-click)
+and source, newest first: each with its item's kind and name, read from
+the Knowledge Base a page at a time.  Choosing one (Enter, or double-click)
 starts a lens for its item.
 
 Search
@@ -577,17 +583,25 @@ previous one.  While System is held, *Tab* moves on, and *Shift-Tab*
 back (*Sys-Shift-Tab* starts at the least recent); releasing System
 chooses.  So a single *Sys-Tab* goes back to the previous window.
 
-Item Properties
-~~~~~~~~~~~~~~~
+Item's Page
+~~~~~~~~~~~
 
-There should be a way to easily access the system information about an
-item.  This would include metadata, indexing, and history.  You should
-be able to edit the metadata -- eg. add a tag, view the history,
-and .. not sure about indexing?  (Tags and the like may be Knowledge
-Base statements, rather than the Metadata service's: see
-:doc:`entity-vs-item`.)
+*Sys-i* opens the page of the item in the focused window: its entity,
+in the entity lens, where it's renamed, and anything else's said of it.
+Every item's an entity (see :doc:`entity-vs-item`), so its names, tags
+and facts are statements there, and the Metadata service isn't needed
+for them.
 
-It's invoked with *Sys-i*.
+The Terminal knows a window only by what the compositor tells it: its
+title, and its Wayland ``app_id``.  So every lens registers its Lens
+port as ``lens.<dpid>``, and makes that its windows' ``app_id``
+(``darq.ui.lens.announce``).  *Sys-i* looks the focused window's
+``app_id`` up, and asks the lens what it's showing, with ``Shown``,
+off Qt's thread: it's asked then, not remembered, as the entity lens
+moves to another entity in the same window as a link's followed.  It
+then starts the entity lens on that item.  On a window that isn't a
+lens's, or one that isn't showing an item, or that's already its
+item's page, it says so, in a notice.
 
 
 Future Editions

@@ -13,6 +13,7 @@ import pathlib
 import socket
 import sys
 import time
+import types as python_types
 import typing
 
 import pytest
@@ -534,7 +535,7 @@ def test_power_panel(terminal):
     assert terminal.fake_services.calls == ["reboot"]
 
 
-@pytest.mark.parametrize("keysym, name", [(main.XK_e, "Events"), (main.XK_i, "Item info")])
+@pytest.mark.parametrize("keysym, name", [(main.XK_e, "Events")])
 def test_tbd(terminal, keysym, name):
     from PyQt6.QtCore import Qt
     unlock(terminal)
@@ -545,6 +546,63 @@ def test_tbd(terminal, keysym, name):
     assert terminal.tbd.isVisible()
     terminal.tbd.keyPressEvent(key(Qt.Key.Key_Space, " "))
     assert visible(terminal) == []
+
+
+class FakeLensClient:
+    """A lens's Lens port, saying what it's showing."""
+
+    shown_as: tuple[str, bool] = ("", False)
+
+    def __init__(self, handle, timeout=None):
+        self.handle = handle
+
+    def shown(self):
+        return python_types.SimpleNamespace(item_id=self.shown_as[0], page=self.shown_as[1])
+
+
+def focused_lens(terminal, monkeypatch, app_id="lens.12", shown=(DOC, False), found=True):
+    """A focused window, of a lens named app_id, showing an item."""
+    looked_up: list[str] = []
+
+    def lookup_name(name, blocking=True):
+        looked_up.append(name)
+        return 77 if found else None
+
+    monkeypatch.setattr(main.darq, "lookup_name", lookup_name)
+    monkeypatch.setattr(main.darq, "close_port", lambda handle: None)
+    monkeypatch.setattr(FakeLensClient, "shown_as", shown)
+    monkeypatch.setattr(main, "Lens", python_types.SimpleNamespace(Client=FakeLensClient))
+    terminal.handle(WindowAdded(window=3, title="A note", app_id=app_id))
+    terminal.handle(WindowFocused(window=3))
+    return looked_up
+
+
+def test_sys_i_opens_the_focused_items_page(terminal, monkeypatch):
+    unlock(terminal)
+    looked_up = focused_lens(terminal, monkeypatch)
+    hotkey(terminal, main.XK_i)
+    assert looked_up == ["lens.12"]
+    assert terminal.fake_services.launch.used == [(DOC, None, "darq.entity")]
+
+
+@pytest.mark.parametrize("options, said", [
+    ({"app_id": "org.example.app"}, "this isn't one"),
+    ({"found": False}, "Can't ask the window"),
+    ({"shown": ("", False)}, "isn't showing an item"),
+    ({"shown": (DOC, True)}, f"This is {DOC}'s page"),
+])
+def test_sys_i_says_why_it_cant(terminal, monkeypatch, options, said):
+    unlock(terminal)
+    focused_lens(terminal, monkeypatch, **options)
+    hotkey(terminal, main.XK_i)
+    assert visible(terminal) == [terminal.notice] and said in terminal.notice.message.text()
+    assert terminal.fake_services.launch.used == []
+
+
+def test_a_closed_windows_app_id_is_forgotten(terminal):
+    terminal.handle(WindowAdded(window=3, title="A note", app_id="lens.12"))
+    terminal.handle(WindowRemoved(window=3))
+    assert 3 not in terminal.app_ids
 
 
 def test_search_panel(terminal):

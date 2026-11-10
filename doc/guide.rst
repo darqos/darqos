@@ -108,11 +108,13 @@ The system's hotkeys:
 | S-b           | Shut down (s) or reboot (b): any other key        |
 |               | cancels.  It works on the lock screen too         |
 +---------------+---------------------------------------------------+
-| S-t           | Import an address book (vCards), for now          |
+| S-t           | Tools: run an import, Reindex, and the others     |
++---------------+---------------------------------------------------+
+| S-i           | The page of the item in the focused window, to    |
+|               | rename it, or say more of it                      |
 +---------------+---------------------------------------------------+
 
-*S-e* (Events) and *S-i* (Item info) show placeholders in First
-Edition.  Escape closes a panel.  Focus follows the mouse, and a click
+*S-e* (Events) shows a placeholder, for now.  Escape closes a panel.  Focus follows the mouse, and a click
 raises a window.
 
 Using It

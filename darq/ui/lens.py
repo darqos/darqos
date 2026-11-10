@@ -1,22 +1,70 @@
 # darqos
 # Copyright (C) 2026 David Arnold
 
-# What the lenses share of their widgets: text shown over a window for
-# a moment (a pop-over), in place of a status line.  Their colours and
+# What the lenses share: text shown over a window for a moment (a
+# pop-over), in place of a status line; and the part of the Lens
+# protocol every lens answers the same way, LensHandler, with announce,
+# which makes a lens findable from its window.  Their colours and
 # stylesheets are in darq.ui.style.
 
+import logging
+
 from PyQt6 import QtCore
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QLabel, QWidget
+
+import darq
+from darq.protocols.lens import Lens, ShownRequest, ShownResponse
 
 from .style import TEXT
 
 
 # Control exports
 __all__ = [
+    "LensHandler",
     "MESSAGE_SHOWN",
+    "announce",
+    "lens_name",
     "overlay",
     "show_over",
 ]
+
+
+def lens_name(dpid: int) -> str:
+    """Return the name a lens's port is registered as, and its windows'
+    Wayland app_id."""
+    return f"lens.{dpid}"
+
+
+def announce(port: int) -> str:
+    """Make a lens findable from its windows: register its Lens port as
+    lens.<dpid>, and make that its windows' Wayland app_id, so that the
+    Terminal can ask the focused window's lens what it's showing.  It's
+    called once a QApplication's made, before any window is.
+
+    :returns: The name."""
+    name = lens_name(darq.getpid())
+    QGuiApplication.setDesktopFileName(name)
+    try:
+        darq.register_name(name, port)
+    except darq.DarqError as e:
+        # Sys-i won't find it: it's no reason not to show the item.
+        logging.warning(f"Can't register {name}: {e!r}")
+    return name
+
+
+class LensHandler(Lens.Handler):
+    """What every lens answers alike: Shown, the item it's showing, which
+    it keeps in shown_item, as it uses one, or moves to another."""
+
+    # Whether what it shows is an item's page, as the entity lens's is.
+    PAGE = False
+
+    # The item it's showing, or empty, before it's used one.
+    shown_item = ""
+
+    def shown(self, request: ShownRequest, source: int) -> ShownResponse:
+        return ShownResponse(item_id=self.shown_item, page=self.PAGE)
 
 
 # Milliseconds a message is shown over a window.

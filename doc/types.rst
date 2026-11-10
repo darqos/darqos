@@ -486,6 +486,17 @@ A lens is started for one item, with the protocols in
   the item port, and closes the item when it's finished with it.  A
   lens uses one item: another `Use` is refused, `BUSY`.
 * The lens exits once its window is closed, or it's sent `Close`.
+* `Shown()` returns the item the lens is showing now, and whether that's
+  the item's page, as the entity lens's is: for the Terminal's *Sys-i*
+  (see :doc:`terminal`).  Every lens answers it alike, through
+  `darq.ui.lens`'s `LensHandler`, and registers its port as
+  `lens.<dpid>`, its windows' Wayland `app_id`, so it can be found from
+  a window.
+* The entity lens, which is any item's page, opens the item's entity
+  itself, by its identifier, with its type implementation's
+  `OpenEntity`, and closes the port it's given, which is its type's own.
+  It's registered for `public.item`, as well as `darq.entity`, so an item
+  of a type with no lens of its own, as data's, is shown by its page.
 
 `darq.launch.use_item()` does all of this, from finding the lens to
 sending `Use`.  A process per item is simple, and isolates items, but

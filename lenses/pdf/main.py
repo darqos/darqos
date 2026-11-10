@@ -43,11 +43,12 @@ import darq.history
 from darq.loop import QtEventLoop
 from darq.protocols import pdf as wire
 from darq.protocols.history import History
-from darq.protocols.lens import Close, Lens, Ready, Status, UseRequest, UseResponse
+from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
 from darq.ui import catalogue, reader, style
 from darq.ui.catalogue import Details
 from darq.ui.launcher import Launcher
-from darq.ui.lens import MESSAGE_SHOWN, overlay, show_over
+from darq.ui.names import item_name
+from darq.ui.lens import MESSAGE_SHOWN, LensHandler, announce, overlay, show_over
 from darq.ui.style import BACKGROUND, CONTROLS
 
 
@@ -253,7 +254,7 @@ class PdfWindow(QWidget):
 
         # Whether it's in the reading view.
         self.reading = False
-        self.setWindowTitle(sync.item_id)
+        self.set_name(sync.item_id)
         self.setWindowFlags(QtCore.Qt.WindowType.FramelessWindowHint)
         self.setStyleSheet(STYLE)
 
@@ -325,6 +326,12 @@ class PdfWindow(QWidget):
         self.setLayout(layout)
         self.resize(1024, 768)
 
+    def set_name(self, name: str):
+        """Title the window with its item's name, which the switcher shows:
+        its identifier, until its name's known."""
+        self.name = name
+        self.setWindowTitle(name)
+
     # Showing
 
     @property
@@ -361,7 +368,7 @@ class PdfWindow(QWidget):
         self.show_over(self.zoom_label, self.zoom_timer, text, ZOOM_SHOWN, middle=True)
 
     def page_changed(self, page: int):
-        self.setWindowTitle(f"{self.sync.item_id} ({page + 1} of {self.page_count})")
+        self.setWindowTitle(f"{self.name} ({page + 1} of {self.page_count})")
 
     # Zooming
 
@@ -651,11 +658,13 @@ class PdfWindow(QWidget):
             on_closed()
 
 
-class PdfLens(Lens.Handler):
+class PdfLens(LensHandler):
     """Answers the Lens protocol: uses one item, in a window."""
 
     def __init__(self, loop: QtEventLoop, history: History.Client | None,
                  find_copy: typing.Callable[[str], str] = catalogue.find_copy):
+        # Looks up an item's name, for its window's title: tests replace it.
+        self.name_of: typing.Callable[[str], str] = item_name
         """Constructor.
 
         :param find_copy: Returns the copy an item is of a book, if any."""
@@ -677,6 +686,7 @@ class PdfLens(Lens.Handler):
         if not sync.reload():
             return UseResponse(status=Status.FAILED)
         self.window = PdfWindow(sync, on_closed=self.finished, on_catalogue=self.catalogue)
+        self.window.set_name(self.name_of(request.item_id))
         self.item_id = request.item_id
         self.window.show()
         self.window.show_failure()
@@ -685,6 +695,7 @@ class PdfLens(Lens.Handler):
             self.window.set_reading(True)
         sync.record(darq.history.OPENED)
         logging.info(f"Using {request.item_id}")
+        self.shown_item = request.item_id
         return UseResponse(status=Status.OK)
 
     def close(self, request: Close, source: int) -> None:
@@ -740,6 +751,7 @@ def darq_main():
 
     lens = PdfLens(loop, history)
     port = darq.open_port()
+    announce(port)
     server = darq.Server()
     server.add(port, lens)
     server.attach(loop)

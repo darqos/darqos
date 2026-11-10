@@ -1,1 +1,1 @@
-{"types": ["darq.entity"], "context": "terminal"}
+{"types": ["darq.entity", "public.item"], "context": "terminal"}

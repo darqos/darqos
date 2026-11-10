@@ -57,8 +57,9 @@ from darq.loop import QtEventLoop
 from darq.protocols.history import History
 from darq.protocols.kb import Changed, EntityItem, Kind, Linked, LinkGroup, Listener
 from darq.protocols.kb import Status as KBStatus
-from darq.protocols.lens import Close, Lens, Ready, Status, UseRequest, UseResponse
+from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
 from darq.ui import links as grouped
+from darq.ui.lens import LensHandler, announce
 from darq.ui import style
 from darq.ui import wikidata as wikidata_ui
 from darq.ui.launcher import Launcher, start_thread
@@ -255,6 +256,7 @@ class EntityWindow(QWidget):
         if self.shown is not None:
             self.leave()
         self.shown = shown
+        self.lens.shown_item = item_id
         self.undo_stack.clear()
         self.redo_stack.clear()
         self.display(page, 0)
@@ -987,9 +989,12 @@ class LensServices:
         self.history = history
 
 
-class EntityLens(Lens.Handler):
+class EntityLens(LensHandler):
     """Answers the Lens protocol: uses one item, in a window, and is the
     Launcher's host, for items opened in new windows."""
+
+    # It's items' pages: Sys-i on one is where it is.
+    PAGE = True
 
     def __init__(self, loop: QtEventLoop, history: History.Client | None, opener: Opener | None = None):
         self.loop = loop
@@ -1067,8 +1072,14 @@ class EntityLens(Lens.Handler):
         if request.item is None:
             return UseResponse(status=Status.FAILED)
 
+        # The item's entity is a port of its own, from its type's
+        # OpenEntity: the port given is its type's own, which, for a
+        # content item, isn't EntityItem (see doc/entity-vs-item.rst).
+        port = self.entity_port(request.item_id, request.item)
+        if port is None:
+            return UseResponse(status=Status.FAILED)
         window = EntityWindow(self, on_closed=self.finished)
-        if not window.show_item(request.item_id, request.item):
+        if not window.show_item(request.item_id, port):
             window.on_closed = None
             window.deleteLater()
             return UseResponse(status=Status.FAILED)
@@ -1076,6 +1087,17 @@ class EntityLens(Lens.Handler):
         window.show()
         logging.info(f"Using {request.item_id}")
         return UseResponse(status=Status.OK)
+
+    def entity_port(self, item_id: str, given: int) -> int | None:
+        """Return a port for an item's entity, opened by its type's
+        implementation, closing the port given, or None if it can't be."""
+        try:
+            return self.opener.open(item_id)
+        except (darq.DarqError, TimeoutError) as e:
+            logging.error(f"Can't open {item_id}'s entity: {e!r}")
+            return None
+        finally:
+            darq.close_port(given)
 
     def close(self, request: Close, source: int) -> None:
         if self.window is not None:
@@ -1141,6 +1163,7 @@ def darq_main():
 
     lens = EntityLens(loop, history)
     port = darq.open_port()
+    announce(port)
     server = darq.Server()
     server.add(port, lens)
     server.attach(loop)

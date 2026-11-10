@@ -1074,7 +1074,8 @@ def test_book_lens(live_pkernel, tmp_path):  # noqa: F811
         def darq_main():
             types = Type.Client(darq.connect("darq.type"), timeout=30)
             deadline = time.monotonic() + 30
-            while not types.find_lenses(type_id="darq.book.work", context="terminal").lenses:
+            while not any(lens.endswith("/book")
+                          for lens in types.find_lenses(type_id="darq.book.work", context="terminal").lenses):
                 if time.monotonic() > deadline:
                     return "no lens registered"
                 time.sleep(0.05)

@@ -11,13 +11,18 @@ import typing
 
 import pytest
 
+import darq
+import darq.items
+import darq.kb as model
 from darq.ui import history as ui_history
+from darq.ui import names
 from darq.ui import search as ui_search
 from darq.ui import wait_for_display
 from darq.ui.launcher import Launcher
 from darq.ui.types import TypeList
 from darq.protocols.history import Event
 
+from fake_kb import FakeKB
 from ui_fakes import DOC, TEXT, FakeServices, inline
 
 
@@ -182,8 +187,10 @@ def test_history_search(made):
     query = host.services.history.queries[-1]
     assert (query["start"], query["end"], query["max"]) == (0, 0, ui_history.PAGE)
     assert view.table.rowCount() == 3
+    # With no KB, no name: the identifier's specifier.
     assert [view.table.item(0, c).text() for c in range(1, 6)] == [
-        TEXT, "0123456789abcdef0123456789abcdef", "edited", "text-lens", "1"]
+        "Text File", "0123456789abcdef0123456789abcdef", "edited", "text-lens", "1"]
+    assert view.table.item(0, 1).toolTip() == TEXT and view.table.item(0, 2).toolTip() == DOC
     assert not view.more.isEnabled()
     assert host.status == "3 events"
 
@@ -260,8 +267,9 @@ def test_search_as_typed(made):
     view.search()
     assert services.index.searches == ["coffee"]
     assert [r.item_id for r in view.shown] == [DOC, OTHER]
-    assert [view.table.item(0, c).text() for c in range(3)][:2] == ["UTF-8 Text", "Meet at the coffee shop"]
-    assert view.table.item(0, 1).toolTip() == DOC
+    assert [view.table.item(0, c).text() for c in range(3)] == [
+        "0123456789abcdef0123456789abcdef", "UTF-8 Text", "Meet at the coffee shop"]
+    assert view.table.item(0, 0).toolTip() == DOC
     assert view.table.currentRow() == 0
     assert host.status == "2 found"
 
@@ -321,3 +329,113 @@ def test_type_names_are_looked_up_once(made, monkeypatch):
     assert view.type_name(TEXT) == "UTF-8 Text"
     assert view.type_name(TEXT) == "UTF-8 Text"
     assert described == [TEXT]
+
+
+################################################################
+# Items' names (see doc/entity-vs-item.rst, step 5)
+################################################################
+
+def named(store, item_id: str, label: str = "", created=None) -> model.Item:
+    entity = darq.items.made(darq.split_item_id(item_id)[0], darq.split_item_id(item_id)[1], label=label,
+                             created=created)
+    store.put(entity)
+    return entity
+
+
+def test_an_items_name_is_its_label():
+    store = FakeKB()
+    entity = named(store, DOC, "Shopping list")
+    assert names.display_name(entity) == "Shopping list"
+
+
+def test_an_unnamed_items_name_is_its_kind_and_when_it_was_made():
+    when = datetime.datetime(2026, 11, 8, 12, tzinfo=datetime.timezone.utc)
+    entity = darq.items.made("public.jpeg", "a" * 32, created=when)
+    made = when.astimezone()
+    assert names.display_name(entity) == f"JPEG Image, {made.day} {made:%b %Y}"
+    assert names.display_name(model.Item("x"), "public.png") == "PNG Image"
+
+
+def test_items_are_named_a_batch_at_a_time():
+    store = FakeKB()
+    named(store, DOC, "Shopping list")
+    other = f"{TEXT}:fedcba9876543210fedcba9876543210"
+    named(store, other)
+    found = names.item_names(typing.cast(typing.Any, store), [DOC, other, "public.png:" + "b" * 32, "nonsense"])
+    assert found[DOC] == "Shopping list" and found[other].startswith("Text File, ")
+    assert set(found) == {DOC, other}
+
+
+def test_a_merged_entitys_name_is_what_it_was_merged_intos():
+    store = FakeKB()
+    person = model.Item("Q313254")
+    person.set_label("Peter Carey")
+    old = model.Item("old")
+    old.redirect = "Q313254"
+    store.entities.update({"Q313254": person, "old": old})
+    assert names.item_names(typing.cast(typing.Any, store), ["darq.person:old"]) == {"darq.person:old": "Peter Carey"}
+
+
+def test_without_the_kb_theres_no_name():
+    assert names.item_names(None, [DOC]) == {}
+
+
+def test_history_and_search_show_names(made):
+    store = FakeKB()
+    named(store, DOC, "Shopping list")
+    view, host = history_view(made)
+    host.services.kb_client = store
+    host.services.history.events = events(1)
+    view.set_period(0)
+    assert view.table.item(0, 2).text() == "Shopping list"
+
+    found, host = made(ui_search.SearchView)
+    host.services.kb_client = store
+    host.services.index.items = {DOC: "eggs"}
+    found.field.setText("eggs")
+    found.search()
+    assert found.table.item(0, 0).text() == "Shopping list"
+
+
+################################################################
+# What every lens answers alike (darq.ui.lens)
+################################################################
+
+def test_a_lens_says_what_its_showing():
+    from darq.protocols.lens import ShownRequest
+    from darq.ui.lens import LensHandler
+    handler = LensHandler()
+    assert (handler.shown(ShownRequest(), 0).item_id, handler.shown(ShownRequest(), 0).page) == ("", False)
+    handler.shown_item = DOC
+    assert handler.shown(ShownRequest(), 0).item_id == DOC
+
+
+def test_a_lens_is_found_by_its_windows(qt_app, monkeypatch):
+    """Its port's registered under its windows' Wayland app_id."""
+    from PyQt6.QtGui import QGuiApplication
+    from darq.ui import lens as ui_lens
+    registered = []
+    monkeypatch.setattr(darq, "getpid", lambda: 12)
+    monkeypatch.setattr(darq, "register_name", lambda name, port: registered.append((name, port)))
+    before = QGuiApplication.desktopFileName()
+    try:
+        assert ui_lens.announce(40) == "lens.12"
+        assert registered == [("lens.12", 40)] and QGuiApplication.desktopFileName() == "lens.12"
+    finally:
+        QGuiApplication.setDesktopFileName(before)
+
+
+def test_a_lens_thats_not_registered_still_shows_its_item(qt_app, monkeypatch):
+    from PyQt6.QtGui import QGuiApplication
+    from darq.ui import lens as ui_lens
+
+    def taken(name, port):
+        raise darq.NameTakenError(name)
+
+    monkeypatch.setattr(darq, "getpid", lambda: 12)
+    monkeypatch.setattr(darq, "register_name", taken)
+    before = QGuiApplication.desktopFileName()
+    try:
+        assert ui_lens.announce(40) == "lens.12"
+    finally:
+        QGuiApplication.setDesktopFileName(before)

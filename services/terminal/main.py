@@ -55,7 +55,9 @@ from darq.protocols.compositor import (
     WindowRemoved,
     WindowRetitled,
 )
+import darq.kb as model
 import darq.ui.types
+from darq.protocols.lens import Lens
 from darq.ui import Services
 from darq.ui.launcher import Launcher
 
@@ -97,6 +99,11 @@ HOTKEYS: dict[tuple[int, int], str] = {
     (XK_t, 0): "show_tools",
 }
 
+# What a lens's Lens port's name starts with (see darq.ui.lens), and
+# seconds to wait for it to say what it's showing.
+LENS_NAME_PREFIX = "lens."
+LENS_TIMEOUT = 5.0
+
 # Where the tools are, under DARQ_ROOT (see darq.ui.tools).
 DEFAULT_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 
@@ -118,6 +125,10 @@ class Terminal:
         # if it's none of them).
         self.windows: dict[int, str] = {}
         self.recent: list[int] = []
+
+        # Their Wayland app_ids: a lens's is its Lens port's name (see
+        # darq.ui.lens.announce), so Sys-i asks it what it's showing.
+        self.app_ids: dict[int, str] = {}
         self.focused = 0
 
         # While the switcher's showing: the windows it offers, and the
@@ -267,6 +278,7 @@ class Terminal:
             self.choose()
         elif isinstance(message, WindowAdded):
             self.windows[message.window] = message.title
+            self.app_ids[message.window] = message.app_id
             if message.window not in self.recent:
                 self.recent.append(message.window)
         elif isinstance(message, WindowRemoved):
@@ -324,8 +336,44 @@ class Terminal:
         self.tbd.show_for("Events")
 
     def show_item_info(self):
-        self.hide_panels(but=self.tbd)
-        self.tbd.show_for("Item info")
+        """Sys-i: open the page of the item the focused window's lens is
+        showing, in the entity lens: it's asked, by its Lens port, which
+        its window's app_id names, since it can change, as the entity
+        lens follows links.  It's asked off Qt's thread."""
+        name = self.app_ids.get(self.focused, "")
+        if not name.startswith(LENS_NAME_PREFIX):
+            self.say("Sys-i shows the page of the item in the focused window: this isn't one")
+            return
+
+        def ask() -> tuple[str, bool]:
+            handle = darq.lookup_name(name, blocking=False)
+            if handle is None:
+                raise darq.DarqError(f"{name} isn't there")
+            try:
+                shown = Lens.Client(handle, timeout=LENS_TIMEOUT).shown()
+            finally:
+                darq.close_port(handle)
+            return shown.item_id, shown.page
+
+        def asked(result: tuple[str, bool] | None, error: Exception | None):
+            if error is not None or result is None:
+                self.say(f"Can't ask the window what it's showing: {error}")
+                return
+            item_id, page = result
+            if not item_id:
+                self.say("The window isn't showing an item")
+            elif page:
+                self.say(f"This is {item_id}'s page")
+            else:
+                self.launcher.use(item_id, lens_for=model.ENTITY_TYPE)
+
+        self.launcher.background(ask, asked)
+
+    def say(self, message: str):
+        """Tell the operator something, in a notice."""
+        logging.info(message)
+        self.hide_panels(but=self.notice)
+        self.notice.show_message(message)
 
     def show_tools(self):
         self.show_panel(self.tools)
@@ -373,6 +421,7 @@ class Terminal:
 
     def window_removed(self, window: int):
         self.windows.pop(window, None)
+        self.app_ids.pop(window, None)
         if window in self.recent:
             self.recent.remove(window)
         if self.switching is not None and window in self.switching:

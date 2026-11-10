@@ -75,10 +75,10 @@ class FakeLaunch:
         self.created.append(type_id)
         return DOC, 42
 
-    def use_item(self, item_id, item=None):
+    def use_item(self, item_id, item=None, lens_for=""):
         if self.fail:
             raise LaunchError(f"No lens for {item_id}")
-        self.used.append((item_id, item))
+        self.used.append((item_id, item) if not lens_for else (item_id, item, lens_for))
         return 7
 
     # Types by extension, for find_types, and those whose create_item_from
@@ -140,10 +140,16 @@ class FakeServices:
         self.history = FakeHistory()
         self.index = FakeIndex()
         self.launch = FakeLaunch()
+        self.kb_client = None
         self.calls = []
 
     def http(self):
         return self.fake_http
+
+    def kb(self):
+        """The Knowledge Base, for items' names: none, unless a test gives
+        one."""
+        return self.kb_client
 
     def shutdown(self):
         self.calls.append("shutdown")

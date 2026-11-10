@@ -392,6 +392,7 @@ def test_lens_use(qt_app, monkeypatch):
             stopped.append(True)
 
     pdf_lens = lens.PdfLens(Loop(), history, lambda item_id: "")  # pyright: ignore[reportArgumentType]
+    pdf_lens.name_of = lambda item_id: "A name"
     assert pdf_lens.use(UseRequest(item_id=ITEM_ID, item=5), 0).status == Status.OK
     assert pdf_lens.use(UseRequest(item_id=ITEM_ID, item=6), 0).status == Status.BUSY
     assert history.events == [(ITEM_ID, "opened", "pdf-lens")]
@@ -486,6 +487,7 @@ def run_lens(monkeypatch, client, copy=""):
             pass
 
     pdf_lens = lens.PdfLens(Loop(), None, lambda item_id: copy)  # pyright: ignore[reportArgumentType]
+    pdf_lens.name_of = lambda item_id: "A name"
     assert pdf_lens.use(UseRequest(item_id=ITEM_ID, item=5), 0).status == Status.OK
     assert pdf_lens.window is not None
     return pdf_lens.window
@@ -529,5 +531,6 @@ def test_lens_use_when_the_item_has_gone(qt_app, monkeypatch):
             pass
 
     pdf_lens = lens.PdfLens(Loop(), None)  # pyright: ignore[reportArgumentType]
+    pdf_lens.name_of = lambda item_id: "A name"
     assert pdf_lens.use(UseRequest(item_id=ITEM_ID, item=5), 0).status == Status.FAILED
     assert pdf_lens.window is None

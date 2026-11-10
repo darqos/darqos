@@ -418,6 +418,7 @@ def test_lens_use(qt_app, monkeypatch):
             stopped.append(True)
 
     image_lens = lens.ImageLens(Loop(), history)  # pyright: ignore[reportArgumentType]
+    image_lens.name_of = lambda item_id: "A name"
     assert image_lens.use(UseRequest(item_id=ITEM_ID, item=5), 0).status == Status.OK
     assert image_lens.use(UseRequest(item_id=ITEM_ID, item=6), 0).status == Status.BUSY
     assert history.events == [(ITEM_ID, "opened", "image-lens")]

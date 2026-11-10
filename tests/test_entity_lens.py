@@ -447,6 +447,27 @@ def test_use_shows_the_item(entity_lens, world):
     assert entity_lens.use(UseRequest(item_id=ACME, item=other), 0).status == Status.BUSY
 
 
+def test_use_opens_the_entity_by_its_identifier(entity_lens, world, monkeypatch):
+    """The port it's given is its type's, which, for a content item, isn't
+    an entity's: so it's closed, and the entity opened by OpenEntity."""
+    opened = []
+    monkeypatch.setattr(entity_lens.opener, "open", lambda item_id: opened.append(item_id) or world.open(item_id))
+    given = world.open(ADA)
+    assert entity_lens.use(UseRequest(item_id=ADA, item=given), 0).status == Status.OK
+    assert opened == [ADA] and given in entity_lens.closed_ports
+
+
+def test_it_says_its_showing_an_items_page(entity_lens, world):
+    """For the Terminal's Sys-i: what it shows now, as it follows links."""
+    from darq.protocols.lens import ShownRequest
+    assert entity_lens.shown(ShownRequest(), 0).item_id == ""
+    use(entity_lens, world)
+    shown = entity_lens.shown(ShownRequest(), 0)
+    assert (shown.item_id, shown.page) == (ADA, True)
+    entity_lens.window.follow(ACME)
+    assert entity_lens.shown(ShownRequest(), 0).item_id == ACME
+
+
 def test_use_fails_if_unreadable(entity_lens, world):
     world.failing.add(ADA)
     assert use(entity_lens, world).status == Status.FAILED

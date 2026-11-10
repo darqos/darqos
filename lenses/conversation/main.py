@@ -39,8 +39,9 @@ from darq.loop import QtEventLoop
 from darq.protocols.history import History
 from darq.protocols.kb import EntityItem, Linked
 from darq.protocols.kb import Status as KBStatus
-from darq.protocols.lens import Close, Lens, Ready, Status, UseRequest, UseResponse
+from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
 from darq.ui import style
+from darq.ui.lens import LensHandler, announce
 from darq.ui.launcher import Launcher
 from darq.ui.style import CONTROLS
 
@@ -385,7 +386,7 @@ class LensServices:
         self.history = history
 
 
-class ConversationLens(Lens.Handler):
+class ConversationLens(LensHandler):
     """Answers the Lens protocol: uses one item, in a window, and is the
     Launcher's host, for items opened in new windows."""
 
@@ -451,6 +452,7 @@ class ConversationLens(Lens.Handler):
             return UseResponse(status=Status.FAILED)
         self.record(request.item_id, darq.history.OPENED)
         logging.info(f"Using {request.item_id}")
+        self.shown_item = request.item_id
         return UseResponse(status=Status.OK)
 
     def show(self, messages: timeline.Timeline, entity: model.Entity | None, linked: list[Linked],
@@ -561,6 +563,7 @@ def darq_main():
 
     lens = ConversationLens(loop, history)
     port = darq.open_port()
+    announce(port)
     server = darq.Server()
     server.add(port, lens)
     server.attach(loop)

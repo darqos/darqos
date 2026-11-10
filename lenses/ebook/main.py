@@ -57,8 +57,9 @@ from darq.loop import QtEventLoop
 from darq.protocols.ebook import ContentsResponse, Ebook
 from darq.protocols.ebook import Status as EbookStatus
 from darq.protocols.history import History
-from darq.protocols.lens import Close, Lens, Ready, Status, UseRequest, UseResponse
+from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
 from darq.ui import catalogue, reader, style
+from darq.ui.lens import LensHandler, announce
 from darq.ui.launcher import Launcher
 from darq.ui.style import CONTROLS
 
@@ -423,7 +424,7 @@ class ReaderWindow(QWidget):
         self.on_closed()
 
 
-class EbookLens(Lens.Handler):
+class EbookLens(LensHandler):
     """The lens port: it uses one item, for the life of the process."""
 
     def __init__(self, loop: QtEventLoop, history: History.Client | None):
@@ -465,6 +466,7 @@ class EbookLens(Lens.Handler):
         self.window.show()
         self.record(request.item_id, darq.history.OPENED)
         logging.info(f"Using {request.item_id}")
+        self.shown_item = request.item_id
         return UseResponse(status=Status.OK)
 
     def fetch(self, url: str):
@@ -563,6 +565,7 @@ def darq_main():
 
     lens = EbookLens(loop, history)
     port = darq.open_port()
+    announce(port)
     server = darq.Server()
     server.add(port, lens)
     server.attach(loop)

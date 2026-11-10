@@ -114,7 +114,7 @@ def test_failures(fail_in, error):
     if fail_in == "create_item":
         services.launch.fail = True
     elif fail_in == "use_item":
-        def use_item(item_id, item=None):
+        def use_item(item_id, item=None, lens_for=""):
             raise LaunchError("No lens")
         services.launch.use_item = use_item
     else:

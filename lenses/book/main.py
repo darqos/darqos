@@ -52,8 +52,9 @@ from darq.protocols.history import History
 from darq.protocols.image import Image as ImageItem
 from darq.protocols.http import Http
 from darq.protocols.http import Status as HttpStatus
-from darq.protocols.lens import Close, Lens, Ready, Status, UseRequest, UseResponse
+from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
 from darq.ui import book_store, catalogue, style
+from darq.ui.lens import LensHandler, announce
 from darq.ui.launcher import Launcher, start_thread
 from darq.ui.style import CONTROLS
 
@@ -375,7 +376,7 @@ class LensServices:
         self.history = history
 
 
-class BookLens(Lens.Handler):
+class BookLens(LensHandler):
     """The lens port: it uses one item, for the life of the process."""
 
     def __init__(self, loop: QtEventLoop, history: History.Client | None, opener: Opener | None = None,
@@ -442,6 +443,7 @@ class BookLens(Lens.Handler):
             self.start_adding()
         self.record(request.item_id, darq.history.OPENED)
         logging.info(f"Using {request.item_id}")
+        self.shown_item = request.item_id
         return UseResponse(status=Status.OK)
 
     def edit(self):
@@ -931,6 +933,7 @@ def darq_main():
 
     lens = BookLens(loop, history)
     port = darq.open_port()
+    announce(port)
     server = darq.Server()
     server.add(port, lens)
     server.attach(loop)

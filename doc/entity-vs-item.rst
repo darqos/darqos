@@ -282,6 +282,8 @@ Rules
     so it's a second port, as COM's ``QueryInterface`` gives another of
     an object's interfaces.  DIDL may come to compose protocols, so that
     one port serves both, as every COM interface extends ``IUnknown``;
+    until it does, the entity lens, given an item's own port, opens its
+    entity's itself, with ``OpenEntity``;
   * its implementation: ``darq.entity_type``'s ``EntityType``, a base
     class, with what was ``types/kb``'s: reading and writing an item's
     entity, the names of what it links to, its links, found a batch at
@@ -355,11 +357,17 @@ measured, and documented as it's built.
    item, is left.  New references are links: the book card and B, HTTP
    snapshots, and the Slack import, which keeps a file of no type as
    data (see :doc:`data-type`), rather than leaving it out.
-5. **Names everywhere.**  History, Search and the switcher show an
-   item's label, not its identifier, and the Index publishes labels as
-   names.  A lens shows its item's name, and renames it: the image lens,
-   the PDF and e-book readers, and the text lens.  A key in each opens
-   the item's page, its entity, in the entity lens, to say more of it.
+5. **Names everywhere** (built).  Every item has a name: its label, or
+   else its kind and when it was made, *Text File, 8 Nov 2026*
+   (``darq.ui.names``).  History and Search list items by name, the
+   Index publishes labels as names, and the lenses title their windows
+   with them, for the switcher.  An item's renamed on its page, in the
+   entity lens, not in each lens, and *Sys-i* opens the page of the
+   focused window's item: the Terminal asks the window's lens, through
+   the Lens protocol's ``Shown``, by the port it registered as its
+   ``app_id`` (see :doc:`terminal`).  The entity lens is registered for
+   ``public.item``, so an item with no lens of its own, as data, opens
+   its page.
 6. **Facts about items.**  *Depicts* (P180) on an image's entity, and
    the vCard import's PHOTO as image items, linked from their people, as
    *image* (P18).  Tags as statements, *has tag*, brought forward from

@@ -31,6 +31,8 @@ from darq.protocols.history import Event
 from darq.protocols.history import Status as HistoryStatus
 
 from . import Host
+from .links import type_name
+from .names import item_names
 
 
 # Control exports
@@ -194,11 +196,17 @@ class HistoryView(QWidget):
         row = len(self.shown)
         self.shown.extend(response.events)
         self.table.setRowCount(len(self.shown))
+        names = item_names(self.host.services.kb(), {e.item_id for e in response.events})
         for n, event in enumerate(response.events, row):
             type_id, _, specifier = event.item_id.partition(":")
-            for column, text in enumerate((format_time(event.time), type_id, specifier, event.event,
-                                           event.source, str(event.count))):
-                self.table.setItem(n, column, QTableWidgetItem(text))
+            for column, text in enumerate((format_time(event.time), type_name(type_id),
+                                           names.get(event.item_id, specifier), event.event, event.source,
+                                           str(event.count))):
+                cell = QTableWidgetItem(text)
+                if column in (1, 2):
+                    # What's shown's for people: the identifiers are here.
+                    cell.setToolTip(type_id if column == 1 else event.item_id)
+                self.table.setItem(n, column, cell)
         self.table.resizeColumnsToContents()
         if row == 0 and self.shown:
             self.table.selectRow(0)

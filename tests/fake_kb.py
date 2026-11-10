@@ -22,7 +22,11 @@ class FakeKB:
         self.failing: Exception | None = None
 
     def get(self, entity_id: str, follow: bool = True) -> model.Entity | None:
+        """Return an entity, following a merge, as the KB does, unless
+        it's not to be."""
         entity = self.entities.get(entity_id)
+        while follow and entity is not None and entity.redirect is not None:
+            entity = self.entities.get(entity.redirect)
         return copy.deepcopy(entity) if entity is not None else None
 
     def put(self, *entities: model.Entity) -> list[model.Entity]:
