@@ -797,12 +797,21 @@ Services
 
 	* Are we ready to start on a CRDT solution yet?
 
+  * Populate Index
+  * Create History events
+
 * CalDAV Sync
 
-  * Repository of calendar events
-  * Able to sync with external services (Exchange, Google, CalDAV,
-    vCalendar)
-  * Index and History providers
+  * Like CardDAV Sync
+  * Subject to the design of events, we might have an issue with
+    determining what should be synced here also.
+
+    * Is the "Battle of Agincourt" event the same Type as "Meeting
+      with accountant" ?
+
+  * Same timescale and concurrency issues as CardDAV
+  * Populate Index
+  * Create History events
 
 * Mail
 
@@ -855,8 +864,8 @@ Types
 
   * Mail objects aren’t special
 
-    * They have Index, Metadata, and History (like all other objects),
-      and so you don’t need folders
+    * They have Index and History (like all other objects), and so you
+      don’t need folders
     * Inbox is really just part of the History and Notification services
     * So there’s no special collection required for mail: just
       Notification and the type actions?
@@ -877,7 +886,7 @@ Types
 * Event
 
   * CRUD
-  * Events, alarms, to-dos
+  * Calendar events, alarms, to-dos
   * Repeating events, encompassing CalDAV content standards
 
 * Sound

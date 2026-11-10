@@ -5,7 +5,10 @@ An Email Service should:
 
 * Support SMTP protocol
 
-  * Support ending emails
+  * Support sending emails
+  * Support configuration of multiple accounts
+  * Standard encryption and authentication support
+  * Used by the email lens/type to send, reply, or forward an email item
 
 * Support IMAP4 protocol
   
@@ -13,14 +16,14 @@ An Email Service should:
   * Detect newly-added emails
   
     * Fetch them
-    * Ingest them
+    * Ingest them as Darq items
 
-      * Create a KB entity
+      * Create and populate a KB entity
       * Create a matching Email item
 
     * Add a History element
     * Update the Index
-    * Add an Event
+    * Add a Notification Event
     
   * Detect newly-deleted emails
   
@@ -33,6 +36,7 @@ protocol continue to work effectively.  While a DarqOS system can
 participate in processing an operator's email, it must not prevent
 their other clients from continuing to do so as well.
 
-Python's standard library includes a well-tested IMAP library, which
-should make the implementation fairly straightforward.
+Python's standard library includes well-tested SMTP and IMAP
+libraries, which should make the implementation fairly
+straightforward.
 
