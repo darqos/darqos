@@ -5,7 +5,7 @@ There are really multiple types of document I'd like to deal with, and I
 think they're likely different types:
 
 * Plain text
-* Markdown / CommonMark / GFMD
+* Markdown / CommonMark / GFM
 * ReStructured Text
 * AsciiDoc
 * org-mode
