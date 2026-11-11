@@ -1,15 +1,17 @@
 """Shows a street address on a pannable, zoomable map.
 
 The map is Leaflet, with OpenStreetMap tiles, in a QWebEngineView.
-Addresses are geocoded in Python: NSW address points first, for
-house-level positions in NSW, then Nominatim for everywhere else.
+Addresses are geocoded in Python: Australian ones from a local copy of
+G-NAF (see gnaf_import.py), for house-level positions, then Nominatim
+for everywhere else.
 """
 
+import itertools
 import json
+import os
 import re
+import sqlite3
 import sys
-import urllib.parse
-import urllib.request
 from threading import Thread
 
 from geopy.exc import GeocoderServiceError
@@ -30,20 +32,132 @@ USER_AGENT = "DarqOS-place-experiment/1.0"
 # origin, sends no Referer, and OpenStreetMap's tile servers refuse it.
 PAGE_BASE_URL = QUrl("https://darqos.local/place/")
 
-# NSW Spatial Services address points (G-NAF based): house-level positions.
-NSW_ADDRESS_URL = ("https://portal.spatial.nsw.gov.au/server/rest/services/"
-                   "NSW_Geocoded_Addressing_Theme/MapServer/1/query")
+# Built by gnaf_import.py.  Without it, every lookup goes to Nominatim.
+GNAF_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gnaf", "gnaf.sqlite")
+GNAF_CREDIT = "G-NAF \u00a9 Geoscape Australia, CC BY 4.0"
 
-# Street-type abbreviations, expanded to the NSW service's full words.
-STREET_TYPES = {
-    "ST": "STREET", "RD": "ROAD", "AVE": "AVENUE", "AV": "AVENUE",
-    "PDE": "PARADE", "CRES": "CRESCENT", "CR": "CRESCENT", "DR": "DRIVE",
-    "PL": "PLACE", "LN": "LANE", "CT": "COURT", "HWY": "HIGHWAY",
-    "TCE": "TERRACE", "CL": "CLOSE", "ESP": "ESPLANADE", "BLVD": "BOULEVARD",
+STATES = {
+    "NSW": "NSW", "NEW SOUTH WALES": "NSW", "VIC": "VIC", "VICTORIA": "VIC",
+    "QLD": "QLD", "QUEENSLAND": "QLD", "SA": "SA", "SOUTH AUSTRALIA": "SA",
+    "WA": "WA", "WESTERN AUSTRALIA": "WA", "TAS": "TAS", "TASMANIA": "TAS",
+    "NT": "NT", "NORTHERN TERRITORY": "NT", "ACT": "ACT",
+    "AUSTRALIAN CAPITAL TERRITORY": "ACT",
 }
 
-# Trailing words that aren't part of the NSW address string.
-TRAILING_NOISE = {"NSW", "AUSTRALIA", "AU"}
+# Common abbreviations beyond G-NAF's own street-type ones ('ST', 'AV', ...).
+OTHER_ABBREVIATIONS = {"MT": "MOUNT", "AVE": "AVENUE", "CRES": "CRESCENT"}
+
+# 'Unit 2, 29 ...', 'U2/29 ...', 'Apt 2 29 ...' -> '2/29 ...'
+UNIT_RE = re.compile(r"^(?:UNIT|U|APT|APARTMENT|FLAT|SUITE|SHOP)\s*(\w+)[\s/]+(?=\d)")
+
+
+class GnafLookup:
+    """Finds Australian addresses in the local G-NAF table."""
+
+    def __init__(self, path):
+        self.path = path
+        self.street_types = None  # 'ST' -> 'STREET', from the database
+
+    def available(self):
+        return os.path.exists(self.path)
+
+    def parse(self, address):
+        """Splits an address into (candidate keys, state, postcode).
+
+        Each word that might be an abbreviation ('ST' could be STREET or
+        SAINT) gives two candidates: as typed, and expanded."""
+        text = re.sub(r"[^A-Z0-9/ -]", " ", address.upper().replace(",", " "))
+        text = " ".join(text.split())
+        text = UNIT_RE.sub(r"\1/", text)
+        text = re.sub(r"\s*/\s*", "/", text)
+
+        state = postcode = None
+        text = re.sub(r"\s+AUSTRALIA$", "", text)
+        for _ in range(2):  # state and postcode, in either order
+            m = re.search(r"\s+(\d{4})$", text)
+            if m and postcode is None:
+                postcode = m.group(1)
+                text = text[:m.start()]
+                continue
+            for name in sorted(STATES, key=len, reverse=True):
+                if state is None and text.endswith(" " + name):
+                    state = STATES[name]
+                    text = text[:-len(name) - 1]
+                    break
+
+        choices = []
+        for word in text.split():
+            full = self.street_types.get(word) or OTHER_ABBREVIATIONS.get(word)
+            choices.append((word, full) if full else (word,))
+        keys = [" ".join(c) for c in itertools.islice(itertools.product(*choices), 16)]
+        return keys, state, postcode
+
+    def lookup(self, address):
+        """Returns (lat, lon, description, note), or None.
+
+        `note` says how the match is inexact, or is empty."""
+        db = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
+        try:
+            if self.street_types is None:
+                self.street_types = dict(db.execute("SELECT abbreviation, name FROM street_type"))
+            keys, state, postcode = self.parse(address)
+            if not keys or not keys[0][:1].isdigit() and not keys[0].startswith("LOT "):
+                return None
+
+            filters = ""
+            filter_params = []
+            if state:
+                filters += " AND state = ?"
+                filter_params.append(state)
+            if postcode:
+                filters += " AND postcode = ?"
+                filter_params.append(postcode)
+
+            def find(where, *params):
+                return db.execute(
+                    "SELECT key, state, postcode, latitude, longitude FROM address"
+                    f" WHERE {where}{filters} ORDER BY principal DESC LIMIT 50",
+                    [*params, *filter_params]).fetchall()
+
+            def find_address(key):
+                # '29 HAY STREET LEICHHARDT', or with no suburb, '29 HAY STREET ...'
+                return (find("key = ?", key)
+                        or find("key > ? AND key < ?", key + " ", key + "!"))
+
+            rows, note = [], ""
+            for key in keys:
+                rows = find_address(key)
+                if rows:
+                    break
+            if not rows:
+                # A number in a range: '1 FLINDERS STREET' is '1-17 FLINDERS STREET'.
+                for key in keys:
+                    m = re.match(r"(\d+) (.*)", key)
+                    if m:
+                        number, rest = m.groups()
+                        rows = find("key > ? AND key < ? AND (key LIKE ? OR key LIKE ?)",
+                                    number + "-", number + ".",
+                                    f"{number}-% {rest}", f"{number}-% {rest} %")
+                        if rows:
+                            break
+            if not rows:
+                # A unit that isn't listed: show its building.
+                for key in keys:
+                    if "/" in key.split(" ", 1)[0]:
+                        rows = find_address(key.split("/", 1)[1])
+                        if rows:
+                            note = "Unit not found, showing the building: "
+                            break
+            if not rows:
+                return None
+
+            key, state, postcode, lat, lon = rows[0]
+            if len({(r[0], r[1]) for r in rows}) > 1:
+                note += "Several places match, showing the first: "
+            return lat, lon, f"{key} {state} {postcode}", note
+        finally:
+            db.close()
+
 
 MAP_HTML = """<!DOCTYPE html>
 <html>
@@ -83,65 +197,37 @@ MAP_HTML = """<!DOCTYPE html>
 """
 
 
-def nsw_address_key(address):
-    """Normalises '29 Hay St, Leichhardt NSW 2040' to '29 HAY STREET LEICHHARDT'."""
-    words = re.sub(r"[,.]", " ", address).upper().split()
-    while words and (words[-1] in TRAILING_NOISE or re.fullmatch(r"\d{4}", words[-1])):
-        words.pop()
-    return " ".join(STREET_TYPES.get(w, w) for w in words)
-
-
 class Geocoder(QObject):
     """Looks up addresses in a background thread, reporting by signal."""
-    found = pyqtSignal(float, float, str, bool)  # lat, lon, address, exact
+    found = pyqtSignal(float, float, str, str)  # lat, lon, address, note
     error = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
         self.nominatim = Nominatim(user_agent=USER_AGENT)
-
-    def lookup_nsw(self, address):
-        """Returns (lat, lon, address) from NSW address points, or None."""
-        key = nsw_address_key(address)
-        if not key or not key[0].isdigit():
-            return None
-        params = urllib.parse.urlencode({
-            "where": "address LIKE '{}%'".format(key.replace("'", "''")),
-            "outFields": "address",
-            "returnGeometry": "true",
-            "outSR": "4326",
-            "resultRecordCount": "1",
-            "f": "json",
-        })
-        req = urllib.request.Request(f"{NSW_ADDRESS_URL}?{params}",
-                                     headers={"User-Agent": USER_AGENT})
-        # The service is usually sub-second, but has occasional slow spells.
-        with urllib.request.urlopen(req, timeout=20) as response:
-            features = json.load(response).get("features") or []
-        if not features:
-            return None
-        f = features[0]
-        return f["geometry"]["y"], f["geometry"]["x"], f["attributes"]["address"]
+        self.gnaf = GnafLookup(GNAF_PATH)
 
     def lookup(self, address):
         Thread(target=self._run, args=(address,), daemon=True).start()
 
     def _run(self, address):
         try:
-            try:
-                nsw = self.lookup_nsw(address)
-            except Exception as e:
-                print(f"NSW address lookup failed: {e}")
-                nsw = None
-            if nsw:
-                self.found.emit(*nsw, True)
-                return
+            if self.gnaf.available():
+                try:
+                    found = self.gnaf.lookup(address)
+                except Exception as e:
+                    print(f"G-NAF lookup failed: {e}")
+                    found = None
+                if found:
+                    lat, lon, description, note = found
+                    self.found.emit(lat, lon, description, note + "{} \u2014 " + GNAF_CREDIT)
+                    return
 
             location = self.nominatim.geocode(address, timeout=10, addressdetails=True)
             if location:
                 exact = "house_number" in location.raw.get("address", {})
-                self.found.emit(location.latitude, location.longitude,
-                                location.address, exact)
+                note = "{}" if exact else "House number not found, showing street: {}"
+                self.found.emit(location.latitude, location.longitude, location.address, note)
             else:
                 self.error.emit("Address not found. Please try being more specific.")
         except GeocoderServiceError:
@@ -223,14 +309,12 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Looking up {address}...")
         self.geocoder.lookup(address)
 
-    def on_found(self, lat, lon, full_address, exact):
+    def on_found(self, lat, lon, full_address, note):
+        """Shows the place; `note` is the status-bar message, with {} for the address."""
         self.search_button.setEnabled(True)
-        self.map_view.show_place(lat, lon, full_address, 18 if exact else 17)
-        if exact:
-            self.statusBar().showMessage(full_address)
-        else:
-            self.statusBar().showMessage(
-                f"House number not found, showing street: {full_address}")
+        street_only = note.startswith("House number not found")
+        self.map_view.show_place(lat, lon, full_address, 17 if street_only else 18)
+        self.statusBar().showMessage(note.format(full_address))
 
     def on_error(self, message):
         self.search_button.setEnabled(True)
