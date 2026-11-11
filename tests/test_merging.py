@@ -111,7 +111,7 @@ def test_a_candidate_without_a_description_says_how_linked_it_is(items):
     book = model.Item()
     book.set_label("Bliss")
     book.claim("P123", model.EntityValue(other.id))
-    items.create("darq.entity", book)
+    items.create("darq.thing", book)
     [found] = merging.candidates(items, this, "Picador")
     assert found.describe() == f"Picador — 1 link ({other.id})"
 

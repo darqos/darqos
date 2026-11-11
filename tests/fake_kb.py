@@ -4,7 +4,7 @@
 # A stand-in for darq.kb.KB, in memory, for the tests of the types whose
 # items' content is in Storage, which make their entities (see
 # darq.items): what they ask of the KB, and no more.  The real thing's
-# tested in test_items.py and test_entity_type.py.
+# tested in test_items.py and test_item_type.py.
 
 import copy
 

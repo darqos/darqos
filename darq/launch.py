@@ -129,7 +129,7 @@ def open_item(item_id: str) -> int:
 
 def open_entity(item_id: str) -> int:
     """Open an item's entity, through the item's type implementation, as
-    every item's an entity (see doc/entity-vs-item.rst).
+    every item has an entity (see doc/item.rst).
 
     :returns: A port for it, serving the EntityItem protocol, which the
               caller must close (or pass to a lens, with use_item).

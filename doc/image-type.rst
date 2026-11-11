@@ -34,7 +34,7 @@ In addition to the image itself, the view should also have a way to
 display and edit any associated metadata encoded in the image.
 
 What's knowledge, such as who's in it, is said on its entity, as
-*depicts* (see :doc:`entity-vs-item`).
+*depicts* (see :doc:`item`).
 
 Types
 -----
@@ -180,7 +180,7 @@ the field edits made, without decoding its pixels, so publishing
 doesn't render the image.  An empty item is published with its entity's
 names alone, and a destroyed one is withdrawn.  It's published again
 when its entity's changed.  Its entity's named by its title, or else by
-the file it came from (see :doc:`entity-vs-item`).  `IndexEntry` gives the same, for a
+the file it came from (see :doc:`item`).  `IndexEntry` gives the same, for a
 reindex.
 
 Implementation

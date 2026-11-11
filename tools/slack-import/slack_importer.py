@@ -342,7 +342,7 @@ class Importer:
         bot.claim(ACCOUNT, model.EntityValue(self.workspace)).add_qualifier(
             MEMBER_ID, model.StringValue(key)).add_reference(
             model.Reference().add(model.STATED_IN, model.EntityValue(self.workspace)))
-        self.items.create(model.ENTITY_TYPE, bot)
+        self.items.create(model.THING_TYPE, bot)
         return entity_id
 
     def conversation_label(self, conversation: dict) -> str:

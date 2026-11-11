@@ -4,8 +4,8 @@ Data Type
 ``public.data`` is the type of a file DarqOS has no implementation for:
 a spreadsheet, an archive, a video.  Its bytes are kept as they came,
 with their media type, so nothing that comes in is refused, and every
-file is an item, and so an entity (see :doc:`entity-vs-item`), that can
-be found, named, and linked to, as a Slack message's attachment is.
+file is an item, with an entity (see :doc:`item`), that can be found,
+named, and linked to, as a Slack message's attachment is.
 
 It's the type of what no other takes: ``darq.launch.import_data``, which
 the HTTP service and the Slack import use, and the launcher's file

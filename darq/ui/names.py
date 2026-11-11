@@ -2,7 +2,7 @@
 # Copyright (C) 2026 David Arnold
 
 """Items' names, as the Terminal and the lenses show them (see
-doc/entity-vs-item.rst, step 5): every item's an entity, and its name's
+doc/item.rst): every item has an entity, and its name's
 its entity's label, or, if it has none, its kind and when it was made,
 such as "Text File, 8 Nov 2026"."""
 

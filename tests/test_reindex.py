@@ -141,7 +141,7 @@ def test_unanswered_entries_are_skipped(caplog):
 
 def test_kb_item_ids(kb, implementation):  # noqa: F811
     person = implementation.create(CreateRequest(type_id="darq.person"), 0).item_id
-    implementation.create(CreateRequest(type_id="darq.entity"), 0)
+    implementation.create(CreateRequest(type_id="darq.thing"), 0)
     kb.put(entity("Q7259", "Ada", "Q5"), entity("acme", "Acme", "Q43229"), entity("Q1", "Somewhere", "Q319608"),
            entity("Q2", "Nothing much"), model.Property(model.Datatype.String, "P999"))
     gone = implementation.create(CreateRequest(type_id="darq.group"), 0).item_id

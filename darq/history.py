@@ -15,6 +15,11 @@ import typing
 import darq
 from darq.protocols.history import History
 
+# Types renamed, old to new: what's kept of their items, as their
+# identifiers, is migrated where it's kept, by the KB's type, from its
+# items' DarqOS type statements, and by History, from its events.
+RENAMED_TYPES = {"darq.entity": "darq.thing"}
+
 CREATED = "created"
 IMPORTED = "imported"
 FETCHED = "fetched"

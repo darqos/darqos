@@ -329,7 +329,7 @@ def test_imported_items_are_published(target, index):  # noqa: F811
     assert any(i.startswith("darq.organisation:") and "Acme Widgets" in n for i, n in published.items())
 
     # Its vocabulary isn't.
-    assert not any(i.startswith("darq.entity:") for i in published)
+    assert not any(i.startswith("darq.thing:") for i in published)
 
 
 def test_reimport_changes_nothing(target, kb_service):  # noqa: F811

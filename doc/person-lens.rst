@@ -130,7 +130,7 @@ person's card.
   implementation, so a thumbnail's fetched in the background, and
   shown when it comes; what can't be shown leaves a link.
 * **Clicking.**  The thumbnail opens the image in its own lens; the
-  link to it opens its page.
+  link to it opens its entity.
 * **The rendered image, kept.**  An image is kept as its original and
   a list of edits, and rendered, with the edits, when it's opened (see
   ``types/image/imaging.py``), so the original's never re-encoded more

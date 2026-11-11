@@ -16,6 +16,7 @@ import pytest
 
 import darq
 import darq.book
+import darq.items
 import darq.kb as model
 import darq.message
 import darq.url
@@ -93,7 +94,7 @@ class MemoryStore:
         return self.item(self.entities[entity_id]) if entity_id in self.entities else ""
 
     def find(self, label: str, type_id: str) -> str:
-        kind = model.ENTITY_TYPE if type_id == darq.book.LANGUAGE_KIND else type_id
+        kind = model.THING_TYPE if type_id == darq.book.LANGUAGE_KIND else type_id
         return next((e.id for e in self.of_kind(kind) if e.get_label() == label), "")
 
     def create(self, type_id: str, label: str) -> model.Entity:
@@ -345,7 +346,7 @@ def test_series_and_volume():
     darq.book.save(store, read)
     read = read_book(store, store.item(book.work))
     assert (read.series, read.volume) == ("The Laundry", "2")
-    assert len(store.of_kind(model.ENTITY_TYPE)) == 1
+    assert len(store.of_kind(model.THING_TYPE)) == 1
 
 
 def test_other_statements_are_left_alone():
@@ -1035,7 +1036,7 @@ def test_lens_reads_the_first_content(opened):
 def test_lens_shows_the_entity(opened):
     used, store, opener = opened
     used.show_entity()
-    assert opener.used == [(used.item_id, model.ENTITY_TYPE)]
+    assert opener.used == [(used.item_id, darq.items.BASE_TYPE)]
 
 
 def test_lens_follows_a_link(opened):
@@ -1515,7 +1516,7 @@ def test_a_work_has_no_move(opened):
 
 
 ################################################################
-# Links to items (see doc/entity-vs-item.rst, step 4)
+# Links to items (see doc/item.rst)
 ################################################################
 
 def test_content_and_a_cover_are_links():

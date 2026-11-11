@@ -38,10 +38,10 @@ protocol Lens {
     2: Close();
 
     // Return the item the lens is showing now, which can change, as the
-    // entity lens follows a link, and whether that's the item's page,
-    // as the entity lens is: the Terminal's Sys-i opens the page of the
-    // focused window's (see doc/terminal.rst).  A lens's port is
-    // registered as lens.<dpid>, its Wayland app_id, so the Terminal
-    // finds it from a window.
-    3: Shown() -> (string item_id, bool page);
+    // entity lens follows a link, and whether it's showing the item's
+    // entity, as the entity lens is: the Terminal's Sys-i opens the
+    // entity of the focused window's item (see doc/terminal.rst).  A
+    // lens's port is registered as lens.<dpid>, its Wayland app_id, so
+    // the Terminal finds it from a window.
+    3: Shown() -> (string item_id, bool entity);
 }

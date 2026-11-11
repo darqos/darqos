@@ -66,8 +66,8 @@ def item_ids(history: History.Client) -> list[str]:
 
 
 def kb_item_ids(kb: model.KB) -> list[str]:
-    """Return the items of the KB's entities of a kind, other than
-    darq.entity, in order of identifier."""
+    """Return the KB's items of a kind, other than things, darq.thing, in
+    order of identifier."""
     ids: set[str] = set()
     for kind, _ in model.KINDS:
         ids.update(kb.find_by_value(model.DARQOS_TYPE, kind))
@@ -87,7 +87,7 @@ def kb_item_ids(kb: model.KB) -> list[str]:
         entities, _ = kb.get_entities(ordered[n:n + BATCH], follow=False)
         for entity in entities:
             kind = model.kind_of(entity, get_class)
-            if kind != model.ENTITY_TYPE:
+            if kind != model.THING_TYPE:
                 found.append(model.item_id(entity.id, kind))
     return found
 

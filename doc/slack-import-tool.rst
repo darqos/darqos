@@ -20,8 +20,8 @@ What It Imports
   :doc:`message-type`.)
 * Each message and thread reply becomes a Message entity.  System
   messages, such as channel joins and renames, are left out for now.
-* Each person becomes, or matches, a Person entity, and each bot a
-  ``darq.entity`` of its own.
+* Each person becomes, or matches, a person, and each bot a thing,
+  ``darq.thing``, of its own.
 * Each file of a type with an implementation (images, text, and PDFs)
   becomes an item, of its type, attached to its messages.  Others are
   recorded by name, type and size, and stay in the export until their

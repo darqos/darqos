@@ -46,9 +46,9 @@ def run_import(path: str, progress: typing.Callable[[str, int, int], None]) -> l
     :raises darq.DarqError: if a service can't be reached."""
     records = lt_export.read_export(pathlib.Path(path).read_text(encoding="utf-8"))
     types = Type.Client(darq.connect("darq.type"), timeout=TIMEOUT)
-    activated = types.activate(type_id=model.ENTITY_TYPE)
+    activated = types.activate(type_id=model.THING_TYPE)
     if activated.status != Status.OK or activated.implementation is None:
-        raise darq.DarqError(f"Can't activate {model.ENTITY_TYPE}: {activated.status.name}")
+        raise darq.DarqError(f"Can't activate {model.THING_TYPE}: {activated.status.name}")
     kb = model.KB.connect(timeout=TIMEOUT)
     items = model.KB(kb.client, EntityWriter.Client(activated.implementation, timeout=TIMEOUT))
 

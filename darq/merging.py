@@ -66,7 +66,7 @@ def alike(this: model.Entity, other: model.Entity) -> bool:
     DarqOS type, or one has none, as one made of Wikidata's minimally
     hasn't, and gains the other's by the merge."""
     kinds = {model.recorded_type(this), model.recorded_type(other)}
-    return len(kinds) == 1 or model.ENTITY_TYPE in kinds
+    return len(kinds) == 1 or model.THING_TYPE in kinds
 
 
 def candidates(kb: model.KB, entity: model.Entity, text: str, language: str = "en") -> list[Candidate]:

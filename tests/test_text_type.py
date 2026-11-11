@@ -602,7 +602,7 @@ def test_text_type(live_pkernel, tmp_path):  # noqa: F811
 
 
 ################################################################
-# Its entity (see doc/entity-vs-item.rst)
+# Its entity (see doc/item.rst)
 ################################################################
 
 def specifier_of(iid):
@@ -639,7 +639,7 @@ def test_destroying_it_destroys_its_entity(call, kb):
 
 
 def test_its_made_without_the_kb(call, kb, blobs):
-    """Its blob's the item: its entity's made later (see darq.entity_type)."""
+    """Its blob's the item: its entity's made later (see darq.item_type)."""
     kb.failing = darq.DarqError("no KB")
     response = call(IMPLEMENTATION_PORT, CreateFromRequest(type_id=text_module.TYPE_ID, data=b"Hi", name="a.txt"))
     assert response.status == Status.OK and kb.entities == {}

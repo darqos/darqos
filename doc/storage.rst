@@ -22,7 +22,7 @@ It knows nothing about what they hold.
   Storage.  Others use the knowledge graph instead.
 * The link from an object to its blob is its item identifier, whose
   specifier is the blob's key, and the object's name, tags and dates
-  are statements on its entity (see :doc:`entity-vs-item`).
+  are statements on its entity (see :doc:`item`).
   History, Index and Search make objects findable.  So Storage needs
   no names, and offers no listing.
 * All system storage, aside from early bootstrap, should use this

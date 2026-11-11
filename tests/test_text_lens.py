@@ -631,7 +631,7 @@ def test_text_lens(live_pkernel, tmp_path):  # noqa: F811
             # It says what it's showing, through the port it registered as
             # lens.<dpid>, as the Terminal's Sys-i asks.
             shown = lens.shown()
-            if (shown.item_id, shown.page) != (item_id, False):
+            if (shown.item_id, shown.entity) != (item_id, False):
                 return f"shown {shown!r}"
             named = [h for h in (darq.lookup_name(f"lens.{n}", blocking=False) for n in range(1, 64)) if h]
             if len(named) != 1:

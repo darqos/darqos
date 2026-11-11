@@ -1,9 +1,9 @@
 {
   "types": [
     {
-      "id": "darq.entity",
-      "name": "Knowledge Base Entity",
-      "description": "Anything in the Knowledge Base: the base type of its items, and the type of those of no other kind.",
+      "id": "darq.thing",
+      "name": "Thing",
+      "description": "Anything in the Knowledge Base of no other kind, such as a property, a class, or a given name.",
       "conforms_to": ["public.item"],
       "implemented": true
     },
@@ -11,91 +11,91 @@
       "id": "darq.person",
       "name": "Person",
       "description": "A person, in the Knowledge Base.",
-      "conforms_to": ["darq.entity", "public.contact"],
+      "conforms_to": ["public.item", "public.contact"],
       "implemented": true
     },
     {
       "id": "darq.organisation",
       "name": "Organisation",
       "description": "An organisation, such as a company, in the Knowledge Base.",
-      "conforms_to": ["darq.entity", "public.contact"],
+      "conforms_to": ["public.item", "public.contact"],
       "implemented": true
     },
     {
       "id": "darq.organisational-unit",
       "name": "Organisational Unit",
       "description": "A part of an organisation, such as a department, in the Knowledge Base (X.500's organizationalUnit).",
-      "conforms_to": ["darq.entity", "public.contact"],
+      "conforms_to": ["public.item", "public.contact"],
       "implemented": true
     },
     {
       "id": "darq.place",
       "name": "Place",
       "description": "A place, such as a country, locality, or address, in the Knowledge Base.",
-      "conforms_to": ["darq.entity"],
+      "conforms_to": ["public.item"],
       "implemented": true
     },
     {
       "id": "darq.group",
       "name": "Group",
       "description": "A group of people, in the Knowledge Base.",
-      "conforms_to": ["darq.entity"],
+      "conforms_to": ["public.item"],
       "implemented": true
     },
     {
       "id": "darq.conversation",
       "name": "Conversation",
       "description": "A conversation: a channel, direct message, or group chat, in the Knowledge Base.",
-      "conforms_to": ["darq.entity"],
+      "conforms_to": ["public.item"],
       "implemented": true
     },
     {
       "id": "darq.message",
       "name": "Message",
       "description": "An instant message, in the Knowledge Base.",
-      "conforms_to": ["darq.entity", "public.message"],
+      "conforms_to": ["public.item", "public.message"],
       "implemented": true
     },
     {
       "id": "public.url",
       "name": "URL",
       "description": "A place on the web, in the Knowledge Base, with what's been fetched from it.",
-      "conforms_to": ["darq.entity"],
+      "conforms_to": ["public.item"],
       "implemented": true
     },
     {
       "id": "darq.book.work",
       "name": "Book",
       "description": "A book, as a creation, in the Knowledge Base: its editions, formats and copies are under it.",
-      "conforms_to": ["darq.entity"],
+      "conforms_to": ["public.item"],
       "implemented": true
     },
     {
       "id": "darq.book.expression",
       "name": "Book Text",
       "description": "A book's text, such as a translation, in the Knowledge Base.",
-      "conforms_to": ["darq.entity"],
+      "conforms_to": ["public.item"],
       "implemented": true
     },
     {
       "id": "darq.book.manifestation",
       "name": "Book Edition",
       "description": "An edition or format of a book, in the Knowledge Base.",
-      "conforms_to": ["darq.entity"],
+      "conforms_to": ["public.item"],
       "implemented": true
     },
     {
       "id": "darq.book.item",
       "name": "Book Copy",
       "description": "A copy of a book, on a shelf or as a file, in the Knowledge Base.",
-      "conforms_to": ["darq.entity"],
+      "conforms_to": ["public.item"],
       "implemented": true
     },
     {
       "id": "darq.tag",
       "name": "Tag",
       "description": "A tag, which anything can have: its page lists what has it.",
-      "conforms_to": ["darq.entity"],
+      "conforms_to": ["public.item"],
       "implemented": true
     }
   ]

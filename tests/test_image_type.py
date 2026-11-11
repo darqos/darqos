@@ -657,7 +657,7 @@ def test_image_type(live_pkernel, tmp_path):  # noqa: F811
 
 
 ################################################################
-# Its entity (see doc/entity-vs-item.rst)
+# Its entity (see doc/item.rst)
 ################################################################
 
 def test_a_new_image_is_an_entity_named_from_its_file(call, kb, index):

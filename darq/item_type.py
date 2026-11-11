@@ -1,25 +1,27 @@
 # darqos
 # Copyright (C) 2026 David Arnold
 
-"""The entity type, which every type implementation inherits (see
-doc/entity-vs-item.rst): every item is a KB entity, so every
-implementation serves the EntityItem protocol (lib/didl/kb.didl) for its
-items, on a port from OpenEntity, beside the port from Open that serves
-its type's own protocol.
+"""What every type implementation shares, ItemType, the base class each
+inherits (see doc/item.rst): every item has an entity, its record in the
+Knowledge Base, so every implementation serves the EntityItem protocol
+(lib/didl/kb.didl) for its items' entities, on a port from OpenEntity,
+beside the port from Open that serves its type's own protocol; and every
+implementation records in History what's done to its items, as its
+callers describe it (see doc/history.rst).
 
-EntityType is the base class, the lower layer: it reads and writes an
-item's entity, in the KB, gives the names of what it links to, finds
-its links a batch at a time, and searches the KB for entities to link
-to.  It keeps nothing itself: each request is answered from the KB.
+ItemType is the lower layer: it reads and writes an item's entity, in
+the KB, gives the names of what it links to, finds its links a batch at
+a time, and searches the KB for entities to link to.  It keeps nothing
+itself: each request is answered from the KB.
 
-It calls entity_changed after each change made through an item's port,
+It calls entity_changed after each change made through an entity's port,
 which an implementation overrides, as the layer above, to publish what's
 changed to the Index: types/kb, for the KB's own kinds, publishes their
 names and descriptions, and a type whose content is in Storage what's in
 it too.  So everything about an item is written through its type
 implementation, and its Index entry kept up to date by it alone.
 
-An entity's kind is its recorded DarqOS type, or else the one its
+An item's kind is its entity's recorded DarqOS type, or else the one its
 classes give (see darq.kb.kind_of): the classes read are cached, and the
 cache kept current by watching the KB."""
 
@@ -64,7 +66,7 @@ from darq.protocols.type import Implementation, OpenEntityRequest, OpenEntityRes
 
 
 # Control exports
-__all__ = ["ClassListener", "EntityItemHandler", "EntityType", "KB_ERRORS"]
+__all__ = ["ClassListener", "EntityItemHandler", "ItemType", "KB_ERRORS"]
 
 
 # The type of a message, which has a summary, since it has no label.
@@ -85,9 +87,9 @@ ANNOTATIONS = [model.START_TIME, model.END_TIME, model.POINT_IN_TIME, model.REAS
                model.REASON_FOR_PREFERRED_RANK]
 
 
-class EntityType(Implementation.Handler):
-    """The entity type's part of a type implementation: its items'
-    entities, for the types it implements.
+class ItemType(Implementation.Handler):
+    """What every type implementation shares: its items' entities, for
+    the types it implements, and recording what's done to its items.
 
     It records the events its items' requests cause in History, described
     by their callers' contexts (see doc/history.rst, Who Records Events),
@@ -367,7 +369,7 @@ class EntityType(Implementation.Handler):
 class ClassListener(Listener.Handler):
     """Forgets cached classes that have changed."""
 
-    def __init__(self, implementation: EntityType):
+    def __init__(self, implementation: ItemType):
         self.implementation = implementation
 
     def changed(self, request: Changed, source: int) -> None:
@@ -381,7 +383,7 @@ class EntityItemHandler(EntityItem.Handler):
     """Answers the EntityItem protocol, on one client's port for an item's
     entity."""
 
-    def __init__(self, implementation: EntityType, entity_id: str, port: int):
+    def __init__(self, implementation: ItemType, entity_id: str, port: int):
         self.implementation = implementation
         self.kb = implementation.kb
         self.entity_id = entity_id
@@ -398,7 +400,7 @@ class EntityItemHandler(EntityItem.Handler):
         """Return the item identifier of the entity, by its kind."""
         entity = self.kb.get(self.entity_id, follow=False)
         return self.implementation.item_id(entity) if entity is not None else model.item_id(self.entity_id,
-                                                                                               model.ENTITY_TYPE)
+                                                                                               model.THING_TYPE)
 
     def viewed(self, request: Viewed, source: int) -> None:
         self.source = request.source

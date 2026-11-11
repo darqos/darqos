@@ -81,7 +81,7 @@ create_object
 
 * An object is an item: its item identifier gives its type, and its
   entity, in the Knowledge Base, its name, when it was made, and what
-  else is known of it (see :doc:`entity-vs-item`).  What happened to it
+  else is known of it (see :doc:`item`).  What happened to it
   is in History.
 
 activate_object

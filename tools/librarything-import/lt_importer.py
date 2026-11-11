@@ -256,7 +256,7 @@ class Importer:
         return model.EntityValue(self.name(text, darq.book.PERSON_TYPE, PERSON_CLASS))
 
     def thing(self, text: str) -> model.EntityValue:
-        return model.EntityValue(self.name(text, model.ENTITY_TYPE))
+        return model.EntityValue(self.name(text, model.THING_TYPE))
 
     # Levels
 

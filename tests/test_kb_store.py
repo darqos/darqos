@@ -507,7 +507,7 @@ def test_link_ids_reverse_and_type(links_kb):
 
     assert k.link_ids("hub", "link", type_id="darq.message") == ["b", "d"]
     assert k.link_ids("hub", None, type_id="darq.message") == ["b", "d"]
-    assert k.link_ids("hub", "link", type_id="darq.entity") == ["a", "c", "e"]
+    assert k.link_ids("hub", "link", type_id="darq.thing") == ["a", "c", "e"]
     assert k.link_ids("hub", "link", type_id="darq.person") == []
     assert k.link_ids("hub", "link", limit=1, type_id="darq.message") == ["b"]
     assert k.link_ids("hub", "link", reverse=True, limit=1, type_id="darq.message") == ["d"]
@@ -521,7 +521,7 @@ def test_link_counts(links_kb):
     k = links_kb
     with k.transaction():
         links_world(k)
-    assert k.link_counts("hub") == [("link", "main", "darq.entity", 3), ("link", "main", "darq.message", 2)]
+    assert k.link_counts("hub") == [("link", "main", "darq.message", 2), ("link", "main", "darq.thing", 3)]
     assert k.link_counts("a") == []
 
 
@@ -579,7 +579,7 @@ def test_link_counts_are_of_entities_not_links(links_kb):
         for target in ("hub", "other"):
             item.claim("link", model.EntityValue(target)).add_reference(
                 model.Reference().add(model.STATED_IN, model.EntityValue("source")))
-    assert k.link_counts("source") == [(model.STATED_IN, "reference", "darq.entity", 1)]
+    assert k.link_counts("source") == [(model.STATED_IN, "reference", "darq.thing", 1)]
 
 
 def test_link_counts_follow_changes(links_kb):
@@ -593,24 +593,24 @@ def test_link_counts_follow_changes(links_kb):
     # Rewriting it changes nothing.
     with k.transaction():
         k.get("a").set_label("Another")
-    assert counts() == {"darq.entity": 3, "darq.message": 2}
+    assert counts() == {"darq.thing": 3, "darq.message": 2}
 
     # A statement removed.
     with k.transaction():
         a = k.get("a")
         a.remove_statement(a.get_statements("link")[0])
-    assert counts() == {"darq.entity": 2, "darq.message": 2}
+    assert counts() == {"darq.thing": 2, "darq.message": 2}
 
     # Destroyed.
     with k.transaction():
         k.destroy("b")
-    assert counts() == {"darq.entity": 2, "darq.message": 1}
+    assert counts() == {"darq.thing": 2, "darq.message": 1}
     assert k.link_ids("hub", "link", type_id="darq.message") == ["d"]
 
     # Merged: its statements are the other's now, with its type.
     with k.transaction():
         k.merge("c", "d")
-    assert counts() == {"darq.entity": 1, "darq.message": 1}
+    assert counts() == {"darq.thing": 1, "darq.message": 1}
     assert k.link_ids("hub", "link") == ["d", "e"]
 
     # Its type changed.
@@ -627,7 +627,7 @@ def test_link_counts_roll_back(tmp_path):
         with k.transaction():
             k.get("a").claim(model.DARQOS_TYPE, model.StringValue("darq.place"))
             raise RuntimeError
-    assert {t: n for _, _, t, n in k.link_counts("hub")} == {"darq.entity": 3, "darq.message": 2}
+    assert {t: n for _, _, t, n in k.link_counts("hub")} == {"darq.thing": 3, "darq.message": 2}
 
     # A type that went with the transaction can be used again.
     with k.transaction():
@@ -673,8 +673,8 @@ def test_relinking_moves_every_reference(links_kb):
     assert authored.references[0].snaks[0].value.entity_id == "new"
     assert bliss.get_statements("about")[0].get_value().entity_id == "source"
     assert k.link_ids("new", "author") == ["bliss"]
-    assert k.link_counts("new") == [(model.STATED_IN, "reference", "darq.entity", 1),
-                                    ("about", "qualifier", "darq.entity", 1), ("author", "main", "darq.entity", 1)]
+    assert k.link_counts("new") == [(model.STATED_IN, "reference", "darq.thing", 1),
+                                    ("about", "qualifier", "darq.thing", 1), ("author", "main", "darq.thing", 1)]
 
 
 def test_relinking_whats_merged_already(links_kb):

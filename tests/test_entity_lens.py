@@ -110,9 +110,9 @@ def test_render():
     links = {
         "acme": render.Link(ACME, "Acme & Co"),
         "old": render.Link("darq.organisation:old", ""),
-        "book": render.Link("darq.entity:book", "Address book"),
+        "book": render.Link("darq.thing:book", "Address book"),
         "P108": render.Link("", "employer"),
-        "Q11573": render.Link("darq.entity:Q11573", "metre"),
+        "Q11573": render.Link("darq.thing:Q11573", "metre"),
     }
     group = LinkGroup("P108", Role.MAIN, "darq.person", 1, "employer", "employs")
     bob = Linked("bob", "darq.person:bob", "en", "Bob")
@@ -468,7 +468,7 @@ def test_it_says_its_showing_an_items_page(entity_lens, world):
     assert entity_lens.shown(ShownRequest(), 0).item_id == ""
     use(entity_lens, world)
     shown = entity_lens.shown(ShownRequest(), 0)
-    assert (shown.item_id, shown.page) == (ADA, True)
+    assert (shown.item_id, shown.entity) == (ADA, True)
     entity_lens.window.follow(ACME)
     assert entity_lens.shown(ShownRequest(), 0).item_id == ACME
 
@@ -730,7 +730,7 @@ def editing(entity_lens, world, qt_app):
     shown in edit mode."""
     world.add("darq.place:home", "1 Example St")
     world.add("darq.place:new", "2 New St")
-    world.add(f"darq.entity:{BOOK}", "Address book")
+    world.add(f"darq.thing:{BOOK}", "Address book")
     ada = world.entities[ADA]
     for property_id, value in [("P551", model.EntityValue("home")), ("P1329", model.StringValue("+61 7 3000 1234"))]:
         ada.claim(property_id, value).add_reference(model.Reference().add("P248", model.EntityValue(BOOK)))

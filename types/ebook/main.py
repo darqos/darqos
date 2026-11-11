@@ -21,8 +21,8 @@
 # title and author are published to the Index as names, and its text as
 # its body, and it's withdrawn when it's destroyed.
 #
-# Every item's an entity (see doc/entity-vs-item.rst): it inherits the
-# entity type, darq.entity_type's EntityType, which serves an item's
+# Every item has an entity (see doc/item.rst): it inherits
+# ItemType, from darq.item_type, which serves an item's
 # entity on a port from OpenEntity.  An item's entity is made with it,
 # identified by its specifier, and named by the book's title, or else the
 # file it came from; its names are published to the Index with its own.
@@ -35,7 +35,7 @@ import darq
 import darq.history
 import darq.index
 import darq.kb as model
-from darq.entity_type import EntityType
+from darq.item_type import ItemType
 from darq.protocols import storage
 from darq.protocols.ebook import (
     Viewed,
@@ -196,7 +196,7 @@ def index_entry(document: Document) -> tuple[list[str], str]:
     return [name for name in (book.title, *book.authors) if name], bookfile.text_of(book)
 
 
-class EbookImplementation(EntityType):
+class EbookImplementation(ItemType):
     """Answers the Implementation protocol, and keeps the open items."""
 
     SOURCE = "ebook-type"

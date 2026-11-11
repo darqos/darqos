@@ -3,7 +3,7 @@
 
 # Give Items Entities: give the items made before every item was an
 # entity theirs, and make what refers to them by identifier link to them
-# (see doc/entity-vs-item.rst, steps 3 and 4).
+# (see doc/item.rst).
 #
 # An item of a type whose content is in Storage, text, an image, a PDF or
 # an e-book, is given its entity by its type implementation when it's

@@ -335,7 +335,7 @@ def test_people_are_people_and_bots_arent(target, export):
     client, _, _, _ = target
     assert model.recorded_type(client.get(find(client, "Ada Lovelace")[0])) == "darq.person"
     for name in ("Buildbot", "Slackbot", "GitLab"):
-        assert model.recorded_type(client.get(find(client, name)[0])) == "darq.entity"
+        assert model.recorded_type(client.get(find(client, name)[0])) == "darq.thing"
 
 
 def test_senders(target, export):

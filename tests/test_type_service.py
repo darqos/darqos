@@ -9,6 +9,7 @@
 import importlib.util
 import json
 import pathlib
+import types as python_types
 
 import pytest
 
@@ -599,6 +600,17 @@ class FakeTypeClient:
         self.lenses.append((lens, type_id, context))
         return RegisterLensResponse(status=Status.OK)
 
+    def find_lenses(self, type_id, context):
+        return python_types.SimpleNamespace(lenses=[lens for lens, t, c in self.lenses if (t, c) == (type_id, context)])
+
+    def deregister_lens(self, lens, type_id, context):
+        self.lenses.remove((lens, type_id, context))
+        return python_types.SimpleNamespace(status=Status.OK)
+
+    def deregister(self, type_id):
+        found = self.types.pop(type_id, None)
+        return python_types.SimpleNamespace(status=Status.OK if found is not None else Status.NOT_FOUND)
+
 
 def write_json(path: pathlib.Path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -632,6 +644,24 @@ def test_sync(tmp_path):
 
     viewer = str(root / "lenses" / "viewer")
     assert client.lenses == [(viewer, "test.thing", "terminal"), (viewer, "test.other", "terminal")]
+
+
+def test_sync_deregisters_renamed_types(tmp_path):
+    """A type that's been renamed goes, with the lenses registered for it,
+    as darq.entity has, for darq.thing."""
+    root = tmp_path / "darq"
+    base = tmp_path / "catalogue.json"
+    write_json(base, {"types": []})
+    client = FakeTypeClient()
+    client.types["darq.entity"] = (Description(name="Knowledge Base Entity"), "/darq/types/kb")
+    client.lenses.append(("/darq/lenses/entity", "darq.entity", "terminal"))
+    client.lenses.append(("/darq/lenses/entity", "public.item", "terminal"))
+    assert sync_module.sync(client, root, base) == 0
+    assert "darq.entity" not in client.types
+    assert client.lenses == [("/darq/lenses/entity", "public.item", "terminal")]
+
+    # Again, there's nothing to do.
+    assert sync_module.sync(client, root, base) == 0
 
 
 def test_base_catalogue_consistent():

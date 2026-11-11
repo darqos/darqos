@@ -559,7 +559,7 @@ class FakeLensClient:
         self.handle = handle
 
     def shown(self):
-        return python_types.SimpleNamespace(item_id=self.shown_as[0], page=self.shown_as[1])
+        return python_types.SimpleNamespace(item_id=self.shown_as[0], entity=self.shown_as[1])
 
 
 def focused_lens(terminal, monkeypatch, app_id="lens.12", shown=(DOC, False), found=True):
@@ -584,14 +584,14 @@ def test_sys_i_opens_the_focused_items_page(terminal, monkeypatch):
     looked_up = focused_lens(terminal, monkeypatch)
     hotkey(terminal, main.XK_i)
     assert looked_up == ["lens.12"]
-    assert terminal.fake_services.launch.used == [(DOC, None, "darq.entity")]
+    assert terminal.fake_services.launch.used == [(DOC, None, "public.item")]
 
 
 @pytest.mark.parametrize("options, said", [
     ({"app_id": "org.example.app"}, "this isn't one"),
     ({"found": False}, "Can't ask the window"),
     ({"shown": ("", False)}, "isn't showing an item"),
-    ({"shown": (DOC, True)}, f"This is {DOC}'s page"),
+    ({"shown": (DOC, True)}, f"This is {DOC}'s entity"),
 ])
 def test_sys_i_says_why_it_cant(terminal, monkeypatch, options, said):
     unlock(terminal)

@@ -184,7 +184,7 @@ IMPRINT = "2f20d2aa-65a0-4486-86c4-56facb477bf6"
 BINDING = "2eabea67-5f8d-4d35-aec1-878da88f077d"
 
 # On a copy: where it is, as text for now, or the item that's its content,
-# a link to its entity, as every item's an entity, and its printing, and
+# a link to its entity, as every item has an entity, and its printing, and
 # when it was printed, and where it came from: when, from where, and for
 # how much, as text.  Its identifier and tags on LibraryThing.
 LOCATION = "2cf1b758-7379-418f-9ea6-049d74518bbe"
@@ -200,7 +200,7 @@ TAG = "8b300fc8-4c53-4805-9390-63864dfdafe2"
 
 # A copy's content, and an edition's cover, as they were, by an item's
 # identifier, a String, before every item was an entity: kept for what
-# can't be linked, as an item that's gone (see doc/entity-vs-item.rst).
+# can't be linked, as an item that's gone (see doc/item.rst).
 OLD_CONTENT = "0cd7fdd5-f6c8-4346-91b8-b5d674244ea4"
 OLD_COVER = "c7ef4020-e876-4650-80b5-616cd386b717"
 
@@ -815,7 +815,7 @@ def _subtitle(text: str) -> model.Value | None:
 def _name_id(store: Store, name: str, type_id: str) -> str:
     """Return the entity with a name, or make one: a language that isn't
     one of Wikidata's is an entity like any other."""
-    made = model.ENTITY_TYPE if type_id == LANGUAGE_KIND else type_id
+    made = model.THING_TYPE if type_id == LANGUAGE_KIND else type_id
     return store.find(name, type_id) or store.create(made, name).id
 
 
@@ -863,7 +863,7 @@ def _series_edits(store: Store, work: Entity, book: Book) -> list[model.Edit]:
         edits += model.remove_statement(work, statements[0].id)
     if name:
         target = _statements(work, SERIES)[0].get_value() if statements and name == now else None
-        value = target if isinstance(target, EntityValue) else EntityValue(_name_id(store, name, model.ENTITY_TYPE))
+        value = target if isinstance(target, EntityValue) else EntityValue(_name_id(store, name, model.THING_TYPE))
         added = model.add_statement(work, SERIES, value, model.ENTITY_EDITOR)
         if volume:
             typing.cast(model.AddStatement, added[0]).statement.add_qualifier(model.SERIES_ORDINAL, StringValue(volume))

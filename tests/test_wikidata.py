@@ -319,7 +319,7 @@ def test_a_hand_edit_survives_a_refresh(linker):
 def test_bringing_languages(linker):
     english = model.Item()
     english.set_label("English")
-    linker.items.create(model.ENTITY_TYPE, english)
+    linker.items.create(model.THING_TYPE, english)
     assert linker.bring_languages() == 1
     q1860 = linker.kb.get("Q1860")
     assert q1860.get_label() == "English" and "en" in q1860.get_aliases()
@@ -349,7 +349,7 @@ def test_a_language_before_wikidatas_is_one_made_here(linker):
     from darq.ui import book_store
     made = model.Item()
     made.set_label("Klingon")
-    linker.items.create(model.ENTITY_TYPE, made)
+    linker.items.create(model.THING_TYPE, made)
     store = book_store.ItemStore(["en"])
     store.kb = linker.kb
     assert store.find("Klingon", darq.book.LANGUAGE_KIND) == made.id

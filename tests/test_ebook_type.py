@@ -540,7 +540,7 @@ def test_ebook_type(live_pkernel, tmp_path):  # noqa: F811
 
 
 ################################################################
-# Its entity (see doc/entity-vs-item.rst)
+# Its entity (see doc/item.rst)
 ################################################################
 
 def test_a_new_book_is_named_by_its_title(call, kb):

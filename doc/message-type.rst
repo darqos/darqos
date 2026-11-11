@@ -177,19 +177,17 @@ Design
 ``darq.message``.  *Sending, replying, forwarding, tags, notifications,
 and constraining a search to a person or conversation come later.*
 
-Each message is a Knowledge Base entity, of a new kind.  This is a
-trial: it's the first real load of content items as entities, and
-gives the entities-and-items decision (see :doc:`entity-vs-item`)
-numbers from real data.  If it doesn't work well, it can be changed.
+Each message is an item of a kind of its own, ``darq.message``, all
+knowledge: its entity, in the Knowledge Base, is all there is of it.
 
 =======================  =============================================
 Thing                    Representation
 =======================  =============================================
-Message                  An entity of type ``darq.message``, which
+Message                  An item of type ``darq.message``, which
                          conforms to ``public.message`` and
-                         ``darq.entity``.  It has no label, so
+                         ``public.item``.  It has no label, so
                          messages stay out of searches for names.
-Conversation             An entity of type ``darq.conversation``: a
+Conversation             An item of type ``darq.conversation``: a
                          channel, direct message, or group chat.
 Service account          An item for the workspace, or the like, which
                          its statements are stated in, as an address
@@ -197,7 +195,7 @@ Service account          An item for the workspace, or the like, which
 Person                   The standard ``darq.person``, with their
                          account on the service as a statement,
                          qualified by ``service``.
-Bot                      A ``darq.entity``, not a person, which can
+Bot                      A thing, ``darq.thing``, not a person, which can
                          still be a message's sender.
 Attachment               An item, of its own type, linked to: a file
                          of a type without an implementation is kept as

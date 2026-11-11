@@ -179,7 +179,7 @@ struct Label {
 }
 
 // How many entities link to one, by a property, in a role, by the
-// linking entities' DarqOS type (darq.entity if they have none).
+// linking entities' DarqOS type (darq.thing if they have none).
 struct LinkCount {
     string property_id;
     Role role;
@@ -287,7 +287,7 @@ protocol KB {
     // it's empty), in a statement's role.  With reverse, they're in
     // descending order, from the last, and after is still the last one
     // returned.  If type_id isn't empty, only entities with that DarqOS
-    // type, or darq.entity for none, are found.
+    // type, or darq.thing for none, are found.
     7: FindLinks(string target_id, string property_id, Role role, uint32 max, string after, bool reverse, string type_id) -> (sequence<string> ids, Status status);
 
     // Find the instances of a class, or of any of its subclasses.

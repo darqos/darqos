@@ -63,14 +63,14 @@ class LensHandler(Lens.Handler):
     """What every lens answers alike: Shown, the item it's showing, which
     it keeps in shown_item, as it uses one, or moves to another."""
 
-    # Whether what it shows is an item's page, as the entity lens's is.
-    PAGE = False
+    # Whether what it shows is an item's entity, as the entity lens's is.
+    SHOWS_ENTITY = False
 
     # The item it's showing, or empty, before it's used one.
     shown_item = ""
 
     def shown(self, request: ShownRequest, source: int) -> ShownResponse:
-        return ShownResponse(item_id=self.shown_item, page=self.PAGE)
+        return ShownResponse(item_id=self.shown_item, entity=self.SHOWS_ENTITY)
 
 
 # Seconds between Viewed calls while a window has the focus, and the

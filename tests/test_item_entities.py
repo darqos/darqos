@@ -2,7 +2,7 @@
 # Copyright (C) 2026 David Arnold
 
 # Tests for Give Items Entities, tools/item-entities (see
-# doc/entity-vs-item.rst, step 3): finding the items made before every
+# doc/item.rst): finding the items made before every
 # item was an entity, from History and what the KB refers to, with a KB
 # service in this process (see test_kb_type.py), and giving them their
 # entities, named from what referred to them.

@@ -12,7 +12,7 @@ image.
 A *Type* describes an *Item*, classifying it by its properties and
 behaviour.  Types can be both general and specific, with a rich
 conformance model that allows generalisation of entire classes of
-entities.
+items.
 
 Strictly, a *type* is an abstract concept; the concrete artifacts
 are a *type identifier*, a *type description*, and a *type
@@ -189,21 +189,21 @@ Index.  A text item's blob is written only by ``types/text``, and an
 entity of one of the Knowledge Base's kinds only by ``types/kb``, with
 its ``EntityWriter`` protocol (see :doc:`kb-service`).
 
-Every item is a KB entity (see :doc:`entity-vs-item`), and everything
-about it, its content and its entity, is written through its type
-implementation, so that it keeps the item's Index entry up to date:
+Every item has an entity, its record in the KB (see :doc:`item`), and
+everything about it, its content and its entity, is written through its
+type implementation, so that it keeps the item's Index entry up to
+date:
 
-* every implementation inherits the entity type's: it serves the
-  ``EntityItem`` protocol for each of its items, on a port from
-  ``OpenEntity``, with ``darq.entity_type``'s ``EntityType`` as its
-  base class, whose hooks it overrides to publish what's changed; and
+* every implementation inherits ``ItemType``, from ``darq.item_type``:
+  it serves the ``EntityItem`` protocol for each of its items' entities,
+  on a port from ``OpenEntity``, and ``ItemType``'s hooks are overridden
+  to publish what's changed; and
 * it makes and destroys its items' entities, and only it changes their
   kinds, their DarqOS type statements.
 
 ``types/kb`` is the plain implementation, for the KB's own kinds, whose
-content is all knowledge.  Other
-entities, such as properties, classes, and plain ``darq.entity``
-entities, can be written to the KB directly.  For now this is a
+content is all knowledge.  Properties, and things, ``darq.thing``, such
+as classes, can be written to the KB directly.  For now this is a
 convention: Storage and the KB service will enforce it, once DIPC
 tells them who sent a message.
 
@@ -270,7 +270,7 @@ Every implementation serves the `Implementation` protocol (also in
   is how items come in from outside: from a file, a web page, or an
   email's attachment.  Its name is the name of the file it came from,
   as its caller knows it, or empty: the item's entity is named from it,
-  when the data has no title of its own (see :doc:`entity-vs-item`).
+  when the data has no title of its own (see :doc:`item`).
   Its media type is the one it came with, if it did, such as a server's
   `Content-Type`: a type that knows its own ignores it, but data's kept
   with it (see :doc:`data-type`).
@@ -288,13 +288,12 @@ Every implementation serves the `Implementation` protocol (also in
   its body (see :doc:`search-service`).  The implementation publishes
   each item as it saves it; this is for a reindex.  A destroyed item is
   `NOT_FOUND`, and a type that isn't indexed answers `UNSUPPORTED`,
-  as `darq.entity` does.
+  as `darq.thing` does.
 * `OpenEntity(item_id)` returns a port for an item's entity, serving the
-  `EntityItem` protocol (see :doc:`kb-service`), as every item is an
-  entity (see :doc:`entity-vs-item`): it's inherited from
-  `darq.entity_type`'s `EntityType`.  An item that has no entity yet,
-  as one made before there were entities hasn't, is given one first, by
-  its implementation (`EntityType.adopt`); an item that isn't there is
+  `EntityItem` protocol (see :doc:`kb-service`), as every item has an
+  entity (see :doc:`item`): it's inherited from `darq.item_type`'s
+  `ItemType`.  An older item that has no entity yet is given one first,
+  by its implementation (`ItemType.adopt`); an item that isn't there is
   `NOT_FOUND`.
 
 The implementation records in History what `Create`, `CreateFrom` and
@@ -499,17 +498,17 @@ A lens is started for one item, with the protocols in
   the item port, and closes the item when it's finished with it.  A
   lens uses one item: another `Use` is refused, `BUSY`.
 * The lens exits once its window is closed, or it's sent `Close`.
-* `Shown()` returns the item the lens is showing now, and whether that's
-  the item's page, as the entity lens's is: for the Terminal's *Sys-i*
+* `Shown()` returns the item the lens is showing now, and whether it's
+  showing the item's entity, as the entity lens is: for the Terminal's *Sys-i*
   (see :doc:`terminal`).  Every lens answers it alike, through
   `darq.ui.lens`'s `LensHandler`, and registers its port as
   `lens.<dpid>`, its windows' Wayland `app_id`, so it can be found from
   a window.
-* The entity lens, which is any item's page, opens the item's entity
-  itself, by its identifier, with its type implementation's
-  `OpenEntity`, and closes the port it's given, which is its type's own.
-  It's registered for `public.item`, as well as `darq.entity`, so an item
-  of a type with no lens of its own, as data's, is shown by its page.
+* The entity lens, which shows any item's entity, opens it itself, by
+  the item's identifier, with its type implementation's `OpenEntity`,
+  and closes the port it's given, which is its type's own.  It's
+  registered for `public.item`, so it's the lens of a thing, and of an
+  item of a type with no lens of its own, as data's.
 
 `darq.launch.use_item()` does all of this, from finding the lens to
 sending `Use`.  A process per item is simple, and isolates items, but

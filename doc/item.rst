@@ -1,11 +1,42 @@
 Items
 =====
 
-*Items* are things that, for instance, would usually be a file in
-traditional operating systems.  They are not, typically, small things
-like a programming language object (like, an integer or string), but
-larger things like a document, a spreadsheet, an image, etc. They are
-also used to represent real-world items, like people or places.
+*Items* are the things DarqOS holds: what would usually be a file in
+other operating systems, a document, a spreadsheet, an image, and also
+things in the world, people, places and organisations, and what's
+known of them.  They are not, typically, small things like a
+programming language's objects, an integer or a string.
+
+Terms
+-----
+
+Item
+  Anything in DarqOS, with an item identifier, a type, and an entity.
+  History, the Index and Search, and the Terminal deal in items.
+
+Entity
+  An item's record in the Knowledge Base (see :doc:`kb-service`): its
+  labels, descriptions and aliases, in any language, and its statements,
+  which link it to other items.  Every item has one.  The entity lens
+  shows and edits it.
+
+Content item
+  An item with content of its own, kept in Storage: a text, an image, a
+  PDF, an e-book, or data.  Its type reads and writes the content, and
+  its entity says what's known of it.
+
+Kind
+  An item's type, as its entity records it, its *DarqOS type*: the KB's
+  kinds, ``darq.person``, ``darq.place`` and the others, and the content
+  types, ``public.jpeg`` and the others.
+
+Thing
+  An item of the plain kind, ``darq.thing``: one with nothing more
+  specific to be, such as a class, a given name, or a unit.  Its entity
+  is all there is of it.
+
+Item Identifiers
+----------------
 
 Items are identified using an *Item Identifier* (aka *iid*).
 An item identifier is a string, with two parts: a type identifier and an
@@ -53,8 +84,9 @@ items of their supported type(s).  The type implementation determines
 where and how the state of an item is stored, and provides methods to
 view and modify that state.
 
-Item state is often stored in the Storage Service, as a blob of bytes,
-or in the Knowledge Service, as a graph of assertions and relationships.
+An item's content, if it has any, is usually stored in the Storage
+Service, as a blob of bytes, and its entity in the Knowledge Base, as
+statements and links.
 
 Item Types
 ----------
@@ -69,18 +101,71 @@ Content type.
 
 For more information on UTIs, see :doc:`types`.
 
+Entities
+--------
+
+Every item has an entity, made with it by its type.
+
+* Its item identifier is its kind and its entity's identifier:
+  ``public.jpeg:03d1824d…``, as ``darq.person:0028db09-…`` is.
+* A content item's entity's identifier is its Storage key, in hex, which
+  is its specifier.  It's how an item's bytes are found from its entity,
+  and its entity from its bytes: no statement says it.  So a type that
+  keeps its content in Storage creates the blob first, so its key is
+  there before the entity is.  A type whose content is all knowledge,
+  as the KB's kinds' is, uses a UUID, as ``types/kb`` does.
+* Its entity records its kind with its *DarqOS type* statement, and has
+  a label, its name, where it has one: a text's first line, an image's
+  or PDF's title or file name, an e-book's title.
+* Everything about an item, its content and its entity, is written
+  through its type implementation, so it's what keeps the item's Index
+  entry and History up to date (see :doc:`types`).
+* Every type implementation inherits ``ItemType``, from
+  ``darq.item_type``: it serves the ``EntityItem`` protocol for an
+  item's entity, on a second port, from ``OpenEntity``, beside the port
+  from ``Open`` that serves its type's own protocol, since a port speaks
+  one protocol, and DIDL has no inheritance.  It reads and writes the
+  entity, gives the names of what it links to, finds its links a batch
+  at a time, searches for entities to link to, and records in History
+  what's done (see :doc:`history`).  Each implementation publishes its
+  items to the Index when they change: ``types/kb``, for its kinds,
+  their names and descriptions, and a content type what's in the
+  content too.
+* A statement refers to an item with an entity value, a link, so it's
+  followed, and found backwards, as any link is.
+* What isn't knowledge, such as where a reader's got to, is view state,
+  kept by its type in the item: for a content item, in its blob's
+  header.
+* Short-lived items, such as calculations, have entities too, and are
+  destroyed like any other.
+
 Facts About an Item
 -------------------
 
-Every item is an entity in the Knowledge Base (see
-:doc:`entity-vs-item`), so what's known of it is said there: its
-name, a label, in any language; its kind; when it was made; its tags
-(*has tag*); and, for a picture, who and what it depicts.  Its entity
-links to other items as to any entity, and is edited on its page, in
-the entity lens (*Sys-i*).  What happened to it is in History.
+What's known of an item is said on its entity:
 
-What isn't knowledge, such as where a reader's got to, is view state,
-kept by its type in the item.
+* **Its name**, a label, in any language.  An item with none is named
+  by its kind and when it was made, *Text File, 8 Nov 2026*
+  (``darq.ui.names``), and History, Search, and the lenses' window
+  titles, for the switcher, show items by name.
+* **Its kind**, and **when it was made**, a local *created* property,
+  and, for what came from a file, its *file name*.
+* **Its tags**, with *has tag*, linking to tags, items of their own
+  kind, ``darq.tag``, whose entities list what has them, as *tag of*
+  (``darq.items.tag``).
+* **What a picture depicts**, with Wikidata's *depicts* (P180), and
+  **the picture of something**, with *image* (P18): a person's entity
+  lists the pictures they're in, as *depicted in*.
+* **What it's part of**, as links: a Copy's *content* is its PDF or
+  e-book, an Edition's *cover* is an image, a URL's *snapshot* is what
+  was fetched, and a message's *attachment* is a file, each read
+  backwards too, as *content of*, *cover of* and so on.
+
+An item's entity is opened with *Sys-i*, from the focused window's
+item: the Terminal asks the window's lens what it's showing, through
+the Lens protocol's ``Shown`` (see :doc:`terminal`), and opens that
+item's entity in the entity lens, where it's renamed, tagged, and
+anything else is said of it.  What happened to it is in History.
 
 Item Storage
 ------------
@@ -91,9 +176,9 @@ implemented to use the Storage Service to persist their state.  This
 includes things like plain or formatted text documents, source code,
 images, videos, sounds and songs, CAD diagrams, etc.
 
-Other items, for instance person, group, or location items from an
-address book application, are represented using a generic knowledge
-graph service.
+Other items, for instance people, groups, or places from an address
+book, are all knowledge: their entities in the Knowledge Base are all
+there is of them.
 
 The *iid*'s type identifier provides the link between code that uses an
 item and its stored state.  The system itself knows nothing about how
@@ -107,11 +192,45 @@ say.
 Using Items
 -----------
 
-It's important to distinguish between the Item's state, the Type
-Implementation that interprets it, and the *Lens* that presents
-the item's properties to the system operator.  A typical Unix or
-Windows application is broken into one or more lenses and type
-implementations in DarqOS.
+It's important to distinguish between the item's state, the Type
+Implementation that interprets it, and the *Lens* that presents it to
+the operator.  A typical Unix or Windows application is broken into one
+or more lenses and type implementations in DarqOS.
+
+An item opens in its type's own lens, such as the text lens for a text,
+or the book lens for a book.  The entity lens is the lens for
+``public.item``, which every type conforms to, so it's the lens of a
+thing, and of any item whose type has no lens of its own, as data's
+hasn't; and it's where *Sys-i* shows any item's entity.
+
+Older Items
+-----------
+
+An item made before every item had an entity is given one when it's
+opened, or its entity is, by its type (``adopt``), named by its
+content's title, if it has one.  The Give Items Entities tool
+(``tools/item-entities``), from the Terminal's Tools panel (*Sys-t*),
+does that for every content item History has events for, and every one
+the KB refers to, names those still unnamed from what referred to them,
+and turns references to them, as identifiers in text, into links.
+References that are still text, to items that are gone, or files that
+aren't items, are kept in the old properties, labelled *(identifier,
+old)*, or *attached file*, and shown as links to the items.
+
+Open Questions
+--------------
+
+* **Identity across formats.**  Whether a converted item keeps its
+  identity: its entity could, with a new kind, if an item identifier
+  didn't include its type, but History, the Index, and the Type
+  service's activation all use the type in it.  Books answer the
+  commoner case, one book as a PDF, an EPUB and a paper copy: they're
+  three items, each a Copy of an Edition of the same Work (see
+  :doc:`book`).
+* **Which facts a content item has.**  Beyond its name, kind and
+  created time: size, dimensions, page count, and an image's EXIF, or
+  only what's said of it by a person, or a source such as Wikidata?
+  Each type's, decided as it's built.
 
 References
 ==========

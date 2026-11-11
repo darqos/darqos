@@ -169,8 +169,8 @@ def test_index_entry(kb, implementation):
     assert index_entry(implementation, iid) == (["Ada Lovelace", "Ada", "Augusta Ada King"],
                                                 "mathematician\nmathématicienne")
 
-    # Items of darq.entity aren't indexed.
-    thing, _ = create(implementation, "darq.entity")
+    # Items of darq.thing aren't indexed.
+    thing, _ = create(implementation, "darq.thing")
     assert index_entry(implementation, thing) == Status.UNSUPPORTED
 
     # A merged entity's item is the other's now; a destroyed one's gone.
@@ -188,7 +188,7 @@ def test_published_as_written(kb, implementation, index):
     iid, port = create(implementation, "darq.person")
     entity_id = darq.split_item_id(iid)[1]
     assert index.sent == [("publish", iid, "")]
-    create(implementation, "darq.entity")
+    create(implementation, "darq.thing")
     assert len(index.sent) == 1
 
     person = kb.get(entity_id)
@@ -313,7 +313,7 @@ def test_kind_of(kb, implementation):
 
     assert [kind(i) for i in ("acme", "qld", "ada", "dept", "addr", "friends", "name")] == [
         "darq.organisation", "darq.place", "darq.person", "darq.organisational-unit", "darq.place",
-        "darq.group", "darq.entity"]
+        "darq.group", "darq.thing"]
 
     # A preferred instance type overrides the default, once the cache
     # hears of it.
@@ -336,7 +336,7 @@ def test_kind_of(kb, implementation):
 @pytest.mark.parametrize("type_id, cls", [
     ("darq.person", "Q5"), ("Darq.Organisation", "Q43229"), ("darq.organisational-unit", "Q9261468"),
     ("darq.place", "Q2221906"), ("darq.group", "Q16334295"), ("darq.conversation", model.CONVERSATION),
-    ("darq.message", model.INSTANT_MESSAGE), ("darq.entity", None)])
+    ("darq.message", model.INSTANT_MESSAGE), ("darq.thing", None)])
 def test_create_and_open(kb, implementation, type_id, cls):
     item_id, port = create(implementation, type_id)
     canonical, entity_id = darq.split_item_id(item_id)
@@ -359,7 +359,7 @@ def test_create_refuses_other_types(implementation):
 def test_open_is_strict(kb, implementation):
     item_id, _ = create(implementation, "darq.person")
     _, entity_id = darq.split_item_id(item_id)
-    assert open_item(implementation, f"darq.entity:{entity_id}") == Status.NOT_FOUND
+    assert open_item(implementation, f"darq.thing:{entity_id}") == Status.NOT_FOUND
     assert open_item(implementation, f"darq.place:{entity_id}") == Status.NOT_FOUND
     assert open_item(implementation, "darq.person:missing") == Status.NOT_FOUND
     assert open_item(implementation, "public.png:x") == Status.NOT_FOUND
@@ -531,12 +531,12 @@ def test_get_entity(ada):
     linked = {(link.entity_id, link.item_id, link.language, link.label) for link in response.linked}
     assert linked == {
         ("acme", "darq.organisation:acme", "en", "Acme"),
-        ("Q5", "darq.entity:Q5", "en", "human"),
+        ("Q5", "darq.thing:Q5", "en", "human"),
         ("P108", "", "en", "employer"),
         (model.INSTANCE_OF, "", "en", "instance of"),
         (model.DARQOS_TYPE, "", "en", "DarqOS type"),
         (model.STATED_IN, "", "en", "stated in"),
-        (model.DARQOS, f"darq.entity:{model.DARQOS}", "en", "DarqOS"),
+        (model.DARQOS, f"darq.thing:{model.DARQOS}", "en", "DarqOS"),
     }
 
 
@@ -653,7 +653,7 @@ def test_get_links_newest_first_and_without_messages(kb, implementation):
     assert links(property_id=darq.message.CONVERSATION, reverse=True, max=2) == ["m3", "m2"]
     assert links(property_id=darq.message.CONVERSATION, reverse=True, max=2, after="m2") == ["m1", "ada"]
     assert links(type_id="darq.message") == ["m1", "m2", "m3"]
-    assert links(type_id="darq.entity") == ["ada"]
+    assert links(type_id="darq.thing") == ["ada"]
 
 
 def test_messages_are_summarised_when_listed(kb, implementation):
@@ -687,8 +687,8 @@ def test_get_link_summary(kb, implementation):
     response = item(implementation, port).get_link_summary(GetLinkSummaryRequest(languages=["en"]), 0)
     assert response.status == wire.Status.OK
     assert [(g.property_id, g.role, g.type_id, g.count, g.label, g.inverse_label) for g in response.groups] == [
-        (darq.message.CONVERSATION, Role.MAIN, "darq.entity", 1, "part of", "has part"),
-        (darq.message.CONVERSATION, Role.MAIN, "darq.message", 2, "part of", "has part")]
+        (darq.message.CONVERSATION, Role.MAIN, "darq.message", 2, "part of", "has part"),
+        (darq.message.CONVERSATION, Role.MAIN, "darq.thing", 1, "part of", "has part")]
 
 
 def test_get_link_summary_without_an_inverse_label(kb, implementation, ada):
@@ -937,3 +937,19 @@ def test_viewing_and_editing_an_entity_on_its_port(kb, implementation, recorded)
                                              context=wire.Context(source="wikidata-match", note="Q7259")), 0)
     assert recorded.events == [(item_id, "viewed", "entity-lens", ""), (item_id, "edited", "entity-lens", ""),
                                (item_id, "edited", "wikidata-match", "Q7259")]
+
+
+def test_a_renamed_type_is_renamed_when_it_starts(kb, implementation):
+    """Items of darq.entity, now darq.thing, have their DarqOS type
+    statements renamed, once."""
+    old = model.Item("old")
+    old.set_label("A unit")
+    old.claim(model.DARQOS_TYPE, model.StringValue("darq.entity"))
+    kb.put(old)
+    implementation.start()
+    renamed = kb.get("old")
+    assert [s.get_value().value for s in renamed.get_statements(model.DARQOS_TYPE)] == [model.THING_TYPE]
+    assert implementation.kind_of(renamed) == model.THING_TYPE
+    revision = renamed.revision
+    implementation.start()
+    assert kb.get("old").revision == revision

@@ -448,7 +448,7 @@ class Linker:
             for local_id in sorted(self.kb.find_by_label(language.label, "en")):
                 if not is_wikidata(local_id):
                     local = self.kb.get(local_id, follow=False)
-                    if local is not None and model.recorded_type(local) == model.ENTITY_TYPE:
+                    if local is not None and model.recorded_type(local) == model.THING_TYPE:
                         self.items.merge(local_id, language.id)
                         merged += 1
         return merged

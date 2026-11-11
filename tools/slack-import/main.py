@@ -41,8 +41,8 @@ import slack_importer  # noqa: E402
 # Seconds to wait for services' replies: a large file takes a while.
 TIMEOUT = 60.0
 
-# The type whose implementation creates the items.
-ENTITY_TYPE = model.ENTITY_TYPE
+# A type whose implementation, the KB's, creates the items.
+KB_TYPE = model.THING_TYPE
 
 
 class LaunchFiles:
@@ -60,9 +60,9 @@ def run_import(path: str, name: str, progress: typing.Callable[[str, int, int], 
     :raises darq.DarqError: if a service can't be reached."""
     export = slack_export.Export(path)
     types = Type.Client(darq.connect("darq.type"), timeout=TIMEOUT)
-    activated = types.activate(type_id=ENTITY_TYPE)
+    activated = types.activate(type_id=KB_TYPE)
     if activated.status != Status.OK or activated.implementation is None:
-        raise darq.DarqError(f"Can't activate {ENTITY_TYPE}: {activated.status.name}")
+        raise darq.DarqError(f"Can't activate {KB_TYPE}: {activated.status.name}")
     implementation = Implementation.Client(activated.implementation, timeout=TIMEOUT)
     kb = model.KB.connect(timeout=TIMEOUT)
     items = model.KB(kb.client, EntityWriter.Client(activated.implementation, timeout=TIMEOUT))

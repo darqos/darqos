@@ -231,7 +231,7 @@ for what it shows, so this choice doesn't commit it.
   vocabulary, and ``darq.launch.import_data`` makes an item of data, as
   the Slack import does too, named by the last part of its URL's path,
   ``paper.pdf``, which its entity's named from, if it has no title of
-  its own (see :doc:`entity-vs-item`).
+  its own (see :doc:`item`).
 
 The tests are in ``tests/test_http_service.py``, with a web server of
 their own.

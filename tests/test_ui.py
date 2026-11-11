@@ -339,7 +339,7 @@ def test_type_names_are_looked_up_once(made, monkeypatch):
 
 
 ################################################################
-# Items' names (see doc/entity-vs-item.rst, step 5)
+# Items' names (see doc/item.rst)
 ################################################################
 
 def named(store, item_id: str, label: str = "", created=None) -> model.Item:
@@ -412,7 +412,7 @@ def test_a_lens_says_what_its_showing():
     from darq.protocols.lens import ShownRequest
     from darq.ui.lens import LensHandler
     handler = LensHandler()
-    assert (handler.shown(ShownRequest(), 0).item_id, handler.shown(ShownRequest(), 0).page) == ("", False)
+    assert (handler.shown(ShownRequest(), 0).item_id, handler.shown(ShownRequest(), 0).entity) == ("", False)
     handler.shown_item = DOC
     assert handler.shown(ShownRequest(), 0).item_id == DOC
 

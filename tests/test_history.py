@@ -203,6 +203,17 @@ def test_an_older_database_gains_notes(database, clock):
     service.db.close()
 
 
+def test_a_renamed_types_events_are_renamed(database, clock):
+    service = module.HistoryService(database, clock)
+    add(service, "darq.entity:Q5", "edited")
+    service.db.close()
+
+    service = module.HistoryService(database, clock)
+    assert get(service)[0][1:3] == ("darq.thing:Q5", "edited")
+    assert get(service, type_ids=["darq.thing"]) and not get(service, type_ids=["darq.entity"])
+    service.db.close()
+
+
 def test_events_persist(database, clock):
     service = module.HistoryService(database, clock)
     add(service, event="created")

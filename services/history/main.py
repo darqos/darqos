@@ -16,6 +16,7 @@ import time
 import typing
 
 import darq
+import darq.history
 from darq.protocols.history import (
     AddEvent,
     Event,
@@ -87,6 +88,10 @@ class HistoryService(History.Handler):
             columns = {row[1] for row in self.db.execute("pragma table_info(events)")}
             if "note" not in columns:
                 self.db.execute("alter table events add column note text not null default ''")
+            # Items of a renamed type have new identifiers.
+            for old, new in darq.history.RENAMED_TYPES.items():
+                self.db.execute("update events set type_id = ?, item_id = ? || substr(item_id, ?) where type_id = ?",
+                                (new, new, len(old) + 1, old))
         logging.info(f"History database {path}")
         return
 

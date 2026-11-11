@@ -43,6 +43,7 @@ from PyQt6.QtWidgets import (
 
 import darq
 import darq.book
+import darq.items
 import darq.kb as model
 import darq.launch
 import darq.openlibrary
@@ -876,7 +877,7 @@ class BookLens(LensHandler):
             self.show_status("This book has nothing to read")
 
     def show_entity(self):
-        self.opener.use(self.item_id, model.ENTITY_TYPE)
+        self.opener.use(self.item_id, darq.items.BASE_TYPE)
 
     def reread(self):
         if self.read() and self.window is not None:

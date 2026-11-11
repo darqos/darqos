@@ -13,9 +13,10 @@
 #   under lenses/.
 #
 # Registering replaces a type's description and implementation, so a
-# changed manifest takes effect.  Nothing is removed: a type or lens
-# that's no longer installed stays in the catalogue until it's
-# deregistered.
+# changed manifest takes effect.  A type that's been renamed (see
+# darq.history.RENAMED_TYPES) is deregistered, with its lenses; nothing
+# else is removed: a type or lens that's no longer installed stays in the
+# catalogue until it's deregistered.
 #
 # Manifest formats:
 #
@@ -38,6 +39,7 @@ import pathlib
 import typing
 
 import darq
+import darq.history
 from darq.protocols.type import Description, Status, Type
 
 
@@ -102,6 +104,13 @@ def sync(client: Type.Client, root: pathlib.Path, base: pathlib.Path = BASE_CATA
             if status != Status.OK:
                 logging.error(f"Can't register lens {directory} for {type_id}: {status.name}")
                 failed += 1
+
+    # A renamed type's old name goes, with the lenses registered for it.
+    for type_id in darq.history.RENAMED_TYPES:
+        for lens in client.find_lenses(type_id=type_id, context="terminal").lenses:
+            client.deregister_lens(lens=lens, type_id=type_id, context="terminal")
+        if client.deregister(type_id=type_id).status == Status.OK:
+            logging.info(f"Deregistered {type_id}, which has been renamed")
 
     logging.info(f"Type catalogue synced from {root}" + (f", with {failed} failures" if failed else ""))
     return failed

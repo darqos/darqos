@@ -1,15 +1,15 @@
 Knowledge Base Service
 ======================
 
-The *Knowledge Base Service* (KB) holds a graph of facts about things:
-people, organisations, places, and anything else that's an item of
-knowledge rather than a document.  Its data model follows Wikidata's,
-and it uses Wikidata's identifiers where they exist, so that a fact
-about Australia is about Wikidata's Australia, Q408.
+The *Knowledge Base Service* (KB) holds a graph of facts about items:
+every item's *entity*, its record (see :doc:`item`), whether it's all
+knowledge, as people, organisations and places are, or a document, an
+image or a message.  Its data model follows Wikidata's, and it uses
+Wikidata's identifiers where they exist, so that a fact about Australia
+is about Wikidata's Australia, Q408.
 
-It's the store behind the PIM types (see :doc:`pim`), and for anything
-else that's better described as assertions and relationships than as
-a blob (see :doc:`item`).
+It's the store behind the PIM types (see :doc:`pim`), and of what's
+known about every content item, beside its content in Storage.
 
 The service, in ``services/kb``, is the start of an implementation of
 this design (see Implementation, below, and the Second Edition plan,
@@ -19,10 +19,11 @@ yet queries.
 Data Model
 ----------
 
-The KB holds *entities*: *items*, which are things, and *properties*,
-which are the kinds of things that can be said about them.  Each has a
-string identifier: a Wikidata identifier, such as ``Q42`` or ``P31``,
-where there is one, or otherwise a UUID.
+The KB holds *entities*: items' entities, and *properties*, which are
+the kinds of things that can be said about items.  Each has a string
+identifier: a Wikidata identifier, such as ``Q42`` or ``P31``, where
+there is one, or otherwise a UUID, or, for a content item's, its
+Storage key.
 
 An entity has *labels*, *descriptions* and *aliases*, each kept per
 language, by language tag, such as ``en`` or ``en-AU``.  Labels aren't
@@ -280,7 +281,7 @@ Most questions are answered by a lookup, each backed by an index:
   descending order, from the last, as a conversation's messages are
   read, newest first, and ``after`` is still the last one returned.
   With ``type_id``, only entities with that DarqOS type are found:
-  ``darq.entity`` for those with none.
+  ``darq.thing`` for those with none.
 * ``LinkCounts(target_id)`` returns how many entities link to one, by
   each property, role and type.
 * ``Instances(class_id, max, after)`` finds the instances of a class.
@@ -319,7 +320,7 @@ Kinds with many items should have identifiers that sort by time, as
 messages' do (see :doc:`message-type`), so that their groups can be
 read newest first, with no other index.  An entity's *type* here is
 its recorded DarqOS type: one that has only a class, with no recorded
-type, is in the ``darq.entity`` group, so the store needn't read
+type, is in the ``darq.thing`` group, so the store needn't read
 classes.
 
 Queries
@@ -488,11 +489,8 @@ contact details also conform to ``public.contact``:
 =============================  =======================================
 Type                           Entities
 =============================  =======================================
-``darq.entity``                Any entity: the base type of every KB
-                               item.  Those of no other kind, such as
-                               properties, given names, classes, and
-                               units, are of this type.  Conforms to
-                               ``public.item``.
+``darq.thing``                 Things: items of no other kind, such
+                               as given names, classes, and units.
 ``darq.person``                People.  Also conforms to
                                ``public.contact``.
 ``darq.organisation``          Organisations, such as companies.  Also
@@ -512,16 +510,16 @@ Type                           Entities
 ``public.url``                 Places on the web (see :doc:`url-type`),
                                with what's been fetched from them.
 ``darq.tag``                   Tags, which anything can have, by *has
-                               tag*: a tag's page lists what has it,
+                               tag*: a tag's entity lists what has it,
                                as *tag of*.
 =============================  =======================================
 
-The others conform to ``darq.entity``.  ``darq.entity`` doesn't
-conform to ``public.data``, since an entity isn't a byte stream, nor
-to ``public.content``, which is for documents.  A person's lenses are
-found through both ``public.contact`` and ``darq.entity``, which are
-the same distance away, so a contact lens and the property-sheet lens
-(see Lenses, below) are both offered.
+Each conforms to ``public.item``, as every type does, and not to
+``public.data``, since an entity isn't a byte stream, nor to
+``public.content``, which is for documents.  A person's lenses are
+found through both ``public.contact`` and ``public.item``, which are
+the same distance away, so a contact lens and the entity lens (see
+Lenses, below) are both offered.
 
 An item identifier is the type identifier and the entity's identifier,
 as it is: ``darq.place:Q408`` is Australia, and ``darq.person:``
@@ -530,9 +528,9 @@ followed by a UUID is someone from an address book.
 Content Items
 ~~~~~~~~~~~~~
 
-Every item is an entity (see :doc:`entity-vs-item`), including those of
-the types that keep their content in Storage: text, images, PDFs and
-e-books.  ``darq.items`` makes, reads, names and destroys their
+Every item has an entity (see :doc:`item`), including those of the
+types that keep their content in Storage: text, images, PDFs, e-books
+and data.  ``darq.items`` makes, reads, names and destroys their
 entities, for their type implementations:
 
 * A content item's entity is identified by its blob's Storage key, in
@@ -547,11 +545,11 @@ entities, for their type implementations:
   properties: *created*, when it was made, in DarqOS, to the second, and
   *file name*, the file it was made from, the same property as a
   message's attachment's file name.
-* An item made before there were entities is given its entity when it,
-  or its entity, is opened, by its type implementation, which overrides
-  ``EntityType.adopt``: so ``OpenEntity`` finds every content item that's
-  there.  The rest are given theirs by Give Items Entities (see
-  :doc:`entity-vs-item`).
+* An older item, made before every item had an entity, is given its
+  entity when it, or its entity, is opened, by its type implementation,
+  which overrides ``ItemType.adopt``: so ``OpenEntity`` finds every
+  content item that's there.  Give Items Entities gives the rest theirs
+  (see :doc:`item`).
 * The kinds' names, such as JPEG Image, are in ``darq.items``, and so
   their items are listed by them on an entity's page.
 * A new item's entity is made by its type implementation, after its
@@ -559,7 +557,7 @@ entities, for their type implementations:
   image's), or else by the file it came from, without its extension, as
   ``CreateFrom`` is given it: an empty note has none.  If the KB won't
   write it, that's logged, and the item's made all the same: an item
-  that has no entity is given one later (see :doc:`entity-vs-item`).
+  that has no entity is given one later (see :doc:`item`).
 * Its names, its entity's labels and aliases, are published to the
   Index with what the type reads from its content, and again when its
   entity's changed through its port.  It's destroyed with the item.
@@ -587,7 +585,7 @@ data in the KB, rather than code.  An entity's kind is the first of
 10. ``darq.tag``
 
 that any of its classes, or of their superclasses, by subclass of
-(P279), has as its instance type, or else ``darq.entity``.  Place comes
+(P279), has as its instance type, or else ``darq.thing``.  Place comes
 before organisation because Wikidata has administrative territorial
 entity, the class of regions, as a subclass of organization as well as
 of geographic location.  Recording a kind keeps an item's identifier
@@ -663,7 +661,7 @@ the default instance types (see ``darq.kb.KB.state``).
   instance of its class (a ``darq.person`` is an instance of human),
   with its DarqOS type.
 * ``Open(item_id)`` opens an entity's item, if its kind is the item
-  identifier's type: ``darq.entity:`` and a person's identifier is
+  identifier's type: ``darq.thing:`` and a person's identifier is
   ``NOT_FOUND``, since conformance is for lenses, not identifiers.
   A merged entity's item opens the entity it redirects to, whatever
   its kind, and a destroyed one's is ``NOT_FOUND``.
@@ -672,9 +670,9 @@ the default instance types (see ``darq.kb.KB.state``).
 * ``OpenEntity(item_id)`` is the same as ``Open``, for these kinds,
   whose item is their entity.
 
-It's the plain implementation of the entity type, which every type
-implementation inherits (see :doc:`entity-vs-item`): ``darq.entity_type``'s
-``EntityType`` is its base class, and serves the ``EntityItem``
+It's the plainest type implementation: ``ItemType``, from
+``darq.item_type``, which every type implementation inherits (see
+:doc:`item`), is its base class, and serves the ``EntityItem``
 protocol for each item, the entity lens's, below.  It calls a hook,
 ``entity_changed``, after each change made through an item's port,
 which ``types/kb`` overrides to publish the entity to the Index.  The
@@ -700,7 +698,7 @@ too, from 16, for clients that write many at once, such as an import:
   create one at a time.  One that exists is a conflict.
 
 Each records what it does in History, as its ``context`` describes it,
-for entities of a kind other than ``darq.entity`` (see :doc:`history`,
+for items other than things, ``darq.thing`` (see :doc:`history`,
 Who Records Events).
 
 Given an ``EntityWriter`` client, ``darq.kb.KB`` writes through it:
@@ -711,7 +709,7 @@ set once for all of its writes.
 Properties, classes, and other entities that aren't of a kind with its
 own implementation can still be written to the KB service directly.
 
-Each entity of a kind other than ``darq.entity`` that it creates or
+Each item other than a thing, ``darq.thing``, that it creates or
 writes, with ``Create``, ``PutEntity`` or ``WriteEntities``, is
 published to the Index (see :doc:`search-service`): its labels and
 aliases, in every language, as names, and its descriptions as its
@@ -719,7 +717,7 @@ body, with a message's text, so the Terminal's Search finds people,
 organisations and places by name, and messages by what they say.  One that's destroyed, or merged into another, is withdrawn,
 as is one whose kind has changed, under the kind it was; the one it's
 merged into is published again.  ``IndexEntry`` gives the same entry,
-for a reindex, and is ``UNSUPPORTED`` for ``darq.entity``.
+for a reindex, and is ``UNSUPPORTED`` for ``darq.thing``.
 
 An item's port serves the ``EntityItem`` protocol, in
 ``lib/didl/kb.didl``: the ``Item`` protocol's ``Close`` and
@@ -765,9 +763,11 @@ watches the KB to drop those that change.
 Lenses
 ~~~~~~
 
-The entity lens, ``lenses/entity``, a property sheet for
-``darq.entity``, shows and edits any entity.  ``FindLenses`` falls
-back through conformance, so every kind has this lens from the start.
+The entity lens, ``lenses/entity``, a property sheet registered for
+``public.item``, shows and edits any item's entity.  ``FindLenses``
+falls back through conformance, so every kind has this lens from the
+start: it's the only lens for a thing, and *Sys-i* opens any item's
+entity in it (see :doc:`terminal`).
 
 * It shows the entity's label, kind, and item identifier; its
   description and aliases; its statements, by property, with their
@@ -912,7 +912,7 @@ about them.
 Other Items
 ~~~~~~~~~~~
 
-Every item has an entity (see :doc:`entity-vs-item`), so KB statements
+Every item has an entity (see :doc:`item`), so KB statements
 link to other DarqOS items as they link to anything: a person's photo
 is an image item, their *image* (P18), and their emails, papers, and
 commits can be linked to them.
@@ -920,7 +920,7 @@ commits can be linked to them.
 An item's name is its entity's label, in the KB, and its tags are
 statements too, *has tag*, linking to tags, entities of their own
 kind, ``darq.tag``.  An image says who and what's in it with *depicts*
-(P180), so a person's page lists the pictures they're in, as *depicted
+(P180), so a person's entity lists the pictures they're in, as *depicted
 in*.  What isn't knowledge, such as where a reader's got to, is view
 state, kept by each type in its items.
 
@@ -932,11 +932,11 @@ Open Questions
 
 None, for now.  These were settled:
 
-* Person, organisation, organisational unit, place, and group are the
-  first kinds, with ``darq.entity`` as their base type, and the type
-  of everything else.  Properties aren't a kind: they're the vocabulary, rather than things
+* Person, organisation, organisational unit, place, and group were the
+  first kinds, with ``darq.thing`` the kind of everything else.
+  Properties aren't a kind: they're the vocabulary, rather than things
   the operator works with, and are changed by tools, on the KB
-  service's port, so they're ``darq.entity`` items.  Events
+  service's port, so they're things.  Events
   might be next, as Apple's ``public.calendar-event``, the base type
   for scheduled events, rather than a ``darq`` type.  Documents'
   bibliographic records (see :doc:`bib`) can wait.
@@ -1006,7 +1006,7 @@ The import is:
    * otherwise, it's created, as an item of its kind, with the type
      implementation's ``Create``, which records it in History as
      ``created``, from ``vcard-import``, noted with the address book's
-     name, if it's of a kind other than ``darq.entity`` (see
+     name, if it's not a thing, ``darq.thing`` (see
      :doc:`history`).  What it destroys is recorded too; its writes of
      statements aren't.
 

@@ -24,9 +24,9 @@ data, as a Place is, and anything that fetches asks the HTTP service.
 That means it needs no implementation of its own.  It's another kind in
 ``types/kb`` (see :doc:`kb-service`), of class URL (Q42253), which
 gives it labels, statements, the groups of what links to it, publishing
-to the Index, and the entity lens.  ``types/kb/type.json`` registers ``public.url`` itself, conforming
-to ``darq.entity``, in place of the catalogue's ``public.data``, as an
-entity isn't a byte stream.
+to the Index, and the entity lens.  ``types/kb/type.json`` registers ``public.url`` itself, conforming to
+``public.item``, in place of the catalogue's ``public.data``, as a URL's
+item isn't a byte stream.
 
 Identity
 --------
@@ -45,8 +45,8 @@ A resource that moves has two items: see Redirects in
 :doc:`http-service`.  Each keeps its own snapshots, sharing an item if
 the content's the same, and the old URL says where it went.
 
-An entity's made when something needs one: when a URL's snapshotted, or
-a statement refers to it.  URLs mentioned in documents or messages don't
+A URL's item is made when something needs one: when a URL's
+snapshotted, or a statement refers to it.  URLs mentioned in documents or messages don't
 each get one.
 
 Statements
@@ -74,7 +74,7 @@ A snapshot's a link to its item's entity, as a message's attachment is
 (see :doc:`message-type`), with *snapshot of* as its inverse label: one
 from before links is a String, its item's identifier, on *snapshot
 (identifier, old)*, until Give Items Entities links it (see
-:doc:`entity-vs-item`).  The latest is the last.  Wikidata's closest to *moved to*, replaced by (P1366), is for
+:doc:`item`).  The latest is the last.  Wikidata's closest to *moved to*, replaced by (P1366), is for
 people and offices, so it's local, with *moved from* as its inverse
 label.  The item's label is its URL, so Search finds it by that: a
 document's title would be better, once something can tell what it is.

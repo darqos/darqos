@@ -950,9 +950,9 @@ REPLACED = "e49c7e56-ea4b-4b90-8d00-fe0510b0a7b3"
 REMOVED = "efc0fb84-3ef0-43d1-81c8-a1b40a0a12d8"
 
 
-# Kinds: the types of KB items (see doc/kb-service.rst).  An entity of
-# no other kind is a darq.entity.
-ENTITY_TYPE = "darq.entity"
+# Kinds: the types of KB items (see doc/kb-service.rst).  An item of no
+# other kind is a darq.thing, as properties, classes and given names are.
+THING_TYPE = "darq.thing"
 
 # The class of a conversation: local, as Wikidata's (Q52943) is of spoken
 # ones.
@@ -992,7 +992,7 @@ KINDS = [
     ("darq.tag", TAG_CLASS),
 ]
 
-KIND_TYPES = [ENTITY_TYPE] + [kind for kind, _ in KINDS]
+KIND_TYPES = [THING_TYPE] + [kind for kind, _ in KINDS]
 
 # The instance type of each class, by default, with its label: human,
 # organizational subdivision, organization, geographic location,
@@ -1039,11 +1039,11 @@ def _targets(entity: Entity, property_id: str) -> List[str]:
 
 
 def recorded_type(entity: Entity) -> str:
-    """Return an entity's recorded DarqOS type, or darq.entity if it has
+    """Return an entity's recorded DarqOS type, or darq.thing if it has
     none, as links are grouped by it: classes are left to kind_of, so
     that the store needn't read any."""
     recorded = _strings(entity, DARQOS_TYPE)
-    return recorded[0] if recorded else ENTITY_TYPE
+    return recorded[0] if recorded else THING_TYPE
 
 
 def kind_of(entity: Entity, get: Callable[[str], Optional[Entity]]) -> str:
@@ -1051,7 +1051,7 @@ def kind_of(entity: Entity, get: Callable[[str], Optional[Entity]]) -> str:
 
     It's its recorded DarqOS type, if it has one; otherwise, the first
     kind, in order of priority, that any of its classes, or their
-    superclasses, have as their instance type; otherwise darq.entity.
+    superclasses, have as their instance type; otherwise darq.thing.
 
     :param get: Returns an entity, by identifier, or None."""
     recorded = _strings(entity, DARQOS_TYPE)
@@ -1075,7 +1075,7 @@ def kind_of(entity: Entity, get: Callable[[str], Optional[Entity]]) -> str:
     for kind, _ in KINDS:
         if kind in found:
             return kind
-    return ENTITY_TYPE
+    return THING_TYPE
 
 
 def stamp(entity: Entity, type_id: str, class_id: Optional[str] = None):

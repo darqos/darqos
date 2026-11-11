@@ -1,7 +1,7 @@
 # darqos
 # Copyright (C) 2026 David Arnold
 
-# Tests for items' entities (see doc/entity-vs-item.rst): every item a KB
+# Tests for items' entities (see doc/item.rst): every item a KB
 # entity, identified by its blob's Storage key, with its kind, name, and
 # when it was made, against a KB service in this process (see
 # test_kb_type.py).

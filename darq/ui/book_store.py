@@ -176,10 +176,10 @@ class ItemStore:
         except ERRORS as e:
             logging.info(f"Can't look up names like {text}: {e!r}")
             return []
-        if type_id == model.ENTITY_TYPE:
-            entities = [e for e in entities if model.recorded_type(e) == model.ENTITY_TYPE]
+        if type_id == model.THING_TYPE:
+            entities = [e for e in entities if model.recorded_type(e) == model.THING_TYPE]
         if not entities and type_id == darq.book.LANGUAGE_KIND:
-            return self.names_like(text, model.ENTITY_TYPE, most)
+            return self.names_like(text, model.THING_TYPE, most)
         names = (e.get_label() for e in entities if isinstance(e, model.Item) and not e.destroyed)
         return sorted(dict.fromkeys(n for n in names if n), key=str.casefold)[:most]
 
@@ -201,8 +201,8 @@ class ItemStore:
 
         # Before Wikidata's languages are brought, a language's one made here.
         if not found and type_id == darq.book.LANGUAGE_KIND:
-            found = self.labelled(label, model.ENTITY_TYPE)
-            type_id = model.ENTITY_TYPE
+            found = self.labelled(label, model.THING_TYPE)
+            type_id = model.THING_TYPE
         if not found:
             return ""
         self.linked[found[0]] = Linked(entity_id=found[0], item_id=model.item_id(found[0], type_id), label=label)

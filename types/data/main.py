@@ -15,8 +15,8 @@
 # then the bytes.  It takes anything, so it's what's made of what no
 # other type takes, by darq.launch.import_data and the launcher.
 #
-# Every item's an entity (see doc/entity-vs-item.rst): it inherits the
-# entity type, darq.entity_type's EntityType, which serves an item's
+# Every item has an entity (see doc/item.rst): it inherits
+# ItemType, from darq.item_type, which serves an item's
 # entity on a port from OpenEntity.  An item's entity is made with it,
 # identified by its specifier, named from the file it came from, with
 # its file name, media type (P1163) and extension (P1195).  Its entity's
@@ -33,7 +33,7 @@ import darq.history
 import darq.index
 import darq.items
 import darq.kb as model
-from darq.entity_type import EntityType
+from darq.item_type import ItemType
 from darq.protocols import storage
 from darq.protocols.data import (CloseRequest, CloseResponse, Data, GetRequest, GetResponse, StatRequest, StatResponse,
                                  Viewed)
@@ -156,7 +156,7 @@ class Document:
         return item_id(self.key)
 
 
-class DataImplementation(EntityType):
+class DataImplementation(ItemType):
     """Answers the Implementation protocol, and keeps the open items."""
 
     SOURCE = "data-type"

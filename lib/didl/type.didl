@@ -135,7 +135,7 @@ protocol Implementation {
     // it, as Create does.  Data that isn't of the type is INVALID_DATA,
     // and nothing is created: it isn't converted.  Its name is the name
     // of the file it came from, or empty: its entity's named from it, if
-    // the data doesn't give one (see doc/entity-vs-item.rst).  Its media
+    // the data doesn't give one (see doc/item.rst).  Its media
     // type is the one it came with, if it came with one, such as a
     // server's Content-Type: a type that knows its own ignores it.
     4: CreateFrom(string type_id, opaque data, string name, string media_type, Context context) -> (string item_id, port item, Status status);
@@ -151,8 +151,8 @@ protocol Implementation {
     6: IndexEntry(string item_id) -> (sequence<string> names, string body, Status status);
 
     // Open an item's entity, returning a port for it that serves the
-    // EntityItem protocol (lib/didl/kb.didl), as every item's an entity
-    // (see doc/entity-vs-item.rst).  Its own port, from Open, serves its
+    // EntityItem protocol (lib/didl/kb.didl), as every item has an entity
+    // (see doc/item.rst).  Its own port, from Open, serves its
     // type's protocol.  An item of another type is NOT_FOUND, and one
     // that has no entity yet NOT_FOUND too.
     7: OpenEntity(string item_id) -> (port item, Status status);

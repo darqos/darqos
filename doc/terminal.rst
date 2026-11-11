@@ -423,10 +423,11 @@ and date: there's no clock elsewhere, and no status bar.  The REPL
 
 Every item's shown by its name (``darq.ui.names``): its entity's label,
 or, if it has none, its kind and when it was made, such as *Text File,
-8 Nov 2026* (see :doc:`entity-vs-item`).  History and Search list items
+8 Nov 2026* (see :doc:`item`).  History and Search list items
 by their names, with their identifiers as tooltips, and the lenses
 title their windows with them, which the switcher shows: windows have
-no title bars.  An item's renamed on its page (see Item's Page, below).
+no title bars.  An item's renamed in its entity (see Item's Entity,
+below).
 
 New
 ~~~
@@ -584,13 +585,13 @@ previous one.  While System is held, *Tab* moves on, and *Shift-Tab*
 back (*Sys-Shift-Tab* starts at the least recent); releasing System
 chooses.  So a single *Sys-Tab* goes back to the previous window.
 
-Item's Page
-~~~~~~~~~~~
+Item's Entity
+~~~~~~~~~~~~~
 
-*Sys-i* opens the page of the item in the focused window: its entity,
-in the entity lens, where it's renamed, and anything else's said of it.
-Every item's an entity (see :doc:`entity-vs-item`), so its names, tags
-and facts are statements there.
+*Sys-i* opens the entity of the item in the focused window, its record
+in the Knowledge Base, in the entity lens, where it's renamed, and
+anything else's said of it: every item has an entity (see :doc:`item`),
+so its names, tags and facts are statements there.
 
 The Terminal knows a window only by what the compositor tells it: its
 title, and its Wayland ``app_id``.  So every lens registers its Lens
@@ -600,8 +601,8 @@ port as ``lens.<dpid>``, and makes that its windows' ``app_id``
 off Qt's thread: it's asked then, not remembered, as the entity lens
 moves to another entity in the same window as a link's followed.  It
 then starts the entity lens on that item.  On a window that isn't a
-lens's, or one that isn't showing an item, or that's already its
-item's page, it says so, in a notice.
+lens's, or one that isn't showing an item, or that's already showing
+its item's entity, it says so, in a notice.
 
 
 Future Editions

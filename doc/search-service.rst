@@ -49,9 +49,8 @@ The publishers are type implementations only:
   their descriptions, and a message's text, as body, each time it
   writes one: an entity destroyed, merged into
   another, or no longer of its kind is withdrawn.  The Knowledge Base
-  service doesn't index, and entities that aren't of a kind with its
-  own implementation, such as properties, classes and ``darq.entity``
-  items, aren't indexed.
+  service doesn't index, and properties and things, ``darq.thing``,
+  such as classes, aren't indexed.
 
 Any process can publish, for now: the Index can't yet tell whether a
 publisher is the item's implementation, since DIPC doesn't say who

@@ -229,17 +229,16 @@ empty, as a caller that passes none sends, is no context.  In Python,
 ``darq.launch``'s create, import and destroy take one, as do
 ``darq.kb.KB``'s writes, and a ``KB`` can be given one, for all of its
 writes, as an importer is.  ``darq.history.Recorder`` records, for
-``EntityType``: it looks up History when it's first needed, and records
+``ItemType``: it looks up History when it's first needed, and records
 nothing if it isn't running.
 
 Content items record ``edited`` when a change is saved, from the
 source of the port it was made through: each port's client names
 itself with ``Viewed``, below.  The KB's implementation records events
-only about entities of a kind, people, places, tags, books and the
-like, not about entities of no kind but ``darq.entity``, such as
-properties, classes and given names, which an import makes by the
-hundred: one of those is recorded only when it's changed on its page,
-through its port.
+only about items of a kind, people, places, tags, books and the like,
+not about things, ``darq.thing``, such as properties, classes and given
+names, which an import makes by the hundred: one of those is recorded
+only when its entity's changed in the entity lens, through its port.
 
 Events gain the note, as a field: free text, of at most a few hundred
 bytes, not normalized, and not part of what makes an event the same as
@@ -317,8 +316,8 @@ What Changed
   and ``Destroy``, and ``EntityItem``'s and ``EntityWriter``'s writes,
   take a context; ``Item`` and ``EntityItem`` gain ``Viewed``.
 * The type implementations record events, through
-  ``darq.entity_type``'s ``EntityType``, which every implementation
-  inherits (see :doc:`entity-vs-item`), so it's written once.
+  ``darq.item_type``'s ``ItemType``, which every implementation
+  inherits (see :doc:`item`), so it's written once.
 * The launcher, the lenses, ``darq.ui.book_store``, the importers, and
   the HTTP service stop calling ``AddEvent``, but for an import's
   summary, and pass a context instead; the lenses call ``Viewed``.

@@ -1,7 +1,7 @@
 # darqos
 # Copyright (C) 2026 David Arnold
 
-"""Items' entities: every item is a KB entity (see doc/entity-vs-item.rst).
+"""Items' entities: every item has an entity, in the KB (see doc/item.rst).
 
 The KB's own kinds, such as people and messages, are made by types/kb.
 This is for the type implementations that keep their items' content in
@@ -29,9 +29,9 @@ from .kb import Datatype, Entity, EntityValue, Item, Property, Reference, String
 
 
 # Control exports
-__all__ = ["CREATED", "DATA_TYPE", "DEPICTS", "FILE_EXTENSION", "FILE_NAME", "HAS_TAG", "IMAGE", "INVERSE_LABELS",
-           "KINDS", "MEDIA_TYPE", "TAG_TYPE", "Kind", "create", "destroy", "is_content", "item_of", "label_for", "made",
-           "names", "read", "rename", "tag", "vocabulary"]
+__all__ = ["BASE_TYPE", "CREATED", "DATA_TYPE", "DEPICTS", "FILE_EXTENSION", "FILE_NAME", "HAS_TAG", "IMAGE",
+           "INVERSE_LABELS", "KINDS", "MEDIA_TYPE", "TAG_TYPE", "Kind", "create", "destroy", "is_content", "item_of",
+           "label_for", "made", "names", "read", "rename", "tag", "vocabulary"]
 
 
 # Properties: when an item was made, in DarqOS, and the name of the file
@@ -47,10 +47,14 @@ DATA_TYPE = "public.data"
 MEDIA_TYPE = "P1163"
 FILE_EXTENSION = "P1195"
 
-# Facts about items (see doc/entity-vs-item.rst, step 6): an item's tags,
+# Facts about items (see doc/item.rst): an item's tags,
 # entities of their own kind, what a picture depicts (P180), and the
 # picture that represents something (P18), Wikidata's.
 TAG_TYPE = "darq.tag"
+
+# The type every item conforms to: the entity lens's, which shows any
+# item's entity.
+BASE_TYPE = "public.item"
 HAS_TAG = "abfb41d9-3a08-440e-bcec-8e899542f45f"
 DEPICTS = "P180"
 IMAGE = "P18"

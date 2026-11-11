@@ -28,9 +28,8 @@ Rendering is done by the lens: the item is just its bytes, so the same
 protocol will serve anything else that wants to show a PDF.  As for other items, the PDF is sent whole in a message, until
 Storage has ranged access (see :doc:`storage`).
 
-PDF items are plain Storage items, as text and images are, for now.
-Whether they become KB entities is part of the entities-and-items
-decision (see :doc:`entity-vs-item`).
+A PDF item's content is in Storage, as text's and images' are, and its
+entity, as every item's is, in the Knowledge Base (see :doc:`item`).
 
 Indexing
 --------
@@ -39,7 +38,7 @@ When an item's created, its entity's names, and its title and author, if
 it has them, are published to the Index (see :doc:`search-service`) as
 names, and the text of its pages as its body: and again when its entity's
 changed, as when it's renamed.  Its entity's named by its title, or else
-by the file it came from (see :doc:`entity-vs-item`).  Few PDFs have a title: of 44 from one
+by the file it came from (see :doc:`item`).  Few PDFs have a title: of 44 from one
 Slack workspace, 15 did.  So most are found by their text.  A
 destroyed item is withdrawn.  ``IndexEntry`` gives the same, for a
 reindex.

@@ -22,8 +22,8 @@
 # when it's destroyed; its entry's also given by IndexEntry, for a
 # reindex.
 #
-# Every item's an entity (see doc/entity-vs-item.rst): it inherits the
-# entity type, darq.entity_type's EntityType, which serves an item's
+# Every item has an entity (see doc/item.rst): it inherits
+# ItemType, from darq.item_type, which serves an item's
 # entity on a port from OpenEntity.  An item's entity is made with it,
 # identified by its specifier, and named from the file it came from, if
 # it did; a change to it is published to the Index.
@@ -37,7 +37,7 @@ import darq
 import darq.history
 import darq.index
 import darq.kb as model
-from darq.entity_type import EntityType
+from darq.item_type import ItemType
 from darq.protocols import storage
 from darq.protocols.text import (
     CloseRequest,
@@ -166,7 +166,7 @@ class Buffer:
         return self.key.high, self.key.low
 
 
-class TextImplementation(EntityType):
+class TextImplementation(ItemType):
     """Answers the Implementation protocol, and keeps the open items."""
 
     SOURCE = "text-type"

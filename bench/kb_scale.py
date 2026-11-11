@@ -2,9 +2,9 @@
 # Copyright (C) 2026 David Arnold
 """Scale test for the Knowledge Base's store.
 
-Grows one database, in steps, with synthetic entities shaped like
-model B in doc/entity-vs-item.rst (every item an entity: mostly emails,
-then files, photos, and people and organisations), and measures, at
+Grows one database, in steps, with synthetic entities shaped like a
+system where every item has an entity (see doc/item.rst): mostly emails,
+then files, photos, and people and organisations, and measures, at
 each step, the speed of writes and lookups, the database's size, and
 the process's memory.  It runs the service's own code, KnowledgeBase
 and Store from services/kb, in this process, without the p-kernel:

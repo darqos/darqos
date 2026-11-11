@@ -1,9 +1,9 @@
 # darqos
 # Copyright (C) 2026 David Arnold
 
-# Tests for the entity type, which every type implementation inherits
-# (darq.entity_type, and doc/entity-vs-item.rst): a stand-in for a type
-# whose content's in Storage, inheriting EntityType, against a KB service
+# Tests for ItemType, which every type implementation inherits
+# (darq.item_type, and doc/item.rst): a stand-in for a type
+# whose content's in Storage, inheriting ItemType, against a KB service
 # in this process (see test_kb_type.py); types/kb, the plain
 # implementation, opening its items' entities; and the entity lens
 # opening them with OpenEntity.
@@ -15,7 +15,7 @@ import darq
 import darq.items as items
 import darq.launch
 import darq.kb as model
-from darq.entity_type import EntityType
+from darq.item_type import ItemType
 from darq.protocols import kb as wire
 from darq.protocols.kb import GetEntityRequest, GetLinkSummaryRequest, PutEntityRequest
 from darq.protocols.type import OpenEntityRequest, OpenEntityResponse, OpenRequest, Status
@@ -30,8 +30,8 @@ from test_wikidata import entity_lens
 KEY = "03d1824dc667bb6b343e27a5a610b06b"
 
 
-class Images(EntityType):
-    """A type implementation for images, inheriting the entity type, and
+class Images(ItemType):
+    """A type implementation for images, inheriting ItemType, and
     remembering what it's told has changed."""
 
     def __init__(self, store: model.KB):
@@ -51,7 +51,7 @@ def images(kb, ports, implementation):  # noqa: F811
     return made
 
 
-def open_entity(implementer: EntityType, item_id: str) -> typing.Any:
+def open_entity(implementer: ItemType, item_id: str) -> typing.Any:
     """Return the handler of an item's entity's port, or why there's none."""
     response = implementer.open_entity(OpenEntityRequest(item_id=item_id), 0)
     if response.status != Status.OK:

@@ -76,8 +76,8 @@ of interest in a personal library, as adding it later would mean
 migrating every book.  The Work and Expression are made for you:
 nobody needs to think about WEMI to catalogue a book.
 
-All four are KB entities, of the kinds below, in ``types/kb``, as
-Message is.  A paper book is an LRM Item that gives a location, and an
+All four are items of the kinds below, all knowledge, in ``types/kb``,
+as messages are.  A paper book is an LRM Item that gives a location, and an
 e-book is an LRM Item that gives an item identifier, as URL snapshots
 do (see :doc:`url-type`).
 
@@ -121,11 +121,11 @@ LRM Item       Local *location* (Shelved at), *content*, *printing* and *date of
 =============  ==========================================================
 
 An imprint is text, for now, unlike a publisher.  People, publishers,
-languages and series are entities, which can become Wikidata's, with a
+languages and series are items too, which can become Wikidata's, with a
 few of its facts (see :doc:`wikidata`): a new name finds
 an entity with exactly that label, or makes one, while a name that's
 already there keeps its entity, so two people with one name aren't
-confused.  A person's page then shows *author of*, through an inverse
+confused.  A person's entity then shows *author of*, through an inverse
 label, in a group of Books.
 
 Which Level
@@ -474,12 +474,12 @@ edition catalogued is one you have.  A digital copy comes from its item,
 by B, so a Manifestation with one has no Add Copy link.
 
 A Manifestation can have a cover, an image item (a local *cover*
-property, which links to its entity, so the image's page says it's the
+property, which links to its entity, so the image's entity says it's the
 *cover of* the Manifestation), shown small with it.  A copy's *content*
 links to its item in the same way, as *content of*.  One from before
 links, a String of the item's identifier, on a property relabelled
 *(identifier, old)*, is still read, and made a link when it's saved, or
-by Give Items Entities (see :doc:`entity-vs-item`).  B takes an EPUB's own; an ISBN lookup
+by Give Items Entities (see :doc:`item`).  B takes an EPUB's own; an ISBN lookup
 fetches Open Library's, through ``darq.http``, after it's added; and a
 Manifestation's Edit form can take one from an image file on the host.
 A cover that can't be had isn't a failure.  MOBI and AZW files don't say

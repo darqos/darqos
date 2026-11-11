@@ -164,17 +164,17 @@ class ShownResponse(Message):
     LENGTH = 20
     DATA_START = 24
 
-    def __init__(self, txid: int = 0, item_id: str = '', page: bool = False):
+    def __init__(self, txid: int = 0, item_id: str = '', entity: bool = False):
         super().__init__(txid)
         self.item_id = item_id
-        self.page = page
+        self.entity = entity
 
     def encode(self) -> tuple[bytes, list[int]]:
         buf, handles = super().encode()
         out = Encoder(self.DATA_START, handles)
         buf += struct.pack(self.BODY_FORMAT,
                            *out.string(self.item_id),
-                           self.page)
+                           self.entity)
         buf += b'\0' * 4
         buf += out.data
         return buf, handles
@@ -187,7 +187,7 @@ class ShownResponse(Message):
         bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
         inp = Decoder(buffer, self.DATA_START, handles)
         self.item_id = inp.string(bits[0], bits[1])
-        self.page = self.decode_bool(bits[2])
+        self.entity = self.decode_bool(bits[2])
         return
 
 

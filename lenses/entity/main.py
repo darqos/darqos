@@ -1,8 +1,10 @@
 # darqos
 # Copyright (C) 2026 David Arnold
 
-# Entity lens: a window showing a Knowledge Base item, darq.entity or
-# any of its kinds, in the Terminal context, and editing it.
+# Entity lens: a window showing any item's entity, its record in the
+# Knowledge Base, in the Terminal context, and editing it.  It's the lens
+# for public.item, so it's the only one for a thing, darq.thing, and for
+# any other item whose type has no lens of its own.
 #
 # It's spawned for one item, with a bootstrap port it reports Ready on,
 # and then asked to Use the item (see lib/didl/lens.didl).  It reads the
@@ -17,7 +19,7 @@
 # (see darq.ui.lens.Viewing), which its type records in History.
 #
 # What links to an item is shown in groups (see darq.ui.links).  A large
-# group opens to a paged list, in place of the item's page, with Back to
+# group opens to a paged list, in place of the entity's page, with Back to
 # return: it isn't an item, so it's not viewed, as History has it, and
 # can't have a window of its own.  An entity chosen from a group opens in its
 # type's own lens, if it has one.
@@ -298,7 +300,7 @@ class EntityWindow(QWidget):
         inline = {grouped.key_of(g): self.group_rows(shown, grouped.key_of(g), grouped.INLINE_MAX, "")
                   for g in groups if grouped.is_inline(g)}
 
-        # A group that's gone since is left, for the item's page.
+        # A group that's gone since is left, for the entity's page.
         if self.view is not None and self.view.key not in map(grouped.key_of, groups):
             self.view = None
         rows: list[Linked] = []
@@ -413,7 +415,7 @@ class EntityWindow(QWidget):
         self.show_status("Editing: each change is saved as it's made")
 
     def finish_editing(self, refresh: bool = True):
-        """Show the item's page again, committing the field being typed in,
+        """Show the entity's page again, committing the field being typed in,
         and read afresh, unless it's not to be."""
         if not self.editing:
             return
@@ -1024,8 +1026,8 @@ class EntityLens(LensHandler):
     """Answers the Lens protocol: uses one item, in a window, and is the
     Launcher's host, for items opened in new windows."""
 
-    # It's items' pages: Sys-i on one is where it is.
-    PAGE = True
+    # It shows items' entities: Sys-i on one is where it is.
+    SHOWS_ENTITY = True
 
     def __init__(self, loop: QtEventLoop, opener: Opener | None = None):
         self.loop = loop
@@ -1107,7 +1109,7 @@ class EntityLens(LensHandler):
 
         # The item's entity is a port of its own, from its type's
         # OpenEntity: the port given is its type's own, which, for a
-        # content item, isn't EntityItem (see doc/entity-vs-item.rst).
+        # content item, isn't EntityItem (see doc/item.rst).
         port = self.entity_port(request.item_id, request.item)
         if port is None:
             return UseResponse(status=Status.FAILED)

@@ -14,8 +14,8 @@
 # - Sys-n New, Sys-h History, Sys-Tab the switcher, Sys-b shut down or
 #   reboot, Sys-x close the focused window, Sys-l lock, Sys-space
 #   Search, with the clock; Sys-t the Tools panel, which runs the
-#   installed tools (darq.ui.tools); Sys-e and Sys-i show a TBD panel
-#   (panels.py).  While it's locked, only Sys-b works, on the lock
+#   installed tools (darq.ui.tools); Sys-i opens the entity of the
+#   focused window's item; Sys-e shows a TBD panel (panels.py).  While it's locked, only Sys-b works, on the lock
 #   screen.
 #
 # Its calls to services are synchronous, on Qt's thread, but for creating
@@ -55,7 +55,7 @@ from darq.protocols.compositor import (
     WindowRemoved,
     WindowRetitled,
 )
-import darq.kb as model
+import darq.items
 import darq.ui.types
 from darq.protocols.lens import Lens
 from darq.ui import Services
@@ -336,13 +336,13 @@ class Terminal:
         self.tbd.show_for("Events")
 
     def show_item_info(self):
-        """Sys-i: open the page of the item the focused window's lens is
+        """Sys-i: open the entity of the item the focused window's lens is
         showing, in the entity lens: it's asked, by its Lens port, which
         its window's app_id names, since it can change, as the entity
         lens follows links.  It's asked off Qt's thread."""
         name = self.app_ids.get(self.focused, "")
         if not name.startswith(LENS_NAME_PREFIX):
-            self.say("Sys-i shows the page of the item in the focused window: this isn't one")
+            self.say("Sys-i shows the entity of the item in the focused window: this isn't one")
             return
 
         def ask() -> tuple[str, bool]:
@@ -353,19 +353,19 @@ class Terminal:
                 shown = Lens.Client(handle, timeout=LENS_TIMEOUT).shown()
             finally:
                 darq.close_port(handle)
-            return shown.item_id, shown.page
+            return shown.item_id, shown.entity
 
         def asked(result: tuple[str, bool] | None, error: Exception | None):
             if error is not None or result is None:
                 self.say(f"Can't ask the window what it's showing: {error}")
                 return
-            item_id, page = result
+            item_id, entity = result
             if not item_id:
                 self.say("The window isn't showing an item")
-            elif page:
-                self.say(f"This is {item_id}'s page")
+            elif entity:
+                self.say(f"This is {item_id}'s entity")
             else:
-                self.launcher.use(item_id, lens_for=model.ENTITY_TYPE)
+                self.launcher.use(item_id, lens_for=darq.items.BASE_TYPE)
 
         self.launcher.background(ask, asked)
 

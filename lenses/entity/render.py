@@ -21,9 +21,8 @@ from darq.ui import links as grouped
 from darq.ui import style
 
 
-# Properties whose values are items' identifiers, as strings, from before
-# every item was an entity, and so linked to (see doc/entity-vs-item.rst):
-# what can't be linked yet is shown as links to the items.
+# Properties whose values are items' identifiers, as strings, from older
+# imports (see doc/item.rst): they're shown as links to the items.
 ITEM_VALUES = frozenset({darq.message.OLD_ATTACHMENT, darq.url.OLD_SNAPSHOT, darq.book.OLD_CONTENT,
                          darq.book.OLD_COVER})
 

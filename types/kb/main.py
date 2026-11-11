@@ -1,15 +1,15 @@
 # darqos
 # Copyright (C) 2026 David Arnold
 
-# Knowledge Base type implementation: items of darq.entity, and of its
-# kinds, darq.person, darq.organisation, darq.organisational-unit,
+# Knowledge Base type implementation: items of darq.thing, and of the
+# other kinds, darq.person, darq.organisation, darq.organisational-unit,
 # darq.place, darq.group, darq.conversation, darq.message and public.url,
 # and the book levels, each an entity in the Knowledge Base, whose
 # content is all knowledge.
 #
-# It's the plain implementation of the entity type, which every type
-# implementation inherits (see darq.entity_type, and
-# doc/entity-vs-item.rst): it's EntityType, with these kinds' vocabulary,
+# It's the plainest type implementation: ItemType, which every type
+# implementation inherits (see darq.item_type, and doc/item.rst), with
+# these kinds' vocabulary,
 # creating them, writing them for imports, and publishing them to the
 # Index, as the layer above it.
 #
@@ -37,7 +37,7 @@
 # Each entity of a kind it writes is published to the Index (see
 # doc/search-service.rst): its labels and aliases, in every language, as
 # names, and its descriptions as its body, with a message's text.
-# Entities of darq.entity, and properties, aren't indexed.  One that's destroyed, merged into
+# Things, and properties, aren't indexed.  One that's destroyed, merged into
 # another, or no longer of its kind is withdrawn.
 
 import logging
@@ -51,7 +51,7 @@ import darq.kb as model
 import darq.message
 import darq.url
 import darq.wikidata
-from darq.entity_type import KB_ERRORS, ClassListener, EntityItemHandler, EntityType  # noqa: F401
+from darq.item_type import KB_ERRORS, ClassListener, EntityItemHandler, ItemType  # noqa: F401
 from darq.protocols import kb as wire
 from darq.protocols.kb import (
     CreateEntitiesRequest,
@@ -123,16 +123,20 @@ def vocabulary() -> list[model.Entity]:
     ]
 
 
-class EntityImplementation(EntityType, EntityWriter.Handler):
+# Entities read and written at a time, renaming types.
+RENAME_BATCH = 200
+
+
+class EntityImplementation(ItemType, EntityWriter.Handler):
     """Creates, opens, writes and destroys KB items, and records them in
-    History, but for entities of no kind but darq.entity, such as
+    History, but for things, darq.thing, such as
     properties, classes and given names, which aren't the operator's
     items: those changed through their ports, on their pages, are
-    recorded, as any entity's are (see darq.entity_type)."""
+    recorded, as any entity's are (see darq.item_type)."""
 
     SOURCE = "kb-type"
 
-    METHODS = {**EntityType.METHODS, **EntityWriter.Handler.METHODS}
+    METHODS = {**ItemType.METHODS, **EntityWriter.Handler.METHODS}
 
     def __init__(self, kb: model.KB, index: darq.index.Publisher):
         super().__init__(kb, model.KIND_TYPES)
@@ -143,6 +147,7 @@ class EntityImplementation(EntityType, EntityWriter.Handler):
         types."""
         self.kb.ensure(*vocabulary())
         self.relabel()
+        self.rename_types()
         for class_id, _, kind in model.DEFAULT_INSTANCE_TYPES:
             self.kb.state(class_id, model.DARQOS, [
                 model.Statement(model.Snak(model.DARQOS_INSTANCE_TYPE, model.StringValue(kind)))])
@@ -150,6 +155,27 @@ class EntityImplementation(EntityType, EntityWriter.Handler):
                                         *darq.book.INVERSE_LABELS, *darq.items.INVERSE_LABELS):
             self.kb.state(property_id, model.DARQOS, [
                 model.Statement(model.Snak(model.INVERSE_LABEL, model.EntityValue(item_id)))])
+
+    def rename_types(self):
+        """Give items of a type that's been renamed the new one, in their
+        DarqOS type statements, and classes in their instance types (see
+        darq.history.RENAMED_TYPES): it's done when it starts, and once
+        it's done, there's nothing to do."""
+        for old, new in darq.history.RENAMED_TYPES.items():
+            for property_id in (model.DARQOS_TYPE, model.DARQOS_INSTANCE_TYPE):
+                ids = sorted(self.kb.find_by_value(property_id, old))
+                for start in range(0, len(ids), RENAME_BATCH):
+                    entities, _ = self.kb.get_entities(ids[start:start + RENAME_BATCH], follow=False)
+                    changed = [e for e in entities if not e.destroyed and e.redirect is None]
+                    for entity in changed:
+                        for s in entity.get_statements(property_id):
+                            value = s.get_value()
+                            if isinstance(value, model.StringValue) and value.value == old:
+                                value.value = new
+                    if changed:
+                        self.kb.put(*changed)
+                if ids:
+                    logging.info(f"Renamed {old} to {new} in {len(ids)} entities' {property_id}")
 
     def relabel(self):
         """Give vocabulary that's been renamed its new label, unless it's
@@ -163,7 +189,7 @@ class EntityImplementation(EntityType, EntityWriter.Handler):
     def record_entity(self, entity: model.Entity, event: str, context: darq.history.Context | None):
         """Record an event about an entity, if it's of a kind."""
         kind = self.kind_of(entity)
-        if kind != model.ENTITY_TYPE:
+        if kind != model.THING_TYPE:
             self.record(model.item_id(entity.id, kind), event, context)
 
     def indexed_kind(self, entity: model.Entity) -> str | None:
@@ -171,7 +197,7 @@ class EntityImplementation(EntityType, EntityWriter.Handler):
         if isinstance(entity, model.Property) or entity.destroyed or entity.redirect is not None:
             return None
         kind = self.kind_of(entity)
-        return kind if kind != model.ENTITY_TYPE else None
+        return kind if kind != model.THING_TYPE else None
 
     def publish(self, entity: model.Entity, was: str | None = None):
         """Publish an entity to the Index, if it's of an indexed kind, and
@@ -212,7 +238,7 @@ class EntityImplementation(EntityType, EntityWriter.Handler):
             logging.error(f"Can't index the new {type_id}: {e}")
         assert self.server is not None
         iid = model.item_id(entity.id, type_id)
-        if type_id != model.ENTITY_TYPE:
+        if type_id != model.THING_TYPE:
             self.record(iid, darq.history.CREATED, request.context)
         logging.info(f"Created {iid}")
         return CreateResponse(item_id=iid, item=self.attach_entity(self.server, entity.id), status=Status.OK)

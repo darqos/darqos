@@ -5,7 +5,7 @@ There's an old term for a class of application called Personal
 Information Management: PIM.  This is contacts, addresses, calendars,
 notes, etc.
 
-In the Darq context, I want to have a base set of entity classes that
+In the Darq context, I want to have a base set of item kinds that
 address this space, but are universal.
 
 Person
@@ -83,7 +83,7 @@ a paper.
 
 You should also be able to see or browse to all the emails, all the
 meetings, all the phone calls, you've had with a person from their
-Person entity.  The idea here is pervasive linking, browsing,
+person item.  The idea here is pervasive linking, browsing,
 indexing, history, etc, but all stored by reference rather than
 relying on runtime parsing and lookup.
 
@@ -91,8 +91,8 @@ All of this information should be kept locally, and synced with
 external sources: it should not rely on external databases, either
 contacts (like CardDAV) or whatever.
 
-These objects should all be implemented by the Entity Service.  The
-Entity service could, and probably should, support two-way sync,
+These objects should all be kept in the Knowledge Base.  The
+Knowledge Base could, and probably should, support two-way sync,
 allowing it to eg. update your CardDAV provider (eg. Google).
 
 Lookup
@@ -111,19 +111,19 @@ This is a very complex problem to resolve.
 
 Let's assume first that the KB service is implemented, and provides a
 data model along the lines of WikiData.  This leads to a scenario
-where we have schemas defined for all the PIM-relevant entity types,
+where we have schemas defined for all the PIM-relevant kinds,
 an ability to store instances of them, and some sort of search and
 retrieval capability.
 
 Assume too that we have a bunch of suitable Lenses defined for these
-entity types, and (perhaps most challengingly) an ability to embed
+kinds, and (perhaps most challengingly) an ability to embed
 those Lenses into other Lenses or Tools as required.
 
 How then do we provide PIM-like functionality, given this?
 * Universal search
-* Defined entity types and instances
+* Defined kinds and instances
 * Storage and retrieval
-* Suitable entity Lenses
+* Suitable Lenses
 
 What are the use-contexts that constitute a "PIM"?  And what about
 other uses?
@@ -174,7 +174,7 @@ So, some scenarios:
 So, ok.
 
 * KB service and client library
-* Schemas for the relevant entity types
+* Schemas for the relevant kinds
 * A basic single-person lens, looking like a business card-style view
   of a person's attributes, with a bunch of links to
 

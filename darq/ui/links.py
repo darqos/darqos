@@ -8,7 +8,7 @@
 # opens to a paged list.
 #
 # A group isn't an item, so it has no lens of its own: a lens shows it in
-# place of its item's page, with a View saying which, and where.  This
+# place of its entity's page, with a View saying which, and where.  This
 # has what lenses share of that, as HTML, and uses no Qt.  A lens gives
 # it a way to make anchors, and is told which target was chosen: a Row,
 # an OpenGroup, or a Turn.
@@ -21,16 +21,16 @@ import darq.items
 from darq.protocols.kb import LinkGroup, Linked, Role
 
 
-# Most entities in a group that's shown in place.
+# Most items in a group that's shown in place.
 INLINE_MAX = 12
 
-# Entities on a page of a group.
+# Items on a page of a group.
 PAGE_ROWS = 100
 
-# Singular and plural names of the types of entities, for those with
+# Singular and plural names of the types of items, for those with
 # names.  Others are shown by their identifiers.
 TYPE_NAMES = {
-    "darq.entity": ("Entity", "Entities"),
+    "darq.thing": ("Thing", "Things"),
     "darq.person": ("Person", "People"),
     "darq.organisation": ("Organisation", "Organisations"),
     "darq.organisational-unit": ("Organisational Unit", "Organisational Units"),
@@ -56,7 +56,7 @@ Key = tuple[str, Role, str]
 
 
 class Row(typing.NamedTuple):
-    """A target: an entity listed in a group, by its item identifier."""
+    """A target: an item listed in a group, by its identifier."""
 
     item_id: str
 
@@ -79,7 +79,7 @@ Anchor = typing.Callable[[Row | OpenGroup | Turn, str], str]
 
 @dataclasses.dataclass
 class View:
-    """A group being shown, and where: the entity each page shown so far
+    """A group being shown, and where: the item each page shown so far
     starts after, so the last is the page shown.  A group's paged from
     its newest, by cursors, so there's no jumping to a page."""
 
@@ -125,7 +125,7 @@ def type_name(type_id: str, count: int = 1) -> str:
 
 def heading(group: LinkGroup) -> str:
     """Return what a group's headed by, reading its property backwards,
-    from the entity it links to."""
+    from the item it links to."""
     if group.inverse_label and group.role == Role.MAIN:
         return group.inverse_label[:1].upper() + group.inverse_label[1:]
     return f"With this as {group.label or group.property_id}{ROLE_NOTES[group.role]}"
@@ -143,12 +143,12 @@ def sections(groups: typing.Iterable[LinkGroup]) -> list[Section]:
 
 
 def is_inline(group: LinkGroup) -> bool:
-    """Return whether a group's entities are shown in place."""
+    """Return whether a group's items are shown in place."""
     return group.count <= INLINE_MAX
 
 
 def row_text(link: Linked) -> str:
-    """Return what an entity's listed as: messages have no labels."""
+    """Return what an item's listed as: messages have no labels."""
     return link.label or link.summary or link.item_id
 
 
@@ -164,7 +164,7 @@ def render_group(group: LinkGroup, rows: list[Linked], anchor: Anchor) -> str:
 def render_sections(all_sections: list[Section], inline: dict[Key, list[Linked]], anchor: Anchor) -> str:
     """Return what links to an item, as HTML.
 
-    :param inline: The entities of the groups shown in place."""
+    :param inline: The items of the groups shown in place."""
     parts = []
     for section in all_sections:
         parts.append(f"<h3>{html.escape(section.heading)}</h3><p>")

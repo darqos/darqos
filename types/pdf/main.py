@@ -19,8 +19,8 @@
 # holds up other requests, but it's only done then, when its entity's
 # changed, and for a reindex.
 #
-# Every item's an entity (see doc/entity-vs-item.rst): it inherits the
-# entity type, darq.entity_type's EntityType, which serves an item's
+# Every item has an entity (see doc/item.rst): it inherits
+# ItemType, from darq.item_type, which serves an item's
 # entity on a port from OpenEntity.  An item's entity is made with it,
 # identified by its specifier, and named by the PDF's title, or else the
 # file it came from; its names are published to the Index with its own.
@@ -35,7 +35,7 @@ import darq
 import darq.history
 import darq.index
 import darq.kb as model
-from darq.entity_type import EntityType
+from darq.item_type import ItemType
 from darq.protocols import storage
 from darq.protocols.pdf import (
     Viewed,
@@ -169,7 +169,7 @@ class Document:
         return item_id(self.key)
 
 
-class PdfImplementation(EntityType):
+class PdfImplementation(ItemType):
     """Answers the Implementation protocol, and keeps the open items."""
 
     SOURCE = "pdf-type"

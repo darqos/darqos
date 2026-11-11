@@ -110,7 +110,7 @@ The system's hotkeys:
 +---------------+---------------------------------------------------+
 | S-t           | Tools: run an import, Reindex, and the others     |
 +---------------+---------------------------------------------------+
-| S-i           | The page of the item in the focused window, to    |
+| S-i           | The entity of the item in the focused window, to  |
 |               | rename it, or say more of it                      |
 +---------------+---------------------------------------------------+
 
@@ -157,9 +157,9 @@ Other things to try:
   people and organisations in it are found by Search, by their names,
   and open in the entity lens (see :doc:`kb-service`), with their
   photos, and their categories as tags.
-* *S-i* opens the page of what's in the focused window, where it's
-  renamed, tagged (*has tag*), and, for a picture, said to depict
-  someone (*depicts*).
+* *S-i* opens the entity of what's in the focused window, its record in
+  the Knowledge Base, where it's renamed, tagged (*has tag*), and, for a
+  picture, said to depict someone (*depicts*).
 * *S-h* lists what's happened recently, and opens an item from
   there too.
 

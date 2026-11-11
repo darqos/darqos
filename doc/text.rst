@@ -83,7 +83,7 @@ Not Yet
   what was indexed for it; it's withdrawn when it's destroyed (see
   :doc:`search-service`).  Its entity's made with it, named from the
   file it came from, if it did, and it's published again when its entity
-  changes (see :doc:`entity-vs-item`).
+  changes (see :doc:`item`).
   The Index finds the words itself, and where they are, so the
   implementation doesn't track them, and a lost publish is put right
   by the next save.
@@ -94,7 +94,7 @@ Not Yet
   made through, which names itself with ``Viewed``.  The History service
   counts repeated events.
 * What's known of an item, its name and when it was made, is on its
-  entity (see :doc:`entity-vs-item`), and when it was changed, in
+  entity (see :doc:`item`), and when it was changed, in
   History.
 
     * They don't belong in the content: that should just be the

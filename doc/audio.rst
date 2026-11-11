@@ -117,7 +117,8 @@ SystemConfigService.
 Albums
 ------
 
-An album is a KB entity with no associated blob storage.  It collects
+An album is an item with no content in Storage: its entity is all
+there is of it.  It collects
 and orders a set of Track items.  Album name, year, publisher, cover
 art, etc, could all be properties, plus an ordinal property giving the
 sequential number of the track within the album.  Singles, EPs, LPs,
