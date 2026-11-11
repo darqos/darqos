@@ -1,3 +1,5 @@
 PyQt6
 numpy
 PyOpenGL
+geopy
+PyQt6-WebEngine
