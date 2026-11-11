@@ -568,3 +568,11 @@ def test_an_old_book_is_given_its_entity_named_by_its_title(call, kb):
     kb.failing = None
     assert call(IMPLEMENTATION_PORT, OpenRequest(item_id=iid)).status == Status.OK
     assert kb.label(darq.split_item_id(iid)[1]) == "A Book"
+
+
+def test_viewing_is_recorded(call, server, fake_ports, recorded):  # noqa: F811
+    from test_text_type import send
+    from darq.protocols.ebook import Viewed
+    iid, port = create_from(call, make_epub())
+    send(fake_ports, server, port, Viewed(source="ebook-lens", note="Chapter 1"))
+    assert recorded.events == [(iid, "created", "ebook-type", ""), (iid, "viewed", "ebook-lens", "Chapter 1")]

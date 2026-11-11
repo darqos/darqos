@@ -65,14 +65,16 @@ class FakeHistory:
 class FakeLaunch:
     def __init__(self):
         self.created = []
+        self.contexts: list = []
         self.names: list[str] = []
         self.used = []
         self.fail = False
 
-    def create_item(self, type_id):
+    def create_item(self, type_id, context=None):
         if self.fail:
             raise LaunchError(f"Can't activate {type_id}")
         self.created.append(type_id)
+        self.contexts.append(context)
         return DOC, 42
 
     def use_item(self, item_id, item=None, lens_for=""):
@@ -89,10 +91,11 @@ class FakeLaunch:
     def find_types(self, mime_type="", extension=""):
         return self.extensions.get(extension, [])
 
-    def create_item_from(self, type_id, data, name=""):
+    def create_item_from(self, type_id, data, name="", media_type="", context=None):
         if type_id in self.refuses:
             raise LaunchError(f"Can't create a {type_id} item from data: INVALID_DATA")
         self.created.append((type_id, data))
+        self.contexts.append(context)
         self.names.append(name)
         return DOC, 43
 

@@ -17,8 +17,10 @@
 # it's the lens that decides what they do.
 #
 # Its thread is Qt's: the lens port is served on Qt's event loop (see
-# darq.Server.attach), and its calls to the item and History are
-# synchronous, on queued reply ports.
+# darq.Server.attach), and its calls to the item are synchronous, on
+# queued reply ports.  It tells the item it's being viewed, and where the
+# reader's got to (see darq.ui.lens.Viewing): the item's type records
+# that in History.
 
 import logging
 import pathlib
@@ -51,15 +53,13 @@ from PyQt6.QtWidgets import (
 )
 
 import darq
-import darq.history
 import darq.launch
 from darq.loop import QtEventLoop
 from darq.protocols.ebook import ContentsResponse, Ebook
 from darq.protocols.ebook import Status as EbookStatus
-from darq.protocols.history import History
 from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
 from darq.ui import catalogue, reader, style
-from darq.ui.lens import LensHandler, announce
+from darq.ui.lens import LensHandler, Viewing, announce
 from darq.ui.launcher import Launcher
 from darq.ui.style import CONTROLS
 
@@ -68,7 +68,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import ebook_pages  # noqa: E402
 
 
-# History source for the events it records.
+# History's source of what's done through it.
 SOURCE = "ebook-lens"
 
 # Seconds to wait for the item's replies, and after starting for a Use.
@@ -176,6 +176,7 @@ class ReaderWindow(QWidget):
         self.lens = lens
         self.on_closed = on_closed
         self.pager: ebook_pages.Pager | None = None
+        self.viewing = Viewing(self, SOURCE)
         self.mode = reader.MODES[0][0]
         self.wheel = 0
 
@@ -283,6 +284,7 @@ class ReaderWindow(QWidget):
     def page_shown(self):
         if self.pager is not None:
             self.status.setText(f"  {self.pager.describe()}")
+            self.viewing.move(self.pager.describe())
 
     def show_status(self, message: str):
         self.status.setText(f"  {message}")
@@ -420,6 +422,7 @@ class ReaderWindow(QWidget):
         self.relay.start()
 
     def closeEvent(self, a0):
+        self.viewing.stop()
         super().closeEvent(a0)
         self.on_closed()
 
@@ -427,15 +430,14 @@ class ReaderWindow(QWidget):
 class EbookLens(LensHandler):
     """The lens port: it uses one item, for the life of the process."""
 
-    def __init__(self, loop: QtEventLoop, history: History.Client | None):
+    def __init__(self, loop: QtEventLoop):
         self.loop = loop
-        self.history = history
         self.window: ReaderWindow | None = None
         self.item: Ebook.Client | None = None
         self.port = 0
         self.item_id = ""
         self.details: ContentsResponse | None = None
-        self.services = typing.cast(typing.Any, catalogue.Services(history))
+        self.services = typing.cast(typing.Any, catalogue.Services())
         self.launcher = Launcher(self, SOURCE, loop.post)
 
     def use(self, request: UseRequest, source: int) -> UseResponse:
@@ -464,7 +466,8 @@ class EbookLens(LensHandler):
         else:
             self.window.say(contents.reason)
         self.window.show()
-        self.record(request.item_id, darq.history.OPENED)
+        pager = self.window.pager
+        self.window.viewing.show(self.item, pager.describe() if pager is not None else "")
         logging.info(f"Using {request.item_id}")
         self.shown_item = request.item_id
         return UseResponse(status=Status.OK)
@@ -481,7 +484,7 @@ class EbookLens(LensHandler):
                                   details.language)
         if not catalogue.find_copy(self.item_id):
             about.cover = self.import_cover(details.cover)
-        problem = catalogue.catalogue(window, self.launcher, self.item_id, about, self.record)
+        problem = catalogue.catalogue(window, self.launcher, self.item_id, about, SOURCE)
         if problem:
             self.show_status(problem)
 
@@ -514,14 +517,6 @@ class EbookLens(LensHandler):
         except ERRORS as e:
             logging.warning(f"Can't close an item: {e!r}")
         darq.close_port(self.port)
-
-    def record(self, item_id: str, event: str):
-        if self.history is None:
-            return
-        try:
-            self.history.add_event(item_id=item_id, event=event, source=SOURCE)
-        except darq.DarqError as e:
-            logging.warning(f"Can't record {event} for {item_id}: {e!r}")
 
     def show_status(self, message: str):
         if self.window is not None:
@@ -559,11 +554,7 @@ def darq_main():
     app.setQuitOnLastWindowClosed(False)
     loop = QtEventLoop()
 
-    # History is best effort: the lens works without it.
-    handle = darq.lookup_name("darq.history", blocking=False)
-    history = History.Client(handle) if handle is not None else None
-
-    lens = EbookLens(loop, history)
+    lens = EbookLens(loop)
     port = darq.open_port()
     announce(port)
     server = darq.Server()

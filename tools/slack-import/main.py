@@ -4,11 +4,12 @@
 # Slack import: a window for importing a Slack workspace's history, from
 # an export, into the Knowledge Base (see doc/slack-import-tool.rst).
 #
-# It's a tool (see tool.json), started from the development Terminal's
-# Tools menu.  Choose the export's directory, and the workspace's name.
-# The export is read (slack_export.py), and imported (slack_importer.py)
-# on another thread: read from the KB service, and created and written
-# through the KB type implementation, and recorded in History.
+# It's a tool (see tool.json), started from the Terminal's Tools panel,
+# Sys-t.  Choose the export's directory, and the workspace's name.  The
+# export is read (slack_export.py), and imported (slack_importer.py) on
+# another thread: read from the KB service, and created and written
+# through the KB type implementation, and recorded in History, as
+# slack_importer.SOURCE describes.
 #
 # Its summary is counts, and the people found by name, to be checked.
 # They're logged too, under "slack-import".
@@ -27,6 +28,7 @@ import darq.launch
 from darq.loop import QtEventLoop
 from darq.protocols.history import History
 from darq.protocols.kb import EntityWriter
+from darq.protocols.type import Context as TypeContext
 from darq.protocols.type import Implementation, Status, Type
 from darq.ui.launcher import start_thread
 
@@ -46,8 +48,9 @@ ENTITY_TYPE = model.ENTITY_TYPE
 class LaunchFiles:
     """Makes items from files' data, with darq.launch."""
 
-    def create(self, media_type: str, extension: str, data: bytes, name: str) -> str | None:
-        return darq.launch.import_data(media_type, extension, data, name)
+    def create(self, media_type: str, extension: str, data: bytes, name: str,
+               context: TypeContext | None = None) -> str | None:
+        return darq.launch.import_data(media_type, extension, data, name, context)
 
 
 def run_import(path: str, name: str, progress: typing.Callable[[str, int, int], None]) -> slack_importer.Result:

@@ -67,8 +67,10 @@ its work and language, an edition its work and ISBN, and a copy its book
 identifier.  So importing again finds the same ones, and changes nothing
 unless the export has.
 
-Each level's recorded in History as ``imported``, and people and
-publishers that are made as ``created``, from ``librarything-import``.
+Each level's recorded in History as ``imported``, and people,
+publishers and tags that are made as ``created``, from
+``librarything-import``, by the KB's type implementation, as the import
+describes them (see :doc:`history`): its updates aren't recorded.
 Every statement cites LibraryThing, and is restated, as an address
 book's are.  A statement that's been changed by hand stays changed: the
 source's is kept, deprecated, and isn't stated again.

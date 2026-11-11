@@ -71,7 +71,9 @@ the window, with the pages in one continuous column.
   click goes to that place.
 * V is the reading view, and B catalogues it as a book.
 * F1 shows the keys, and F11 is full screen.
-* It's recorded in History as ``opened``, from ``pdf-lens``.
+* It tells the item it's being viewed, and on which page, and the item's
+  type records it in History as ``viewed``, from ``pdf-lens``, noted
+  with the page, such as *page 45 of 296*.
 
 Links in a PDF aren't followed, and text can't be selected: Qt's
 ``QPdfView`` does neither, so each would need the lens to work out

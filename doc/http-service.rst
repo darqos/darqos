@@ -88,9 +88,11 @@ How It Works
    latest already, and any moves are recorded.
 
 The item's recorded in History as ``imported``, and the URL's item as
-``created`` when it's made, and as ``fetched`` each time it's fetched
-from the server, whether or not anything's changed, so it shows when it
-was last checked.  All are from ``http``.
+``created`` when it's made, and as ``fetched`` when a fetch finds
+something new, each noted with the URL, and from ``http``: by their
+types, as the service describes them (see :doc:`history`).  A fetch
+that finds nothing new writes nothing, so isn't recorded: the lens it's
+shown in records it viewed.
 
 .. list-table::
    :header-rows: 1

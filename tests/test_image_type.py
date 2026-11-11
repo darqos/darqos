@@ -687,3 +687,13 @@ def test_an_old_image_is_given_its_entity(call, kb):
     kb.failing = None
     assert call(IMPLEMENTATION_PORT, OpenEntityRequest(item_id=iid)).status == Status.OK
     assert model.recorded_type(kb.get(darq.split_item_id(iid)[1])) == "public.png"
+
+
+def test_viewing_and_editing_are_recorded_with_the_ports_client(call, server, fake_ports, recorded):  # noqa: F811
+    from test_text_type import send
+    iid, port = create_from(call, make())
+    send(fake_ports, server, port, wire.Viewed(source="image-lens", note=""))
+    call(port, SetEditsRequest(edits=[wire.Edit(wire.EditType.FLIP)]))
+    call(port, CloseRequest())
+    assert recorded.events == [(iid, "created", "image-type", ""), (iid, "viewed", "image-lens", ""),
+                               (iid, "edited", "image-lens", "")]

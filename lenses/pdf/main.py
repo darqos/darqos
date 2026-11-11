@@ -14,8 +14,10 @@
 # mark (see doc/book.rst).  It reopens where the reader left off.
 #
 # Its thread is Qt's: the lens port is served on Qt's event loop (see
-# darq.Server.attach), and its calls to the item and History are
-# synchronous, on queued reply ports.
+# darq.Server.attach), and its calls to the item are synchronous, on
+# queued reply ports.  It tells the item it's being viewed, and on which
+# page (see darq.ui.lens.Viewing): the item's type records that in
+# History.
 
 import logging
 import typing
@@ -39,20 +41,18 @@ from PyQt6.QtWidgets import (
 
 import darq
 import darq.book
-import darq.history
 from darq.loop import QtEventLoop
 from darq.protocols import pdf as wire
-from darq.protocols.history import History
 from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
 from darq.ui import catalogue, reader, style
 from darq.ui.catalogue import Details
 from darq.ui.launcher import Launcher
 from darq.ui.names import item_name
-from darq.ui.lens import MESSAGE_SHOWN, LensHandler, announce, overlay, show_over
+from darq.ui.lens import MESSAGE_SHOWN, LensHandler, Viewing, announce, overlay, show_over
 from darq.ui.style import BACKGROUND, CONTROLS
 
 
-# History source for the events it records.
+# History's source of what's done through it.
 SOURCE = "pdf-lens"
 
 # Seconds to wait for the item's replies: a large PDF takes a while.
@@ -132,13 +132,12 @@ def step_match(index: int, count: int, step: int) -> int:
 
 
 class PdfSync:
-    """The lens's use of the item, and of History.  It uses no Qt, so it
-    can be tested without a display."""
+    """The lens's use of the item.  It uses no Qt, so it can be tested
+    without a display."""
 
-    def __init__(self, client: wire.Pdf.Client, item_id: str, history: History.Client | None = None):
+    def __init__(self, client: wire.Pdf.Client, item_id: str):
         self.client = client
         self.item_id = item_id
-        self.history = history
         self.data = b""
 
         # False once the item has stopped answering.
@@ -164,15 +163,6 @@ class PdfSync:
             logging.warning(f"Can't get the position of {self.item_id}: {e!r}")
             return 0
 
-    def note(self, item_id: str, event: str):
-        """Record a History event about another item, if History's running."""
-        if self.history is None:
-            return
-        try:
-            self.history.add_event(item_id=item_id, event=event, source=SOURCE)
-        except darq.DarqError as e:
-            logging.warning(f"Can't record {event} for {item_id}: {e!r}")
-
     def save_position(self, page: int):
         """Save the page the reader's got to: it rewrites the blob, so
         it's only done on closing."""
@@ -182,15 +172,6 @@ class PdfSync:
             self.client.set_position(position=str(page))
         except (darq.DarqError, TimeoutError) as e:
             logging.warning(f"Can't save the position of {self.item_id}: {e!r}")
-
-    def record(self, event: str):
-        """Record a History event about the item, if History is running."""
-        if self.history is None:
-            return
-        try:
-            self.history.add_event(item_id=self.item_id, event=event, source=SOURCE)
-        except darq.DarqError as e:
-            logging.warning(f"Can't record {event} for {self.item_id}: {e!r}")
 
     def close(self):
         """Close the item, once finished with it."""
@@ -248,6 +229,7 @@ class PdfWindow(QWidget):
     def __init__(self, sync: PdfSync, on_closed: typing.Callable[[], None] | None = None,
                  on_catalogue: typing.Callable[[], None] | None = None):
         super().__init__()
+        self.viewing = Viewing(self, SOURCE)
         self.sync = sync
         self.on_closed = on_closed
         self.on_catalogue = on_catalogue
@@ -369,6 +351,11 @@ class PdfWindow(QWidget):
 
     def page_changed(self, page: int):
         self.setWindowTitle(f"{self.name} ({page + 1} of {self.page_count})")
+        self.viewing.move(self.where())
+
+    def where(self) -> str:
+        """Return where the reader's got to, for History."""
+        return f"page {self.page + 1} of {self.page_count}" if self.page_count else ""
 
     # Zooming
 
@@ -650,6 +637,7 @@ class PdfWindow(QWidget):
         menu.exec(a0.globalPos())
 
     def closeEvent(self, a0):
+        self.viewing.stop()
         self.sync.save_position(self.page)
         self.sync.close()
         super().closeEvent(a0)
@@ -661,19 +649,17 @@ class PdfWindow(QWidget):
 class PdfLens(LensHandler):
     """Answers the Lens protocol: uses one item, in a window."""
 
-    def __init__(self, loop: QtEventLoop, history: History.Client | None,
-                 find_copy: typing.Callable[[str], str] = catalogue.find_copy):
+    def __init__(self, loop: QtEventLoop, find_copy: typing.Callable[[str], str] = catalogue.find_copy):
         # Looks up an item's name, for its window's title: tests replace it.
         self.name_of: typing.Callable[[str], str] = item_name
         """Constructor.
 
         :param find_copy: Returns the copy an item is of a book, if any."""
         self.loop = loop
-        self.history = history
         self.find_copy = find_copy
         self.window: PdfWindow | None = None
         self.item_id = ""
-        self.services = typing.cast(typing.Any, catalogue.Services(history))
+        self.services = typing.cast(typing.Any, catalogue.Services())
         self.launcher = Launcher(self, SOURCE, lambda job: loop.post(job))
 
     def use(self, request: UseRequest, source: int) -> UseResponse:
@@ -682,7 +668,7 @@ class PdfLens(LensHandler):
         if request.item is None:
             return UseResponse(status=Status.FAILED)
 
-        sync = PdfSync(wire.Pdf.Client(request.item, timeout=TIMEOUT), request.item_id, self.history)
+        sync = PdfSync(wire.Pdf.Client(request.item, timeout=TIMEOUT), request.item_id)
         if not sync.reload():
             return UseResponse(status=Status.FAILED)
         self.window = PdfWindow(sync, on_closed=self.finished, on_catalogue=self.catalogue)
@@ -693,7 +679,7 @@ class PdfLens(LensHandler):
         self.window.go_to(sync.position())
         if self.find_copy(request.item_id):
             self.window.set_reading(True)
-        sync.record(darq.history.OPENED)
+        self.window.viewing.show(sync.client, self.window.where())
         logging.info(f"Using {request.item_id}")
         self.shown_item = request.item_id
         return UseResponse(status=Status.OK)
@@ -709,7 +695,7 @@ class PdfLens(LensHandler):
         window = self.window
         if window is None:
             return
-        problem = catalogue.catalogue(window, self.launcher, self.item_id, window.details(), window.sync.note)
+        problem = catalogue.catalogue(window, self.launcher, self.item_id, window.details(), SOURCE)
         if problem:
             window.show_zoom(problem)
         else:
@@ -745,11 +731,7 @@ def darq_main():
     app.setQuitOnLastWindowClosed(False)
     loop = QtEventLoop()
 
-    # History is best effort: the lens works without it.
-    handle = darq.lookup_name("darq.history", blocking=False)
-    history = History.Client(handle) if handle is not None else None
-
-    lens = PdfLens(loop, history)
+    lens = PdfLens(loop)
     port = darq.open_port()
     announce(port)
     server = darq.Server()

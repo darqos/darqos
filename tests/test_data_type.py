@@ -197,3 +197,11 @@ def test_an_old_one_is_given_its_entity(call, kb):
     kb.failing = None
     assert call(IMPLEMENTATION_PORT, OpenEntityRequest(item_id=iid)).status == Status.OK
     assert strings(kb.get(darq.split_item_id(iid)[1]), items.MEDIA_TYPE) == ["application/zip"]
+
+
+def test_viewing_is_recorded(call, server, fake_ports, recorded):  # noqa: F811
+    from test_text_type import send
+    from darq.protocols.data import Viewed
+    iid, port = create_from(call)
+    send(fake_ports, server, port, Viewed(source="entity-lens", note=""))
+    assert recorded.events == [(iid, "created", "data-type", ""), (iid, "viewed", "entity-lens", "")]

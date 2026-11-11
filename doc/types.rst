@@ -253,15 +253,16 @@ its waiting `Activate` requests, rather than being restarted.
 Every implementation serves the `Implementation` protocol (also in
 `lib/didl/type.didl`):
 
-* `Create(type_id)` creates an item of a type, and returns its
+* `Create(type_id, context)` creates an item of a type, and returns its
   identifier, and a port for it.  A type the implementation doesn't
   implement is `NOT_FOUND`, and one with no empty items, such as a
   PDF, is `UNSUPPORTED`: they're only made with `CreateFrom`.
 * `Open(item_id)` returns a port for an existing item.  An implementation
   must check that the identifier's type is its own: an item of another
   type, including a conforming subtype, is `NOT_FOUND`.
-* `Destroy(item_id)` marks it destroyed (see Item Destruction, below).
-* `CreateFrom(type_id, data, name, media_type)` creates an item of a
+* `Destroy(item_id, context)` marks it destroyed (see Item Destruction,
+  below).
+* `CreateFrom(type_id, data, name, media_type, context)` creates an item of a
   type from data in the type's own format, such as a PNG file's bytes,
   and returns its
   identifier and a port, as `Create` does.  Data that isn't of the type
@@ -296,12 +297,24 @@ Every implementation serves the `Implementation` protocol (also in
   its implementation (`EntityType.adopt`); an item that isn't there is
   `NOT_FOUND`.
 
+The implementation records in History what `Create`, `CreateFrom` and
+`Destroy` do, and the entity writes, as their `context` describes it:
+what happened, from where, and a note, such as a file's path.  An
+empty context is the request's own event, from the implementation.
+Every item port has `Viewed(source, note)` too, after `Close`: a lens
+calls it when it shows the operator the item, and the implementation
+records it, and what's changed through that port, as from the lens (see
+:doc:`history`, Who Records Events).
+
 `darq.launch` has `create_item_from(type_id, data)`,
 `export_item(item_id)` and `find_types(mime_type, extension)` for
 clients.  Until there's a filesystem type, the Terminals' New panel
 has *Import File...*, which brings in a file from the host: its type is
 the first `FindTypes` finds for its extension whose `CreateFrom` takes
-it, and it's recorded in History as `imported`.
+it, and its type records it in History as `imported`, noted with the
+file's path.  A type implementation records what's done to its items,
+as their callers describe it with a context: see :doc:`history`, Who
+Records Events.
 
 Type Instances
 --------------

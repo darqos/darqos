@@ -21,7 +21,7 @@ import darq.kb as model
 
 from test_kb_type import Writer, implementation, index, kb, kb_service, ports  # noqa: F401
 from test_pkernel import live_pkernel, pkernel, run_kernel_until, write_app  # noqa: F401
-from test_vcard_import import History, Implementation
+from test_vcard_import import Implementation
 
 
 TOOL_PATH = pathlib.Path(__file__).parent.parent / "tools" / "librarything-import"
@@ -197,15 +197,15 @@ def test_an_export_that_isnt():
 ################################################################
 
 @pytest.fixture
-def target(kb, implementation):  # noqa: F811
-    return kb, Implementation(implementation), History()
+def target(kb, implementation, recorded):  # noqa: F811
+    return kb, Implementation(implementation), recorded
 
 
 def run(target, *records):
-    client, adapter, history = target
+    client, adapter, _ = target
     items = model.KB(client.client, Writer(adapter.handler))
     export = json.dumps({r["books_id"]: r for r in records})
-    return lt_importer.Importer(client, items, history, lt_export.read_export(export),
+    return lt_importer.Importer(client, items, lt_export.read_export(export),
                                 lambda step, done, total: None).run()
 
 
@@ -415,11 +415,12 @@ def test_a_book_with_no_author(target):
 
 
 def test_history(target):
+    """What it makes is recorded by the KB type, as it describes it: but
+    not entities of no kind, such as a place of publication."""
     run(target, record())
-    events = {(item_id.partition(":")[0], event, source) for item_id, event, source in target[2].events}
+    events = {(item_id.partition(":")[0], event, source) for item_id, event, source, _ in target[2].events}
     assert events == {("darq.person", "created", "librarything-import"),
                       ("darq.organisation", "created", "librarything-import"),
-                      ("darq.entity", "created", "librarything-import"),
                       *((t, "imported", "librarything-import") for t in (
                           darq.book.WORK_TYPE, darq.book.EXPRESSION_TYPE, darq.book.MANIFESTATION_TYPE,
                           darq.book.ITEM_TYPE))}

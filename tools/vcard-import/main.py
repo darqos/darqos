@@ -27,7 +27,6 @@ from PyQt6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QLi
 import darq
 import darq.kb as model
 from darq.loop import QtEventLoop
-from darq.protocols.history import History
 from darq.protocols.kb import EntityWriter
 from darq.protocols.type import Implementation, Status, Type
 from darq.ui.launcher import start_thread
@@ -67,11 +66,7 @@ def run_import(path: str, name: str, progress: typing.Callable[[str, int, int], 
     kb = model.KB.connect(timeout=TIMEOUT)
     items = model.KB(kb.client, EntityWriter.Client(activated.implementation, timeout=TIMEOUT))
 
-    # History is best effort: the import works without it.
-    handle = darq.lookup_name("darq.history", blocking=False)
-    history = History.Client(handle, timeout=TIMEOUT) if handle is not None else None
-
-    result = importer.Import(kb, items, implementation, history, wd, name, progress).run(reader.drafts)
+    result = importer.Import(kb, items, implementation, wd, name, progress).run(reader.drafts)
     return cards.summary(reader), result
 
 

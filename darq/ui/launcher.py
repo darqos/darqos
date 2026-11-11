@@ -18,6 +18,7 @@ import darq
 import darq.items
 import darq.history
 from darq.protocols.http import Status as HttpStatus
+from darq.protocols.type import Context
 
 from . import Host
 
@@ -60,7 +61,8 @@ class Launcher:
                  run: typing.Callable[[typing.Callable[[], None]], None] = start_thread):
         """Constructor.
 
-        :param source: The History source for the created events it records.
+        :param source: The History source of the items it creates, which
+                       their types record (see doc/history.rst).
         :param post: Calls a function on the UI's thread, from any thread
                      (such as QtEventLoop.post).
         :param run: Runs a job: on a thread, unless tests say otherwise."""
@@ -71,7 +73,8 @@ class Launcher:
 
     def create(self, type_id: str, name: str, context: object = None,
                done: typing.Callable[[], None] | None = None):
-        """Create an item of a type, record that it was, and use it.
+        """Create an item of a type, and use it: its type records that it
+        was, from the launcher's source.
 
         :param done: Called on the UI's thread when it's finished, before
                      the host's told, whether or not it worked."""
@@ -80,21 +83,17 @@ class Launcher:
 
         def job() -> tuple[str | None, str | None]:
             try:
-                item_id, item = services.launch.create_item(type_id)
+                item_id, item = services.launch.create_item(type_id, Context(source=self.source))
             except (darq.DarqError, TimeoutError) as e:
                 return None, f"Can't create a {name}: {e}"
-            try:
-                services.history.add_event(item_id=item_id, event=darq.history.CREATED, source=self.source)
-            except darq.DarqError as e:
-                logging.warning(f"Can't record created for {item_id}: {e!r}")
             return item_id, self.use_item(item_id, item)
 
         self.start(job, context, done)
 
     def create_from_file(self, path: str, context: object = None,
                          done: typing.Callable[[], None] | None = None):
-        """Create an item from a host file, record that it was imported,
-        and use it.
+        """Create an item from a host file, and use it: its type records
+        that it was imported, with the file's path.
 
         Its type is found from its name's extension: the first that
         takes its data, or else data, public.data, which takes anything.
@@ -119,15 +118,12 @@ class Launcher:
                 return None, f"Can't find a type for {name}: {e}"
             # What no type takes is kept as data (see doc/data-type.rst).
             for type_id in [*dict.fromkeys(type_ids), darq.items.DATA_TYPE]:
+                context = Context(event=darq.history.IMPORTED, source=self.source, note=path)
                 try:
-                    item_id, item = services.launch.create_item_from(type_id, data, name)
+                    item_id, item = services.launch.create_item_from(type_id, data, name, context=context)
                 except (darq.DarqError, TimeoutError) as e:
                     logging.info(f"{type_id} didn't take {name}: {e}")
                     continue
-                try:
-                    services.history.add_event(item_id=item_id, event=darq.history.IMPORTED, source=self.source)
-                except darq.DarqError as e:
-                    logging.warning(f"Can't record imported for {item_id}: {e!r}")
                 return item_id, self.use_item(item_id, item)
             return None, f"Can't import {name}: it isn't a {' or '.join([*type_ids, darq.items.DATA_TYPE])}"
 

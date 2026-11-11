@@ -34,6 +34,7 @@ import struct
 import time
 
 import darq
+import darq.history
 import darq.index
 import darq.kb as model
 from darq.entity_type import EntityType
@@ -48,6 +49,7 @@ from darq.protocols.text import (
     StatRequest,
     StatResponse,
     Text,
+    Viewed,
 )
 from darq.protocols.text import Status as TextStatus
 from darq.protocols.type import (
@@ -66,7 +68,6 @@ from darq.protocols.type import (
     Ready,
     Status,
 )
-
 
 # The type implemented.
 TYPE_ID = "public.utf8-plain-text"
@@ -156,6 +157,10 @@ class Buffer:
         self.dirty_since: float | None = None
         self.timer: darq.Timer | None = None
 
+        # The source of its latest change: whoever made it, recorded as
+        # its editor when it's saved.
+        self.editor = ""
+
     @property
     def id(self) -> tuple[int, int]:
         return self.key.high, self.key.low
@@ -163,6 +168,8 @@ class Buffer:
 
 class TextImplementation(EntityType):
     """Answers the Implementation protocol, and keeps the open items."""
+
+    SOURCE = "text-type"
 
     def __init__(self, client: storage.Storage.Client, index: darq.index.Publisher, kb: model.KB):
         super().__init__(kb, [TYPE_ID])
@@ -242,6 +249,7 @@ class TextImplementation(EntityType):
             buffer.timer = None
 
         iid = item_id(buffer.key)
+        edited = buffer.dirty_since is not None
         try:
             response = self.storage.put(key=buffer.key, expected=buffer.generation,
                                         value=encode_blob(buffer.text, buffer.flags))
@@ -255,6 +263,8 @@ class TextImplementation(EntityType):
         buffer.generation = response.generation
         buffer.dirty_since = None
         self.publish(buffer)
+        if edited:
+            self.record(iid, darq.history.EDITED, source=buffer.editor)
         return True
 
     def publish(self, buffer: Buffer):
@@ -295,6 +305,7 @@ class TextImplementation(EntityType):
         buffer = self.new("")
         if buffer is None:
             return CreateResponse(status=Status.FAILED)
+        self.record(item_id(buffer.key), darq.history.CREATED, request.context)
         return CreateResponse(item_id=item_id(buffer.key), item=self.attach(buffer), status=Status.OK)
 
     def create_from(self, request: CreateFromRequest, source: int) -> CreateFromResponse:
@@ -313,6 +324,7 @@ class TextImplementation(EntityType):
         buffer = self.new(text, request.name)
         if buffer is None:
             return CreateFromResponse(status=Status.FAILED)
+        self.record(item_id(buffer.key), darq.history.CREATED, request.context)
         return CreateFromResponse(item_id=item_id(buffer.key), item=self.attach(buffer), status=Status.OK)
 
     def export(self, request: ExportRequest, source: int) -> ExportResponse:
@@ -408,6 +420,7 @@ class TextImplementation(EntityType):
             buffer.flags &= ~DESTROYED
             return DestroyResponse(status=Status.FAILED)
         self.destroy_item_entity(specifier(key))
+        self.record(item_id(key), darq.history.DESTROYED, request.context)
         logging.info(f"Destroyed {request.item_id}")
         return DestroyResponse(status=Status.OK)
 
@@ -420,9 +433,17 @@ class TextItem(Text.Handler):
         self.buffer = buffer
         self.port = port
 
+        # The client's name, from Viewed: its changes are recorded with it.
+        self.source = ""
+
     def close(self, request: CloseRequest, source: int) -> CloseResponse:
         self.implementation.detach(self.buffer, self.port)
         return CloseResponse()
+
+    def viewed(self, request: Viewed, source: int) -> None:
+        self.source = request.source
+        self.implementation.record(item_id(self.buffer.key), darq.history.VIEWED, source=request.source,
+                                   note=request.note)
 
     def get(self, request: GetRequest, source: int) -> GetResponse:
         return GetResponse(text=self.buffer.text, version=self.buffer.version)
@@ -436,6 +457,7 @@ class TextItem(Text.Handler):
 
         buffer.text = buffer.text[:request.start] + request.text + buffer.text[request.end:]
         buffer.version += 1
+        buffer.editor = self.source
         self.implementation.changed(buffer)
         return ReplaceResponse(version=buffer.version, status=TextStatus.OK)
 

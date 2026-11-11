@@ -266,8 +266,7 @@ def loop(qt_app):
     work = store.add(darq.book.WORK_TYPE, "x")
     del work.labels["en"]
     store.__class__ = DestroyingStore
-    used = lens.BookLens(python_types.SimpleNamespace(post=lambda job: job(), stop=lambda: None), None,
-                         FakeOpener(), store)
+    used = lens.BookLens(python_types.SimpleNamespace(post=lambda job: job(), stop=lambda: None), FakeOpener(), store)
     used.run = lambda job: job()
     used.fetch = lambda url: encoded(ANSWER if "bibkeys" in url else SEARCH)
     DestroyingStore.destroyed = []
@@ -531,8 +530,7 @@ def test_adding_from_a_card(qt_app):
     book = bought()
     darq.book.save(store, book)
     store.__class__ = LensStore
-    used = lens.BookLens(python_types.SimpleNamespace(post=lambda job: job(), stop=lambda: None), None,
-                         FakeOpener(), store)
+    used = lens.BookLens(python_types.SimpleNamespace(post=lambda job: job(), stop=lambda: None), FakeOpener(), store)
     used.use(UseRequest(item_id=store.item(book.work), item=5), 0)
     used.start_adding()
     assert used.window.stack.currentWidget() is used.window.adding and used.spare is None

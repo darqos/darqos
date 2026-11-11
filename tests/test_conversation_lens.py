@@ -71,6 +71,7 @@ class World:
         }
         self.reads = 0
         self.closed: list[str] = []
+        self.viewed: list[tuple[str, str]] = []
         self.ports: dict[int, str] = {}
         self.next_port = 700
         self.failing = False
@@ -116,6 +117,9 @@ class FakeItem:
     def close(self):
         self.world.closed.append(self.item_id)
 
+    def viewed(self, source="", note=""):
+        self.world.viewed.append((self.item_id, source))
+
 
 class FakeOpener:
     def __init__(self, world):
@@ -138,14 +142,6 @@ class FakeLoop:
 
     def stop(self):
         self.stopped = True
-
-
-class FakeHistory:
-    def __init__(self):
-        self.events = []
-
-    def add_event(self, item_id, event, source):
-        self.events.append((item_id, event, source))
 
 
 def held(world: World) -> timeline.Timeline:
@@ -422,8 +418,7 @@ def world():
 @pytest.fixture
 def conversation_lens(qt_app, world, monkeypatch):
     monkeypatch.setattr(darq, "close_port", lambda port: None)
-    history = FakeHistory()
-    used = lens.ConversationLens(FakeLoop(), history, FakeOpener(world))
+    used = lens.ConversationLens(FakeLoop(), FakeOpener(world))
     monkeypatch.setattr(used, "client", lambda port: used.ports.setdefault(port, FakeItem(world, port)))
     yield used
     if used.window is not None:
@@ -444,7 +439,8 @@ def test_conversation_opens_at_the_newest(conversation_lens, world):
     assert window.title.text() == "#dev" and window.people.text() == "Ada Lovelace"
     assert "Message 249" in text_of(window)
     assert window.bar.value() == window.bar.maximum()
-    assert conversation_lens.history.events == [(CONVERSATION, "opened", "conversation-lens")]
+    # It's told it's viewed: its type records it.
+    assert world.viewed == [(CONVERSATION, "conversation-lens")]
 
 
 def test_empty_conversation(conversation_lens, world):
@@ -463,7 +459,8 @@ def test_message_opens_in_its_conversation(conversation_lens, world):
 
     # The message's port has gone, and the conversation's is what's left.
     assert world.closed == [item_id]
-    assert conversation_lens.history.events == [(item_id, "opened", "conversation-lens")]
+    # The message is told it's viewed, and then the conversation it's in.
+    assert world.viewed == [(item_id, "conversation-lens"), (CONVERSATION, "conversation-lens")]
 
 
 def test_message_without_a_conversation_is_shown_alone(conversation_lens, world):
@@ -649,10 +646,16 @@ def test_conversation_lens(live_pkernel, tmp_path):  # noqa: F811
 
             item_id = f"darq.message:{new.id}"
             lens = Lens.Client(darq.launch.use_item(item_id), timeout=30)
+            # Its type records it viewed, as it comes, one way.
             history = History.Client(darq.connect("darq.history"), timeout=10)
-            events = [(e.event, e.source) for e in history.get_events(item_ids=[item_id]).events]
-            if events != [("opened", "conversation-lens")]:
-                return f"events are {events!r}"
+            deadline = time.monotonic() + 10
+            while True:
+                events = [(e.event, e.source) for e in history.get_events(item_ids=[item_id]).events]
+                if ("viewed", "conversation-lens") in events:
+                    break
+                if time.monotonic() > deadline:
+                    return f"events are {events!r}"
+                time.sleep(0.05)
             lens.close()
             return 0
         """)

@@ -22,7 +22,7 @@ import darq.message
 
 from test_kb_type import Writer, implementation, index, kb, kb_service, ports  # noqa: F401
 from test_pkernel import live_pkernel, pkernel, run_kernel_until, write_app  # noqa: F401
-from test_vcard_import import History, Implementation, find
+from test_vcard_import import Implementation, find
 
 
 TOOL_PATH = pathlib.Path(__file__).parent.parent / "tools" / "slack-import"
@@ -223,7 +223,10 @@ class Files:
         self.names: list[str] = []
         self.types = {"application/pdf": "com.adobe.pdf"}
 
-    def create(self, media_type, extension, data, name):
+        # How each's to be recorded: (event, source, note).
+        self.contexts: list[tuple[str, str, str]] = []
+
+    def create(self, media_type, extension, data, name, context=None):
         """Make an item, with its entity, as its type does, so that a
         message can link to it."""
         type_id = self.types.get(media_type)
@@ -231,10 +234,23 @@ class Files:
             return None
         self.made.append(media_type)
         self.names.append(name)
+        if context is not None:
+            self.contexts.append((context.event, context.source, context.note))
         specifier = f"{len(self.made):032x}"
         if self.kb is not None:
             darq.items.create(self.kb, type_id, specifier, file_name=name)
         return f"{type_id}:{specifier}"
+
+
+class History:
+    """Stands in for History: the import's own summaries, as (item_id,
+    event, source, note)."""
+
+    def __init__(self):
+        self.events: list[tuple[str, str, str, str]] = []
+
+    def add_event(self, item_id, event, source, note=""):
+        self.events.append((item_id, event, source, note))
 
 
 @pytest.fixture
@@ -390,24 +406,30 @@ def test_a_message_of_only_a_file_has_no_body(target, export):
     assert darq.message.body_of(message_at(target[0], "C1", "1010.000100")) == ""
 
 
-def test_history(target, export):
-    run(target, export)
-    _, _, history, _ = target
-    assert sum(event == "created" for _, event, _ in history.events) == 2
-    imported = [item for item, event, _ in history.events if event == "imported"]
-    assert sum(item.startswith("darq.conversation:") for item in imported) == 2
-    assert sum(item.startswith("com.adobe.pdf:") for item in imported) == 1
-    assert all(source == "slack-import" for _, _, source in history.events)
-
-
-def test_reimport_changes_nothing(target, export, kb_service):  # noqa: F811
+def test_history(target, export, recorded):
+    """People and files are recorded by their types, as it describes them;
+    messages and conversations aren't, but it records each conversation
+    that gains messages, as delivered, with how many."""
     run(target, export)
     _, _, history, files = target
-    events, writes = len(history.events), kb_service.store.writes
+    assert [e[1:] for e in recorded.events] == [("created", "slack-import", "Example")] * 2
+    assert all(e[0].startswith("darq.person:") for e in recorded.events)
+    assert files.contexts == [("imported", "slack-import", "Example")]
+    assert len(history.events) == 2
+    assert all(item.startswith("darq.conversation:") and (event, source) == ("delivered", "slack-import")
+               for item, event, source, _ in history.events)
+    assert all(note.endswith(" new messages, Example") or note.endswith(" new message, Example")
+               for *_, note in history.events)
+
+
+def test_reimport_changes_nothing(target, export, kb_service, recorded):  # noqa: F811
+    run(target, export)
+    _, _, history, files = target
+    events, writes = len(history.events) + len(recorded.events), kb_service.store.writes
     result = run(target, export)
     assert (result.created, result.updated, result.failed, result.matches) == (0, 0, 0, [])
     assert result.unchanged == 10
-    assert (len(history.events), kb_service.store.writes) == (events, writes)
+    assert (len(history.events) + len(recorded.events), kb_service.store.writes) == (events, writes)
     assert files.made == ["application/pdf"]
 
 

@@ -386,7 +386,7 @@ def test_ebook_lens(live_pkernel, tmp_path, monkeypatch):  # noqa: F811
             time.sleep(6)
             history = History.Client(darq.connect("darq.history"), timeout=10)
             events = [(e.event, e.source) for e in history.get_events(item_ids=[item_id]).events]
-            if ("opened", "ebook-lens") not in events:
+            if ("viewed", "ebook-lens") not in events:
                 return f"events are {{events!r}}"
             lens.close()
             time.sleep(1.5)

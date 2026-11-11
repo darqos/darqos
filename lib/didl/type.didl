@@ -95,18 +95,40 @@ protocol Bootstrap {
 }
 
 // Served by every type implementation, on the port Activate returns.
+// What a caller says of the event its request causes, which the type
+// implementation records in History (see doc/history.rst, Who Records
+// Events).  An empty context, as a caller that passes none sends, is
+// the request's own event, recorded with the implementation as its
+// source.
+struct Context {
+    // The event, such as "imported", when it's not the request's own
+    // ("created", "edited", "destroyed"); or empty.
+    string event;
+
+    // What the request came through, such as "terminal" or
+    // "slack-import"; or empty, for the implementation.
+    string source;
+
+    // A line for the operator, such as a file's path or a URL.
+    string note;
+
+    // Don't record it: the caller records one event for many, as an
+    // import does.
+    bool quiet;
+}
+
 protocol Implementation {
     // Create an item of a type, returning its identifier and a port for
     // it.  An implementation can implement several types; a type it
     // doesn't implement is NOT_FOUND.
-    1: Create(string type_id) -> (string item_id, port item, Status status);
+    1: Create(string type_id, Context context) -> (string item_id, port item, Status status);
 
     // Open an existing item, returning a port for it.  An item of
     // another type is NOT_FOUND.
     2: Open(string item_id) -> (port item, Status status);
 
     // Mark an item destroyed (see doc/types.rst).
-    3: Destroy(string item_id) -> (Status status);
+    3: Destroy(string item_id, Context context) -> (Status status);
 
     // Create an item of a type from data in the type's own format, such
     // as a PNG file's bytes, returning its identifier and a port for
@@ -116,7 +138,7 @@ protocol Implementation {
     // the data doesn't give one (see doc/entity-vs-item.rst).  Its media
     // type is the one it came with, if it came with one, such as a
     // server's Content-Type: a type that knows its own ignores it.
-    4: CreateFrom(string type_id, opaque data, string name, string media_type) -> (string item_id, port item, Status status);
+    4: CreateFrom(string type_id, opaque data, string name, string media_type, Context context) -> (string item_id, port item, Status status);
 
     // Return an item's content as data in its type's format, with its
     // MIME type.
@@ -142,4 +164,9 @@ protocol Implementation {
 // implementation can then save and forget it, and close the port.
 protocol Item {
     1: Close() -> ();
+
+    // The operator's looking at the item, through a client, such as a
+    // lens, named by source, with a note of where they've got to: as
+    // Text.Viewed.  One-way.
+    2: Viewed(string source, string note);
 }

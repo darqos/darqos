@@ -4,11 +4,11 @@
 # LibraryThing import: a window for importing a library, from its JSON
 # export, into the Knowledge Base (see doc/librarything-import-tool.rst).
 #
-# It's a tool (see tool.json), started from the development Terminal's
-# Tools menu.  Choose the export.  It's read (lt_export.py), and imported
+# It's a tool (see tool.json), started from the Terminal's Tools panel,
+# Sys-t.  Choose the export.  It's read (lt_export.py), and imported
 # (lt_importer.py) on another thread: read from the KB service, and
-# created and written through the KB type implementation, and recorded
-# in History.
+# created and written through the KB type implementation, which records
+# what's made in History.
 #
 # Its summary is counts, and what's to be checked: people found by name,
 # editions that were here, and publications that weren't understood.
@@ -25,7 +25,6 @@ from PyQt6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QLi
 import darq
 import darq.kb as model
 from darq.loop import QtEventLoop
-from darq.protocols.history import History
 from darq.protocols.kb import EntityWriter
 from darq.protocols.type import Status, Type
 from darq.ui.launcher import start_thread
@@ -53,11 +52,7 @@ def run_import(path: str, progress: typing.Callable[[str, int, int], None]) -> l
     kb = model.KB.connect(timeout=TIMEOUT)
     items = model.KB(kb.client, EntityWriter.Client(activated.implementation, timeout=TIMEOUT))
 
-    # History is best effort: the import works without it.
-    handle = darq.lookup_name("darq.history", blocking=False)
-    history = History.Client(handle, timeout=TIMEOUT) if handle is not None else None
-
-    return lt_importer.Importer(kb, items, history, records, progress).run()
+    return lt_importer.Importer(kb, items, records, progress).run()
 
 
 def summary(outcome: lt_importer.Result) -> list[str]:

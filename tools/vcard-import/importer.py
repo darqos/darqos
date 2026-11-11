@@ -13,7 +13,8 @@ items, and through which they're written (see doc/types.rst):
 2. Each draft's entity is found: by its cards' UIDs; or by where an
    earlier import of the address book's statements led; or by its
    natural key, which is logged, to be checked; or else it's created, as
-   an item of its kind, with Create, and recorded in History.
+   an item of its kind, with Create, which its type records in History
+   (see doc/history.rst), noted with the address book's name.
 3. Each entity's statements from the address book are replaced with the
    draft's, keeping any others, and written in batches.  Qualifiers and
    ranks added by hand are kept, as are statements the address book no
@@ -49,6 +50,8 @@ import darq.kb as model
 import darq.launch
 import darq.url
 from darq.protocols.kb import EntityItem
+from darq.protocols.kb import Context as KBContext
+from darq.protocols.type import Context as TypeContext
 from darq.protocols.type import Implementation
 from darq.protocols.type import Status as TypeStatus
 
@@ -58,7 +61,8 @@ import vocabulary
 
 log = logging.getLogger("vcard-import")
 
-# History source for the created events.
+# History source of what it creates and destroys: its writes of
+# statements aren't recorded.
 SOURCE = "vcard-import"
 
 # Entities read and written in each request.
@@ -70,14 +74,15 @@ IMAGE_TYPES = {"image/jpeg": "public.jpeg", "image/png": "public.png", "image/gi
                "image/heic": "public.heic", "image/heif": "public.heif"}
 
 
-def make_image(photo: cards.Photo) -> str:
-    """Make an image item from a photo, and return its identifier.
+def make_image(photo: cards.Photo, context: TypeContext) -> str:
+    """Make an image item from a photo, and return its identifier: its
+    type records it, as context says.
 
     :raises darq.DarqError: if it can't be made."""
     type_id = IMAGE_TYPES.get(photo.media_type)
     if type_id is None:
         raise darq.DarqError(f"{photo.media_type} isn't an image type")
-    item_id, port = darq.launch.create_item_from(type_id, photo.data, media_type=photo.media_type)
+    item_id, port = darq.launch.create_item_from(type_id, photo.data, media_type=photo.media_type, context=context)
     darq.close_port(port)
     return item_id
 
@@ -149,10 +154,6 @@ class Result:
                 f"{len(self.failed)} cards failed"]
 
 
-class History(typing.Protocol):
-    def add_event(self, item_id: str, event: str, source: str) -> typing.Any: ...
-
-
 def squash(text: str) -> str:
     """Return text folded, with its spaces squashed, for comparing."""
     return re.sub(r"\s+", " ", model.fold(text)).strip()
@@ -183,7 +184,6 @@ class Import:
                  kb: model.KB,
                  items: model.KB,
                  implementation: Implementation.Client,
-                 history: History | None,
                  wd: vocabulary.Vocabulary,
                  name: str,
                  progress: typing.Callable[[str, int, int], None] = lambda step, done, total: None):
@@ -195,9 +195,9 @@ class Import:
         :param name: The address book's name.
         :param progress: Told of each step, and how far it's got."""
         self.kb = kb
-        self.items = items
+        # Its writes of statements aren't recorded in History.
+        self.items = model.KB(items.client, items.writer, KBContext(quiet=True))
         self.implementation = implementation
-        self.history = history
         self.wd = wd
         self.name = name
         self.progress = progress
@@ -415,10 +415,11 @@ class Import:
                 and targets(entity, wd.country) == country)
 
     def create(self, draft: cards.Draft):
-        """Create a draft's entity, as an item of its kind, and record it."""
+        """Create a draft's entity, as an item of its kind: its type records
+        it."""
         kind = self.kind(draft.entity)
         try:
-            response = self.implementation.create(type_id=kind)
+            response = self.implementation.create(type_id=kind, context=self.context())
             if response.status != TypeStatus.OK or response.item is None:
                 raise darq.DarqError(response.status.name)
             try:
@@ -432,11 +433,10 @@ class Import:
         _, entity_id = darq.split_item_id(response.item_id)
         self.real[draft.entity.id] = entity_id
         self.result.created += 1
-        if kind != model.ENTITY_TYPE and self.history is not None:
-            try:
-                self.history.add_event(item_id=response.item_id, event=darq.history.CREATED, source=SOURCE)
-            except darq.DarqError as e:
-                log.warning(f"Can't record created for {response.item_id}: {e!r}")
+
+    def context(self, event: str = "") -> TypeContext:
+        """Return how History's to describe what it makes or destroys."""
+        return TypeContext(event=event, source=SOURCE, note=self.name)
 
     def fail(self, draft: cards.Draft, why: str):
         """Note that a draft failed, and log its cards' UIDs."""
@@ -474,7 +474,8 @@ class Import:
                 key = model.fold(name)
                 try:
                     if key not in tags:
-                        tags[key] = darq.items.tag(self.kb, self.items, name)
+                        tags[key] = darq.items.tag(self.kb, self.items, name,
+                                                   KBContext(source=SOURCE, note=self.name))
                 except (darq.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError) as e:
                     log.warning(f"Can't make a tag for card {min(draft.cards, default='')}: {e}")
                     continue
@@ -499,15 +500,10 @@ class Import:
                     for q in s.qualifiers):
                 return value.entity_id
         try:
-            item_id = make_image(photo)
+            item_id = make_image(photo, self.context(darq.history.IMPORTED))
         except (darq.DarqError, TimeoutError) as e:
             log.warning(f"Can't make an image of card {min(draft.cards, default='')}'s photo: {e}")
             return ""
-        if self.history is not None:
-            try:
-                self.history.add_event(item_id=item_id, event=darq.history.CREATED, source=SOURCE)
-            except darq.DarqError as e:
-                log.warning(f"Can't record created for {item_id}: {e!r}")
         return darq.split_item_id(item_id)[1]
 
     def fill(self, drafts: dict[str, cards.Draft]):
@@ -614,7 +610,7 @@ class Import:
                 self.items.put(entity)
                 continue
             item_id = self.item_id(entity)
-            response = self.implementation.destroy(item_id=item_id)
+            response = self.implementation.destroy(item_id=item_id, context=self.context())
             if response.status == TypeStatus.OK:
                 self.result.destroyed += 1
             else:

@@ -34,6 +34,13 @@ protocol Ebook {
     // As Item.Close.
     1: Close() -> ();
 
+    // The operator's looking at the item, through a client, such as a
+    // lens, named by source, with a note of where they've got to, such
+    // as "page 45 of 296": recorded as "viewed" (see doc/history.rst).
+    // Changes made through this port are recorded with its source too.
+    // It's one-way.
+    2: Viewed(string source, string note);
+
     // Return the file.
     16: Get() -> (opaque data);
 

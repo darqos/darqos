@@ -33,7 +33,9 @@ import darq.history
 import darq.items
 import darq.kb as model
 import darq.message
+from darq.protocols.kb import Context as KBContext
 from darq.protocols.kb import EntityItem
+from darq.protocols.type import Context as TypeContext
 from darq.protocols.type import Implementation
 from darq.protocols.type import Status as TypeStatus
 
@@ -43,7 +45,11 @@ import slack_text
 
 log = logging.getLogger("slack-import")
 
-# History source for its events.
+# History source of what it makes (see doc/history.rst).  People and
+# files are recorded by their types, as it describes them; messages
+# aren't, as there can be tens of thousands, nor are conversations, but
+# it records one event of its own for each conversation that gains
+# messages: delivered, with how many.
 SOURCE = "slack-import"
 
 # Entities read and written in each request.
@@ -81,14 +87,16 @@ SLACKBOT = "USLACKBOT"
 class Files(typing.Protocol):
     """Makes items from files' data: darq.launch, or a fake in tests."""
 
-    def create(self, media_type: str, extension: str, data: bytes, name: str) -> str | None:
+    def create(self, media_type: str, extension: str, data: bytes, name: str,
+               context: TypeContext | None = None) -> str | None:
         """Create an item, and return its identifier, or None if there's
-        no type with an implementation that takes the data."""
+        no type with an implementation that takes the data: its type
+        records it, as context says."""
         ...
 
 
 class History(typing.Protocol):
-    def add_event(self, item_id: str, event: str, source: str) -> typing.Any: ...
+    def add_event(self, item_id: str, event: str, source: str, note: str) -> typing.Any: ...
 
 
 class Result:
@@ -171,7 +179,8 @@ class Importer:
         :param name: The workspace's name.
         :param progress: Told the step, how much is done, and the total."""
         self.kb = kb
-        self.items = items
+        # What it writes isn't recorded, but as it says (see SOURCE).
+        self.items = model.KB(items.client, items.writer, KBContext(quiet=True))
         self.implementation = implementation
         self.history = history
         self.files = files
@@ -209,11 +218,13 @@ class Importer:
         self.import_messages()
         return self.result
 
-    def record(self, item_id: str, event: str):
+    def record(self, item_id: str, event: str, note: str):
+        """Record a summary of what's been made, as History's one exception
+        to its types recording what's done (see SOURCE)."""
         if self.history is None:
             return
         try:
-            self.history.add_event(item_id=item_id, event=event, source=SOURCE)
+            self.history.add_event(item_id=item_id, event=event, source=SOURCE, note=note)
         except darq.DarqError as e:
             log.warning(f"Can't record {event} for {item_id}: {e!r}")
 
@@ -307,14 +318,13 @@ class Importer:
         return found
 
     def create_person(self) -> str:
-        response = self.implementation.create(type_id="darq.person")
+        response = self.implementation.create(type_id="darq.person", context=TypeContext(source=SOURCE, note=self.name))
         if response.status != TypeStatus.OK or response.item is None:
             raise darq.DarqError(f"Can't create a person: {response.status.name}")
         try:
             EntityItem.Client(response.item, timeout=self.implementation.timeout).close()
         finally:
             darq.close_port(response.item)
-        self.record(response.item_id, darq.history.CREATED)
         return darq.split_item_id(response.item_id)[1]
 
     def bot(self, key: str) -> str:
@@ -412,13 +422,13 @@ class Importer:
         media_type = record.get("mimetype", "")
         extension = path.suffix.removeprefix(".")
         try:
-            item_id = self.files.create(media_type, extension, path.read_bytes(), record.get("name") or path.name)
+            item_id = self.files.create(media_type, extension, path.read_bytes(), record.get("name") or path.name,
+                                        TypeContext(event=darq.history.IMPORTED, source=SOURCE, note=self.name))
         except (OSError, darq.DarqError, TimeoutError) as e:
             log.warning(f"Can't make an item of {record['id']}: {e!r}")
             return ""
         if item_id is None:
             return ""
-        self.record(item_id, darq.history.IMPORTED)
         return item_id
 
     def attachment(self, record: dict) -> model.Statement:
@@ -477,7 +487,9 @@ class Importer:
             for start in range(0, len(messages), BATCH):
                 self.import_batch(channel, messages[start:start + BATCH], said)
             if self.result.created > created:
-                self.record(model.item_id(entity_id, CONVERSATION_TYPE), darq.history.IMPORTED)
+                count = self.result.created - created
+                self.record(model.item_id(entity_id, CONVERSATION_TYPE), darq.history.DELIVERED,
+                            f"{count} new message{'s' if count != 1 else ''}, {self.name}")
 
     def import_batch(self, channel: str, messages: list[dict], said: set[str]):
         """Create or restate a batch of messages, all or none."""

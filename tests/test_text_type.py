@@ -673,3 +673,48 @@ def test_one_thats_gone_isnt_given_one(call, kb):
     assert call(IMPLEMENTATION_PORT, DestroyRequest(item_id=iid)).status == Status.OK
     assert call(IMPLEMENTATION_PORT, OpenEntityRequest(item_id=iid)).status == Status.NOT_FOUND
     assert kb.entities == {}
+
+
+################################################################
+# History (see doc/history.rst, Who Records Events)
+################################################################
+
+def send(fake_ports, server, port, message):
+    """Send a one-way message to a port: there's no reply."""
+    buf, message_handles = message.encode()
+    fake_ports.deliver(port, CLIENT, buf, message_handles)
+    server.run_once(timeout=0)
+    assert fake_ports.sent == []
+
+
+def test_what_its_asked_for_is_recorded_as_its_caller_says(call, recorded):
+    from darq.protocols.type import Context
+    response = call(IMPLEMENTATION_PORT, CreateRequest(type_id=text_module.TYPE_ID,
+                                                       context=Context(source="terminal", note="New")))
+    created = response.item_id
+    response = call(IMPLEMENTATION_PORT, CreateFromRequest(
+        type_id=text_module.TYPE_ID, data=b"hi", name="hi.txt",
+        context=Context(event="imported", source="terminal", note="/home/me/hi.txt")))
+    imported = response.item_id
+    call(IMPLEMENTATION_PORT, CreateFromRequest(type_id=text_module.TYPE_ID, data=b"quiet",
+                                                context=Context(quiet=True)))
+    call(IMPLEMENTATION_PORT, DestroyRequest(item_id=created))
+    assert recorded.events == [(created, "created", "terminal", "New"),
+                               (imported, "imported", "terminal", "/home/me/hi.txt"),
+                               (created, "destroyed", "text-type", "")]
+
+
+def test_viewing_and_editing_through_a_port_are_recorded_with_its_client(call, server, fake_ports, recorded):
+    from darq.protocols.text import Viewed
+    iid, port = create(call)
+    recorded.events.clear()
+    send(fake_ports, server, port, Viewed(source="text-lens", note="line 1"))
+    replace(call, port, 0, 0, "hello")
+    call(port, CloseRequest())
+    assert recorded.events == [(iid, "viewed", "text-lens", "line 1"), (iid, "edited", "text-lens", "")]
+
+
+def test_a_save_without_changes_isnt_an_edit(call, recorded):
+    iid, port = create(call)
+    call(port, CloseRequest())
+    assert [e[1] for e in recorded.events] == ["created"]

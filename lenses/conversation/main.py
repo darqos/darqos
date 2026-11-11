@@ -17,8 +17,10 @@
 # newest.
 #
 # Its thread is Qt's: the lens port is served on Qt's event loop (see
-# darq.Server.attach), and its calls to the item and History are
-# synchronous, on queued reply ports.
+# darq.Server.attach), and its calls to the item are synchronous, on
+# queued reply ports.  It tells the conversation's item it's being viewed
+# (see darq.ui.lens.Viewing), and a message's, opened in it: their type
+# records that in History.
 
 import logging
 import os
@@ -31,17 +33,15 @@ from PyQt6.QtGui import QKeyEvent, QMouseEvent
 from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMenu, QTextBrowser, QVBoxLayout, QWidget
 
 import darq
-import darq.history
 import darq.kb as model
 import darq.launch
 import darq.message
 from darq.loop import QtEventLoop
-from darq.protocols.history import History
 from darq.protocols.kb import EntityItem, Linked
 from darq.protocols.kb import Status as KBStatus
 from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
 from darq.ui import style
-from darq.ui.lens import LensHandler, announce
+from darq.ui.lens import LensHandler, Viewing, announce
 from darq.ui.launcher import Launcher
 from darq.ui.style import CONTROLS
 
@@ -51,7 +51,7 @@ import message_page  # noqa: E402
 import timeline  # noqa: E402
 
 
-# History source for the events it records.
+# History's source of what's done through it.
 SOURCE = "conversation-lens"
 
 # Seconds to wait for items' replies.
@@ -134,6 +134,7 @@ class ConversationWindow(QWidget):
 
     def __init__(self, lens: "ConversationLens", messages: timeline.Timeline, on_closed: typing.Callable[[], None]):
         super().__init__()
+        self.viewing = Viewing(self, SOURCE)
         self.lens = lens
         self.timeline = messages
         self.on_closed = on_closed
@@ -358,6 +359,7 @@ class ConversationWindow(QWidget):
             handle.startSystemMove()
 
     def closeEvent(self, a0):
+        self.viewing.stop()
         self.lens.close_items()
         super().closeEvent(a0)
         if self.on_closed is not None:
@@ -379,22 +381,20 @@ class LaunchOpener:
 
 
 class LensServices:
-    """What a Launcher uses: darq.launch, and History."""
+    """What a Launcher uses: darq.launch."""
 
-    def __init__(self, history: History.Client | None):
+    def __init__(self):
         self.launch = darq.launch
-        self.history = history
 
 
 class ConversationLens(LensHandler):
     """Answers the Lens protocol: uses one item, in a window, and is the
     Launcher's host, for items opened in new windows."""
 
-    def __init__(self, loop: QtEventLoop, history: History.Client | None, opener: Opener | None = None):
+    def __init__(self, loop: QtEventLoop, opener: Opener | None = None):
         self.loop = loop
-        self.history = history
         self.window: ConversationWindow | None = None
-        self.services = typing.cast(typing.Any, LensServices(history))
+        self.services = typing.cast(typing.Any, LensServices())
         self.launcher = Launcher(self, SOURCE, loop.post)
         self.opener: Opener = opener if opener is not None else LaunchOpener(self.launcher)
         self.chain = languages()
@@ -450,7 +450,6 @@ class ConversationLens(LensHandler):
         if not shown:
             self.close_items()
             return UseResponse(status=Status.FAILED)
-        self.record(request.item_id, darq.history.OPENED)
         logging.info(f"Using {request.item_id}")
         self.shown_item = request.item_id
         return UseResponse(status=Status.OK)
@@ -469,11 +468,17 @@ class ConversationLens(LensHandler):
         window = self.show(timeline.Timeline(client, self.chain), entity, linked,
                            label(entity, self.chain) or "Conversation")
         window.newest()
+        window.viewing.show(client)
         return True
 
     def use_message(self, port: int, message: model.Entity, linked: list[Linked]) -> bool:
         """Show a message in its conversation, whose item takes the place
-        of the message's: alone, if it isn't in one."""
+        of the message's: alone, if it isn't in one.  The message is told
+        it's viewed, once, and then the conversation, as it's read."""
+        try:
+            self.ports[port].viewed(source=SOURCE, note="")
+        except (darq.DarqError, KeyError) as e:
+            logging.warning(f"Can't say a message is viewed: {e!r}")
         conversation = next((link for link in linked if link.entity_id == conversation_of(message)), None)
         client = None
         if conversation is not None and conversation.item_id:
@@ -496,6 +501,7 @@ class ConversationLens(LensHandler):
         messages.remember(linked)
         window = self.show(messages, entity, conversation_linked, label(entity, self.chain) or "Conversation")
         window.at_message(message)
+        window.viewing.show(client)
         return True
 
     def close(self, request: Close, source: int) -> None:
@@ -518,15 +524,6 @@ class ConversationLens(LensHandler):
     def close_items(self):
         for port in list(self.ports):
             self.close_item(port)
-
-    def record(self, item_id: str, event: str):
-        """Record a History event about an item, if History is running."""
-        if self.history is None:
-            return
-        try:
-            self.history.add_event(item_id=item_id, event=event, source=SOURCE)
-        except darq.DarqError as e:
-            logging.warning(f"Can't record {event} for {item_id}: {e!r}")
 
     # As the Launcher's host
 
@@ -557,11 +554,7 @@ def darq_main():
     app.setQuitOnLastWindowClosed(False)
     loop = QtEventLoop()
 
-    # History is best effort: the lens works without it.
-    handle = darq.lookup_name("darq.history", blocking=False)
-    history = History.Client(handle) if handle is not None else None
-
-    lens = ConversationLens(loop, history)
+    lens = ConversationLens(loop)
     port = darq.open_port()
     announce(port)
     server = darq.Server()

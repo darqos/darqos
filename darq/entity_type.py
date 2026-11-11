@@ -29,6 +29,7 @@ import logging
 import typing
 
 import darq
+import darq.history
 import darq.items
 import darq.kb as model
 import darq.message
@@ -55,6 +56,7 @@ from darq.protocols.kb import (
     PutEntityResponse,
     SuggestPropertiesRequest,
     SuggestPropertiesResponse,
+    Viewed,
     WatchEntityRequest,
     WatchEntityResponse,
 )
@@ -85,7 +87,16 @@ ANNOTATIONS = [model.START_TIME, model.END_TIME, model.POINT_IN_TIME, model.REAS
 
 class EntityType(Implementation.Handler):
     """The entity type's part of a type implementation: its items'
-    entities, for the types it implements."""
+    entities, for the types it implements.
+
+    It records the events its items' requests cause in History, described
+    by their callers' contexts (see doc/history.rst, Who Records Events),
+    with self.history: an implementation records its own items' events
+    through it too."""
+
+    # The source of events whose callers don't give one: an
+    # implementation's to override, with its name.
+    SOURCE = "entity-type"
 
     def __init__(self, kb: model.KB, types: typing.Iterable[str]):
         """Constructor.
@@ -103,6 +114,15 @@ class EntityType(Implementation.Handler):
 
         # Entity ports, by port.
         self.entity_ports: dict[int, "EntityItemHandler"] = {}
+
+        # Records events in History: tests replace it.
+        self.history = darq.history.Recorder(self.SOURCE)
+
+    def record(self, item_id: str, event: str, context: darq.history.Context | None = None, source: str = "",
+               note: str = ""):
+        """Record an event about an item, as its caller's context says:
+        else from source, if it's given, or the implementation."""
+        self.history.record(item_id, event, context, source, note)
 
     def add(self, server: darq.Server, port: int):
         """Answer requests on a port, with a server, and watch the KB for
@@ -367,9 +387,27 @@ class EntityItemHandler(EntityItem.Handler):
         self.entity_id = entity_id
         self.port = port
 
+        # The client's name, from Viewed: its changes are recorded with it.
+        self.source = ""
+
     def close(self, request: CloseRequest, source: int) -> CloseResponse:
         self.implementation.detach_entity(self.port)
         return CloseResponse()
+
+    def item_id(self) -> str:
+        """Return the item identifier of the entity, by its kind."""
+        entity = self.kb.get(self.entity_id, follow=False)
+        return self.implementation.item_id(entity) if entity is not None else model.item_id(self.entity_id,
+                                                                                               model.ENTITY_TYPE)
+
+    def viewed(self, request: Viewed, source: int) -> None:
+        self.source = request.source
+        try:
+            item_id = self.item_id()
+        except KB_ERRORS as e:
+            logging.error(f"Can't record {self.entity_id} viewed: {e}")
+            return
+        self.implementation.record(item_id, darq.history.VIEWED, source=request.source, note=request.note)
 
     def get_entity(self, request: GetEntityRequest, source: int) -> GetEntityResponse:
         try:
@@ -408,10 +446,13 @@ class EntityItemHandler(EntityItem.Handler):
             return PutEntityResponse(status=wire.Status.NOT_FOUND)
         if response.status != wire.Status.OK:
             return PutEntityResponse(status=response.status)
+        after = model.entity_from_wire(response.entities[0])
         try:
-            self.implementation.entity_changed(current, model.entity_from_wire(response.entities[0]))
+            self.implementation.entity_changed(current, after)
         except KB_ERRORS as e:
             logging.error(f"Can't publish {self.entity_id}: {e}")
+        self.implementation.record(self.implementation.item_id(after), darq.history.EDITED, request.context,
+                                   source=self.source)
         return PutEntityResponse(revision=response.entities[0].revision, status=wire.Status.OK)
 
     def get_links(self, request: GetLinksRequest, source: int) -> GetLinksResponse:

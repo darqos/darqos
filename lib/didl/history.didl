@@ -33,14 +33,19 @@ struct Event {
     // How many times it was recorded: repeats within a while of the
     // first are counted, rather than recorded again.
     uint32 count;
+
+    // A line for the operator, such as a file's path, or where a reader
+    // had got to: a counted event's is the latest's.  At most 500 bytes
+    // are kept.
+    string note;
 }
 
 // The History service, registered as "darq.history".
 protocol History {
-    // Record an event about an item.  The service sets its time.  It's
-    // one-way, so a client never waits for it: an invalid event is
-    // logged and dropped.
-    1: AddEvent(string item_id, string event, string source);
+    // Record an event about an item, with a note, which can be empty.
+    // The service sets its time.  It's one-way, so a client never waits
+    // for it: an invalid event is logged and dropped.
+    1: AddEvent(string item_id, string event, string source, string note);
 
     // Return events from start, up to but not including end (0 for
     // now), newest first.  Each non-empty list must match: type_ids

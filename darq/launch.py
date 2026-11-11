@@ -34,19 +34,21 @@ def _activate(type_id: str) -> type_protocol.Implementation.Client:
     return type_protocol.Implementation.Client(response.implementation, timeout=TIMEOUT)
 
 
-def create_item(type_id: str) -> tuple[str, int]:
-    """Create an item of a type.
+def create_item(type_id: str, context: type_protocol.Context | None = None) -> tuple[str, int]:
+    """Create an item of a type: recorded in History as its context says
+    (see doc/history.rst).
 
     :returns: Its identifier, and a port for it, which the caller must
               close (or pass to a lens, with use_item).
     :raises LaunchError: if it couldn't be created."""
-    response = _activate(type_id).create(type_id=type_id)
+    response = _activate(type_id).create(type_id=type_id, context=context)
     if response.status != type_protocol.Status.OK or response.item is None:
         raise LaunchError(f"Can't create a {type_id} item: {response.status.name}")
     return response.item_id, response.item
 
 
-def create_item_from(type_id: str, data: bytes, name: str = "", media_type: str = "") -> tuple[str, int]:
+def create_item_from(type_id: str, data: bytes, name: str = "", media_type: str = "",
+                     context: type_protocol.Context | None = None) -> tuple[str, int]:
     """Create an item of a type from data in the type's format, such as a
     PNG file's bytes.
 
@@ -56,13 +58,15 @@ def create_item_from(type_id: str, data: bytes, name: str = "", media_type: str 
     :returns: Its identifier, and a port for it, as create_item does.
     :raises LaunchError: if it couldn't be created: if the data isn't of
                          the type, nothing is."""
-    response = _activate(type_id).create_from(type_id=type_id, data=data, name=name, media_type=media_type)
+    response = _activate(type_id).create_from(type_id=type_id, data=data, name=name, media_type=media_type,
+                                              context=context)
     if response.status != type_protocol.Status.OK or response.item is None:
         raise LaunchError(f"Can't create a {type_id} item from data: {response.status.name}")
     return response.item_id, response.item
 
 
-def import_data(media_type: str, extension: str, data: bytes, name: str = "") -> str | None:
+def import_data(media_type: str, extension: str, data: bytes, name: str = "",
+                context: type_protocol.Context | None = None) -> str | None:
     """Create an item from data that's come from somewhere else, of the
     first type for its media type, or else its extension, that takes it,
     or else as data, public.data, which takes anything (see
@@ -77,7 +81,7 @@ def import_data(media_type: str, extension: str, data: bytes, name: str = "") ->
         types += find_types(extension=extension)
     for type_id in [*dict.fromkeys(types), DATA_TYPE]:
         try:
-            item_id, port = create_item_from(type_id, data, name, media_type)
+            item_id, port = create_item_from(type_id, data, name, media_type, context)
         except LaunchError:
             continue
         try:
@@ -221,12 +225,12 @@ def use_item(item_id: str, item: int | None = None, context: str = "terminal", l
     return lens
 
 
-def destroy_item(item_id: str):
+def destroy_item(item_id: str, context: type_protocol.Context | None = None):
     """Destroy an item.
 
     :raises LaunchError: if it couldn't be."""
     type_id, _ = split_item_id(item_id)
-    response = _activate(type_id).destroy(item_id=item_id)
+    response = _activate(type_id).destroy(item_id=item_id, context=context)
     if response.status != type_protocol.Status.OK:
         raise LaunchError(f"Can't destroy {item_id}: {response.status.name}")
 

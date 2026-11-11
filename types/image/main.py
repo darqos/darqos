@@ -38,6 +38,7 @@ import struct
 import time
 
 import darq
+import darq.history
 import darq.index
 import darq.kb as model
 from darq.entity_type import EntityType
@@ -55,6 +56,7 @@ from darq.protocols.image import (
     SetEditsResponse,
     StatRequest,
     StatResponse,
+    Viewed,
 )
 from darq.protocols.image import Status as ImageStatus
 from darq.protocols.type import (
@@ -219,6 +221,10 @@ class Picture:
         self.dirty_since: float | None = None
         self.timer: darq.Timer | None = None
 
+        # The source of its latest change: whoever made it, recorded as
+        # its editor when it's saved.
+        self.editor = ""
+
     @property
     def id(self) -> tuple[int, int]:
         return self.key.high, self.key.low
@@ -244,6 +250,8 @@ class Picture:
 
 class ImageImplementation(EntityType):
     """Answers the Implementation protocol, and keeps the open items."""
+
+    SOURCE = "image-type"
 
     def __init__(self, client: storage.Storage.Client, index: darq.index.Publisher, kb: model.KB):
         super().__init__(kb, imaging.FORMATS)
@@ -333,6 +341,7 @@ class ImageImplementation(EntityType):
         if picture.timer is not None:
             picture.timer.cancel()
             picture.timer = None
+        edited = picture.dirty_since is not None
         try:
             response = self.storage.put(key=picture.key, expected=picture.generation,
                                         value=encode_blob(picture.original, picture.edits, picture.flags))
@@ -345,6 +354,8 @@ class ImageImplementation(EntityType):
         picture.generation = response.generation
         picture.dirty_since = None
         self.publish(picture)
+        if edited:
+            self.record(picture.iid, darq.history.EDITED, source=picture.editor)
         return True
 
     def publish(self, picture: Picture):
@@ -412,6 +423,7 @@ class ImageImplementation(EntityType):
         picture = self.new(type_id, b"")
         if picture is None:
             return CreateResponse(status=Status.FAILED)
+        self.record(picture.iid, darq.history.CREATED, request.context)
         return CreateResponse(item_id=picture.iid, item=self.attach(picture), status=Status.OK)
 
     def create_from(self, request: CreateFromRequest, source: int) -> CreateFromResponse:
@@ -426,6 +438,7 @@ class ImageImplementation(EntityType):
         picture = self.new(type_id, request.data, request.name)
         if picture is None:
             return CreateFromResponse(status=Status.FAILED)
+        self.record(picture.iid, darq.history.CREATED, request.context)
         return CreateFromResponse(item_id=picture.iid, item=self.attach(picture), status=Status.OK)
 
     def open(self, request: OpenRequest, source: int) -> OpenResponse:
@@ -474,6 +487,7 @@ class ImageImplementation(EntityType):
             picture.flags &= ~DESTROYED
             return DestroyResponse(status=Status.FAILED)
         self.destroy_item_entity(specifier(picture.key))
+        self.record(picture.iid, darq.history.DESTROYED, request.context)
         logging.info(f"Destroyed {request.item_id}")
         return DestroyResponse(status=Status.OK)
 
@@ -486,9 +500,16 @@ class ImageItem(Image.Handler):
         self.picture = picture
         self.port = port
 
+        # The client's name, from Viewed: its changes are recorded with it.
+        self.source = ""
+
     def close(self, request: CloseRequest, source: int) -> CloseResponse:
         self.implementation.detach(self.picture, self.port)
         return CloseResponse()
+
+    def viewed(self, request: Viewed, source: int) -> None:
+        self.source = request.source
+        self.implementation.record(self.picture.iid, darq.history.VIEWED, source=request.source, note=request.note)
 
     def render(self) -> tuple[bytes, imaging.Info] | ImageStatus:
         """Return the image and its size, or why it can't be."""
@@ -541,6 +562,7 @@ class ImageItem(Image.Handler):
         picture.edits = edits
         picture.rendered = picture.info = None
         picture.version += 1
+        picture.editor = self.source
         self.implementation.changed(picture)
         return SetEditsResponse(version=picture.version, status=ImageStatus.OK)
 

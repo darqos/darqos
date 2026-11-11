@@ -252,6 +252,11 @@ class World:
         self.failing: set[str] = set()
         self.puts: list[model.Entity] = []
 
+        # The contexts writes were described with, for History, and the
+        # items told they're viewed, with by whom.
+        self.contexts: list = []
+        self.viewed: list[tuple[str, str]] = []
+
         # Properties, by identifier: their labels and datatypes.
         self.properties: dict[str, tuple[str, model.Datatype]] = {
             "P108": ("employer", model.Datatype.Item),
@@ -311,7 +316,11 @@ class FakeItem:
         linked = [self.world.linked(i) for i in sorted(model.referenced(entity))]
         return GetEntityResponse(entity=model.entity_to_wire(entity), linked=linked, status=wire.Status.OK)
 
-    def put_entity(self, entity):
+    def viewed(self, source="", note=""):
+        self.world.viewed.append((self.item_id, source))
+
+    def put_entity(self, entity, context=None):
+        self.world.contexts.append(context)
         current = self.world.entities[self.item_id]
         if entity.revision != current.revision:
             return PutEntityResponse(status=wire.Status.CONFLICT)
@@ -396,14 +405,6 @@ class FakeLoop:
         self.stopped = True
 
 
-class FakeHistory:
-    def __init__(self):
-        self.events = []
-
-    def add_event(self, item_id, event, source):
-        self.events.append((item_id, event, source))
-
-
 @pytest.fixture
 def world():
     world = World()
@@ -420,9 +421,8 @@ def entity_lens(qt_app, world, monkeypatch):
     closed = []
     monkeypatch.setattr(darq, "open_port", lambda: next(ports))
     monkeypatch.setattr(darq, "close_port", closed.append)
-    history = FakeHistory()
     loop = FakeLoop()
-    entity_lens = lens.EntityLens(loop, history, FakeOpener(world))
+    entity_lens = lens.EntityLens(loop, FakeOpener(world))
     entity_lens.client = lambda port: FakeItem(world, port)
     server = darq.Server()
     server.add(10, entity_lens)
@@ -444,7 +444,8 @@ def test_use_shows_the_item(entity_lens, world):
     assert window.item_label.text() == ADA
     assert not window.back_button.isEnabled()
     assert world.watched == [(ADA, 900)]
-    assert entity_lens.history.events == [(ADA, "opened", "entity-lens")]
+    # It's told it's viewed: its type records it.
+    assert world.viewed == [(ADA, "entity-lens")]
     assert window.targets == [ACME]
 
     other = world.open(ACME)
@@ -499,8 +500,8 @@ def test_follow_and_back(entity_lens, world):
     window.go_back()
     assert window.title.text() == "Ada"
 
-    opened = [e[0] for e in entity_lens.history.events]
-    assert opened == [ADA, ACME, "darq.person:bob", ACME, ADA]
+    viewed = [item_id for item_id, _ in world.viewed]
+    assert viewed == [ADA, ACME, "darq.person:bob", ACME, ADA]
 
 
 def messages(world, n):
@@ -540,7 +541,7 @@ def test_group_is_shown_in_the_window(entity_lens, world):
     messages(world, 105)
     use(entity_lens, world, ACME)
     window = entity_lens.window
-    opened = len(entity_lens.history.events)
+    viewed = len(world.viewed)
     window.choose(window.targets[0])
 
     text = window.browser.toPlainText()
@@ -548,8 +549,8 @@ def test_group_is_shown_in_the_window(entity_lens, world):
     assert "Ada: message 105" in text and "Ada: message 6" in text and "Ada: message 5\n" not in text
     assert window.title.text() == "Acme" and window.back_button.isEnabled()
 
-    # It's not an item: it isn't recorded, and the item stays open.
-    assert len(entity_lens.history.events) == opened
+    # It's not an item: it isn't viewed, and the item stays open.
+    assert len(world.viewed) == viewed
     assert world.closed_items == []
 
 
@@ -759,7 +760,7 @@ def test_edit_mode(editing, entity_lens, world, qt_app):
 
     window.finish_editing()
     assert not window.editing and window.stack.currentWidget() is window.browser
-    assert entity_lens.history.events == [(ADA, "opened", "entity-lens")]
+    assert world.viewed == [(ADA, "entity-lens")]
 
 
 def test_each_change_is_saved(editing, entity_lens, world, qt_app):
@@ -777,8 +778,10 @@ def test_each_change_is_saved(editing, entity_lens, world, qt_app):
     settle(qt_app)
     assert world.entities[ADA].aliases == {"en": ["Augusta", "Countess of Lovelace"]}
 
-    # It's recorded as edited once, each time edit mode's entered.
-    assert entity_lens.history.events == [(ADA, "opened", "entity-lens"), (ADA, "edited", "entity-lens")]
+    # Each save's recorded by its type, as this lens says: History counts
+    # them together.
+    assert world.viewed == [(ADA, "entity-lens")]
+    assert {(c.source, c.quiet) for c in world.contexts} == {("entity-lens", False)}
 
     # Undo and redo.
     window.undo()
@@ -1012,10 +1015,16 @@ def test_entity_lens(live_pkernel, tmp_path):  # noqa: F811
             kb.put(person)
 
             lens = Lens.Client(darq.launch.use_item(person_id, person_port), timeout=10)
+            # Its type records it viewed, as it comes, one way.
             history = History.Client(darq.connect("darq.history"), timeout=10)
-            events = [(e.event, e.source) for e in history.get_events(item_ids=[person_id]).events]
-            if events != [("opened", "entity-lens")]:
-                return f"events are {events!r}"
+            deadline = time.monotonic() + 10
+            while True:
+                events = [(e.event, e.source) for e in history.get_events(item_ids=[person_id]).events]
+                if ("viewed", "entity-lens") in events:
+                    break
+                if time.monotonic() > deadline:
+                    return f"events are {events!r}"
+                time.sleep(0.05)
             lens.close()
             return 0
         """)
@@ -1100,11 +1109,12 @@ def test_making_a_tag_names_it(world, monkeypatch):
     world.add("darq.tag:t1", "")
     created, closed = [], []
     monkeypatch.setattr(lens.darq.launch, "create_item",
-                        lambda type_id: created.append(type_id) or ("darq.tag:t1", 77))
+                        lambda type_id, context: created.append((type_id, context.source)) or ("darq.tag:t1", 77))
     monkeypatch.setattr(lens.darq, "close_port", closed.append)
     monkeypatch.setattr(lens.EntityItem, "Client", lambda port, timeout=None: FakeItem(world, port))
     world.ports[77] = "darq.tag:t1"
     made = lens.make_tag(" To  read ", "en")
-    assert created == [darq.items.TAG_TYPE] and closed == [77]
+    assert created == [(darq.items.TAG_TYPE, "entity-lens")] and closed == [77]
+    assert world.contexts[-1].quiet
     assert (made.entity_id, made.item_id, made.label) == ("t1", "darq.tag:t1", "To read")
     assert world.entities["darq.tag:t1"].get_label() == "To read"

@@ -111,8 +111,9 @@ class HistoryView(QWidget):
         form.addRow("Events", self.events)
         form.addRow("Sources", self.sources)
 
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(("Time", "Type", "Item", "Event", "Source", "Count"))
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels(("Time", "Type", "Item", "Event", "Source", "Count", "Note"))
+        self.table.horizontalHeader().setStretchLastSection(True)  # pyright: ignore[reportOptionalMemberAccess]
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)  # pyright: ignore[reportOptionalMemberAccess]
@@ -201,11 +202,14 @@ class HistoryView(QWidget):
             type_id, _, specifier = event.item_id.partition(":")
             for column, text in enumerate((format_time(event.time), type_name(type_id),
                                            names.get(event.item_id, specifier), event.event, event.source,
-                                           str(event.count))):
+                                           str(event.count), event.note)):
                 cell = QTableWidgetItem(text)
                 if column in (1, 2):
                     # What's shown's for people: the identifiers are here.
                     cell.setToolTip(type_id if column == 1 else event.item_id)
+                elif column == 6 and text:
+                    # A note can be longer than its column.
+                    cell.setToolTip(text)
                 self.table.setItem(n, column, cell)
         self.table.resizeColumnsToContents()
         if row == 0 and self.shown:

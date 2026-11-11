@@ -165,8 +165,9 @@ aspect ratio, unless it's told not to.  Ctrl+Z and Ctrl+Shift+Z undo
 and redo, and its menu has *Revert to Original*.  Each change is sent
 as it's made, so nothing's unsaved.  I shows the information panel:
 the fields, to edit, *Remove Location*, if it has one, and every
-entry, as plain text.  The lens records `opened`, and `edited` once,
-when it's first edited.
+entry, as plain text.  The lens tells the item it's being viewed, and
+the item's type records that, and its edits, as from `image-lens` (see
+:doc:`history`).
 
 Searching
 ---------

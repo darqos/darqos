@@ -26,7 +26,6 @@ import darq.url
 from test_kb_type import Writer, implementation, index, kb, kb_service, ports  # noqa: F401
 from test_pdf_type import make_pdf
 from test_pkernel import live_pkernel, pkernel, run_kernel_until, write_app  # noqa: F401
-from test_vcard_import import History
 
 
 SERVICE_PATH = pathlib.Path(__file__).parent.parent / "services" / "http"
@@ -355,11 +354,16 @@ class Items:
         self.made: list[tuple[str, str, bytes]] = []
         self.names: list[str] = []
 
-    def __call__(self, media_type, extension, data, name):
+        # What the type would record each as: (event, source, note).
+        self.contexts: list[tuple[str, str, str]] = []
+
+    def __call__(self, media_type, extension, data, name, context=None):
         if media_type not in ("application/pdf", "text/plain") and extension != "pdf":
             return None
         self.made.append((media_type, extension, data))
         self.names.append(name)
+        assert context is not None
+        self.contexts.append((context.event, context.source, context.note))
         item_id = f"com.adobe.pdf:{len(self.made):032x}"
         if self.kb is not None:
             darq.items.create(self.kb, "com.adobe.pdf", item_id.partition(":")[2], file_name=name)
@@ -370,7 +374,7 @@ class Items:
 def keeper(kb, implementation):  # noqa: F811
     items = model.KB(kb.client, Writer(implementation))
     made = Items(kb)
-    return snapshots.Snapshots(items, made, History()), made
+    return snapshots.Snapshots(items, made), made
 
 
 NOW = darq.message.time_value(1_700_000_000_000_000)
@@ -414,43 +418,38 @@ def test_snapshots_are_stated_in_the_service(keeper, web, tmp_path, kb):  # noqa
     assert model.is_sourced(entity.get_statements(darq.url.SNAPSHOT)[0], darq.url.HTTP_SERVICE)
 
 
-def test_recorded_in_history(keeper, web, tmp_path):
+def test_recorded_in_history(keeper, web, tmp_path, recorded):
+    """What it makes and writes is recorded by their types, as it says."""
     outcome = take(keeper, web, tmp_path, "/paper.pdf")
-    assert keeper[0].history.events == [(outcome.url_item, "created", "http"), (outcome.url_item, "fetched", "http"),
-                                        (outcome.item, "imported", "http")]
+    url = web.base + "/paper.pdf"
+    assert recorded.events == [(outcome.url_item, "created", "http", url), (outcome.url_item, "fetched", "http", url)]
+    assert keeper[1].contexts == [("imported", "http", url)]
 
 
-def test_an_unchanged_fetch_is_recorded_on_the_url(keeper, web, tmp_path):
-    first = take(keeper, web, tmp_path, "/paper.pdf")
-    keeper[0].history.events.clear()
+def test_an_unchanged_fetch_writes_nothing_so_records_nothing(keeper, web, tmp_path, recorded):
     take(keeper, web, tmp_path, "/paper.pdf")
-    assert keeper[0].history.events == [(first.url_item, "fetched", "http")]
+    recorded.events.clear()
+    take(keeper, web, tmp_path, "/paper.pdf")
+    assert recorded.events == [] and len(keeper[1].contexts) == 1
 
 
-def test_a_changed_fetch_is_recorded_on_both(keeper, web, tmp_path):
+def test_a_changed_fetch_is_recorded_on_both(keeper, web, tmp_path, recorded):
     first = take(keeper, web, tmp_path, "/noetag.txt")
     web.pages["/noetag.txt"] = (200, "text/plain", b"Different", {})
-    keeper[0].history.events.clear()
-    second = take(keeper, web, tmp_path, "/noetag.txt")
-    assert keeper[0].history.events == [(first.url_item, "fetched", "http"), (second.item, "imported", "http")]
-
-
-def test_a_refused_fetch_of_a_known_url_is_recorded(keeper, web, tmp_path):
-    first = take(keeper, web, tmp_path, "/noetag.txt")
-    web.pages["/noetag.txt"] = (404, "text/plain", b"", {})
-    keeper[0].history.events.clear()
+    recorded.events.clear()
     take(keeper, web, tmp_path, "/noetag.txt")
-    assert keeper[0].history.events == [(first.url_item, "fetched", "http")]
+    url = web.base + "/noetag.txt"
+    assert recorded.events == [(first.url_item, "fetched", "http", url)]
+    assert keeper[1].contexts[-1] == ("imported", "http", url)
 
 
-def test_a_failure_with_no_item_records_nothing(keeper, web, tmp_path):
+def test_a_refused_fetch_records_nothing(keeper, web, tmp_path, recorded):
+    take(keeper, web, tmp_path, "/noetag.txt")
+    web.pages["/noetag.txt"] = (404, "text/plain", b"", {})
+    recorded.events.clear()
+    take(keeper, web, tmp_path, "/noetag.txt")
     take(keeper, web, tmp_path, "/gone")
-    assert keeper[0].history.events == []
-
-
-def test_history_not_running(kb, implementation, web, tmp_path):  # noqa: F811
-    items = model.KB(kb.client, Writer(implementation))
-    assert take((snapshots.Snapshots(items, Items(kb), None),), web, tmp_path, "/paper.pdf").changed
+    assert recorded.events == []
 
 
 def test_not_modified_keeps_the_latest(keeper, web, tmp_path):
@@ -558,13 +557,13 @@ def test_a_move_shares_the_snapshot(keeper, web, tmp_path, kb, status):  # noqa:
     assert darq.url.qualifier(statement, darq.url.HTTP_STATUS) == str(status)
 
 
-def test_a_moves_history(keeper, web, tmp_path):
-    first = take(keeper, web, tmp_path, "/noetag.txt")
+def test_a_moves_history(keeper, web, tmp_path, recorded):
+    take(keeper, web, tmp_path, "/noetag.txt")
     moved_a_page(web)
-    keeper[0].history.events.clear()
+    recorded.events.clear()
     moved = take(keeper, web, tmp_path, "/noetag.txt")
-    assert keeper[0].history.events == [(first.url_item, "fetched", "http"), (moved.url_item, "created", "http"),
-                                        (moved.url_item, "fetched", "http")]
+    assert [e[:3] for e in recorded.events] == [(moved.url_item, "created", "http"),
+                                                (moved.url_item, "fetched", "http")]
 
 
 def test_a_move_with_new_content_is_a_new_snapshot_on_the_new_url(keeper, web, tmp_path, kb):  # noqa: F811
@@ -878,20 +877,19 @@ def test_fetching_from_search(live_pkernel, web, tmp_path):  # noqa: F811
             if error is not None or not item_id.startswith("com.adobe.pdf:"):
                 return f"fetched: {{host.results!r}}"
 
-            events = [(e.event, e.source) for e in host.services.history.get_events(item_ids=[item_id]).events]
-            if ("imported", "http") not in events:
-                return f"events are {{events!r}}"
+            # Its types record what's made, as the service describes it,
+            # and that it's viewed in the lens: as they come, one way.
             url_item = darq.url.item_id({web.base + "/paper.pdf"!r})
-            events = [(e.event, e.source) for e in host.services.history.get_events(item_ids=[url_item]).events]
-            if ("created", "http") not in events or ("fetched", "http") not in events:
-                return f"URL's events are {{events!r}}"
-            events = []
-            while ("opened", "pdf-lens") not in events:
+            wanted = {{item_id: {{("imported", "http"), ("viewed", "pdf-lens")}},
+                      url_item: {{("created", "http"), ("fetched", "http")}}}}
+            while True:
+                events = {{i: {{(e.event, e.source) for e in host.services.history.get_events(item_ids=[i]).events}}
+                          for i in wanted}}
+                if all(wanted[i] <= events[i] for i in wanted):
+                    break
                 if time.monotonic() > deadline:
-                    return f"never opened: {{events!r}}"
+                    return f"events are {{events!r}}"
                 time.sleep(0.05)
-                events = [(e.event, e.source)
-                          for e in host.services.history.get_events(item_ids=[item_id]).events]
 
             hits = host.services.index.search("Hello")
             if item_id not in [hit.item_id for hit in hits]:

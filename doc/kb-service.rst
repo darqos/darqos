@@ -692,20 +692,26 @@ service directly (see :doc:`types`), so it sees every change to its
 items.  Its Implementation port serves the ``EntityWriter`` protocol
 too, from 16, for clients that write many at once, such as an import:
 
-* ``WriteEntities(entities)`` writes entities, as ``PutEntities``
+* ``WriteEntities(entities, context)`` writes entities, as ``PutEntities``
   does, all or none, keeping an existing entity's DarqOS type; a new
   one can't have one, since an item of a kind is made by ``Create``;
-* ``MergeEntity(old_id, new_id)`` and ``DestroyEntity(entity_id)``
-  are the KB's ``Merge`` and ``Destroy``; and
-* ``CreateEntities(type_id, entities)`` creates new entities of a
+* ``MergeEntity(old_id, new_id, context)`` and ``DestroyEntity(entity_id,
+  context)`` are the KB's ``Merge`` and ``Destroy``; and
+* ``CreateEntities(type_id, entities, context)`` creates new entities of a
   kind, all or none, with the identifiers they have, each with the
   class and DarqOS type ``Create`` gives.  It's for an import that
   chooses its identifiers, as messages' are chosen, and too many to
   create one at a time.  One that exists is a conflict.
 
+Each records what it does in History, as its ``context`` describes it,
+for entities of a kind other than ``darq.entity`` (see :doc:`history`,
+Who Records Events).
+
 Given an ``EntityWriter`` client, ``darq.kb.KB`` writes through it:
 ``put``, ``ensure``, ``state``, ``merge`` and ``destroy`` go to the
-type implementation, while lookups still go to the KB service.
+type implementation, while lookups still go to the KB service.  Each
+write takes a context, or else uses the ``KB``'s own, as an import's is
+set once for all of its writes.
 Properties, classes, and other entities that aren't of a kind with its
 own implementation can still be written to the KB service directly.
 
@@ -720,13 +726,15 @@ merged into is published again.  ``IndexEntry`` gives the same entry,
 for a reindex, and is ``UNSUPPORTED`` for ``darq.entity``.
 
 An item's port serves the ``EntityItem`` protocol, in
-``lib/didl/kb.didl``: the ``Item`` protocol's ``Close``, and, from 16,
+``lib/didl/kb.didl``: the ``Item`` protocol's ``Close`` and
+``Viewed``, and, from 16,
 
 * ``GetEntity(languages)``, with the entities it refers to, as
   ``Linked``: their item identifiers, labels and descriptions in the
   chain of languages, and properties' datatypes;
-* ``PutEntity(entity)``, which writes it, as ``PutEntities`` does,
-  keeping its DarqOS type;
+* ``PutEntity(entity, context)``, which writes it, as ``PutEntities``
+  does, keeping its DarqOS type, and is recorded in History as its
+  context says, or else as ``edited``, from the port's client;
 * ``GetLinks(property_id, role, languages, max, after, reverse,
   type_id)``, for the entities that link to it, as ``Linked``, with
   ``reverse`` and ``type_id`` as for ``FindLinks``;
@@ -778,8 +786,8 @@ back through conformance, so every kind has this lens from the start.
   Ctrl+click, or a link's context menu, opens it in a new window, with
   whatever lens its type has.
 * Each item shown is watched (``WatchEntity``), so the view keeps up
-  with changes, and recorded in History as ``opened``, from
-  ``entity-lens``.
+  with changes, and told it's being viewed (``Viewed``), which its type
+  records in History, from ``entity-lens`` (see :doc:`history`).
 
 It's HTML in a ``QTextBrowser``, built by ``render.py``, which uses no
 Qt.  A link is an anchor numbered in the page's list of item
@@ -823,8 +831,9 @@ statements, DarqOS type, aren't shown, as they can't be changed.
   and a note says so.
 * Changes from elsewhere are shown as they're made, once a field being
   typed in is finished with.
-* The item's recorded in History as ``edited``, once each time edit
-  mode's entered.
+* The item's type records each change in History as ``edited``, from
+  ``entity-lens``: the service counts those within ten minutes
+  together.
 
 M, or Merge into ... on the context menu, merges the entity shown into
 another, as two spellings of a publisher, from two imports, are one
@@ -843,8 +852,9 @@ publisher (``darq.merging``).  W, for one on Wikidata, is described in
   way round, so that Wikidata's identifier stays, and it says so.
 * Entities of different DarqOS types, two of Wikidata's, which it says
   are different, and one already merged, aren't merged, and it says why.
-* Both items are recorded in History as ``merged``, and the page shows
-  the one that's left, with a note that the other was merged into it.
+* The KB's type implementation records both items in History as
+  ``merged``, from ``entity-lens``, and the page shows the one that's
+  left, with a note that the other was merged into it.
 
 Edits are operations: setting a label, description, or aliases, in a
 language; adding or removing a statement; and setting a statement's
@@ -999,9 +1009,11 @@ The import is:
      natural key is logged, and listed in the window, with its key and
      the item it matched, to be checked;
    * otherwise, it's created, as an item of its kind, with the type
-     implementation's ``Create``, and recorded in History as
-     ``created``, from ``vcard-import``, if it's of a kind other than
-     ``darq.entity``.
+     implementation's ``Create``, which records it in History as
+     ``created``, from ``vcard-import``, noted with the address book's
+     name, if it's of a kind other than ``darq.entity`` (see
+     :doc:`history`).  What it destroys is recorded too; its writes of
+     statements aren't.
 
 3. Each entity's statements from the address book are restated from
    its draft, keeping any others, in batches written through the type
@@ -1018,8 +1030,9 @@ The import is:
    *has tag* links, to tags found by name, ignoring case, or made (see
    ``darq.items.tag``); and their photo (``PHOTO``), if it's in the
    card, as base64 or a ``data:`` URI, becomes an image item, made with
-   the image type's ``CreateFrom``, recorded in History, and linked as
-   their *image* (P18), qualified by its SHA-256 (``darq.url.HASH``).
+   the image type's ``CreateFrom``, recorded in History as
+   ``imported``, and linked as their *image* (P18), qualified by its
+   SHA-256 (``darq.url.HASH``).
    A re-import finds the image by its hash, rather than making another;
    a new photo is another image, which replaces it.  A photo that's
    only a link isn't fetched, and is counted as unmapped.

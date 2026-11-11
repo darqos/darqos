@@ -19,6 +19,7 @@ __all__ = [
     "Bootstrap",
     "CloseRequest",
     "CloseResponse",
+    "Context",
     "CreateFromRequest",
     "CreateFromResponse",
     "CreateRequest",
@@ -55,6 +56,7 @@ __all__ = [
     "RegisterResponse",
     "Status",
     "Type",
+    "Viewed",
 ]
 
 
@@ -95,6 +97,16 @@ class Description(Record):
         self.mime_types = [] if mime_types is None else mime_types
         self.extensions = [] if extensions is None else extensions
         self.icon = icon
+
+
+class Context(Record):
+    """struct Context: 28 bytes, 4-byte aligned."""
+
+    def __init__(self, event: str = '', source: str = '', note: str = '', quiet: bool = False):
+        self.event = event
+        self.source = source
+        self.note = note
+        self.quiet = quiet
 
 
 ################################################################
@@ -825,20 +837,26 @@ class CreateRequest(Message):
 
     METHOD = 1
     RESPONSE = CreateResponse
-    BODY_FORMAT = "<II"
+    BODY_FORMAT = "<IIIIIIIIB3x"
     BODY_START = 8
-    LENGTH = 16
-    DATA_START = 16
+    LENGTH = 44
+    DATA_START = 48
 
-    def __init__(self, txid: int = 0, type_id: str = ''):
+    def __init__(self, txid: int = 0, type_id: str = '', context: Context | None = None):
         super().__init__(txid)
         self.type_id = type_id
+        self.context = Context() if context is None else context
 
     def encode(self) -> tuple[bytes, list[int]]:
         buf, handles = super().encode()
         out = Encoder(self.DATA_START, handles)
         buf += struct.pack(self.BODY_FORMAT,
-                           *out.string(self.type_id))
+                           *out.string(self.type_id),
+                           *out.string(self.context.event),
+                           *out.string(self.context.source),
+                           *out.string(self.context.note),
+                           self.context.quiet)
+        buf += b'\0' * 4
         buf += out.data
         return buf, handles
 
@@ -850,6 +868,11 @@ class CreateRequest(Message):
         bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
         inp = Decoder(buffer, self.DATA_START, handles)
         self.type_id = inp.string(bits[0], bits[1])
+        self.context = Context()
+        self.context.event = inp.string(bits[2], bits[3])
+        self.context.source = inp.string(bits[4], bits[5])
+        self.context.note = inp.string(bits[6], bits[7])
+        self.context.quiet = self.decode_bool(bits[8])
         return
 
 
@@ -950,20 +973,26 @@ class DestroyRequest(Message):
 
     METHOD = 3
     RESPONSE = DestroyResponse
-    BODY_FORMAT = "<II"
+    BODY_FORMAT = "<IIIIIIIIB3x"
     BODY_START = 8
-    LENGTH = 16
-    DATA_START = 16
+    LENGTH = 44
+    DATA_START = 48
 
-    def __init__(self, txid: int = 0, item_id: str = ''):
+    def __init__(self, txid: int = 0, item_id: str = '', context: Context | None = None):
         super().__init__(txid)
         self.item_id = item_id
+        self.context = Context() if context is None else context
 
     def encode(self) -> tuple[bytes, list[int]]:
         buf, handles = super().encode()
         out = Encoder(self.DATA_START, handles)
         buf += struct.pack(self.BODY_FORMAT,
-                           *out.string(self.item_id))
+                           *out.string(self.item_id),
+                           *out.string(self.context.event),
+                           *out.string(self.context.source),
+                           *out.string(self.context.note),
+                           self.context.quiet)
+        buf += b'\0' * 4
         buf += out.data
         return buf, handles
 
@@ -975,6 +1004,11 @@ class DestroyRequest(Message):
         bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
         inp = Decoder(buffer, self.DATA_START, handles)
         self.item_id = inp.string(bits[0], bits[1])
+        self.context = Context()
+        self.context.event = inp.string(bits[2], bits[3])
+        self.context.source = inp.string(bits[4], bits[5])
+        self.context.note = inp.string(bits[6], bits[7])
+        self.context.quiet = self.decode_bool(bits[8])
         return
 
 
@@ -1025,22 +1059,24 @@ class CreateFromRequest(Message):
 
     METHOD = 4
     RESPONSE = CreateFromResponse
-    BODY_FORMAT = "<IIIIIIII"
+    BODY_FORMAT = "<IIIIIIIIIIIIIIB3x"
     BODY_START = 8
-    LENGTH = 40
-    DATA_START = 40
+    LENGTH = 68
+    DATA_START = 72
 
     def __init__(self,
                  txid: int = 0,
                  type_id: str = '',
                  data: bytes = b'',
                  name: str = '',
-                 media_type: str = ''):
+                 media_type: str = '',
+                 context: Context | None = None):
         super().__init__(txid)
         self.type_id = type_id
         self.data = data
         self.name = name
         self.media_type = media_type
+        self.context = Context() if context is None else context
 
     def encode(self) -> tuple[bytes, list[int]]:
         buf, handles = super().encode()
@@ -1049,7 +1085,12 @@ class CreateFromRequest(Message):
                            *out.string(self.type_id),
                            *out.opaque(self.data),
                            *out.string(self.name),
-                           *out.string(self.media_type))
+                           *out.string(self.media_type),
+                           *out.string(self.context.event),
+                           *out.string(self.context.source),
+                           *out.string(self.context.note),
+                           self.context.quiet)
+        buf += b'\0' * 4
         buf += out.data
         return buf, handles
 
@@ -1064,6 +1105,11 @@ class CreateFromRequest(Message):
         self.data = inp.opaque(bits[2], bits[3])
         self.name = inp.string(bits[4], bits[5])
         self.media_type = inp.string(bits[6], bits[7])
+        self.context = Context()
+        self.context.event = inp.string(bits[8], bits[9])
+        self.context.source = inp.string(bits[10], bits[11])
+        self.context.note = inp.string(bits[12], bits[13])
+        self.context.quiet = self.decode_bool(bits[14])
         return
 
 
@@ -1321,6 +1367,41 @@ class CloseRequest(Message):
         return
 
 
+class Viewed(Message):
+    """Item.Viewed one-way message."""
+
+    METHOD = 2
+    BODY_FORMAT = "<IIII"
+    BODY_START = 8
+    LENGTH = 24
+    DATA_START = 24
+
+    def __init__(self, txid: int = 0, source: str = '', note: str = ''):
+        super().__init__(txid)
+        self.source = source
+        self.note = note
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.source),
+                           *out.string(self.note))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.source = inp.string(bits[0], bits[1])
+        self.note = inp.string(bits[2], bits[3])
+        return
+
+
 ################################################################
 # Protocols
 ################################################################
@@ -1532,28 +1613,30 @@ class Implementation:
     class Client(system.Client):
         """protocol Implementation: client, for a handle to a service."""
 
-        def create(self, type_id: str = '') -> CreateResponse:
+        def create(self, type_id: str = '', context: Context | None = None) -> CreateResponse:
             """Implementation.Create."""
-            return self.call(CreateRequest(type_id=type_id), CreateResponse)
+            return self.call(CreateRequest(type_id=type_id, context=context), CreateResponse)
 
         def open(self, item_id: str = '') -> OpenResponse:
             """Implementation.Open."""
             return self.call(OpenRequest(item_id=item_id), OpenResponse)
 
-        def destroy(self, item_id: str = '') -> DestroyResponse:
+        def destroy(self, item_id: str = '', context: Context | None = None) -> DestroyResponse:
             """Implementation.Destroy."""
-            return self.call(DestroyRequest(item_id=item_id), DestroyResponse)
+            return self.call(DestroyRequest(item_id=item_id, context=context), DestroyResponse)
 
         def create_from(self,
                         type_id: str = '',
                         data: bytes = b'',
                         name: str = '',
-                        media_type: str = '') -> CreateFromResponse:
+                        media_type: str = '',
+                        context: Context | None = None) -> CreateFromResponse:
             """Implementation.CreateFrom."""
             request = CreateFromRequest(type_id=type_id,
                                         data=data,
                                         name=name,
-                                        media_type=media_type)
+                                        media_type=media_type,
+                                        context=context)
             return self.call(request, CreateFromResponse)
 
         def export(self, item_id: str = '') -> ExportResponse:
@@ -1623,6 +1706,7 @@ class Item:
 
     REQUESTS = {
         1: CloseRequest,
+        2: Viewed,
     }
 
     RESPONSES = {
@@ -1636,13 +1720,22 @@ class Item:
             """Item.Close."""
             return self.call(CloseRequest(), CloseResponse)
 
+        def viewed(self, source: str = '', note: str = '') -> None:
+            """Item.Viewed, one-way."""
+            self.send(Viewed(source=source, note=note))
+
     class Handler(system.Handler):
         """protocol Item: base class for a service's handler."""
 
         METHODS = {
             1: (CloseRequest, "close"),
+            2: (Viewed, "viewed"),
         }
 
         def close(self, request: CloseRequest, source: int) -> CloseResponse | system.Deferred:
             """Handle Item.Close."""
+            raise NotImplementedError
+
+        def viewed(self, request: Viewed, source: int) -> None:
+            """Handle Item.Viewed, one-way."""
             raise NotImplementedError

@@ -45,6 +45,7 @@ class FakeImage:
         self.version = 1
         self.sets = 0
         self.closed = False
+        self.views: list[tuple[str, str]] = []
         self.dead = False
 
         # Set to make the next set_edits conflict, with these edits.
@@ -92,18 +93,14 @@ class FakeImage:
         self.check()
         self.closed = True
 
-
-class FakeHistory:
-    def __init__(self):
-        self.events = []
-
-    def add_event(self, item_id, event, source):
-        self.events.append((item_id, event, source))
+    def viewed(self, source="", note=""):
+        self.check()
+        self.views.append((source, note))
 
 
-def make_sync(data: bytes | None = None, type_id="public.png", history=None):
+def make_sync(data: bytes | None = None, type_id="public.png"):
     client = FakeImage(encode(pixels(), "PNG") if data is None else data, type_id)
-    sync = lens.ImageSync(client, ITEM_ID, history)
+    sync = lens.ImageSync(client, ITEM_ID)
     assert sync.reload()
     return sync, client
 
@@ -171,8 +168,7 @@ def test_decode():
 ################################################################
 
 def test_edit_undo_redo():
-    history = FakeHistory()
-    sync, client = make_sync(history=history)
+    sync, client = make_sync()
     assert (sync.width, sync.height) == (3, 2)
     assert sync.edit(TURN) == sync.OK
     assert (sync.width, sync.height) == (2, 3)
@@ -194,9 +190,6 @@ def test_edit_undo_redo():
     sync.undo()
     sync.edit(TURN)
     assert sync.redo_stack == []
-
-    # Edited is recorded once.
-    assert history.events == [(ITEM_ID, "edited", "image-lens")]
 
 
 def test_revert():
@@ -410,18 +403,18 @@ def test_empty(window):
 def test_lens_use(qt_app, monkeypatch):
     client = FakeImage(encode(pixels(), "PNG"))
     monkeypatch.setattr(lens.wire.Image, "Client", lambda port, timeout: client)
-    history = FakeHistory()
     stopped = []
 
     class Loop:
         def stop(self):
             stopped.append(True)
 
-    image_lens = lens.ImageLens(Loop(), history)  # pyright: ignore[reportArgumentType]
+    image_lens = lens.ImageLens(Loop())  # pyright: ignore[reportArgumentType]
     image_lens.name_of = lambda item_id: "A name"
     assert image_lens.use(UseRequest(item_id=ITEM_ID, item=5), 0).status == Status.OK
     assert image_lens.use(UseRequest(item_id=ITEM_ID, item=6), 0).status == Status.BUSY
-    assert history.events == [(ITEM_ID, "opened", "image-lens")]
+    # The item's told it's viewed: its type records it, and its edits.
+    assert client.views == [("image-lens", "")]
     assert image_lens.window is not None
     image_lens.window.close()
     assert client.closed and stopped == [True]

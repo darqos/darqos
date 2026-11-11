@@ -43,6 +43,9 @@ class FakeText:
         self.replaces = []
         self.closed = False
 
+        # Viewed calls, as (source, note).
+        self.views: list[tuple[str, str]] = []
+
         # Set to make the next replace conflict, or every call fail.
         self.conflict_with: str | None = None
         self.dead = False
@@ -72,18 +75,14 @@ class FakeText:
         self.check()
         self.closed = True
 
-
-class FakeHistory:
-    def __init__(self):
-        self.events = []
-
-    def add_event(self, item_id, event, source):
-        self.events.append((item_id, event, source))
+    def viewed(self, source="", note=""):
+        self.check()
+        self.views.append((source, note))
 
 
-def make_sync(text: str = "", history=None) -> tuple:
+def make_sync(text: str = "") -> tuple:
     client = FakeText(text)
-    return lens.TextSync(client, ITEM_ID, text, client.version, history), client
+    return lens.TextSync(client, ITEM_ID, text, client.version), client
 
 
 ################################################################
@@ -120,8 +119,7 @@ def test_utf16_offsets():
 ################################################################
 
 def test_change_sends_the_difference():
-    history = FakeHistory()
-    sync, client = make_sync("hello world", history)
+    sync, client = make_sync("hello world")
     assert sync.change("hello world") == lens.TextSync.OK
     assert sync.change("hello, world") == lens.TextSync.OK
     assert sync.change("hello, world") == lens.TextSync.OK
@@ -129,7 +127,6 @@ def test_change_sends_the_difference():
     assert sync.change("hello, 😀!") == lens.TextSync.OK
     assert client.replaces == [(5, 5, ","), (7, 12, "😀"), (8, 8, "!")]
     assert (sync.text, sync.version) == ("hello, 😀!", 4)
-    assert history.events == [(ITEM_ID, "edited", "text-lens")] * 3
 
 
 def test_change_conflict_reloads():
@@ -156,11 +153,6 @@ def test_close():
     assert client.closed and not sync.available
 
 
-def test_no_history():
-    sync, _ = make_sync()
-    sync.record("opened")
-
-
 ################################################################
 # Window and keys, offscreen
 ################################################################
@@ -177,7 +169,7 @@ def window(qt_app, clipboard):
     created = []
 
     def make(text: str = ""):
-        sync, client = make_sync(text, FakeHistory())
+        sync, client = make_sync(text)
         closed = []
         window = lens.TextWindow(sync, on_closed=lambda: closed.append(True))
         window.show()
@@ -530,22 +522,22 @@ def handler(qt_app, monkeypatch):
 
     monkeypatch.setattr(lens, "Text", Clients)
     loop = FakeLoop()
-    history = FakeHistory()
-    handler = lens.TextLens(loop, history)
+    handler = lens.TextLens(loop)
     handler.name_of = lambda item_id: "A name"
-    yield handler, items, loop, history
+    yield handler, items, loop
     if handler.window is not None:
         handler.window.on_closed = None
         handler.window.close()
 
 
 def test_use(handler):
-    h, items, loop, history = handler
+    h, items, loop = handler
     items[7] = FakeText("hello")
     assert h.use(UseRequest(item_id=ITEM_ID, item=7), 0).status == Status.OK
     assert h.window is not None and h.window.isVisible()
     assert h.window.document_text() == "hello"
-    assert history.events == [(ITEM_ID, "opened", "text-lens")]
+    # The item's told it's viewed: its type records it, and its edits.
+    assert items[7].views == [("text-lens", "")]
 
     # One item per lens.
     items[8] = FakeText()
@@ -556,7 +548,7 @@ def test_use(handler):
 
 
 def test_use_failures(handler):
-    h, items, loop, _ = handler
+    h, items, loop = handler
     assert h.use(UseRequest(item_id=ITEM_ID, item=None), 0).status == Status.FAILED
     items[7] = FakeText()
     items[7].dead = True
@@ -565,13 +557,13 @@ def test_use_failures(handler):
 
 
 def test_close_before_use(handler):
-    h, _, loop, _ = handler
+    h, _, loop = handler
     h.close(Close(), 0)
     assert loop.stopped
 
 
 def test_expire(handler):
-    h, items, loop, _ = handler
+    h, items, loop = handler
     items[7] = FakeText()
     h.use(UseRequest(item_id=ITEM_ID, item=7), 0)
     h.expire()
@@ -624,11 +616,17 @@ def test_text_lens(live_pkernel, tmp_path):  # noqa: F811
 
             lens = Lens.Client(darq.launch.use_item(item_id, port), timeout=10)
 
-            # It's opened, by the lens.
+            # It's created, and viewed through the lens: its type records
+            # both, as they come, one way.
             history = History.Client(darq.connect("darq.history"), timeout=10)
-            events = [(e.event, e.source) for e in history.get_events(item_ids=[item_id]).events]
-            if events != [("opened", "text-lens")]:
-                return f"events are {events!r}"
+            deadline = time.monotonic() + 10
+            while True:
+                events = sorted((e.event, e.source) for e in history.get_events(item_ids=[item_id]).events)
+                if events == [("created", "text-type"), ("viewed", "text-lens")]:
+                    break
+                if time.monotonic() > deadline:
+                    return f"events are {events!r}"
+                time.sleep(0.05)
 
             # It says what it's showing, through the port it registered as
             # lens.<dpid>, as the Terminal's Sys-i asks.
@@ -719,10 +717,16 @@ def test_launch_doesnt_block(live_pkernel, tmp_path):  # noqa: F811
                 return f"launched {host.results!r}"
             if len(ticks) < 5:
                 return f"the loop ticked {len(ticks)} times while launching"
+            # Created by the launcher's source, and viewed in the lens.
             history = History.Client(darq.connect("darq.history"), timeout=10)
-            events = sorted((e.event, e.source) for e in history.get_events(item_ids=[item_id]).events)
-            if events != [("created", "test"), ("opened", "text-lens")]:
-                return f"events are {events!r}"
+            deadline = time.monotonic() + 10
+            while True:
+                events = sorted((e.event, e.source) for e in history.get_events(item_ids=[item_id]).events)
+                if events == [("created", "test"), ("viewed", "text-lens")]:
+                    break
+                if time.monotonic() > deadline:
+                    return f"events are {events!r}"
+                time.sleep(0.05)
             loop.close()
             return 0
         """)

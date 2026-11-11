@@ -7,6 +7,7 @@
 # in test_terminal.py.
 
 import datetime
+import types as python_types
 import typing
 
 import pytest
@@ -119,7 +120,9 @@ def test_create(made):
     widget.create_button.click()
     services = host.services
     assert services.launch.created == [TEXT]
-    assert services.history.added == [(DOC, "created", "terminal")]
+    # Its type records it, as the launcher's context says.
+    assert services.history.added == []
+    assert [(c.event, c.source, c.note) for c in services.launch.contexts] == [("", "terminal", "")]
     assert services.launch.used == [(DOC, 42)]
     assert host.status == f"Using {DOC}"
 
@@ -133,7 +136,8 @@ def test_import_file(made, tmp_path, monkeypatch):
     services = host.services
     assert services.launch.created == [(TEXT, b"Hello")]
     assert services.launch.names == ["notes.txt"]
-    assert services.history.added == [(DOC, "imported", "terminal")]
+    assert services.history.added == []
+    assert [(c.event, c.source, c.note) for c in services.launch.contexts] == [("imported", "terminal", str(path))]
     assert services.launch.used == [(DOC, 43)]
     assert host.status == f"Using {DOC}"
     assert widget.import_button.isEnabled()
@@ -170,7 +174,8 @@ def test_create_failure(made):
 
 def events(n: int, start: int = 1_800_000_000_000_000) -> list[Event]:
     """Newest first, a second apart."""
-    return [Event(time=start + (n - i) * 1_000_000, item_id=DOC, event="edited", source="text-lens", count=i + 1)
+    return [Event(time=start + (n - i) * 1_000_000, item_id=DOC, event="edited", source="text-lens", count=i + 1,
+                  note=f"note {i}" if i else "")
             for i in range(n)]
 
 
@@ -188,8 +193,10 @@ def test_history_search(made):
     assert (query["start"], query["end"], query["max"]) == (0, 0, ui_history.PAGE)
     assert view.table.rowCount() == 3
     # With no KB, no name: the identifier's specifier.
-    assert [view.table.item(0, c).text() for c in range(1, 6)] == [
-        "Text File", "0123456789abcdef0123456789abcdef", "edited", "text-lens", "1"]
+    assert [view.table.item(0, c).text() for c in range(1, 7)] == [
+        "Text File", "0123456789abcdef0123456789abcdef", "edited", "text-lens", "1", ""]
+    # Its note, as for where a reader had got to.
+    assert view.table.item(1, 6).text() == "note 1" and view.table.item(1, 6).toolTip() == "note 1"
     assert view.table.item(0, 1).toolTip() == TEXT and view.table.item(0, 2).toolTip() == DOC
     assert not view.more.isEnabled()
     assert host.status == "3 events"
@@ -439,3 +446,88 @@ def test_a_lens_thats_not_registered_still_shows_its_item(qt_app, monkeypatch):
         assert ui_lens.announce(40) == "lens.12"
     finally:
         QGuiApplication.setDesktopFileName(before)
+
+
+################################################################
+# Viewing (darq.ui.lens)
+################################################################
+
+class ViewedItem:
+    def __init__(self):
+        self.views: list[tuple[str, str]] = []
+        self.dead = False
+
+    def viewed(self, source="", note=""):
+        if self.dead:
+            raise darq.DeadPortError("gone")
+        self.views.append((source, note))
+
+
+@pytest.fixture
+def viewing(qt_app):
+    from PyQt6.QtWidgets import QWidget
+    from darq.ui.lens import Viewing
+    window = QWidget()
+    clock = python_types.SimpleNamespace(now=100.0)
+    shown = Viewing(window, "a-lens", clock=lambda: clock.now)
+    yield shown, clock, window
+    shown.stop()
+
+
+def test_viewing_says_so_when_shown(viewing):
+    shown, _, _ = viewing
+    item = ViewedItem()
+    shown.show(item, "page 1 of 9")
+    assert item.views == [("a-lens", "page 1 of 9")]
+    assert shown.focused.isActive()
+
+
+def test_moving_on_says_where_at_most_every_gap(viewing):
+    from darq.ui.lens import VIEWED_GAP
+    shown, clock, _ = viewing
+    item = ViewedItem()
+    shown.show(item, "page 1 of 9")
+
+    # Soon after: it's said once the gap's passed, with the latest place.
+    clock.now += 5
+    shown.move("page 2 of 9")
+    shown.move("page 3 of 9")
+    assert item.views == [("a-lens", "page 1 of 9")]
+    assert shown.pending.isActive() and shown.pending.interval() == (VIEWED_GAP - 5) * 1000
+    shown.pending.timeout.emit()
+    assert item.views[-1] == ("a-lens", "page 3 of 9")
+
+    # Long after: it's said now.
+    clock.now += VIEWED_GAP
+    shown.move("page 4 of 9")
+    assert item.views[-1] == ("a-lens", "page 4 of 9") and not shown.pending.isActive()
+
+    # Where it already is says nothing.
+    shown.move("page 4 of 9")
+    assert len(item.views) == 3
+
+
+def test_while_focused_its_said_again(viewing, monkeypatch):
+    shown, _, window = viewing
+    item = ViewedItem()
+    shown.show(item)
+    monkeypatch.setattr(window, "isActiveWindow", lambda: False)
+    shown.tick()
+    assert len(item.views) == 1
+    monkeypatch.setattr(window, "isActiveWindow", lambda: True)
+    shown.tick()
+    assert len(item.views) == 2
+
+
+def test_once_stopped_nothings_said_and_a_gone_item_is_only_logged(viewing, caplog):
+    shown, _, _ = viewing
+    item = ViewedItem()
+    shown.show(item)
+    shown.stop()
+    shown.tick()
+    shown.move("page 2")
+    assert len(item.views) == 1 and not shown.focused.isActive()
+
+    item.dead = True
+    shown.show(item)
+    assert "Can't say it's viewed" in caplog.text

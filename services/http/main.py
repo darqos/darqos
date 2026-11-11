@@ -26,7 +26,6 @@ import darq.kb as model
 import darq.launch
 import darq.message
 import darq.url
-from darq.protocols.history import History
 from darq.protocols.http import (
     Cancel,
     Fetched,
@@ -107,13 +106,6 @@ class HttpService(Http.Handler):
         self.running: dict[int, threading.Event] = {}
         self.lock = threading.Lock()
 
-    @staticmethod
-    def history() -> History.Client | None:
-        """Return a client of History, if it's running.  It's looked for
-        each time, not at boot, when it mightn't have started."""
-        handle = darq.lookup_name("darq.history", blocking=False)
-        return History.Client(handle, timeout=TIMEOUT) if handle is not None else None
-
     def writer(self) -> model.KB:
         """Return a KB client that writes through its implementation,
         which may have exited since last time."""
@@ -186,7 +178,7 @@ class HttpService(Http.Handler):
                 return fetcher.fetch("GET", url, headers, b"", limit, self.user_agent, path, report, stop.is_set)
 
             try:
-                keeper = snapshots.Snapshots(self.writer(), darq.launch.import_data, self.history())
+                keeper = snapshots.Snapshots(self.writer(), darq.launch.import_data)
                 now = darq.message.time_value(time.time_ns() // 1000)
                 outcome = keeper.take(request.url, fetch, path, now)
                 reply = SnapshotResponse(http_status=outcome.http_status, url_item=outcome.url_item,

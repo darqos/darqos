@@ -8,7 +8,9 @@
 #
 # Each level's an item of its own, so what's made and changed here is
 # recorded in History against that item, and not only the one that's
-# open, along with any people and publishers that are made.
+# open, along with any people and publishers that are made: by their
+# type, with the store's source (see doc/history.rst).  What's filled in
+# as it's made isn't an edit.
 
 import itertools
 import logging
@@ -16,12 +18,12 @@ import typing
 
 import darq
 import darq.book
-import darq.history
 import darq.kb as model
 import darq.launch
 import darq.wikidata
 from darq.book import BookError
-from darq.protocols.kb import EntityItem, Linked, Role
+from darq.protocols import type as type_protocol
+from darq.protocols.kb import Context, EntityItem, Linked, Role
 from darq.protocols.kb import Status as KBStatus
 
 
@@ -47,24 +49,23 @@ ERRORS = (darq.DarqError, TimeoutError, ValueError)
 # Opens an item, returning a port for it.
 Open = typing.Callable[[str], int]
 
-# Creates an item of a type, returning its identifier and a port for it.
-Create = typing.Callable[[str], tuple[str, int]]
-
-# Records a History event about an item.
-Record = typing.Callable[[str, str], None]
+# Creates an item of a type, as a context describes it, returning its
+# identifier and a port for it.
+Create = typing.Callable[[str, type_protocol.Context | None], tuple[str, int]]
 
 
 class ItemStore:
     def __init__(self, chain: list[str], open_item: Open = darq.launch.open_item,
-                 create_item: Create = darq.launch.create_item, record: Record = lambda item_id, event: None):
+                 create_item: Create = darq.launch.create_item, source: str = ""):
         """Constructor.
 
         :param chain: Languages, best first.
-        :param record: Records a History event about an item."""
+        :param source: What's using it, such as "book-lens", as History's
+                       source of what's made and changed with it."""
         self.chain = chain
         self.open_item = open_item
         self.create_item = create_item
-        self.record = record
+        self.source = source
 
         # The items of open entities, and those made since settled(), which
         # are still being filled in: that's not an edit.
@@ -225,11 +226,10 @@ class ItemStore:
 
     def create(self, type_id: str, label: str) -> model.Entity:
         try:
-            item_id, port = self.create_item(type_id)
+            item_id, port = self.create_item(type_id, type_protocol.Context(source=self.source))
         except ERRORS as e:
             raise BookError(f"Can't make a {type_id}: {e}") from None
         self.adopt(item_id, port)
-        self.record(item_id, darq.history.CREATED)
         self.fresh.add(darq.split_item_id(item_id)[1])
         entity = self.get(item_id)
         if entity is None:
@@ -261,7 +261,9 @@ class ItemStore:
         for _ in range(SAVE_ATTEMPTS):
             try:
                 changed = model.apply_edits(entity, edits)
-                response = client.put_entity(entity=model.entity_to_wire(changed))
+                # Filling in what's just been made isn't an edit.
+                context = Context(quiet=True) if entity.id in self.fresh else Context(source=self.source)
+                response = client.put_entity(entity=model.entity_to_wire(changed), context=context)
                 if response.status == KBStatus.CONFLICT:
                     read = client.get_entity(languages=self.chain)
                     entity = model.entity_from_wire(read.entity)
@@ -270,8 +272,6 @@ class ItemStore:
                     raise BookError("A value doesn't fit its property")
                 if response.status != KBStatus.OK:
                     raise BookError(f"Can't save {entity.id}: {response.status.name}")
-                if entity.id not in self.fresh:
-                    self.record(self.items[entity.id], darq.history.EDITED)
                 read = client.get_entity(languages=self.chain)
                 self.remember(read.linked)
                 return model.entity_from_wire(read.entity)
@@ -297,10 +297,9 @@ class ItemStore:
                 logging.warning(f"Can't close {item_id}: {e!r}")
             darq.close_port(port)
         try:
-            darq.launch.destroy_item(item_id)
+            darq.launch.destroy_item(item_id, type_protocol.Context(source=self.source))
         except ERRORS as e:
             raise BookError(f"Can't destroy {item_id}: {e}") from None
-        self.record(item_id, darq.history.DESTROYED)
 
     def close(self):
         """Close the items, and their ports."""

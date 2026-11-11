@@ -39,6 +39,14 @@ THROTTLE = 10 * 60 * 1_000_000
 # Most events GetEvents returns, and when it's asked for no limit.
 MAX_EVENTS = 1000
 
+# Most bytes of a note kept: a longer one's cut, at a character.
+NOTE_MAX = 500
+
+
+def cut(note: str) -> str:
+    """Return a note, cut to NOTE_MAX bytes of UTF-8, at a character."""
+    return note.encode()[:NOTE_MAX].decode(errors="ignore")
+
 
 def now() -> int:
     """Return the time, in UTC microseconds since the epoch."""
@@ -75,6 +83,10 @@ class HistoryService(History.Handler):
                             "count integer not null)")
             self.db.execute("create index if not exists events_by_item "
                             "on events (item_id, event, source, time)")
+            # Notes came in Second Edition: an older database gains them.
+            columns = {row[1] for row in self.db.execute("pragma table_info(events)")}
+            if "note" not in columns:
+                self.db.execute("alter table events add column note text not null default ''")
         logging.info(f"History database {path}")
         return
 
@@ -88,6 +100,7 @@ class HistoryService(History.Handler):
                             f"about {request.item_id!r}: {e}")
             return
         item_id = f"{type_id}:{specifier}"
+        note = cut(request.note)
 
         when = self.clock()
         with self.db:
@@ -96,14 +109,18 @@ class HistoryService(History.Handler):
                                   "order by time desc limit 1",
                                   (item_id, event, event_source, when - THROTTLE)).fetchone()
             if row is not None:
-                self.db.execute("update events set count = count + 1 where time = ?", row)
+                # A counted event keeps the latest note, if it's given one:
+                # where a reader had got to.
+                self.db.execute("update events set count = count + 1, note = case when ? = '' then note else ? end "
+                                "where time = ?", (note, note, *row))
                 return
 
             latest = self.db.execute("select max(time) from events").fetchone()[0]
             if latest is not None and when <= latest:
                 when = latest + 1
-            self.db.execute("insert into events values (?, ?, ?, ?, ?, 1)",
-                            (when, type_id, item_id, event, event_source))
+            self.db.execute("insert into events (time, type_id, item_id, event, source, count, note) "
+                            "values (?, ?, ?, ?, ?, 1, ?)",
+                            (when, type_id, item_id, event, event_source, note))
         return
 
     def get_events(self, request: GetEventsRequest, source: int) -> GetEventsResponse:
@@ -129,7 +146,7 @@ class HistoryService(History.Handler):
                 parameters.extend(values)
         limit = MAX_EVENTS if request.max == 0 else min(request.max, MAX_EVENTS)
 
-        rows = self.db.execute("select time, item_id, event, source, count from events "
+        rows = self.db.execute("select time, item_id, event, source, count, note from events "
                                f"where {' and '.join(where)} order by time desc limit {limit}",
                                parameters).fetchall()
         return GetEventsResponse(events=[Event(*row) for row in rows], status=Status.OK)

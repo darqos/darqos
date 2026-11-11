@@ -473,7 +473,8 @@ History
 The history panel, invoked with *Sys-h*, lists History events between
 two times (the last hour, when it's opened), filtered by type, event,
 and source, newest first: each with its item's kind and name, read from
-the Knowledge Base a page at a time.  Choosing one (Enter, or double-click)
+the Knowledge Base a page at a time, and its note, such as a file's
+path, or the page a reader had got to (see :doc:`history`).  Choosing one (Enter, or double-click)
 starts a lens for its item.
 
 Search

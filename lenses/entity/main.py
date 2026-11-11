@@ -13,13 +13,13 @@
 # Following a link shows the linked item in the same window, like a web
 # browser, with Back to return; Ctrl+click, or the link's context menu,
 # opens it in a new window, with its own lens.  Each item shown is
-# watched, so the view keeps up with changes, and recorded in History
-# as opened.
+# watched, so the view keeps up with changes, and told it's being viewed
+# (see darq.ui.lens.Viewing), which its type records in History.
 #
 # What links to an item is shown in groups (see darq.ui.links).  A large
 # group opens to a paged list, in place of the item's page, with Back to
-# return: it isn't an item, so it's not recorded in History, and can't
-# have a window of its own.  An entity chosen from a group opens in its
+# return: it isn't an item, so it's not viewed, as History has it, and
+# can't have a window of its own.  An entity chosen from a group opens in its
 # type's own lens, if it has one.
 #
 # In edit mode (E), the page is a form (see edit.py), and each change is
@@ -28,12 +28,13 @@
 # since, it's read again and the edits made again, unless what they
 # change has been changed too: then that's shown, to keep mine or take
 # theirs.  A source's statements are kept its own (see
-# darq.kb.change_value).  Undo and redo make edits too.  Items are
-# recorded in History as edited, once each time edit mode's entered.
+# darq.kb.change_value).  Undo and redo make edits too.  The item's type
+# records each in History, as edited by this lens: History counts those
+# within ten minutes together.
 #
 # Its thread is Qt's: the lens port, and the ports it watches items on,
 # are served on Qt's event loop (see darq.Server.attach), and its calls
-# to items and History are synchronous, on queued reply ports.
+# to items are synchronous, on queued reply ports.
 
 import logging
 import os
@@ -47,7 +48,6 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QInputDialog, QLabel, QM
                              QScrollArea, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget)
 
 import darq
-import darq.history
 import darq.items
 import darq.merging
 import darq.ui.kb_writer
@@ -55,12 +55,13 @@ import darq.kb as model
 import darq.launch
 import darq.wikidata
 from darq.loop import QtEventLoop
-from darq.protocols.history import History
 from darq.protocols.kb import Changed, EntityItem, Kind, Linked, LinkGroup, Listener
+from darq.protocols.kb import Context as KBContext
+from darq.protocols.type import Context as TypeContext
 from darq.protocols.kb import Status as KBStatus
 from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
 from darq.ui import links as grouped
-from darq.ui.lens import LensHandler, announce
+from darq.ui.lens import LensHandler, Viewing, announce
 from darq.ui import style
 from darq.ui import wikidata as wikidata_ui
 from darq.ui.launcher import Launcher, start_thread
@@ -72,7 +73,7 @@ import edit  # noqa: E402
 import render  # noqa: E402
 
 
-# History source for the events it records.
+# History's source of what's done through it.
 SOURCE = "entity-lens"
 
 # Seconds to wait for items' replies.
@@ -161,6 +162,7 @@ class EntityWindow(QWidget):
 
     def __init__(self, lens: "EntityLens", on_closed: typing.Callable[[], None] | None = None):
         super().__init__()
+        self.viewing = Viewing(self, SOURCE)
         self.lens = lens
         self.on_closed = on_closed
         self.chain = render.languages(os.environ.get("LANG", "") or "en")
@@ -184,7 +186,6 @@ class EntityWindow(QWidget):
         self.language = self.chain[0]
         self.undo_stack: list[list[model.Edit]] = []
         self.redo_stack: list[list[model.Edit]] = []
-        self.recorded_edit = False
 
         self.setWindowFlags(QtCore.Qt.WindowType.FramelessWindowHint)
         self.setStyleSheet(CONTROLS + f"EntityWindow {{ background-color: {style.SURFACE}; }}"
@@ -262,7 +263,7 @@ class EntityWindow(QWidget):
         self.redo_stack.clear()
         self.display(page, 0)
         self.watch(shown)
-        self.lens.record(item_id, darq.history.OPENED)
+        self.viewing.show(shown.client)
         logging.info(f"Showing {item_id}")
         return True
 
@@ -405,7 +406,6 @@ class EntityWindow(QWidget):
         base = self.chain[0].split("-")[0]
         self.language = next((lang for lang in self.chain if lang in entity.labels), base)
         self.editing = True
-        self.recorded_edit = False
         self.form.reset()
         self.form.build()
         self.stack.setCurrentWidget(self.form_area)
@@ -498,7 +498,9 @@ class EntityWindow(QWidget):
                 self.conflict(edits, e, force)
                 return False
             try:
-                response = shown.client.put_entity(entity=model.entity_to_wire(entity))
+                # Its type records it edited, by this lens.
+                response = shown.client.put_entity(entity=model.entity_to_wire(entity),
+                                                   context=KBContext(source=SOURCE))
             except (darq.DarqError, TimeoutError) as e:
                 logging.error(f"Can't save {shown.item_id}: {e!r}")
                 self.show_status(f"Can't save: {e}")
@@ -528,9 +530,6 @@ class EntityWindow(QWidget):
             self.redo_stack.append(model.invert(edits))
         else:
             self.undo_stack.append(edits)
-        if not self.recorded_edit:
-            self.lens.record(self.shown.item_id, darq.history.EDITED)
-            self.recorded_edit = True
         self.form.conflict = None
         self.read(self.shown, links=False)
         self.title.setText(render.best(self.shown.entity.labels, self.chain) or self.shown.entity.id)
@@ -927,16 +926,14 @@ class EntityWindow(QWidget):
             return
         old, new = plan.old, plan.new
         self.show_status("Merging ...")
-        self.lens.in_kb(lambda kb: self.lens.items(kb).merge(old.id, new.id),
+        # Its type records it merged, on both, by this lens.
+        self.lens.in_kb(lambda kb: self.lens.items(kb).merge(old.id, new.id, context=KBContext(source=SOURCE)),
                         lambda done: self.merged(old, new, done))
 
     def merged(self, old: model.Entity, new: model.Entity, outcome: typing.Any):
         if isinstance(outcome, Exception):
             self.show_status(str(outcome))
             return
-        for entity in (old, new):
-            self.lens.record(model.item_id(entity.id, model.recorded_type(entity) or model.ENTITY_TYPE),
-                             darq.history.MERGED)
         self.show_status(f"Merged {old.id} into {new.id}")
         self.refresh()
 
@@ -948,6 +945,7 @@ class EntityWindow(QWidget):
             handle.startSystemMove()
 
     def closeEvent(self, a0):
+        self.viewing.stop()
         self.leave()
         super().closeEvent(a0)
         if self.on_closed is not None:
@@ -993,11 +991,10 @@ class LaunchOpener:
 
 
 class LensServices:
-    """What a Launcher uses: darq.launch, and History."""
+    """What a Launcher uses: darq.launch."""
 
-    def __init__(self, history: History.Client | None):
+    def __init__(self):
         self.launch = darq.launch
-        self.history = history
 
 
 def make_tag(name: str, language: str) -> Linked:
@@ -1008,13 +1005,14 @@ def make_tag(name: str, language: str) -> Linked:
     name = " ".join(name.split())
     if not name:
         raise ValueError("a tag needs a name")
-    item_id, port = darq.launch.create_item(darq.items.TAG_TYPE)
+    item_id, port = darq.launch.create_item(darq.items.TAG_TYPE, TypeContext(source=SOURCE, note=name))
     try:
         item = EntityItem.Client(port, timeout=TIMEOUT)
         got = item.get_entity(languages=[language])
         entity = model.entity_from_wire(got.entity)
         entity.set_label(name, language)
-        if item.put_entity(model.entity_to_wire(entity)).status != KBStatus.OK:
+        # Naming what's just been made isn't an edit.
+        if item.put_entity(model.entity_to_wire(entity), KBContext(quiet=True)).status != KBStatus.OK:
             raise darq.DarqError("the KB didn't take its name")
         item.close()
     finally:
@@ -1029,17 +1027,16 @@ class EntityLens(LensHandler):
     # It's items' pages: Sys-i on one is where it is.
     PAGE = True
 
-    def __init__(self, loop: QtEventLoop, history: History.Client | None, opener: Opener | None = None):
+    def __init__(self, loop: QtEventLoop, opener: Opener | None = None):
         self.loop = loop
-        self.history = history
         self.window: EntityWindow | None = None
-        self.services = typing.cast(typing.Any, LensServices(history))
+        self.services = typing.cast(typing.Any, LensServices())
         self.launcher = Launcher(self, SOURCE, loop.post)
         self.opener: Opener = opener if opener is not None else LaunchOpener(self.launcher)
 
         # How Wikidata's asked, on another thread, and how one of what it
         # has is chosen: tests replace these.
-        self.make_linker: typing.Callable[[], darq.wikidata.Linker] = wikidata_ui.linker
+        self.make_linker: typing.Callable[[], darq.wikidata.Linker] = lambda: wikidata_ui.linker(SOURCE)
         self.run: typing.Callable[[typing.Callable[[], None]], None] = start_thread
         self.choose: typing.Callable[..., int | None] = self.ask_to_choose
 
@@ -1155,15 +1152,6 @@ class EntityLens(LensHandler):
         self.server.remove(port)
         darq.close_port(port)
 
-    def record(self, item_id: str, event: str):
-        """Record a History event about an item, if History is running."""
-        if self.history is None:
-            return
-        try:
-            self.history.add_event(item_id=item_id, event=event, source=SOURCE)
-        except darq.DarqError as e:
-            logging.warning(f"Can't record {event} for {item_id}: {e!r}")
-
     # As the Launcher's host
 
     def show_status(self, message: str):
@@ -1193,11 +1181,7 @@ def darq_main():
     app.setQuitOnLastWindowClosed(False)
     loop = QtEventLoop()
 
-    # History is best effort: the lens works without it.
-    handle = darq.lookup_name("darq.history", blocking=False)
-    history = History.Client(handle) if handle is not None else None
-
-    lens = EntityLens(loop, history)
+    lens = EntityLens(loop)
     port = darq.open_port()
     announce(port)
     server = darq.Server()

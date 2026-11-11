@@ -40,6 +40,7 @@ import darq.url
 from darq.protocols import kb as wire
 from darq.protocols.history import History
 from darq.protocols.history import Status as HistoryStatus
+from darq.protocols.kb import Context as KBContext
 from darq.protocols.kb import EntityItem
 from darq.protocols.type import Implementation, Status, Type
 from darq.ui import kb_writer
@@ -240,7 +241,8 @@ def relink(kb: model.KB, writer: model.KB) -> Relinked:
                 if touched:
                     changed.append(entity)
             if changed:
-                writer.put(*changed)
+                # Turning references into links isn't the operator's edit.
+                writer.put(*changed, context=KBContext(quiet=True))
     return Relinked(linked, left)
 
 

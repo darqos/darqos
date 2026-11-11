@@ -37,6 +37,7 @@ import darq.history
 import darq.items
 import darq.kb as model
 from darq.book import EXPRESSION_TYPE, ITEM_TYPE, MANIFESTATION_TYPE, WORK_TYPE, Edition
+from darq.protocols.kb import Context as KBContext
 
 import lt_export
 from lt_export import Record
@@ -44,8 +45,13 @@ from lt_export import Record
 
 log = logging.getLogger("librarything-import")
 
-# History source for its events.
+# History source of what it makes, which the KB type records (see
+# doc/history.rst): people, publishers and tags are created, and books
+# imported.  Its updates aren't recorded.
 SOURCE = "librarything-import"
+CREATED = KBContext(source=SOURCE)
+IMPORTED = KBContext(event=darq.history.IMPORTED, source=SOURCE)
+QUIET = KBContext(quiet=True)
 
 # Entities read and written in each request.
 BATCH = 200
@@ -61,10 +67,6 @@ QUALIFIERS = frozenset({model.SERIES_ORDINAL, darq.book.CONTRIBUTOR_ROLE})
 # Classes of what's found by name: none for what can be anything.
 PERSON_CLASS = "Q5"
 ORGANISATION_CLASS = "Q43229"
-
-
-class History(typing.Protocol):
-    def add_event(self, item_id: str, event: str, source: str) -> typing.Any: ...
 
 
 def identifier(kind: str, key: str) -> str:
@@ -144,7 +146,7 @@ class Result:
 
 
 class Importer:
-    def __init__(self, kb: model.KB, items: model.KB, history: History | None, records: list[Record],
+    def __init__(self, kb: model.KB, items: model.KB, records: list[Record],
                  progress: typing.Callable[[str, int, int], None]):
         """Constructor.
 
@@ -153,7 +155,6 @@ class Importer:
         :param progress: Told the step, how much is done, and the total."""
         self.kb = kb
         self.items = items
-        self.history = history
         self.records = records
         self.progress = progress
         self.result = Result()
@@ -177,14 +178,6 @@ class Importer:
         for level in levels:
             self.write(level)
         return self.result
-
-    def record(self, item_id: str, event: str):
-        if self.history is None:
-            return
-        try:
-            self.history.add_event(item_id=item_id, event=event, source=SOURCE)
-        except darq.DarqError as e:
-            log.warning(f"Can't record {event} for {item_id}: {e!r}")
 
     def ensure_vocabulary(self):
         self.kb.ensure(*darq.book.vocabulary())
@@ -250,8 +243,7 @@ class Importer:
             if self.items.get(entity_id, follow=False) is None:
                 made = model.Item(entity_id)
                 made.set_label(text)
-                self.items.create(type_id, made)
-                self.record(model.item_id(entity_id, type_id), darq.history.CREATED)
+                self.items.create(type_id, made, context=CREATED)
         # One that's been merged, as into Wikidata's, is what it was merged
         # into, so that its links aren't to the old one.
         current = self.items.get(entity_id)
@@ -341,7 +333,7 @@ class Importer:
         """Return the tag with a name, making it if there's none."""
         key = model.fold(" ".join(name.split()))
         if key not in self.tags:
-            self.tags[key] = darq.items.tag(self.kb, self.items, name)
+            self.tags[key] = darq.items.tag(self.kb, self.items, name, CREATED)
         return self.tags[key]
 
     def levels(self) -> list[Level]:
@@ -398,9 +390,9 @@ class Importer:
                 elif model.restate(entity, darq.book.LIBRARYTHING, wanted, QUALIFIERS):
                     changed.append(entity)
             if new:
-                self.items.create(level.type_id, *new)
+                self.items.create(level.type_id, *new, context=IMPORTED)
             if changed:
-                self.items.put(*changed)
+                self.items.put(*changed, context=QUIET)
         except (darq.DarqError, TimeoutError, ValueError, LookupError, model.ConflictError) as e:
             log.error(f"Can't import {len(ids)} of {level.type_id}: {e!r}")
             self.result.failed += len(ids)
@@ -409,5 +401,3 @@ class Importer:
             self.result.created[level.type_id] = self.result.created.get(level.type_id, 0) + len(new)
         self.result.updated += len(changed)
         self.result.unchanged += len(ids) - len(new) - len(changed)
-        for entity in new:
-            self.record(model.item_id(entity.id, level.type_id), darq.history.IMPORTED)

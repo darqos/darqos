@@ -164,6 +164,45 @@ def test_throttle_is_per_item_event_and_source(service, clock):
     ]
 
 
+def notes(service) -> list[str]:
+    return [e.note for e in service.get_events(GetEventsRequest(), 0).events]
+
+
+def test_notes(service, clock):
+    service.add_event(AddEvent(item_id=DOC, event="viewed", source="lens", note="page 1 of 9"), 0)
+    assert notes(service) == ["page 1 of 9"]
+
+    # A counted event keeps the latest note, unless it's given none.
+    clock.now += MINUTE
+    service.add_event(AddEvent(item_id=DOC, event="viewed", source="lens", note="page 5 of 9"), 0)
+    clock.now += MINUTE
+    service.add_event(AddEvent(item_id=DOC, event="viewed", source="lens"), 0)
+    assert notes(service) == ["page 5 of 9"]
+    assert get(service)[0][4] == 3
+
+
+def test_a_long_note_is_cut_at_a_character(service):
+    service.add_event(AddEvent(item_id=DOC, event="created", source="lens", note="é" * 400), 0)
+    [note] = notes(service)
+    assert note == "é" * 250 and len(note.encode()) == module.NOTE_MAX
+
+
+def test_an_older_database_gains_notes(database, clock):
+    import sqlite3
+    db = sqlite3.connect(database)
+    db.execute("create table events (time integer not null primary key, type_id text not null, "
+               "item_id text not null, event text not null, source text not null, count integer not null)")
+    db.execute("insert into events values (1, 'public.utf8-plain-text', ?, 'opened', 'lens', 2)", (DOC,))
+    db.commit()
+    db.close()
+
+    service = module.HistoryService(database, clock)
+    assert notes(service) == [""]
+    add(service, event="created")
+    assert get(service)[0][1:] == (DOC, "created", "lens", 1)
+    service.db.close()
+
+
 def test_events_persist(database, clock):
     service = module.HistoryService(database, clock)
     add(service, event="created")

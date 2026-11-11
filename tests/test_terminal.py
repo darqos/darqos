@@ -398,7 +398,9 @@ def test_new_creates_and_uses(terminal):
 
     services = terminal.fake_services
     assert services.launch.created == [TEXT]
-    assert services.history.added == [(DOC, "created", "terminal")]
+    # Its type records it, as the launcher's context says.
+    assert services.history.added == []
+    assert [(c.event, c.source, c.note) for c in services.launch.contexts] == [("", "terminal", "")]
     assert services.launch.used == [(DOC, 42)]
     assert visible(terminal) == []
 

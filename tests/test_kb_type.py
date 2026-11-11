@@ -882,3 +882,58 @@ def test_kb_type(live_pkernel, tmp_path):  # noqa: F811
     zombie = kernel.module.KernelProcessStatus.ZOMBIE
     run_kernel_until(kernel, lambda: client.get_status() == zombie, "the client to exit")
     assert (client.get_exit_status(), client.get_exit_error()) == (0, None)
+
+
+################################################################
+# History (see doc/history.rst, Who Records Events)
+################################################################
+
+def test_what_it_does_is_recorded(kb, implementation, recorded):
+    ctx = wire.Context(source="vcard-import", note="Address book")
+    old_id = implementation.create(CreateRequest(type_id="darq.person"), 0).item_id
+    new_id, _ = create(implementation, "darq.person")
+    old, new = darq.split_item_id(old_id)[1], darq.split_item_id(new_id)[1]
+
+    # Created as messages, then a person renamed.
+    created = implementation.create_entities(wire.CreateEntitiesRequest(
+        type_id="darq.message", entities=[model.entity_to_wire(message("m1"))], context=ctx), 0)
+    assert created.status == wire.Status.OK
+    person = kb.get(new)
+    person.set_label("Ada")
+    written = implementation.write_entities(wire.WriteEntitiesRequest(
+        entities=[model.entity_to_wire(person)], context=ctx), 0)
+    assert written.status == wire.Status.OK
+    implementation.merge_entity(wire.MergeEntityRequest(old_id=old, new_id=new), 0)
+    implementation.destroy_entity(wire.DestroyEntityRequest(entity_id=new, context=wire.Context(quiet=True)), 0)
+    assert recorded.events == [
+        (old_id, "created", "kb-type", ""),
+        (new_id, "created", "kb-type", ""),
+        ("darq.message:m1", "created", "vcard-import", "Address book"),
+        (new_id, "edited", "vcard-import", "Address book"),
+        (old_id, "merged", "kb-type", ""),
+        (new_id, "merged", "kb-type", ""),
+    ]
+
+
+def test_an_entity_of_no_kind_isnt_recorded_unless_its_edited_on_its_page(kb, implementation, recorded):
+    kb.ensure(entity("given", "Ada"))
+    given = kb.get("given")
+    given.set_description("a given name")
+    implementation.write_entities(wire.WriteEntitiesRequest(entities=[model.entity_to_wire(given)]), 0)
+    implementation.destroy_entity(wire.DestroyEntityRequest(entity_id="given"), 0)
+    assert recorded.events == []
+
+
+def test_viewing_and_editing_an_entity_on_its_port(kb, implementation, recorded):
+    item_id, _ = create(implementation, "darq.person")
+    port = open_item(implementation, item_id)
+    recorded.events.clear()
+    handler = item(implementation, port)
+    handler.viewed(wire.Viewed(source="entity-lens", note=""), 0)
+    person = kb.get(darq.split_item_id(item_id)[1])
+    person.set_label("Ada")
+    assert handler.put_entity(wire.PutEntityRequest(entity=model.entity_to_wire(person)), 0).status == wire.Status.OK
+    handler.put_entity(wire.PutEntityRequest(entity=model.entity_to_wire(kb.get(person.id)),
+                                             context=wire.Context(source="wikidata-match", note="Q7259")), 0)
+    assert recorded.events == [(item_id, "viewed", "entity-lens", ""), (item_id, "edited", "entity-lens", ""),
+                               (item_id, "edited", "wikidata-match", "Q7259")]

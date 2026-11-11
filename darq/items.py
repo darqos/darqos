@@ -24,6 +24,7 @@ import typing
 
 from . import kb as model
 from . import message
+from .protocols import kb as wire
 from .kb import Datatype, Entity, EntityValue, Item, Property, Reference, StringValue, TimePrecision, TimeValue
 
 
@@ -122,12 +123,13 @@ def label_for(title: str = "", file_name: str = "") -> str:
     return stem.strip()
 
 
-def tag(reader: model.KB, writer: model.KB, name: str) -> str:
+def tag(reader: model.KB, writer: model.KB, name: str, context: wire.Context | None = None) -> str:
     """Return the tag with a name, ignoring case, making it if there's
     none, and return its entity's identifier.
 
     :param writer: The KB, written through the KB type implementation,
-                   which makes items of its kinds."""
+                   which makes items of its kinds.
+    :param context: Describes what makes one, for History."""
     name = " ".join(name.split())
     if not name:
         raise ValueError("A tag needs a name")
@@ -138,7 +140,7 @@ def tag(reader: model.KB, writer: model.KB, name: str) -> str:
             return found.id
     made = Item()
     made.set_label(name)
-    writer.create(TAG_TYPE, made)
+    writer.create(TAG_TYPE, made, context=context)
     return made.id
 
 

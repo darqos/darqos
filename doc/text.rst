@@ -87,10 +87,11 @@ Not Yet
   implementation doesn't track them, and a lost publish is put right
   by the next save.
 
-* History events are recorded by the lens, not the implementation,
-  which can't tell who caused a change (see :doc:`history`).  The
-  History service counts repeated events, so the lens can record each
-  edit.
+* History events are recorded by the implementation, as its callers
+  describe them (see :doc:`history`): ``created``, ``destroyed``,
+  ``viewed``, and ``edited`` when a change is saved, from the lens it was
+  made through, which names itself with ``Viewed``.  The History service
+  counts repeated events.
 * What Metadata is recorded?
 
   * Things like the current cursor position within the text, the
@@ -180,9 +181,9 @@ its window is closed, or it's asked to `Close`.
 * Text that Qt can't hold exactly, such as a U+2029 paragraph
   separator, is shown read only, so editing can't change what isn't
   shown.
-* It records `opened` when it starts using the item, and `edited` for
-  each change, with source `text-lens` (see :doc:`history`): the
-  service counts repeats.
+* It tells the item it's being viewed when it starts using it, and
+  every few minutes while it has the focus, as `text-lens`: the item's
+  type records that, and its edits (see :doc:`history`).
 * Keys follow Emacs, with Alt as Meta: C-f, C-b, C-n, C-p, C-a, C-e,
   M-f, M-b, M-<, M->, C-v, M-v to move; C-d, M-d and C-k to delete and
   kill; M-u, M-l and M-c to upper-case, lower-case and capitalize to

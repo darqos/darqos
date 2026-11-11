@@ -11,8 +11,10 @@
 # saves it.  It exits when its window is closed.
 #
 # Its thread is Qt's: the lens port is served on Qt's event loop (see
-# darq.Server.attach), and its calls to the item and History are
-# synchronous, on queued reply ports.
+# darq.Server.attach), and its calls to the item are synchronous, on
+# queued reply ports.  It tells the item it's being viewed (see
+# darq.ui.lens.Viewing), and the item's type records that, and its
+# edits, in History.
 #
 # Its look is the image lens's (darq.ui.lens): slim dark scroll bars,
 # and messages shown over the text for a moment, with no status line.
@@ -27,19 +29,17 @@ from PyQt6.QtGui import QAction, QKeyEvent, QMouseEvent, QTextCursor
 from PyQt6.QtWidgets import QApplication, QLabel, QMenu, QPlainTextEdit, QVBoxLayout, QWidget
 
 import darq
-import darq.history
 from darq.loop import QtEventLoop
-from darq.protocols.history import History
 from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
 from darq.protocols.text import Status as TextStatus
 from darq.protocols.text import Text
 from darq.ui import style
 from darq.ui.names import item_name
-from darq.ui.lens import MESSAGE_SHOWN, LensHandler, announce, overlay, show_over
+from darq.ui.lens import MESSAGE_SHOWN, LensHandler, Viewing, announce, overlay, show_over
 from darq.ui.style import CONTROLS, SCROLL_BARS
 
 
-# History source for the events it records.
+# History's source of what's done through it.
 SOURCE = "text-lens"
 
 # Seconds to wait for the item's replies.
@@ -147,13 +147,11 @@ class TextSync:
     CONFLICT = "conflict"
     FAILED = "failed"
 
-    def __init__(self, client: Text.Client, item_id: str, text: str, version: int,
-                 history: History.Client | None = None):
+    def __init__(self, client: Text.Client, item_id: str, text: str, version: int):
         self.client = client
         self.item_id = item_id
         self.text = text
         self.version = version
-        self.history = history
 
         # False once the item has stopped answering.
         self.available = True
@@ -180,7 +178,6 @@ class TextSync:
             return self.CONFLICT if self.reload() else self.FAILED
 
         self.text, self.version = new, response.version
-        self.record(darq.history.EDITED)
         return self.OK
 
     def reload(self) -> bool:
@@ -195,15 +192,6 @@ class TextSync:
             return False
         self.text, self.version = response.text, response.version
         return True
-
-    def record(self, event: str):
-        """Record a History event about the item, if History is running."""
-        if self.history is None:
-            return
-        try:
-            self.history.add_event(item_id=self.item_id, event=event, source=SOURCE)
-        except darq.DarqError as e:
-            logging.warning(f"Can't record {event} for {self.item_id}: {e!r}")
 
     def close(self):
         """Close the item, once finished with it."""
@@ -465,6 +453,7 @@ class TextWindow(QWidget):
 
     def __init__(self, sync: TextSync, on_closed=None):
         super().__init__()
+        self.viewing = Viewing(self, SOURCE)
         self.sync = sync
         self.on_closed = on_closed
 
@@ -617,6 +606,7 @@ class TextWindow(QWidget):
         menu.exec(a0.globalPos())
 
     def closeEvent(self, a0):
+        self.viewing.stop()
         self.sync.close()
         super().closeEvent(a0)
         if self.on_closed is not None:
@@ -627,11 +617,10 @@ class TextWindow(QWidget):
 class TextLens(LensHandler):
     """Answers the Lens protocol: uses one item, in a window."""
 
-    def __init__(self, loop: QtEventLoop, history: History.Client | None):
+    def __init__(self, loop: QtEventLoop):
         # Looks up an item's name, for its window's title: tests replace it.
         self.name_of: typing.Callable[[str], str] = item_name
         self.loop = loop
-        self.history = history
         self.window: TextWindow | None = None
 
     def use(self, request: UseRequest, source: int) -> UseResponse:
@@ -647,11 +636,11 @@ class TextLens(LensHandler):
             logging.error(f"Can't get {request.item_id}: {e!r}")
             return UseResponse(status=Status.FAILED)
 
-        sync = TextSync(client, request.item_id, response.text, response.version, self.history)
+        sync = TextSync(client, request.item_id, response.text, response.version)
         self.window = TextWindow(sync, on_closed=self.finished)
         self.window.set_name(self.name_of(request.item_id))
         self.window.show()
-        sync.record(darq.history.OPENED)
+        self.window.viewing.show(client)
         logging.info(f"Using {request.item_id}")
         self.shown_item = request.item_id
         return UseResponse(status=Status.OK)
@@ -682,11 +671,7 @@ def darq_main():
     app.setQuitOnLastWindowClosed(False)
     loop = QtEventLoop()
 
-    # History is best effort: the lens works without it.
-    handle = darq.lookup_name("darq.history", blocking=False)
-    history = History.Client(handle) if handle is not None else None
-
-    lens = TextLens(loop, history)
+    lens = TextLens(loop)
     port = darq.open_port()
     announce(port)
     server = darq.Server()

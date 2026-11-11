@@ -28,6 +28,7 @@ __all__ = [
     "Changed",
     "CloseRequest",
     "CloseResponse",
+    "Context",
     "CreateEntitiesRequest",
     "CreateEntitiesResponse",
     "Datatype",
@@ -96,6 +97,7 @@ __all__ = [
     "UnwatchResponse",
     "Value",
     "ValueType",
+    "Viewed",
     "WatchEntityRequest",
     "WatchEntityResponse",
     "WatchRequest",
@@ -399,6 +401,16 @@ class Linked(Record):
         self.description = description
         self.datatype = datatype
         self.summary = summary
+
+
+class Context(Record):
+    """struct Context: 28 bytes, 4-byte aligned."""
+
+    def __init__(self, event: str = '', source: str = '', note: str = '', quiet: bool = False):
+        self.event = event
+        self.source = source
+        self.note = note
+        self.quiet = quiet
 
 
 Text.CODEC = StructCodec(Text, 16, [
@@ -1524,21 +1536,30 @@ class WriteEntitiesRequest(Message):
 
     METHOD = 16
     RESPONSE = WriteEntitiesResponse
-    BODY_FORMAT = "<II"
+    BODY_FORMAT = "<IIIIIIIIB3x"
     BODY_START = 8
-    LENGTH = 16
-    DATA_START = 16
+    LENGTH = 44
+    DATA_START = 48
     CODEC_0 = Entity.CODEC
 
-    def __init__(self, txid: int = 0, entities: list[Entity] | None = None):
+    def __init__(self,
+                 txid: int = 0,
+                 entities: list[Entity] | None = None,
+                 context: Context | None = None):
         super().__init__(txid)
         self.entities = [] if entities is None else entities
+        self.context = Context() if context is None else context
 
     def encode(self) -> tuple[bytes, list[int]]:
         buf, handles = super().encode()
         out = Encoder(self.DATA_START, handles)
         buf += struct.pack(self.BODY_FORMAT,
-                           *out.sequence(self.entities, self.CODEC_0))
+                           *out.sequence(self.entities, self.CODEC_0),
+                           *out.string(self.context.event),
+                           *out.string(self.context.source),
+                           *out.string(self.context.note),
+                           self.context.quiet)
+        buf += b'\0' * 4
         buf += out.data
         return buf, handles
 
@@ -1550,6 +1571,11 @@ class WriteEntitiesRequest(Message):
         bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
         inp = Decoder(buffer, self.DATA_START, handles)
         self.entities = inp.sequence(self.CODEC_0, bits[0], bits[1])
+        self.context = Context()
+        self.context.event = inp.string(bits[2], bits[3])
+        self.context.source = inp.string(bits[4], bits[5])
+        self.context.note = inp.string(bits[6], bits[7])
+        self.context.quiet = self.decode_bool(bits[8])
         return
 
 
@@ -1586,22 +1612,32 @@ class MergeEntityRequest(Message):
 
     METHOD = 17
     RESPONSE = MergeEntityResponse
-    BODY_FORMAT = "<IIII"
+    BODY_FORMAT = "<IIIIIIIIIIB3x"
     BODY_START = 8
-    LENGTH = 24
-    DATA_START = 24
+    LENGTH = 52
+    DATA_START = 56
 
-    def __init__(self, txid: int = 0, old_id: str = '', new_id: str = ''):
+    def __init__(self,
+                 txid: int = 0,
+                 old_id: str = '',
+                 new_id: str = '',
+                 context: Context | None = None):
         super().__init__(txid)
         self.old_id = old_id
         self.new_id = new_id
+        self.context = Context() if context is None else context
 
     def encode(self) -> tuple[bytes, list[int]]:
         buf, handles = super().encode()
         out = Encoder(self.DATA_START, handles)
         buf += struct.pack(self.BODY_FORMAT,
                            *out.string(self.old_id),
-                           *out.string(self.new_id))
+                           *out.string(self.new_id),
+                           *out.string(self.context.event),
+                           *out.string(self.context.source),
+                           *out.string(self.context.note),
+                           self.context.quiet)
+        buf += b'\0' * 4
         buf += out.data
         return buf, handles
 
@@ -1614,6 +1650,11 @@ class MergeEntityRequest(Message):
         inp = Decoder(buffer, self.DATA_START, handles)
         self.old_id = inp.string(bits[0], bits[1])
         self.new_id = inp.string(bits[2], bits[3])
+        self.context = Context()
+        self.context.event = inp.string(bits[4], bits[5])
+        self.context.source = inp.string(bits[6], bits[7])
+        self.context.note = inp.string(bits[8], bits[9])
+        self.context.quiet = self.decode_bool(bits[10])
         return
 
 
@@ -1650,20 +1691,26 @@ class DestroyEntityRequest(Message):
 
     METHOD = 18
     RESPONSE = DestroyEntityResponse
-    BODY_FORMAT = "<II"
+    BODY_FORMAT = "<IIIIIIIIB3x"
     BODY_START = 8
-    LENGTH = 16
-    DATA_START = 16
+    LENGTH = 44
+    DATA_START = 48
 
-    def __init__(self, txid: int = 0, entity_id: str = ''):
+    def __init__(self, txid: int = 0, entity_id: str = '', context: Context | None = None):
         super().__init__(txid)
         self.entity_id = entity_id
+        self.context = Context() if context is None else context
 
     def encode(self) -> tuple[bytes, list[int]]:
         buf, handles = super().encode()
         out = Encoder(self.DATA_START, handles)
         buf += struct.pack(self.BODY_FORMAT,
-                           *out.string(self.entity_id))
+                           *out.string(self.entity_id),
+                           *out.string(self.context.event),
+                           *out.string(self.context.source),
+                           *out.string(self.context.note),
+                           self.context.quiet)
+        buf += b'\0' * 4
         buf += out.data
         return buf, handles
 
@@ -1675,6 +1722,11 @@ class DestroyEntityRequest(Message):
         bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
         inp = Decoder(buffer, self.DATA_START, handles)
         self.entity_id = inp.string(bits[0], bits[1])
+        self.context = Context()
+        self.context.event = inp.string(bits[2], bits[3])
+        self.context.source = inp.string(bits[4], bits[5])
+        self.context.note = inp.string(bits[6], bits[7])
+        self.context.quiet = self.decode_bool(bits[8])
         return
 
 
@@ -1727,23 +1779,33 @@ class CreateEntitiesRequest(Message):
 
     METHOD = 19
     RESPONSE = CreateEntitiesResponse
-    BODY_FORMAT = "<IIII"
+    BODY_FORMAT = "<IIIIIIIIIIB3x"
     BODY_START = 8
-    LENGTH = 24
-    DATA_START = 24
+    LENGTH = 52
+    DATA_START = 56
     CODEC_0 = Entity.CODEC
 
-    def __init__(self, txid: int = 0, type_id: str = '', entities: list[Entity] | None = None):
+    def __init__(self,
+                 txid: int = 0,
+                 type_id: str = '',
+                 entities: list[Entity] | None = None,
+                 context: Context | None = None):
         super().__init__(txid)
         self.type_id = type_id
         self.entities = [] if entities is None else entities
+        self.context = Context() if context is None else context
 
     def encode(self) -> tuple[bytes, list[int]]:
         buf, handles = super().encode()
         out = Encoder(self.DATA_START, handles)
         buf += struct.pack(self.BODY_FORMAT,
                            *out.string(self.type_id),
-                           *out.sequence(self.entities, self.CODEC_0))
+                           *out.sequence(self.entities, self.CODEC_0),
+                           *out.string(self.context.event),
+                           *out.string(self.context.source),
+                           *out.string(self.context.note),
+                           self.context.quiet)
+        buf += b'\0' * 4
         buf += out.data
         return buf, handles
 
@@ -1756,6 +1818,11 @@ class CreateEntitiesRequest(Message):
         inp = Decoder(buffer, self.DATA_START, handles)
         self.type_id = inp.string(bits[0], bits[1])
         self.entities = inp.sequence(self.CODEC_0, bits[2], bits[3])
+        self.context = Context()
+        self.context.event = inp.string(bits[4], bits[5])
+        self.context.source = inp.string(bits[6], bits[7])
+        self.context.note = inp.string(bits[8], bits[9])
+        self.context.quiet = self.decode_bool(bits[10])
         return
 
 
@@ -1828,6 +1895,41 @@ class CloseRequest(Message):
 
     def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
         super().decode(buffer, handles)
+        return
+
+
+class Viewed(Message):
+    """EntityItem.Viewed one-way message."""
+
+    METHOD = 2
+    BODY_FORMAT = "<IIII"
+    BODY_START = 8
+    LENGTH = 24
+    DATA_START = 24
+
+    def __init__(self, txid: int = 0, source: str = '', note: str = ''):
+        super().__init__(txid)
+        self.source = source
+        self.note = note
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.source),
+                           *out.string(self.note))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.source = inp.string(bits[0], bits[1])
+        self.note = inp.string(bits[2], bits[3])
         return
 
 
@@ -1967,18 +2069,19 @@ class PutEntityRequest(Message):
 
     METHOD = 17
     RESPONSE = PutEntityResponse
-    BODY_FORMAT = "<IIBB6xQIIIIIIIIIIB7x"
+    BODY_FORMAT = "<IIBB6xQIIIIIIIIIIB7xIIIIIIB7x"
     BODY_START = 8
-    LENGTH = 80
-    DATA_START = 80
+    LENGTH = 112
+    DATA_START = 112
     CODEC_0 = Text.CODEC
     CODEC_1 = Text.CODEC
     CODEC_2 = Text.CODEC
     CODEC_3 = Statement.CODEC
 
-    def __init__(self, txid: int = 0, entity: Entity | None = None):
+    def __init__(self, txid: int = 0, entity: Entity | None = None, context: Context | None = None):
         super().__init__(txid)
         self.entity = Entity() if entity is None else entity
+        self.context = Context() if context is None else context
 
     def encode(self) -> tuple[bytes, list[int]]:
         buf, handles = super().encode()
@@ -1993,7 +2096,11 @@ class PutEntityRequest(Message):
                            *out.sequence(self.entity.aliases, self.CODEC_2),
                            *out.sequence(self.entity.statements, self.CODEC_3),
                            *out.string(self.entity.redirect),
-                           self.entity.destroyed)
+                           self.entity.destroyed,
+                           *out.string(self.context.event),
+                           *out.string(self.context.source),
+                           *out.string(self.context.note),
+                           self.context.quiet)
         buf += out.data
         return buf, handles
 
@@ -2015,6 +2122,11 @@ class PutEntityRequest(Message):
         self.entity.statements = inp.sequence(self.CODEC_3, bits[11], bits[12])
         self.entity.redirect = inp.string(bits[13], bits[14])
         self.entity.destroyed = self.decode_bool(bits[15])
+        self.context = Context()
+        self.context.event = inp.string(bits[16], bits[17])
+        self.context.source = inp.string(bits[18], bits[19])
+        self.context.note = inp.string(bits[20], bits[21])
+        self.context.quiet = self.decode_bool(bits[22])
         return
 
 
@@ -2772,23 +2884,34 @@ class EntityWriter:
     class Client(system.Client):
         """protocol EntityWriter: client, for a handle to a service."""
 
-        def write_entities(self, entities: list[Entity] | None = None) -> WriteEntitiesResponse:
+        def write_entities(self,
+                           entities: list[Entity] | None = None,
+                           context: Context | None = None) -> WriteEntitiesResponse:
             """EntityWriter.WriteEntities."""
-            return self.call(WriteEntitiesRequest(entities=entities), WriteEntitiesResponse)
+            request = WriteEntitiesRequest(entities=entities, context=context)
+            return self.call(request, WriteEntitiesResponse)
 
-        def merge_entity(self, old_id: str = '', new_id: str = '') -> MergeEntityResponse:
+        def merge_entity(self,
+                         old_id: str = '',
+                         new_id: str = '',
+                         context: Context | None = None) -> MergeEntityResponse:
             """EntityWriter.MergeEntity."""
-            return self.call(MergeEntityRequest(old_id=old_id, new_id=new_id), MergeEntityResponse)
+            request = MergeEntityRequest(old_id=old_id, new_id=new_id, context=context)
+            return self.call(request, MergeEntityResponse)
 
-        def destroy_entity(self, entity_id: str = '') -> DestroyEntityResponse:
+        def destroy_entity(self,
+                           entity_id: str = '',
+                           context: Context | None = None) -> DestroyEntityResponse:
             """EntityWriter.DestroyEntity."""
-            return self.call(DestroyEntityRequest(entity_id=entity_id), DestroyEntityResponse)
+            request = DestroyEntityRequest(entity_id=entity_id, context=context)
+            return self.call(request, DestroyEntityResponse)
 
         def create_entities(self,
                             type_id: str = '',
-                            entities: list[Entity] | None = None) -> CreateEntitiesResponse:
+                            entities: list[Entity] | None = None,
+                            context: Context | None = None) -> CreateEntitiesResponse:
             """EntityWriter.CreateEntities."""
-            request = CreateEntitiesRequest(type_id=type_id, entities=entities)
+            request = CreateEntitiesRequest(type_id=type_id, entities=entities, context=context)
             return self.call(request, CreateEntitiesResponse)
 
     class Handler(system.Handler):
@@ -2859,6 +2982,7 @@ class EntityItem:
 
     REQUESTS = {
         1: CloseRequest,
+        2: Viewed,
         16: GetEntityRequest,
         17: PutEntityRequest,
         18: GetLinksRequest,
@@ -2888,13 +3012,19 @@ class EntityItem:
             """EntityItem.Close."""
             return self.call(CloseRequest(), CloseResponse)
 
+        def viewed(self, source: str = '', note: str = '') -> None:
+            """EntityItem.Viewed, one-way."""
+            self.send(Viewed(source=source, note=note))
+
         def get_entity(self, languages: list[str] | None = None) -> GetEntityResponse:
             """EntityItem.GetEntity."""
             return self.call(GetEntityRequest(languages=languages), GetEntityResponse)
 
-        def put_entity(self, entity: Entity | None = None) -> PutEntityResponse:
+        def put_entity(self,
+                       entity: Entity | None = None,
+                       context: Context | None = None) -> PutEntityResponse:
             """EntityItem.PutEntity."""
-            return self.call(PutEntityRequest(entity=entity), PutEntityResponse)
+            return self.call(PutEntityRequest(entity=entity, context=context), PutEntityResponse)
 
         def get_links(self,
                       property_id: str = '',
@@ -2968,6 +3098,7 @@ class EntityItem:
 
         METHODS = {
             1: (CloseRequest, "close"),
+            2: (Viewed, "viewed"),
             16: (GetEntityRequest, "get_entity"),
             17: (PutEntityRequest, "put_entity"),
             18: (GetLinksRequest, "get_links"),
@@ -2980,6 +3111,10 @@ class EntityItem:
 
         def close(self, request: CloseRequest, source: int) -> CloseResponse | system.Deferred:
             """Handle EntityItem.Close."""
+            raise NotImplementedError
+
+        def viewed(self, request: Viewed, source: int) -> None:
+            """Handle EntityItem.Viewed, one-way."""
             raise NotImplementedError
 
         def get_entity(self,

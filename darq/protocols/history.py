@@ -41,27 +41,30 @@ class Status(IntEnum):
 
 
 class Event(Record):
-    """struct Event: 40 bytes, 8-byte aligned."""
+    """struct Event: 48 bytes, 8-byte aligned."""
 
     def __init__(self,
                  time: int = 0,
                  item_id: str = '',
                  event: str = '',
                  source: str = '',
-                 count: int = 0):
+                 count: int = 0,
+                 note: str = ''):
         self.time = time
         self.item_id = item_id
         self.event = event
         self.source = source
         self.count = count
+        self.note = note
 
 
-Event.CODEC = StructCodec(Event, 40, [
+Event.CODEC = StructCodec(Event, 48, [
     ("time", 0, Codec("q")),
     ("item_id", 8, STRING_CODEC),
     ("event", 16, STRING_CODEC),
     ("source", 24, STRING_CODEC),
     ("count", 32, Codec("I")),
+    ("note", 36, STRING_CODEC),
 ])
 
 
@@ -74,16 +77,22 @@ class AddEvent(Message):
     """History.AddEvent one-way message."""
 
     METHOD = 1
-    BODY_FORMAT = "<IIIIII"
+    BODY_FORMAT = "<IIIIIIII"
     BODY_START = 8
-    LENGTH = 32
-    DATA_START = 32
+    LENGTH = 40
+    DATA_START = 40
 
-    def __init__(self, txid: int = 0, item_id: str = '', event: str = '', source: str = ''):
+    def __init__(self,
+                 txid: int = 0,
+                 item_id: str = '',
+                 event: str = '',
+                 source: str = '',
+                 note: str = ''):
         super().__init__(txid)
         self.item_id = item_id
         self.event = event
         self.source = source
+        self.note = note
 
     def encode(self) -> tuple[bytes, list[int]]:
         buf, handles = super().encode()
@@ -91,7 +100,8 @@ class AddEvent(Message):
         buf += struct.pack(self.BODY_FORMAT,
                            *out.string(self.item_id),
                            *out.string(self.event),
-                           *out.string(self.source))
+                           *out.string(self.source),
+                           *out.string(self.note))
         buf += out.data
         return buf, handles
 
@@ -105,6 +115,7 @@ class AddEvent(Message):
         self.item_id = inp.string(bits[0], bits[1])
         self.event = inp.string(bits[2], bits[3])
         self.source = inp.string(bits[4], bits[5])
+        self.note = inp.string(bits[6], bits[7])
         return
 
 
@@ -231,9 +242,13 @@ class History:
     class Client(system.Client):
         """protocol History: client, for a handle to a service."""
 
-        def add_event(self, item_id: str = '', event: str = '', source: str = '') -> None:
+        def add_event(self,
+                      item_id: str = '',
+                      event: str = '',
+                      source: str = '',
+                      note: str = '') -> None:
             """History.AddEvent, one-way."""
-            self.send(AddEvent(item_id=item_id, event=event, source=source))
+            self.send(AddEvent(item_id=item_id, event=event, source=source, note=note))
 
         def get_events(self,
                        start: int = 0,

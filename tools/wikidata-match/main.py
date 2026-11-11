@@ -66,7 +66,8 @@ class MatchWindow(QWidget):
     """Those that aren't matched, what Wikidata has for one, and the
     buttons to link, skip, and bring languages."""
 
-    def __init__(self, loop: QtEventLoop, make_linker: typing.Callable[[], darq.wikidata.Linker] = wikidata_ui.linker,
+    def __init__(self, loop: QtEventLoop,
+                 make_linker: typing.Callable[[], darq.wikidata.Linker] = lambda: wikidata_ui.linker("wikidata-match"),
                  run: typing.Callable[[typing.Callable[[], None]], None] = start_thread):
         super().__init__()
         self.loop = loop

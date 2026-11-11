@@ -70,3 +70,13 @@ That 3D model should have minimal texturing, but ideally would map the
 place.  It's likely only to be the operator's house(s), maybe
 workplace(s), and the houses of closely related people.  Perhaps a
 workshed, clubhouse, or a small number of other structures.
+
+Should the 3D model be a separate type?  It almost has to be: the
+location is just a sequence of containments.
+
+  Box 1 -> Shelf Z -> Cupboard Y -> Room X -> 23 Example Ave, Town, State, Country
+
+Each containment is itself a separate place, so the final location is
+just an ItemID, but the Lens needs to follow the hierachy.  Attaching
+a model to this is like Open Street Map -- it's an external item to
+which you can map the identity of the locations.

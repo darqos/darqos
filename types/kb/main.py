@@ -43,11 +43,12 @@
 import logging
 
 import darq
+import darq.book
+import darq.history
 import darq.index
 import darq.items
 import darq.kb as model
 import darq.message
-import darq.book
 import darq.url
 import darq.wikidata
 from darq.entity_type import KB_ERRORS, ClassListener, EntityItemHandler, EntityType  # noqa: F401
@@ -123,7 +124,13 @@ def vocabulary() -> list[model.Entity]:
 
 
 class EntityImplementation(EntityType, EntityWriter.Handler):
-    """Creates, opens, writes and destroys KB items."""
+    """Creates, opens, writes and destroys KB items, and records them in
+    History, but for entities of no kind but darq.entity, such as
+    properties, classes and given names, which aren't the operator's
+    items: those changed through their ports, on their pages, are
+    recorded, as any entity's are (see darq.entity_type)."""
+
+    SOURCE = "kb-type"
 
     METHODS = {**EntityType.METHODS, **EntityWriter.Handler.METHODS}
 
@@ -152,6 +159,12 @@ class EntityImplementation(EntityType, EntityWriter.Handler):
             if entity is not None and entity.get_label() == old:
                 entity.set_label(new)
                 self.kb.put(entity)
+
+    def record_entity(self, entity: model.Entity, event: str, context: darq.history.Context | None):
+        """Record an event about an entity, if it's of a kind."""
+        kind = self.kind_of(entity)
+        if kind != model.ENTITY_TYPE:
+            self.record(model.item_id(entity.id, kind), event, context)
 
     def indexed_kind(self, entity: model.Entity) -> str | None:
         """Return an entity's kind, if it's indexed, or None."""
@@ -199,6 +212,8 @@ class EntityImplementation(EntityType, EntityWriter.Handler):
             logging.error(f"Can't index the new {type_id}: {e}")
         assert self.server is not None
         iid = model.item_id(entity.id, type_id)
+        if type_id != model.ENTITY_TYPE:
+            self.record(iid, darq.history.CREATED, request.context)
         logging.info(f"Created {iid}")
         return CreateResponse(item_id=iid, item=self.attach_entity(self.server, entity.id), status=Status.OK)
 
@@ -250,6 +265,7 @@ class EntityImplementation(EntityType, EntityWriter.Handler):
             return DestroyResponse(status=Status.FAILED)
         if kind is not None:
             self.index.withdraw(model.item_id(entity.id, kind))
+        self.record_entity(entity, darq.history.DESTROYED, request.context)
         logging.info(f"Destroyed {request.item_id}")
         return DestroyResponse(status=Status.OK)
 
@@ -280,6 +296,8 @@ class EntityImplementation(EntityType, EntityWriter.Handler):
                 for written in response.entities:
                     entity = model.entity_from_wire(written)
                     self.publish(entity, was.get(entity.id))
+                    self.record_entity(entity, darq.history.EDITED if entity.id in was else darq.history.CREATED,
+                                       request.context)
             except KB_ERRORS as e:
                 logging.error(f"Can't index the entities written: {e}")
         return WriteEntitiesResponse(entities=response.entities, failed_id=response.failed_id,
@@ -310,7 +328,9 @@ class EntityImplementation(EntityType, EntityWriter.Handler):
         if response.status == wire.Status.OK:
             try:
                 for written in response.entities:
-                    self.publish(model.entity_from_wire(written))
+                    entity = model.entity_from_wire(written)
+                    self.publish(entity)
+                    self.record_entity(entity, darq.history.CREATED, request.context)
             except KB_ERRORS as e:
                 logging.error(f"Can't index the entities created: {e}")
         return CreateEntitiesResponse(entities=response.entities, failed_id=response.failed_id,
@@ -331,6 +351,10 @@ class EntityImplementation(EntityType, EntityWriter.Handler):
                 new = self.kb.get(request.new_id)
                 if new is not None:
                     self.publish(new)
+                    # On both: the old one's kind is its own still.
+                    if old is not None:
+                        self.record_entity(old, darq.history.MERGED, request.context)
+                    self.record_entity(new, darq.history.MERGED, request.context)
             except KB_ERRORS as e:
                 logging.error(f"Can't index {request.new_id}: {e}")
         return MergeEntityResponse(status=response.status)
@@ -343,8 +367,11 @@ class EntityImplementation(EntityType, EntityWriter.Handler):
         except KB_ERRORS as e:
             logging.error(f"Can't destroy {request.entity_id}: {e}")
             return DestroyEntityResponse(status=wire.Status.NOT_FOUND)
-        if response.status == wire.Status.OK and was is not None:
-            self.index.withdraw(model.item_id(request.entity_id, was))
+        if response.status == wire.Status.OK:
+            if was is not None:
+                self.index.withdraw(model.item_id(request.entity_id, was))
+            if entity is not None:
+                self.record_entity(entity, darq.history.DESTROYED, request.context)
         return DestroyEntityResponse(status=response.status)
 
 

@@ -23,6 +23,7 @@ __all__ = [
     "SetPositionResponse",
     "StatRequest",
     "StatResponse",
+    "Viewed",
 ]
 
 
@@ -65,6 +66,41 @@ class CloseRequest(Message):
 
     def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
         super().decode(buffer, handles)
+        return
+
+
+class Viewed(Message):
+    """Pdf.Viewed one-way message."""
+
+    METHOD = 2
+    BODY_FORMAT = "<IIII"
+    BODY_START = 8
+    LENGTH = 24
+    DATA_START = 24
+
+    def __init__(self, txid: int = 0, source: str = '', note: str = ''):
+        super().__init__(txid)
+        self.source = source
+        self.note = note
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.source),
+                           *out.string(self.note))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.source = inp.string(bits[0], bits[1])
+        self.note = inp.string(bits[2], bits[3])
         return
 
 
@@ -281,6 +317,7 @@ class Pdf:
 
     REQUESTS = {
         1: CloseRequest,
+        2: Viewed,
         16: GetRequest,
         17: StatRequest,
         18: GetPositionRequest,
@@ -301,6 +338,10 @@ class Pdf:
         def close(self) -> CloseResponse:
             """Pdf.Close."""
             return self.call(CloseRequest(), CloseResponse)
+
+        def viewed(self, source: str = '', note: str = '') -> None:
+            """Pdf.Viewed, one-way."""
+            self.send(Viewed(source=source, note=note))
 
         def get(self) -> GetResponse:
             """Pdf.Get."""
@@ -323,6 +364,7 @@ class Pdf:
 
         METHODS = {
             1: (CloseRequest, "close"),
+            2: (Viewed, "viewed"),
             16: (GetRequest, "get"),
             17: (StatRequest, "stat"),
             18: (GetPositionRequest, "get_position"),
@@ -331,6 +373,10 @@ class Pdf:
 
         def close(self, request: CloseRequest, source: int) -> CloseResponse | system.Deferred:
             """Handle Pdf.Close."""
+            raise NotImplementedError
+
+        def viewed(self, request: Viewed, source: int) -> None:
+            """Handle Pdf.Viewed, one-way."""
             raise NotImplementedError
 
         def get(self, request: GetRequest, source: int) -> GetResponse | system.Deferred:

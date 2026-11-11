@@ -194,7 +194,7 @@ class MergingWindow(FakeWindow):
     merged = entity_lens.EntityWindow.merged
 
 
-def test_m_merges_into_the_one_chosen(items):
+def test_m_merges_into_the_one_chosen(items, recorded):
     plc = made(items, "Bloomsbury Publishing PLC")
     bloomsbury = made(items, "Bloomsbury")
     window = MergingWindow(plc)
@@ -203,8 +203,11 @@ def test_m_merges_into_the_one_chosen(items):
     assert items.get(plc.id).id == bloomsbury.id
     assert "Bloomsbury Publishing PLC" in items.get(bloomsbury.id).get_aliases()
     assert lens.asked[0].startswith(f"Merge Bloomsbury Publishing PLC ({plc.id}) into Bloomsbury ({bloomsbury.id})")
-    assert lens.recorded == [(f"{ORGANISATION}:{plc.id}", darq.history.MERGED),
-                             (f"{ORGANISATION}:{bloomsbury.id}", darq.history.MERGED)]
+    # Its type records it, on both, as the lens says.
+    assert lens.recorded == []
+    assert [e for e in recorded.events if e[1] == darq.history.MERGED] == [
+        (f"{ORGANISATION}:{plc.id}", darq.history.MERGED, "entity-lens", ""),
+        (f"{ORGANISATION}:{bloomsbury.id}", darq.history.MERGED, "entity-lens", "")]
     assert window.refreshed == 1 and window.said[-1] == f"Merged {plc.id} into {bloomsbury.id}"
 
 

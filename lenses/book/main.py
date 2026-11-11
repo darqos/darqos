@@ -14,8 +14,10 @@
 # lens, with all of its statements.
 #
 # Its thread is Qt's: the lens port is served on Qt's event loop (see
-# darq.Server.attach), and its calls to items and History are
-# synchronous, on queued reply ports.
+# darq.Server.attach), and its calls to items are synchronous, on queued
+# reply ports.  It tells the item it was asked to use that it's being
+# viewed (see darq.ui.lens.Viewing): its type records that in History,
+# and what's made and changed (see darq.ui.book_store).
 
 import logging
 import mimetypes
@@ -41,20 +43,18 @@ from PyQt6.QtWidgets import (
 
 import darq
 import darq.book
-import darq.history
 import darq.kb as model
 import darq.launch
 import darq.openlibrary
 from darq.book import Book, BookError, Copy, Edition, Text
 from darq.loop import QtEventLoop
 from darq.openlibrary import LookupError as OpenLibraryError
-from darq.protocols.history import History
 from darq.protocols.image import Image as ImageItem
 from darq.protocols.http import Http
 from darq.protocols.http import Status as HttpStatus
 from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
 from darq.ui import book_store, catalogue, style
-from darq.ui.lens import LensHandler, announce
+from darq.ui.lens import LensHandler, Viewing, announce
 from darq.ui.launcher import Launcher, start_thread
 from darq.ui.style import CONTROLS
 
@@ -65,7 +65,7 @@ import book_card  # noqa: E402
 import book_form  # noqa: E402
 
 
-# History source for the events it records.
+# History's source of what's done through it.
 SOURCE = "book-lens"
 
 # Seconds after starting to wait for a Use, before giving up and exiting.
@@ -184,6 +184,7 @@ class BookWindow(QWidget):
 
     def __init__(self, lens: "BookLens", on_closed: typing.Callable[[], None]):
         super().__init__()
+        self.viewing = Viewing(self, SOURCE)
         self.lens = lens
         self.on_closed = on_closed
 
@@ -354,6 +355,7 @@ class BookWindow(QWidget):
                 handle.startSystemMove()
 
     def closeEvent(self, a0):
+        self.viewing.stop()
         super().closeEvent(a0)
         self.on_closed()
 
@@ -371,23 +373,21 @@ class LaunchOpener:
 class LensServices:
     """What the Launcher needs from a lens."""
 
-    def __init__(self, history: History.Client | None):
+    def __init__(self):
         self.launch = darq.launch
-        self.history = history
 
 
 class BookLens(LensHandler):
     """The lens port: it uses one item, for the life of the process."""
 
-    def __init__(self, loop: QtEventLoop, history: History.Client | None, opener: Opener | None = None,
+    def __init__(self, loop: QtEventLoop, opener: Opener | None = None,
                  store: book_store.ItemStore | None = None):
         self.loop = loop
-        self.history = history
         self.window: BookWindow | None = None
-        self.services = typing.cast(typing.Any, LensServices(history))
+        self.services = typing.cast(typing.Any, LensServices())
         self.launcher = Launcher(self, SOURCE, loop.post)
         self.opener: Opener = opener if opener is not None else LaunchOpener(self.launcher)
-        self.store = store if store is not None else book_store.ItemStore(languages(), record=self.record)
+        self.store = store if store is not None else book_store.ItemStore(languages(), source=SOURCE)
         self.item_id = ""
         self.book = Book()
 
@@ -428,7 +428,7 @@ class BookLens(LensHandler):
         if request.item is None:
             return UseResponse(status=Status.FAILED)
         self.item_id = request.item_id
-        self.store.adopt(request.item_id, request.item)
+        client = self.store.adopt(request.item_id, request.item)
         if not self.read():
             self.store.close()
             return UseResponse(status=Status.FAILED)
@@ -441,7 +441,7 @@ class BookLens(LensHandler):
         if not self.book.title:
             self.spare = self.book
             self.start_adding()
-        self.record(request.item_id, darq.history.OPENED)
+        self.window.viewing.show(client)
         logging.info(f"Using {request.item_id}")
         self.shown_item = request.item_id
         return UseResponse(status=Status.OK)
@@ -888,15 +888,6 @@ class BookLens(LensHandler):
         else:
             self.finished()
 
-    def record(self, item_id: str, event: str):
-        """Record a History event about an item, if History is running."""
-        if self.history is None:
-            return
-        try:
-            self.history.add_event(item_id=item_id, event=event, source=SOURCE)
-        except darq.DarqError as e:
-            logging.warning(f"Can't record {event} for {item_id}: {e!r}")
-
     # As the Launcher's host
 
     def show_status(self, message: str):
@@ -927,11 +918,7 @@ def darq_main():
     app.setQuitOnLastWindowClosed(False)
     loop = QtEventLoop()
 
-    # History is best effort: the lens works without it.
-    handle = darq.lookup_name("darq.history", blocking=False)
-    history = History.Client(handle) if handle is not None else None
-
-    lens = BookLens(loop, history)
+    lens = BookLens(loop)
     port = darq.open_port()
     announce(port)
     server = darq.Server()

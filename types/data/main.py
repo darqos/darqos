@@ -29,12 +29,14 @@ import re
 import struct
 
 import darq
+import darq.history
 import darq.index
 import darq.items
 import darq.kb as model
 from darq.entity_type import EntityType
 from darq.protocols import storage
-from darq.protocols.data import CloseRequest, CloseResponse, Data, GetRequest, GetResponse, StatRequest, StatResponse
+from darq.protocols.data import (CloseRequest, CloseResponse, Data, GetRequest, GetResponse, StatRequest, StatResponse,
+                                 Viewed)
 from darq.protocols.type import (
     CreateFromRequest,
     CreateFromResponse,
@@ -157,6 +159,8 @@ class Document:
 class DataImplementation(EntityType):
     """Answers the Implementation protocol, and keeps the open items."""
 
+    SOURCE = "data-type"
+
     def __init__(self, client: storage.Storage.Client, index: darq.index.Publisher, kb: model.KB):
         super().__init__(kb, [TYPE_ID])
         self.storage = client
@@ -269,6 +273,7 @@ class DataImplementation(EntityType):
             statements.append((darq.items.FILE_EXTENSION, model.StringValue(extension_of(request.name))))
         self.make_entity(TYPE_ID, specifier(document.key), file_name=request.name, statements=statements)
         self.publish(document)
+        self.record(document.iid, darq.history.CREATED, request.context)
         return CreateFromResponse(item_id=document.iid, item=self.attach(document), status=Status.OK)
 
     def open(self, request: OpenRequest, source: int) -> OpenResponse:
@@ -311,6 +316,7 @@ class DataImplementation(EntityType):
         document.generation = response.generation
         self.index.withdraw(document.iid)
         self.destroy_item_entity(specifier(document.key))
+        self.record(document.iid, darq.history.DESTROYED, request.context)
         logging.info(f"Destroyed {request.item_id}")
         return DestroyResponse(status=Status.OK)
 
@@ -326,6 +332,9 @@ class DataItem(Data.Handler):
     def close(self, request: CloseRequest, source: int) -> CloseResponse:
         self.implementation.detach(self.document, self.port)
         return CloseResponse()
+
+    def viewed(self, request: Viewed, source: int) -> None:
+        self.implementation.record(self.document.iid, darq.history.VIEWED, source=request.source, note=request.note)
 
     def get(self, request: GetRequest, source: int) -> GetResponse:
         return GetResponse(data=self.document.data, media_type=self.document.media_type)

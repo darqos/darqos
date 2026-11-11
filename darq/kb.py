@@ -2069,12 +2069,16 @@ class KB:
 
     Entities of a kind are written through the kind's type
     implementation (see doc/types.rst): given its writer, put, merge
-    and destroy go through it, and the KB service is only read."""
+    and destroy go through it, and the KB service is only read.  The
+    writer records what they do in History, as their context describes
+    it: each call's, or else the KB's (see doc/history.rst)."""
 
     def __init__(self, client: wire.KB.Client,
-                 writer: Optional[wire.EntityWriter.Client] = None):
+                 writer: Optional[wire.EntityWriter.Client] = None,
+                 context: Optional[wire.Context] = None):
         self.client = client
         self.writer = writer
+        self.context = context
 
     @classmethod
     def connect(cls, timeout: Optional[float] = None,
@@ -2113,7 +2117,7 @@ class KB:
         entities, _ = self.get_entities([entity_id], follow)
         return entities[0] if entities else None
 
-    def put(self, *entities: Entity) -> List[Entity]:
+    def put(self, *entities: Entity, context: Optional[wire.Context] = None) -> List[Entity]:
         """Write entities, all or none, and set their new revisions.
 
         Raises ConflictError if one's changed since it was read, or is
@@ -2121,7 +2125,7 @@ class KB:
         property."""
         wired = [entity_to_wire(e) for e in entities]
         if self.writer is not None:
-            response = self.writer.write_entities(wired)
+            response = self.writer.write_entities(wired, context or self.context)
         else:
             response = self.client.put_entities(wired)
         self._check(response.status, response.failed_id or "put")
@@ -2129,7 +2133,7 @@ class KB:
             entity.revision = written.revision
         return list(entities)
 
-    def create(self, type_id: str, *entities: Entity) -> List[Entity]:
+    def create(self, type_id: str, *entities: Entity, context: Optional[wire.Context] = None) -> List[Entity]:
         """Create new entities of a kind, all or none, with the
         identifiers they have, and set their revisions.
 
@@ -2139,7 +2143,7 @@ class KB:
         if self.writer is None:
             raise ValueError("create: there's no writer")
         wired = [entity_to_wire(e) for e in entities]
-        response = self.writer.create_entities(type_id, wired)
+        response = self.writer.create_entities(type_id, wired, context or self.context)
         self._check(response.status, response.failed_id or "create")
         for entity, written in zip(entities, response.entities):
             entity.revision = written.revision
@@ -2192,18 +2196,18 @@ class KB:
             return entity
         raise ConflictError(f"{entity_id}: it keeps changing", entity_id)
 
-    def merge(self, old_id: str, new_id: str):
+    def merge(self, old_id: str, new_id: str, context: Optional[wire.Context] = None):
         """Merge one entity into another."""
         if self.writer is not None:
-            status = self.writer.merge_entity(old_id, new_id).status
+            status = self.writer.merge_entity(old_id, new_id, context or self.context).status
         else:
             status = self.client.merge(old_id, new_id).status
         self._check(status, f"merge {old_id} into {new_id}")
 
-    def destroy(self, entity_id: str):
+    def destroy(self, entity_id: str, context: Optional[wire.Context] = None):
         """Mark an entity destroyed."""
         if self.writer is not None:
-            status = self.writer.destroy_entity(entity_id).status
+            status = self.writer.destroy_entity(entity_id, context or self.context).status
         else:
             status = self.client.destroy(entity_id).status
         self._check(status, entity_id)

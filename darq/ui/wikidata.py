@@ -9,6 +9,7 @@ import darq.kb as model
 import darq.wikidata
 from darq.protocols.http import Header, Http
 from darq.protocols.http import Status as HttpStatus
+from darq.protocols.kb import Context as KBContext
 from darq.ui import kb_writer
 
 
@@ -55,14 +56,17 @@ def fetch(url: str, headers: list[tuple[str, str]]) -> bytes:
     return response.body
 
 
-def linker() -> darq.wikidata.Linker:
+def linker(source: str = "") -> darq.wikidata.Linker:
     """Return a Linker, writing through the KB type implementation, so
-    that the Index is kept up to date, on the calling thread.
+    that the Index is kept up to date, on the calling thread: which
+    records what it merges and changes in History, from a source, noted
+    as from Wikidata (see doc/history.rst).
 
     :raises darq.wikidata.WikidataError: if it can't be had."""
     try:
         kb = model.KB.connect(timeout=TIMEOUT)
         items = kb_writer.writer(kb)
+        items.context = KBContext(source=source, note="from Wikidata")
     except (darq.DarqError, TimeoutError) as e:
         raise darq.wikidata.WikidataError(f"Can't reach the KB: {e}") from None
     return darq.wikidata.Linker(kb, items, fetch, agent())

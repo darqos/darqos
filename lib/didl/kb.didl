@@ -321,19 +321,19 @@ protocol EntityWriter {
     // Write entities, as the KB's PutEntities, all or none.  An existing
     // entity's kind, its DarqOS type statements, stays as it was, and a
     // new one can't have one: an item of a kind is made by Create.
-    16: WriteEntities(sequence<Entity> entities) -> (sequence<Entity> entities, string failed_id, Status status);
+    16: WriteEntities(sequence<Entity> entities, Context context) -> (sequence<Entity> entities, string failed_id, Status status);
 
     // Merge one entity into another, as the KB's Merge.
-    17: MergeEntity(string old_id, string new_id) -> (Status status);
+    17: MergeEntity(string old_id, string new_id, Context context) -> (Status status);
 
     // Mark an entity destroyed, as the KB's Destroy.
-    18: DestroyEntity(string entity_id) -> (Status status);
+    18: DestroyEntity(string entity_id, Context context) -> (Status status);
 
     // Create new entities of a kind, all or none, with the identifiers
     // they have, or a UUID, if they've none: for an import, which
     // chooses them.  Each gets the class and DarqOS type of an item of
     // the kind, as Create gives, and it's CONFLICT if one exists.
-    19: CreateEntities(string type_id, sequence<Entity> entities) -> (sequence<Entity> entities, string failed_id, Status status);
+    19: CreateEntities(string type_id, sequence<Entity> entities, Context context) -> (sequence<Entity> entities, string failed_id, Status status);
 }
 
 // Served by a watcher, on the port it gives Watch.
@@ -362,8 +362,37 @@ struct Linked {
 // Served by the KB type implementation (types/kb) on an item's port:
 // the entity it's for, the Item protocol's Close, and its own methods
 // from 16.  A merged entity's port is for the entity it redirects to.
+// What a caller says of the event its request causes, which the type
+// implementation records in History (see doc/history.rst, Who Records
+// Events).  An empty context, as a caller that passes none sends, is
+// the request's own event, recorded with the implementation as its
+// source.
+struct Context {
+    // The event, such as "imported", when it's not the request's own
+    // ("created", "edited", "destroyed"); or empty.
+    string event;
+
+    // What the request came through, such as "terminal" or
+    // "slack-import"; or empty, for the implementation.
+    string source;
+
+    // A line for the operator, such as a file's path or a URL.
+    string note;
+
+    // Don't record it: the caller records one event for many, as an
+    // import does.
+    bool quiet;
+}
+
 protocol EntityItem {
     1: Close() -> ();
+
+    // The operator's looking at the item, through a client, such as a
+    // lens, named by source, with a note of where they've got to, such
+    // as "page 45 of 296": recorded as "viewed" (see doc/history.rst).
+    // Changes made through this port are recorded with its source too.
+    // It's one-way.
+    2: Viewed(string source, string note);
 
     // Return the entity, and the entities it refers to, with their
     // labels in a chain of languages.
@@ -371,7 +400,7 @@ protocol EntityItem {
 
     // Write the entity, whole, as read at its revision: as PutEntities.
     // Its kind, its DarqOS type statements, can't be changed.
-    17: PutEntity(Entity entity) -> (uint64 revision, Status status);
+    17: PutEntity(Entity entity, Context context) -> (uint64 revision, Status status);
 
     // Return the entities that link to this one, by a property (or any,
     // if it's empty), in a statement's role, in batches, as KB lookups,

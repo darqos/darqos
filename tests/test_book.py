@@ -714,9 +714,20 @@ class FakeOpener:
         self.used.append((item_id, lens_for))
 
 
+class ViewedItem:
+    """Stands in for an item's port: what it's told of being viewed."""
+
+    def __init__(self):
+        self.views: list[tuple[str, str]] = []
+
+    def viewed(self, source="", note=""):
+        self.views.append((source, note))
+
+
 class LensStore(MemoryStore):
     def adopt(self, item_id: str, port: int):
-        pass
+        self.viewed_item = ViewedItem()
+        return self.viewed_item
 
     def settled(self):
         pass
@@ -732,7 +743,7 @@ def opened(qt_app):
     store.__class__ = LensStore
     opener = FakeOpener()
     loop = python_types.SimpleNamespace(post=lambda job: job(), stop=lambda: None)
-    used = lens.BookLens(loop, None, opener, store)
+    used = lens.BookLens(loop, opener, store)
     assert used.use(UseRequest(item_id=store.item(book.work), item=5), 0).status == Status.OK
     yield used, store, opener
     if used.window is not None:
@@ -746,13 +757,18 @@ def test_lens_shows_the_book(opened):
     assert not used.window.editing
 
 
+def test_lens_tells_its_item_its_viewed(opened):
+    _, store, _ = opened
+    assert store.viewed_item.views == [("book-lens", "")]
+
+
 def test_lens_opens_a_new_book_for_adding(qt_app):
     store = MemoryStore()
     work = store.add(darq.book.WORK_TYPE, "x")
     del work.labels["en"]
     store.__class__ = LensStore
     loop = python_types.SimpleNamespace(post=lambda job: job(), stop=lambda: None)
-    used = lens.BookLens(loop, None, FakeOpener(), store)
+    used = lens.BookLens(loop, FakeOpener(), store)
     used.use(UseRequest(item_id=store.item(work), item=5), 0)
     assert used.window.stack.currentWidget() is used.window.adding
     used.window.close()
@@ -920,7 +936,7 @@ def test_a_copy_of_another_text_can_be_edited(qt_app):
     store, latin, book = harry_potter()
     store.__class__ = LensStore
     loop = python_types.SimpleNamespace(post=lambda job: job(), stop=lambda: None)
-    used = lens.BookLens(loop, None, FakeOpener(), store)
+    used = lens.BookLens(loop, FakeOpener(), store)
     used.use(UseRequest(item_id=store.item(book.work), item=5), 0)
     used.start_edit(find_edit(used, card.COPY, 1))
     assert used.window.level.edits["location"].text() == "lounge"
@@ -963,7 +979,7 @@ def test_removing_from_the_bottom_up(qt_app):
     store, book = saved()
     store.__class__ = LensStore
     loop = python_types.SimpleNamespace(post=lambda job: job(), stop=lambda: None)
-    used = lens.BookLens(loop, None, FakeOpener(), store)
+    used = lens.BookLens(loop, FakeOpener(), store)
     used.use(UseRequest(item_id=store.item(book.work), item=5), 0)
     used.confirm = lambda question: True
     for level, number in ((card.COPY, 0), (card.COPY, 0), (card.MANIFESTATION, 0), (card.MANIFESTATION, 0),
@@ -979,7 +995,7 @@ def test_removing_what_it_was_opened_on(qt_app):
     store.__class__ = LensStore
     copy = book.editions[0].copies[0].entity
     loop = python_types.SimpleNamespace(post=lambda job: job(), stop=lambda: None)
-    used = lens.BookLens(loop, None, FakeOpener(), store)
+    used = lens.BookLens(loop, FakeOpener(), store)
     used.use(UseRequest(item_id=store.item(copy), item=5), 0)
     used.confirm = lambda question: True
     used.start_edit(next(t for t in used.window.targets if isinstance(t, card.Edit) and t.entity.id == copy.id))
@@ -1087,10 +1103,9 @@ def test_book_lens(live_pkernel, tmp_path):  # noqa: F811
             work_item, port = darq.launch.create_item("darq.book.work")
             history = History.Client(darq.connect("darq.history"), timeout=10)
 
-            def record(item_id, event):
-                history.add_event(item_id=item_id, event=event, source="book-test")
-
-            store = book_store.ItemStore(["en"], record=record)
+            # What's made and changed is recorded by the KB type, as the
+            # store's source.
+            store = book_store.ItemStore(["en"], source="book-test")
             store.adopt(work_item, port)
             book = darq.book.read(store, work_item)
             book.title = "Bliss"
@@ -1134,13 +1149,13 @@ def test_book_lens(live_pkernel, tmp_path):  # noqa: F811
                       "text": model.item_id(read.expression.id, darq.book.EXPRESSION_TYPE),
                       "author": read.links["Peter Carey"]}
             for name, level in levels.items():
-                events = [e.event for e in history.get_events(item_ids=[level]).events]
-                if events != ["created"]:
+                events = [(e.event, e.source) for e in history.get_events(item_ids=[level]).events]
+                if events != [("created", "book-test")]:
                     return f"{name}'s events are {events!r}"
 
             read.editions[1].binding = "paperback"
             store.close()
-            edited = book_store.ItemStore(["en"], record=record)
+            edited = book_store.ItemStore(["en"], source="book-test")
             edited.adopt(copy_item, darq.launch.open_item(copy_item))
             again = darq.book.read(edited, copy_item)
             again.editions[1].binding = "paperback"
@@ -1152,7 +1167,7 @@ def test_book_lens(live_pkernel, tmp_path):  # noqa: F811
 
             # Opened at the top, everything under it's read with its parent,
             # and can still be changed: a lens starts this way.
-            top = book_store.ItemStore(["en"], record=record)
+            top = book_store.ItemStore(["en"], source="book-test")
             top.adopt(work_item, darq.launch.open_item(work_item))
             card = darq.book.read(top, work_item)
             card.editions[0].pages = "300"
@@ -1172,7 +1187,7 @@ def test_book_lens(live_pkernel, tmp_path):  # noqa: F811
                 return f"editions {card.editions!r}"
 
             # What the real KB has to accept: a preference, a cover, and a move.
-            top = book_store.ItemStore(["en"], record=record)
+            top = book_store.ItemStore(["en"], source="book-test")
             top.adopt(work_item, darq.launch.open_item(work_item))
             card = darq.book.read(top, work_item)
             darq.book.prefer(top, card, card.editions[0].copies[0])
@@ -1196,7 +1211,7 @@ def test_book_lens(live_pkernel, tmp_path):  # noqa: F811
             top.close()
 
             # Removed from the bottom up: what's destroyed stops counting.
-            top = book_store.ItemStore(["en"], record=record)
+            top = book_store.ItemStore(["en"], source="book-test")
             top.adopt(work_item, darq.launch.open_item(work_item))
             card = darq.book.read(top, work_item)
             first = card.editions[0]
@@ -1217,10 +1232,16 @@ def test_book_lens(live_pkernel, tmp_path):  # noqa: F811
                 return f"removed events {events!r}"
             top.close()
 
+            # Its type records it viewed, as it comes, one way.
             lens = Lens.Client(darq.launch.use_item(copy_item), timeout=30)
-            events = [(e.event, e.source) for e in history.get_events(item_ids=[copy_item]).events]
-            if ("opened", "book-lens") not in events:
-                return f"events are {events!r}"
+            deadline = time.monotonic() + 10
+            while True:
+                events = [(e.event, e.source) for e in history.get_events(item_ids=[copy_item]).events]
+                if ("viewed", "book-lens") in events:
+                    break
+                if time.monotonic() > deadline:
+                    return f"events are {events!r}"
+                time.sleep(0.05)
             lens.close()
             return 0
         """)
@@ -1312,7 +1333,7 @@ def test_the_lens_prefers_and_reads_it(qt_app):
     store, book = formats()
     store.__class__ = LensStore
     opener = FakeOpener()
-    used = lens.BookLens(python_types.SimpleNamespace(post=lambda job: job(), stop=lambda: None), None, opener, store)
+    used = lens.BookLens(python_types.SimpleNamespace(post=lambda job: job(), stop=lambda: None), opener, store)
     used.use(UseRequest(item_id=store.item(book.work), item=5), 0)
     used.prefer(used.book.editions[1].copies[0])
     used.read_book()
@@ -1354,8 +1375,7 @@ def test_the_lens_shows_a_cover(qt_app):
     buffer = QBuffer()
     buffer.open(QIODevice.OpenModeFlag.WriteOnly)
     image.save(buffer, "PNG")
-    used = lens.BookLens(python_types.SimpleNamespace(post=lambda job: job(), stop=lambda: None), None,
-                         FakeOpener(), store)
+    used = lens.BookLens(python_types.SimpleNamespace(post=lambda job: job(), stop=lambda: None), FakeOpener(), store)
     data = bytes(buffer.data().data())
     used.cover = lambda item_id: asked.append(item_id) or data
     used.use(UseRequest(item_id=store.item(book.work), item=5), 0)
@@ -1372,8 +1392,7 @@ def test_a_looked_up_cover_is_fetched_after_adding(qt_app):
     work = store.add(darq.book.WORK_TYPE, "x")
     del work.labels["en"]
     store.__class__ = LensStore
-    used = lens.BookLens(python_types.SimpleNamespace(post=lambda job: job(), stop=lambda: None), None,
-                         FakeOpener(), store)
+    used = lens.BookLens(python_types.SimpleNamespace(post=lambda job: job(), stop=lambda: None), FakeOpener(), store)
     used.run = lambda job: job()
     used.snapshot = lambda url: "public.jpeg:fetched" if url == "https://covers.openlibrary.org/b/id/1-L.jpg" else ""
     used.cover = lambda item_id: b""
@@ -1392,8 +1411,7 @@ def test_a_cover_that_cant_be_had_is_no_failure(qt_app):
     work = store.add(darq.book.WORK_TYPE, "x")
     del work.labels["en"]
     store.__class__ = LensStore
-    used = lens.BookLens(python_types.SimpleNamespace(post=lambda job: job(), stop=lambda: None), None,
-                         FakeOpener(), store)
+    used = lens.BookLens(python_types.SimpleNamespace(post=lambda job: job(), stop=lambda: None), FakeOpener(), store)
     used.run = lambda job: job()
 
     def fail(url):
@@ -1468,8 +1486,7 @@ def test_the_lens_moves_a_manifestation_to_another_book(qt_app):
     darq.book.save(store, other)
     store.__class__ = LensStore
     typing.cast(typing.Any, store).works_like = lambda text: [(store.item(other.work), "Harry Potter (a copy)")]
-    used = lens.BookLens(python_types.SimpleNamespace(post=lambda job: job(), stop=lambda: None), None,
-                         FakeOpener(), store)
+    used = lens.BookLens(python_types.SimpleNamespace(post=lambda job: job(), stop=lambda: None), FakeOpener(), store)
     used.use(UseRequest(item_id=store.item(book.work), item=5), 0)
     used.ask_text = lambda question: "Harry"
     used.choose = lambda question, choices: 0

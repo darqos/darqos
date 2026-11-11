@@ -32,11 +32,13 @@ import re
 import struct
 
 import darq
+import darq.history
 import darq.index
 import darq.kb as model
 from darq.entity_type import EntityType
 from darq.protocols import storage
 from darq.protocols.ebook import (
+    Viewed,
     CloseRequest,
     CloseResponse,
     ContentsEntry,
@@ -197,6 +199,8 @@ def index_entry(document: Document) -> tuple[list[str], str]:
 class EbookImplementation(EntityType):
     """Answers the Implementation protocol, and keeps the open items."""
 
+    SOURCE = "ebook-type"
+
     def __init__(self, client: storage.Storage.Client, index: darq.index.Publisher, kb: model.KB):
         super().__init__(kb, [t for t in TYPES])
         self.storage = client
@@ -305,6 +309,7 @@ class EbookImplementation(EntityType):
         book = document.book()
         self.make_entity(type_id, specifier(document.key), book.title if book is not None else "", request.name)
         self.publish(document)
+        self.record(document.iid, darq.history.CREATED, request.context)
         return CreateFromResponse(item_id=document.iid, item=self.attach(document), status=Status.OK)
 
     def entry(self, document: Document) -> tuple[list[str], str]:
@@ -370,6 +375,7 @@ class EbookImplementation(EntityType):
             return DestroyResponse(status=Status.FAILED)
         self.index.withdraw(document.iid)
         self.destroy_item_entity(specifier(document.key))
+        self.record(document.iid, darq.history.DESTROYED, request.context)
         logging.info(f"Destroyed {request.item_id}")
         return DestroyResponse(status=Status.OK)
 
@@ -385,6 +391,9 @@ class EbookItem(Ebook.Handler):
     def close(self, request: CloseRequest, source: int) -> CloseResponse:
         self.implementation.detach(self.document, self.port)
         return CloseResponse()
+
+    def viewed(self, request: Viewed, source: int) -> None:
+        self.implementation.record(self.document.iid, darq.history.VIEWED, source=request.source, note=request.note)
 
     def get(self, request: GetRequest, source: int) -> GetResponse:
         return GetResponse(data=self.document.data)

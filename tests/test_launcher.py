@@ -43,7 +43,7 @@ class BlockingLaunch:
         self.release = threading.Event()
         self.started = threading.Event()
 
-    def create_item(self, type_id):
+    def create_item(self, type_id, context=None):
         return self.launch.create_item(type_id)
 
     def use_item(self, item_id, item=None):
@@ -90,7 +90,7 @@ def test_create_doesnt_block(loop):
     assert host.results == [("ctx", DOC, None)]
     assert host.thread is threading.main_thread()
     assert done == [True]
-    assert services.history.added == [(DOC, "created", "test")]
+    assert services.history.added == []
     assert services.launch.launch.used == [(DOC, 42)]
 
 
@@ -118,7 +118,7 @@ def test_failures(fail_in, error):
             raise LaunchError("No lens")
         services.launch.use_item = use_item
     else:
-        def create_item(type_id):
+        def create_item(type_id, context=None):
             raise RuntimeError("oops")
         services.launch.create_item = create_item
     host = FakeHost(services)
@@ -127,7 +127,7 @@ def test_failures(fail_in, error):
 
     [(_, _, reported)] = host.results
     assert reported == error and done == [True]
-    assert services.history.added == ([] if fail_in != "use_item" else [(DOC, "created", "test")])
+    assert services.history.added == []
 
 
 @pytest.mark.parametrize("name, created, error", [
@@ -151,7 +151,8 @@ def test_create_from_file(tmp_path, name, created, error):
     assert done == [True]
     if error is None:
         assert host.results == [(3, DOC, None)]
-        assert services.history.added == [(DOC, "imported", "test")]
+        assert services.history.added == []
+        assert [(c.event, c.source, c.note) for c in services.launch.contexts] == [("imported", "test", str(path))]
         assert services.launch.used == [(DOC, 43)]
     else:
         assert host.results == [(3, None, error)]

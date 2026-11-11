@@ -277,8 +277,9 @@ A reply also sent to its channel is listed by Slack in both, and is
 one message, as its identifier shows.
 
 The ``types/kb`` implementation publishes a message's body to the
-Index.  An import records one ``imported`` History event for each
-conversation, rather than one for each message.
+Index.  An import records one ``delivered`` History event for each
+conversation that gains messages, noted with how many, rather than one
+for each message (see :doc:`history`).
 
 The Conversation lens, ``lenses/conversation``, is one read-only
 timeline for both types.  A conversation opens at its newest message;

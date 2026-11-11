@@ -405,3 +405,11 @@ def test_an_old_pdf_is_given_its_entity_named_by_its_title(call, kb, qt_app):
     kb.failing = None
     assert call(IMPLEMENTATION_PORT, OpenEntityRequest(item_id=iid)).status == Status.OK
     assert kb.label(darq.split_item_id(iid)[1]) == "A Title"
+
+
+def test_viewing_is_recorded(call, server, fake_ports, recorded, qt_app):  # noqa: F811
+    from test_text_type import send
+    from darq.protocols.pdf import Viewed
+    iid, port = create_from(call, make_pdf())
+    send(fake_ports, server, port, Viewed(source="pdf-lens", note="page 1 of 1"))
+    assert recorded.events == [(iid, "created", "pdf-type", ""), (iid, "viewed", "pdf-lens", "page 1 of 1")]

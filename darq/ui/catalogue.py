@@ -20,7 +20,6 @@ import darq.kb as model
 import darq.launch
 from darq.book import ANOTHER_COPY, ANOTHER_EDITION, Book, BookError, Copy, Edition, Match
 from darq.protocols.http import Http
-from darq.protocols.history import History
 from darq.ui import book_store
 from darq.ui.launcher import Launcher
 
@@ -107,9 +106,8 @@ def add_content(store: darq.book.Store, content: str, details: Details,
 class Services:
     """What the Launcher needs from a reading lens."""
 
-    def __init__(self, history: History.Client | None):
+    def __init__(self):
         self.launch = darq.launch
-        self.history = history
 
     @staticmethod
     def http() -> Http.Client | None:
@@ -117,12 +115,11 @@ class Services:
         return Http.Client(handle, timeout=FETCH_TIMEOUT) if handle is not None else None
 
 
-def catalogue(window: QWidget, launcher: Launcher, content: str, details: Details,
-              record: book_store.Record) -> str:
+def catalogue(window: QWidget, launcher: Launcher, content: str, details: Details, source: str) -> str:
     """B, in a reading lens: show an item's book, if it's been catalogued,
     or catalogue it, asking what's needed, and show that.
 
-    :param record: Records a History event about an item.
+    :param source: The lens, as History's source of what's made.
     :returns: What went wrong, if anything: an empty string if it worked."""
     copy = find_copy(content)
     if copy:
@@ -139,7 +136,7 @@ def catalogue(window: QWidget, launcher: Launcher, content: str, details: Detail
         chosen, ok = QInputDialog.getItem(window, "Catalogue", "This is:", choices, 0, False)
         return ok and chosen == choices[0]
 
-    store = book_store.ItemStore([darq.book.OWN_LANGUAGE], record=record)
+    store = book_store.ItemStore([darq.book.OWN_LANGUAGE], source=source)
     try:
         work = add_content(store, content, details, choose)
     except BookError as e:

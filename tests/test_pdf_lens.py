@@ -41,6 +41,7 @@ class FakePdf:
         self.closed = False
         self.dead = False
         self.position = ""
+        self.views: list[tuple[str, str]] = []
 
     def get(self):
         if self.dead:
@@ -62,13 +63,10 @@ class FakePdf:
             raise DeadPortError("item is gone")
         self.position = position
 
-
-class FakeHistory:
-    def __init__(self):
-        self.events = []
-
-    def add_event(self, item_id, event, source):
-        self.events.append((item_id, event, source))
+    def viewed(self, source="", note=""):
+        if self.dead:
+            raise DeadPortError("item is gone")
+        self.views.append((source, note))
 
 
 # Helpers
@@ -108,12 +106,10 @@ def test_step_match():
 # PdfSync
 
 
-def test_sync_reloads_records_and_closes():
-    client, history = FakePdf(b"data"), FakeHistory()
-    sync = lens.PdfSync(client, ITEM_ID, history)
+def test_sync_reloads_and_closes():
+    client = FakePdf(b"data")
+    sync = lens.PdfSync(client, ITEM_ID)
     assert sync.reload() and sync.data == b"data"
-    sync.record("opened")
-    assert history.events == [(ITEM_ID, "opened", "pdf-lens")]
     sync.close()
     sync.close()
     assert client.closed
@@ -384,18 +380,18 @@ def test_help(window):
 def test_lens_use(qt_app, monkeypatch):
     client = FakePdf(make_pdf())
     monkeypatch.setattr(lens.wire.Pdf, "Client", lambda port, timeout: client)
-    history = FakeHistory()
     stopped = []
 
     class Loop:
         def stop(self):
             stopped.append(True)
 
-    pdf_lens = lens.PdfLens(Loop(), history, lambda item_id: "")  # pyright: ignore[reportArgumentType]
+    pdf_lens = lens.PdfLens(Loop(), lambda item_id: "")  # pyright: ignore[reportArgumentType]
     pdf_lens.name_of = lambda item_id: "A name"
     assert pdf_lens.use(UseRequest(item_id=ITEM_ID, item=5), 0).status == Status.OK
     assert pdf_lens.use(UseRequest(item_id=ITEM_ID, item=6), 0).status == Status.BUSY
-    assert history.events == [(ITEM_ID, "opened", "pdf-lens")]
+    # The item's told it's viewed, and where: its type records it.
+    assert client.views == [("pdf-lens", "page 1 of 1")]
     assert pdf_lens.window is not None
     pdf_lens.window.close()
     assert client.closed and stopped == [True]
@@ -486,7 +482,7 @@ def run_lens(monkeypatch, client, copy=""):
         def stop(self):
             pass
 
-    pdf_lens = lens.PdfLens(Loop(), None, lambda item_id: copy)  # pyright: ignore[reportArgumentType]
+    pdf_lens = lens.PdfLens(Loop(), lambda item_id: copy)  # pyright: ignore[reportArgumentType]
     pdf_lens.name_of = lambda item_id: "A name"
     assert pdf_lens.use(UseRequest(item_id=ITEM_ID, item=5), 0).status == Status.OK
     assert pdf_lens.window is not None
@@ -530,7 +526,7 @@ def test_lens_use_when_the_item_has_gone(qt_app, monkeypatch):
         def stop(self):
             pass
 
-    pdf_lens = lens.PdfLens(Loop(), None)  # pyright: ignore[reportArgumentType]
+    pdf_lens = lens.PdfLens(Loop())  # pyright: ignore[reportArgumentType]
     pdf_lens.name_of = lambda item_id: "A name"
     assert pdf_lens.use(UseRequest(item_id=ITEM_ID, item=5), 0).status == Status.FAILED
     assert pdf_lens.window is None

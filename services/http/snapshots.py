@@ -3,13 +3,19 @@
 
 """Keeping what's at a URL (see doc/http-service.rst).
 
+What it makes and writes is recorded in History by the types that make
+and write it, as it describes it (see doc/history.rst): a URL's item is
+created, a new snapshot of it fetched, and the snapshot's item imported,
+noted with the URL.  A fetch that finds nothing new writes nothing, so
+isn't recorded: the lens it's shown in records it viewed.  Moves aren't
+recorded.
+
 A snapshot's an ordinary item, of its real type, recorded on the URL's
 item.  It knows nothing of how things are fetched or served, so it's
 tested with what stands in for them."""
 
 import dataclasses
 import hashlib
-import logging
 import pathlib
 import typing
 import urllib.parse
@@ -20,6 +26,8 @@ import darq.items
 import darq.kb as model
 import darq.message
 import darq.url
+from darq.protocols import kb as kb_protocol
+from darq.protocols import type as type_protocol
 
 import fetcher
 
@@ -27,7 +35,7 @@ import fetcher
 # When a type can't take what was fetched, as well as fetcher's.
 NO_TYPE = "no type"
 
-# History source for its events.
+# History source of what it does.
 SOURCE = "http"
 
 # Times a URL's item is written, when it's being changed elsewhere.
@@ -37,12 +45,9 @@ RECORD_ATTEMPTS = 3
 HASH_CHUNK = 1 << 20
 
 
-class History(typing.Protocol):
-    def add_event(self, item_id: str, event: str, source: str) -> typing.Any: ...
-
-
 class MakeItem(typing.Protocol):
-    def __call__(self, media_type: str, extension: str, data: bytes, name: str) -> str | None: ...
+    def __call__(self, media_type: str, extension: str, data: bytes, name: str,
+                 context: type_protocol.Context | None = None) -> str | None: ...
 
 
 class Fetch(typing.Protocol):
@@ -106,16 +111,14 @@ def permanent_chain(url: str, response: fetcher.Response) -> list[tuple[str, int
 
 
 class Snapshots:
-    def __init__(self, kb: model.KB, make_item: MakeItem, history: History | None):
+    def __init__(self, kb: model.KB, make_item: MakeItem):
         """Constructor.
 
         :param kb: Client that writes through the implementation.
         :param make_item: Makes an item from data, returning its identifier,
-                          or None if no type will take it.
-        :param history: Where to record what's made, if anywhere."""
+                          or None if no type will take it."""
         self.kb = kb
         self.make_item = make_item
-        self.history = history
 
     def item_of(self, entity_id: str) -> str:
         """Return the identifier of a snapshot's item, from its entity's."""
@@ -160,10 +163,6 @@ class Snapshots:
         urls = [address for address, _ in chain]
         here = urls[-1]
 
-        for address in urls:
-            if self.kb.get(darq.url.entity_id(address), follow=False) is not None:
-                self.note(darq.url.item_id(address), darq.history.FETCHED)
-
         latest = known[0] if known else None
         unmodified = response.http_status == 304 and latest is not None
         if not unmodified and not 200 <= response.http_status < 300:
@@ -181,7 +180,8 @@ class Snapshots:
             item_id, changed = same.item_id, False
         else:
             made = self.make_item(media_type, extension_of(response.final_url), path.read_bytes(),
-                                  name_of(response.final_url))
+                                  name_of(response.final_url),
+                                  type_protocol.Context(event=darq.history.IMPORTED, source=SOURCE, note=here))
             if made is None:
                 raise fetcher.FetchError(NO_TYPE, media_type or "no media type")
             item_id, changed = made, True
@@ -194,31 +194,20 @@ class Snapshots:
             snapshot = darq.url.Snapshot(item_id, digest, (kept.etag if kept else header(response, "ETag")),
                                          kept.last_modified if kept else header(response, "Last-Modified"))
             final = response.final_url if darq.serialize_url(response.final_url) != here else ""
-            self.record(here, darq.url.snapshot_statement(snapshot, now, media_type, final))
+            self.record(here, darq.url.snapshot_statement(snapshot, now, media_type, final),
+                        kb_protocol.Context(event=darq.history.FETCHED, source=SOURCE, note=here))
 
         self.record_moves(chain, now)
         if len(urls) == 1:
             self.end_move(here, now)
-        if changed:
-            self.note(item_id, darq.history.IMPORTED)
         return Outcome(response.http_status, darq.url.item_id(here), item_id, changed)
-
-    def note(self, item_id: str, event: str):
-        """Record an event in History, if it's running."""
-        if self.history is None:
-            return
-        try:
-            self.history.add_event(item_id=item_id, event=event, source=SOURCE)
-        except darq.DarqError as e:
-            logging.warning(f"Can't record {event} for {item_id}: {e!r}")
 
     @staticmethod
     def source() -> model.Reference:
         return model.Reference().add(model.STATED_IN, model.EntityValue(darq.url.HTTP_SERVICE))
 
     def ensure(self, url: str):
-        """Make a URL's item, if it's new, and record that it was, and
-        that it's been fetched."""
+        """Make a URL's item, if it's new: its type records it created."""
         entity_id = darq.url.entity_id(url)
         if self.kb.get(entity_id, follow=False) is not None:
             return
@@ -226,28 +215,30 @@ class Snapshots:
         entity.set_label(url)
         entity.claim(darq.url.URL, model.StringValue(url)).add_reference(self.source())
         try:
-            self.kb.create(darq.url.URL_TYPE, entity)
+            self.kb.create(darq.url.URL_TYPE, entity, context=kb_protocol.Context(source=SOURCE, note=url))
         except model.ConflictError:
             return
-        self.note(darq.url.item_id(url), darq.history.CREATED)
-        self.note(darq.url.item_id(url), darq.history.FETCHED)
 
-    def change(self, url: str, change: typing.Callable[[model.Entity], bool]):
-        """Change a URL's item, as it is, if change says it did."""
+    def change(self, url: str, change: typing.Callable[[model.Entity], bool],
+               context: kb_protocol.Context | None = None):
+        """Change a URL's item, as it is, if change says it did: its type
+        records it as context says, or not at all."""
+        context = context or kb_protocol.Context(quiet=True)
         entity_id = darq.url.entity_id(url)
         for _ in range(RECORD_ATTEMPTS):
             entity = self.kb.get(entity_id, follow=False)
             if entity is None or not change(entity):
                 return
             try:
-                self.kb.put(entity)
+                self.kb.put(entity, context=context)
                 return
             except model.ConflictError:
                 continue
         raise fetcher.FetchError(fetcher.FAILED, f"{url} keeps being changed")
 
-    def record(self, url: str, snapshot: model.Statement):
-        """Add a snapshot to a URL's item, which is made if it's new."""
+    def record(self, url: str, snapshot: model.Statement, context: kb_protocol.Context):
+        """Add a snapshot to a URL's item, which is made if it's new: its
+        type records it as context says."""
         snapshot.add_reference(self.source())
         self.ensure(url)
 
@@ -255,7 +246,7 @@ class Snapshots:
             entity.add_statement(snapshot)
             return True
 
-        self.change(url, add)
+        self.change(url, add, context)
 
     def record_moves(self, chain: list[tuple[str, int]], now: model.TimeValue):
         """Say that each URL of a chain moved to the next, from the last

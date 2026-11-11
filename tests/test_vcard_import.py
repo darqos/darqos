@@ -85,26 +85,19 @@ class Implementation:
         self.handler = handler
         self.fail_types: set[str] = set()
 
-    def create(self, type_id):
+    def create(self, type_id, context=None):
         if type_id in self.fail_types:
             raise darq.DarqError(f"can't create a {type_id}")
-        return self.handler.create(CreateRequest(type_id=type_id), 0)
+        return self.handler.create(CreateRequest(type_id=type_id, context=context), 0)
 
-    def destroy(self, item_id):
-        return self.handler.destroy(DestroyRequest(item_id=item_id), 0)
-
-
-class History:
-    def __init__(self):
-        self.events: list[tuple[str, str, str]] = []
-
-    def add_event(self, item_id, event, source):
-        self.events.append((item_id, event, source))
+    def destroy(self, item_id, context=None):
+        return self.handler.destroy(DestroyRequest(item_id=item_id, context=context), 0)
 
 
 @pytest.fixture
-def target(kb, implementation, monkeypatch):  # noqa: F811
-    """What an import needs: the KB, the implementation, and History."""
+def target(kb, implementation, monkeypatch, recorded):  # noqa: F811
+    """What an import needs: the KB, and the implementation; and what
+    it records in History."""
     adapter = Implementation(implementation)
 
     class ItemClient:
@@ -115,16 +108,16 @@ def target(kb, implementation, monkeypatch):  # noqa: F811
             implementation.entity_ports[self.port].close(None, 0)
 
     monkeypatch.setattr(importer, "EntityItem", type("EntityItem", (), {"Client": ItemClient}))
-    return kb, adapter, History()
+    return kb, adapter, recorded
 
 
 def run(target, people, name="Address book"):
-    client, adapter, history = target
+    client, adapter, _ = target
     wd = vocabulary.Vocabulary()
     reader = cards.Importer(wd)
     reader.read(people)
     items = model.KB(client.client, Writer(adapter.handler))
-    return importer.Import(client, items, adapter, history, wd, name).run(reader.drafts)
+    return importer.Import(client, items, adapter, wd, name).run(reader.drafts)
 
 
 def find(client, label, class_id=""):
@@ -269,11 +262,12 @@ def test_first_import(target):
     result = run(target, book(("u1", "Ann", "Example"), ("u2", "Ben", "Example"), group=True))
     assert (result.created, result.found, result.failed) == (12, 0, set())
 
-    # Created events for items of a kind, not names.
-    kinds = sorted(item_id.partition(":")[0] for item_id, event, source in history.events)
+    # Created events for items of a kind, not names, recorded by their
+    # type, as the import describes them; its writes aren't recorded.
+    kinds = sorted(item_id.partition(":")[0] for item_id, _, _, _ in history.events)
     assert kinds == ["darq.group", "darq.organisation", "darq.organisational-unit", "darq.person",
                      "darq.person", "darq.person", "darq.person", "darq.place", "darq.place"]
-    assert {(e, s) for _, e, s in history.events} == {("created", "vcard-import")}
+    assert {(e, s, n) for _, e, s, n in history.events} == {("created", "vcard-import", "Address book")}
 
     # Items' statements, with their references to the address book.
     [ann] = find(client, "Ann Example")
@@ -693,7 +687,8 @@ def images(target, monkeypatch):
     """Images made of photos: their identifiers, as made."""
     made: list[str] = []
 
-    def make(photo):
+    def make(photo, context):
+        assert (context.event, context.source, context.note) == ("imported", "vcard-import", "Address book")
         made.append(f"public.png:{model.key_id(photo.sha256 + str(len(made)))}")
         target[0].ensure(model.Item(darq.split_item_id(made[-1])[1]))
         return made[-1]
@@ -713,7 +708,6 @@ def test_import_links_photos_and_tags(target, images):
     assert image.get_value().entity_id == darq.split_item_id(images[0])[1]
     assert [(q.property_id, q.value.value) for q in image.qualifiers] == \
         [(darq.url.HASH, cards.photo(with_extras(line)[0].all("PHOTO")[0]).sha256)]
-    assert (images[0], darq.history.CREATED, importer.SOURCE) in history.events
     tags = sorted(client.instances(model.TAG_CLASS))
     assert sorted(client.get(t).get_label() for t in tags) == ["Friends", "Work"]
     assert sorted(s.get_value().entity_id for s in person.get_statements(darq.items.HAS_TAG)) == tags
@@ -737,7 +731,7 @@ def test_import_links_photos_and_tags(target, images):
 def test_a_photo_that_cant_be_made_is_left_out(target, monkeypatch):
     import base64
 
-    def fail(photo):
+    def fail(photo, context):
         raise darq.DarqError("no image type")
 
     monkeypatch.setattr(importer, "make_image", fail)
