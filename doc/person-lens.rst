@@ -69,16 +69,19 @@ Properties
 ----------
 
 *label*
+  Standard entity property
+
 *description*
+  Standard entity property
+  
 *also known as*
-   Standard entity properties
+  Standard entity property
 
 *instance of*
-   *human*
+  *human*
 
 
    
-
       
     
 * Name
