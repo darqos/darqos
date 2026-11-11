@@ -25,6 +25,15 @@ Introduction
 .. include:: repl.rst
 .. include:: ux.rst
 
+	     
+
+************************************************************************
+Scope
+************************************************************************
+
+.. include:: pim.rst
+
+
 ************************************************************************
 Kernel
 ************************************************************************
@@ -32,13 +41,15 @@ Kernel
 .. include:: p-kernel.rst
 .. include:: kernel.rst
 
+	     
 ************************************************************************
-Application Runtime
+Runtime
 ************************************************************************
 
 .. include:: runtime.rst
 .. include:: ipc.rst
 .. include:: processes.rst
+
 
 ************************************************************************
 Services
@@ -69,6 +80,7 @@ Items, Types, and Lenses
 .. include:: item.rst
 .. include:: entity-vs-item.rst
 	     
+
 ************************************************************************
 Type Implementations
 ************************************************************************
@@ -88,7 +100,8 @@ Type Implementations
 .. include:: email.rst
 .. include:: message-type.rst
 .. include:: audio.rst
-.. include:: pim.rst
+.. include:: person-type.rst
+.. include:: place-type.rst
 .. include:: project.rst
 .. include:: host-type.rst
 .. include:: ssh.rst
@@ -100,6 +113,15 @@ Type Implementations
 .. include:: librarything-import-tool.rst
 .. include:: gedcom-import-tool.rst
 .. include:: ports.rst
+
+	     
+************************************************************************
+Lenses
+************************************************************************
+
+.. include:: person-lens.rst
+.. include:: place-lens.rst
+
 
 ************************************************************************
 Editions
