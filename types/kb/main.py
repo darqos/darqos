@@ -140,7 +140,7 @@ class EntityImplementation(EntityType, EntityWriter.Handler):
             self.kb.state(class_id, model.DARQOS, [
                 model.Statement(model.Snak(model.DARQOS_INSTANCE_TYPE, model.StringValue(kind)))])
         for property_id, item_id, _ in (*darq.message.INVERSE_LABELS, *darq.url.INVERSE_LABELS,
-                                        *darq.book.INVERSE_LABELS):
+                                        *darq.book.INVERSE_LABELS, *darq.items.INVERSE_LABELS):
             self.kb.state(property_id, model.DARQOS, [
                 model.Statement(model.Snak(model.INVERSE_LABEL, model.EntityValue(item_id)))])
 

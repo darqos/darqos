@@ -16,6 +16,7 @@ import typing
 import pytest
 
 import darq.book
+import darq.items
 import darq.kb as model
 
 from test_kb_type import Writer, implementation, index, kb, kb_service, ports  # noqa: F401
@@ -501,3 +502,21 @@ def test_librarything_import(live_pkernel, tmp_path):  # noqa: F811
     zombie = kernel.module.KernelProcessStatus.ZOMBIE
     run_kernel_until(kernel, lambda: client.get_status() == zombie, "the client to exit")
     assert (client.get_exit_status(), client.get_exit_error()) == (0, None)
+
+
+def test_tags_are_entities(target):
+    """A copy's tags link to tag entities, one for each name, whatever its
+    case, shared by every copy with it, and found again on a reimport."""
+    client = target[0]
+    run(target, record("1", tags=["fiction", "Australian"]),
+        record("2", workcode="w2", title="Illywhacker", isbn=["1000000000"], originalisbn="1000000000",
+               tags=["Fiction"]))
+    tags = sorted(client.instances(model.TAG_CLASS))
+    assert sorted(client.get(t).get_label() for t in tags) == ["Australian", "fiction"]
+    copies = list(client.instances(model.COPY_CLASS))
+    linked = {s.get_value().entity_id for c in copies for s in client.get(c).get_statements(darq.items.HAS_TAG)}
+    assert linked == set(tags)
+    assert all(client.get(c).get_statements(darq.book.TAG) == [] for c in copies)
+
+    run(target, record("1", tags=["fiction", "Australian"]))
+    assert sorted(client.instances(model.TAG_CLASS)) == tags

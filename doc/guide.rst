@@ -155,7 +155,11 @@ Other things to try:
   pages can't be kept yet: PDFs, images and text can.
 * *S-t* imports an address book, a ``.vcf`` file of vCards: the
   people and organisations in it are found by Search, by their names,
-  and open in the entity lens (see :doc:`kb-service`).
+  and open in the entity lens (see :doc:`kb-service`), with their
+  photos, and their categories as tags.
+* *S-i* opens the page of what's in the focused window, where it's
+  renamed, tagged (*has tag*), and, for a picture, said to depict
+  someone (*depicts*).
 * *S-h* lists what's happened recently, and opens an item from
   there too.
 

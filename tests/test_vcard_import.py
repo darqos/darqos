@@ -17,6 +17,9 @@ import sys
 import pytest
 
 import darq
+import darq.items
+import darq.url
+import darq.history
 import darq.kb as model
 from darq.protocols.type import CreateRequest, DestroyRequest
 
@@ -631,3 +634,114 @@ def test_vcard_import(live_pkernel, tmp_path):  # noqa: F811
     zombie = kernel.module.KernelProcessStatus.ZOMBIE
     run_kernel_until(kernel, lambda: client.get_status() == zombie, "the client to exit")
     assert (client.get_exit_status(), client.get_exit_error()) == (0, None)
+
+
+################################################################
+# Photos and categories
+################################################################
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 40
+
+
+def with_extras(photo_line="", categories=""):
+    """A card with a photo, folded as an export folds it, and categories."""
+    lines = CARD.format(uid="u1", given="Alice", family="Example", org="Acme Widgets", street="1 Example St",
+                        locality="Brisbane").splitlines()
+    extra = []
+    if photo_line:
+        extra += [photo_line[:60], *(" " + photo_line[n:n + 60] for n in range(60, len(photo_line), 60))]
+    if categories:
+        extra.append(f"CATEGORIES:{categories}")
+    return list(vcard.parse("\n".join([*lines[:-1], *extra, lines[-1]]) + "\n"))
+
+
+def test_photo_in_base64():
+    import base64
+    import hashlib
+    [card] = with_extras("PHOTO;ENCODING=b;TYPE=PNG:" + base64.b64encode(PNG).decode())
+    [p] = card.all("PHOTO")
+    assert cards.photo(p) == cards.Photo(PNG, "image/png", hashlib.sha256(PNG).hexdigest())
+
+
+def test_photo_as_a_data_uri_its_bytes_say_what_it_is():
+    import base64
+    [card] = with_extras("PHOTO:data:image/jpeg;base64," + base64.b64encode(PNG).decode())
+    found = cards.photo(card.all("PHOTO")[0])
+    assert found is not None and found.media_type == "image/png"
+
+
+@pytest.mark.parametrize("line", ["PHOTO;VALUE=uri:https://example.com/a.png", "PHOTO;ENCODING=b:not base64!",
+                                  "PHOTO;ENCODING=b:" + "QUJD"])
+def test_photo_not_in_the_card(line):
+    [card] = with_extras(line)
+    assert cards.photo(card.all("PHOTO")[0]) is None
+    reader = cards.Importer(vocabulary.Vocabulary())
+    reader.read([card])
+    assert reader.unmapped["photo not in the card"] == 1
+
+
+def test_categories_are_kept_with_the_draft():
+    reader = cards.Importer(vocabulary.Vocabulary())
+    reader.read(with_extras(categories="Friends,Work,friends, Book  club"))
+    [person] = [d for d in reader.drafts.values() if d.category == "card"]
+    assert person.tags == ["Friends", "Work", "Book club"]
+    assert "property CATEGORIES" not in reader.unmapped
+
+
+@pytest.fixture
+def images(target, monkeypatch):
+    """Images made of photos: their identifiers, as made."""
+    made: list[str] = []
+
+    def make(photo):
+        made.append(f"public.png:{model.key_id(photo.sha256 + str(len(made)))}")
+        target[0].ensure(model.Item(darq.split_item_id(made[-1])[1]))
+        return made[-1]
+
+    monkeypatch.setattr(importer, "make_image", make)
+    return made
+
+
+def test_import_links_photos_and_tags(target, images):
+    import base64
+    client, _, history = target
+    line = "PHOTO;ENCODING=b;TYPE=PNG:" + base64.b64encode(PNG).decode()
+    run(target, with_extras(line, "Friends,Work"))
+    [alice] = find(client, "Alice Example")
+    person = client.get(alice)
+    [image] = person.get_statements(darq.items.IMAGE)
+    assert image.get_value().entity_id == darq.split_item_id(images[0])[1]
+    assert [(q.property_id, q.value.value) for q in image.qualifiers] == \
+        [(darq.url.HASH, cards.photo(with_extras(line)[0].all("PHOTO")[0]).sha256)]
+    assert (images[0], darq.history.CREATED, importer.SOURCE) in history.events
+    tags = sorted(client.instances(model.TAG_CLASS))
+    assert sorted(client.get(t).get_label() for t in tags) == ["Friends", "Work"]
+    assert sorted(s.get_value().entity_id for s in person.get_statements(darq.items.HAS_TAG)) == tags
+
+    # Again, the same photo's image, and tags, are found.
+    run(target, with_extras(line, "work"))
+    assert len(images) == 1
+    person = client.get(alice)
+    assert len(person.get_statements(darq.items.IMAGE)) == 1
+    assert sorted(client.instances(model.TAG_CLASS)) == tags
+    [work] = person.get_statements(darq.items.HAS_TAG)
+    assert client.get(work.get_value().entity_id).get_label() == "Work"
+
+    # A new photo's another image, which replaces it.
+    run(target, with_extras("PHOTO;ENCODING=b;TYPE=PNG:" + base64.b64encode(PNG + b"x").decode()))
+    assert len(images) == 2
+    [image] = client.get(alice).get_statements(darq.items.IMAGE)
+    assert image.get_value().entity_id == darq.split_item_id(images[1])[1]
+
+
+def test_a_photo_that_cant_be_made_is_left_out(target, monkeypatch):
+    import base64
+
+    def fail(photo):
+        raise darq.DarqError("no image type")
+
+    monkeypatch.setattr(importer, "make_image", fail)
+    result = run(target, with_extras("PHOTO;ENCODING=b;TYPE=PNG:" + base64.b64encode(PNG).decode()))
+    [alice] = find(target[0], "Alice Example")
+    assert target[0].get(alice).get_statements(darq.items.IMAGE) == []
+    assert not result.failed

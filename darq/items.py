@@ -28,8 +28,9 @@ from .kb import Datatype, Entity, EntityValue, Item, Property, Reference, String
 
 
 # Control exports
-__all__ = ["CREATED", "DATA_TYPE", "FILE_EXTENSION", "FILE_NAME", "KINDS", "MEDIA_TYPE", "Kind", "create", "destroy",
-           "is_content", "item_of", "label_for", "made", "names", "read", "rename", "vocabulary"]
+__all__ = ["CREATED", "DATA_TYPE", "DEPICTS", "FILE_EXTENSION", "FILE_NAME", "HAS_TAG", "IMAGE", "INVERSE_LABELS",
+           "KINDS", "MEDIA_TYPE", "TAG_TYPE", "Kind", "create", "destroy", "is_content", "item_of", "label_for", "made",
+           "names", "read", "rename", "tag", "vocabulary"]
 
 
 # Properties: when an item was made, in DarqOS, and the name of the file
@@ -44,6 +45,21 @@ DATA_TYPE = "public.data"
 # Wikidata's properties of a file: its media type, and its extension.
 MEDIA_TYPE = "P1163"
 FILE_EXTENSION = "P1195"
+
+# Facts about items (see doc/entity-vs-item.rst, step 6): an item's tags,
+# entities of their own kind, what a picture depicts (P180), and the
+# picture that represents something (P18), Wikidata's.
+TAG_TYPE = "darq.tag"
+HAS_TAG = "abfb41d9-3a08-440e-bcec-8e899542f45f"
+DEPICTS = "P180"
+IMAGE = "P18"
+
+# Their inverse labels, reading them backwards, from what they link to.
+INVERSE_LABELS = [
+    (HAS_TAG, "f2295096-8f72-4dbe-8c1a-116a2424c45e", "tag of"),
+    (DEPICTS, "f7524c95-4c70-4095-ae42-77521959959a", "depicted in"),
+    (IMAGE, "e07939b2-289b-4bb2-9cdd-07f0ac9c232a", "image of"),
+]
 
 # Wikidata's classes of files: text file, image file, and computer file.
 TEXT_FILE = "Q86920"
@@ -104,6 +120,26 @@ def label_for(title: str = "", file_name: str = "") -> str:
         return " ".join(title.split())
     stem = pathlib.PurePath(file_name.strip()).stem if file_name.strip() else ""
     return stem.strip()
+
+
+def tag(reader: model.KB, writer: model.KB, name: str) -> str:
+    """Return the tag with a name, ignoring case, making it if there's
+    none, and return its entity's identifier.
+
+    :param writer: The KB, written through the KB type implementation,
+                   which makes items of its kinds."""
+    name = " ".join(name.split())
+    if not name:
+        raise ValueError("A tag needs a name")
+    for entity_id in sorted(reader.find_by_label(name, "en", words=True, class_id=model.TAG_CLASS)):
+        found = reader.get(entity_id)
+        if found is not None and any(model.fold(label) == model.fold(name)
+                                     for label in [*found.labels.values(), *found.get_aliases()]):
+            return found.id
+    made = Item()
+    made.set_label(name)
+    writer.create(TAG_TYPE, made)
+    return made.id
 
 
 def item_of(kb: model.KB, entity_id: str) -> str:
@@ -231,6 +267,11 @@ def vocabulary() -> list[Entity]:
         prop(MEDIA_TYPE, "media type", Datatype.String, "IANA-registered identifier for a file type"),
         prop(FILE_EXTENSION, "file extension", Datatype.String,
              "filename suffix that indicates the format of the file's contents"),
+        prop(HAS_TAG, "has tag", Datatype.Item, "A tag on anything: an entity of its own, which lists what has it"),
+        prop(DEPICTS, "depicts", Datatype.Item, "entity visually depicted in an image, literarily described in a work, "
+             "or otherwise incorporated into an audiovisual or other medium"),
+        prop(IMAGE, "image", Datatype.Item, "image of relevant illustration of the subject"),
+        *(item(item_id, label) for _, item_id, label in INVERSE_LABELS),
         item(TEXT_FILE, "text file"),
         item(IMAGE_FILE, "image file"),
         item(COMPUTER_FILE, "computer file"),

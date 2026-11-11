@@ -40,6 +40,11 @@ Field                                             Goes on
 * ``format`` only says *paperback* or *hardcover* for some: the others,
   such as *Paper Book*, are left out.
 * HTML entities are resolved in everything.
+* ``tags`` are *has tag* links, to tags, entities of their own kind,
+  found by name, ignoring case, or made (see :doc:`kb-service`), so a
+  book's tags are shared with everything else's.  Copies imported
+  before tags were entities keep theirs as text, *tag (text, old)*,
+  until they're imported again.
 * ``summary`` is left out, as it's a citation LibraryThing makes, and
   ``awards``, ``genre``, the dimensions and weight, which
   ``physical_description`` mostly covers.

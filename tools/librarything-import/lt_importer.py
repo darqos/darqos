@@ -34,6 +34,7 @@ import uuid
 import darq
 import darq.book
 import darq.history
+import darq.items
 import darq.kb as model
 from darq.book import EXPRESSION_TYPE, ITEM_TYPE, MANIFESTATION_TYPE, WORK_TYPE, Edition
 
@@ -164,6 +165,9 @@ class Importer:
 
         # Entities of names, by kind and name.
         self.names: dict[tuple[str, str], str] = {}
+
+        # Tags, by name, folded, as they're found or made.
+        self.tags: dict[str, str] = {}
 
     def run(self) -> Result:
         self.result.records = len(self.records)
@@ -328,9 +332,17 @@ class Importer:
         made += time(darq.book.ACQUIRED, record.acquired)
         made += string(darq.book.ACQUIRED_FROM, record.acquired_from)
         made += string(darq.book.PRICE, record.price)
-        for tag in record.tags:
-            made += string(darq.book.TAG, tag)
+        for name in record.tags:
+            # A tag's an entity, found or made by its name.
+            made.append(statement(darq.items.HAS_TAG, model.EntityValue(self.tag(name))))
         return made
+
+    def tag(self, name: str) -> str:
+        """Return the tag with a name, making it if there's none."""
+        key = model.fold(" ".join(name.split()))
+        if key not in self.tags:
+            self.tags[key] = darq.items.tag(self.kb, self.items, name)
+        return self.tags[key]
 
     def levels(self) -> list[Level]:
         works = Level(WORK_TYPE)

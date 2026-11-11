@@ -206,7 +206,8 @@ OLD_COVER = "c7ef4020-e876-4650-80b5-616cd386b717"
 
 # Labels of the vocabulary that have changed, with what they were: what's
 # there's left alone by ensure, so an existing KB is told.
-RELABELLED = [(OLD_CONTENT, "file", "content (identifier, old)"),
+RELABELLED = [(TAG, "tag", "tag (text, old)"),
+              (OLD_CONTENT, "file", "content (identifier, old)"),
               (OLD_CONTENT, "content", "content (identifier, old)"),
               (OLD_COVER, "cover", "cover (identifier, old)")]
 
@@ -1172,7 +1173,8 @@ def vocabulary() -> list[Entity]:
         prop(ACQUIRED, "date acquired", Datatype.Time, "When a copy of a book was acquired"),
         prop(ACQUIRED_FROM, "acquired from", Datatype.String, "Where a copy of a book came from"),
         prop(PRICE, "price paid", Datatype.String, "What a copy of a book cost, as text"),
-        prop(TAG, "tag", Datatype.String, "A tag on a copy of a book"),
+        prop(TAG, "tag (text, old)", Datatype.String,
+             "A tag on a copy of a book, as text, before tags were entities: see has tag"),
         item(LIBRARYTHING, "LibraryThing"),
         prop(STARTED, "started reading", Datatype.Time, "When a book's text was started"),
         prop(FINISHED, "finished reading", Datatype.Time, "When a book's text was finished"),

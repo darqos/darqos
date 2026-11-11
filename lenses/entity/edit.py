@@ -23,6 +23,7 @@ from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import (QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
                              QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
 
+import darq.items
 import darq.kb as model
 from darq.protocols.kb import Kind, Linked
 from darq.ui import style
@@ -81,8 +82,13 @@ class Context(typing.Protocol):
         """Return a property's datatype, or None if it's not known."""
         ...
 
-    def search(self, text: str, kind: Kind) -> list[Linked]:
-        """Return the entities of a kind found by words of their labels."""
+    def search(self, text: str, kind: Kind, class_id: str = "") -> list[Linked]:
+        """Return the entities of a kind found by words of their labels:
+        instances of a class, if one's given."""
+        ...
+
+    def make_tag(self, name: str) -> Linked | None:
+        """Make a tag with a name, and return it, or None if it can't be."""
         ...
 
     def suggest(self) -> list[Linked]:
@@ -124,7 +130,10 @@ class Picker(QWidget):
     a kind found, to choose one from: with the arrow keys and Enter, or
     a click.
 
-    Before anything's typed, it lists the suggestions, if any."""
+    Before anything's typed, it lists the suggestions, if any.  Given a
+    class, it lists only its instances; and given a way to make one, as
+    a tag's made, it offers to make one with the name typed, if there's
+    none with that name."""
 
     def __init__(self,
                  context: Context,
@@ -133,12 +142,16 @@ class Picker(QWidget):
                  text: str = "",
                  placeholder: str = "",
                  suggestions: typing.Callable[[], list[Linked]] | None = None,
-                 parent: QWidget | None = None):
+                 parent: QWidget | None = None,
+                 class_id: str = "",
+                 make: tuple[str, typing.Callable[[str], Linked | None]] | None = None):
         super().__init__(parent)
         self.context = context
         self.kind = kind
         self.on_choose = on_choose
         self.suggestions = suggestions
+        self.class_id = class_id
+        self.make = make
         self.found: list[Linked] = []
 
         layout = QVBoxLayout(self)
@@ -179,7 +192,11 @@ class Picker(QWidget):
         if not text:
             self.show_choices(self.suggestions() if self.suggestions is not None else [])
             return
-        self.show_choices(rank(self.context.search(text, self.kind), text)[:MAX_CHOICES])
+        found = rank(self.context.search(text, self.kind, self.class_id), text)[:MAX_CHOICES]
+        if self.make is not None and not any(model.fold(link.label) == model.fold(text) for link in found):
+            # Offered last: what there is first.
+            found.append(Linked(entity_id="", label=f'{self.make[0]} "{" ".join(text.split())}"'))
+        self.show_choices(found)
 
     def show_choices(self, found: list[Linked]):
         self.found = found
@@ -208,6 +225,13 @@ class Picker(QWidget):
         if not 0 <= row < len(self.found):
             return False
         link = self.found[row]
+        if not link.entity_id and self.make is not None:
+            made = self.make[1](" ".join(self.line.text().split()))
+            if made is None:
+                self.hint.setText("Can't make it")
+                self.hint.show()
+                return False
+            link = made
         self.choices.hide()
         self.line.setText(link.label or link.entity_id)
         self.on_choose(link)
@@ -215,9 +239,11 @@ class Picker(QWidget):
 
     def accept(self) -> bool:
         """Choose the entity selected, if the text's been changed."""
+        self.hint.hide()
         if not self.choose(self.choices.currentRow() if self.choices.isVisible() else -1):
-            self.hint.setText("Choose one from the list")
-            self.hint.show()
+            if self.hint.isHidden():
+                self.hint.setText("Choose one from the list")
+                self.hint.show()
             return False
         return True
 
@@ -248,7 +274,9 @@ class ValueEditor(QWidget):
                  value: model.Value | None,
                  on_value: typing.Callable[[model.Value], typing.Any],
                  placeholder: str = "",
-                 parent: QWidget | None = None):
+                 parent: QWidget | None = None,
+                 class_id: str = "",
+                 make: tuple[str, typing.Callable[[str], Linked | None]] | None = None):
         super().__init__(parent)
         self.context = context
         self.datatype = datatype
@@ -262,7 +290,8 @@ class ValueEditor(QWidget):
         self.picker: Picker | None = None
         if datatype in (model.Datatype.Item, model.Datatype.Property):
             kind = Kind.PROPERTY if datatype == model.Datatype.Property else Kind.ITEM
-            self.picker = Picker(context, kind, self.chosen, self.initial, placeholder, parent=self)
+            self.picker = Picker(context, kind, self.chosen, self.initial, placeholder, parent=self,
+                                 class_id=class_id, make=make)
             self.line = self.picker.line
             self.line.editingFinished.connect(self.left)
             layout.addWidget(self.picker)
@@ -357,6 +386,10 @@ def editor(context: Context, property_id: str, value: model.Value | None,
         label = QLabel("" if value is None else text_of(value, context), parent)
         label.setToolTip(f"{property_id} isn't known: its values can't be edited")
         return label
+    if property_id == darq.items.HAS_TAG:
+        # A tag's chosen from the tags, or made, by its name.
+        return ValueEditor(context, datatype, value, on_value, "tag", parent, class_id=model.TAG_CLASS,
+                           make=("New tag", context.make_tag))
     return ValueEditor(context, datatype, value, on_value, "value", parent)
 
 

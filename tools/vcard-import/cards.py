@@ -12,9 +12,16 @@ Each is a Draft, with a temporary identifier, derived from its key, so
 cards that refer to the same thing share it; and with its natural key,
 by which the importer (importer.py) finds it in the KB, if it's there.
 Statements refer to drafts by their temporary identifiers, and to the
-vocabulary by its own."""
+vocabulary by its own.
 
+A person's photo and categories are kept with its draft, for the
+importer: the photo's made an image item, and each category a tag."""
+
+import base64
+import binascii
 import collections
+import dataclasses
+import hashlib
 import re
 
 from typing import Counter, Dict, List, Optional, Set, Tuple
@@ -33,10 +40,10 @@ HANDLED = {
     "X-ABDATE", "X-ABRELATEDNAMES", "TEL", "EMAIL", "URL", "IMPP", "X-AIM",
     "X-JABBER", "X-YAHOO", "X-MS-IMADDRESS", "X-SOCIALPROFILE", "ADR",
     "NOTE", "X-ABADR", "X-ABLABEL", "X-ABSHOWAS", "X-ADDRESSBOOKSERVER-KIND",
-    "X-ADDRESSBOOKSERVER-MEMBER",
+    "X-ADDRESSBOOKSERVER-MEMBER", "PHOTO", "CATEGORIES",
 }
 IGNORED = {
-    "VERSION", "PRODID", "REV", "CATEGORIES", "PHOTO", "X-IMAGETYPE",
+    "VERSION", "PRODID", "REV", "X-IMAGETYPE",
     "X-IMAGEHASH", "X-SHARED-PHOTO-DISPLAY-PREF", "X-ADDRESSING-GRAMMAR",
     "CREATED", "X-CREATED", "X-BUSYMAC-MODIFIED-BY", "MAILER", "CLASS",
     "X-ACTIVITY-ALERT",
@@ -67,6 +74,51 @@ DATE = re.compile(r"(\d{4})-?(\d{2})-?(\d{2})")
 # Apple's placeholder year, for a date without one.
 NO_YEAR = 1604
 
+# Media types, by a PHOTO's TYPE, and by the bytes a format starts with.
+PHOTO_TYPES = {"JPEG": "image/jpeg", "JPG": "image/jpeg", "PNG": "image/png", "GIF": "image/gif",
+               "WEBP": "image/webp", "HEIC": "image/heic", "TIFF": "image/tiff", "BMP": "image/bmp"}
+MAGIC = [(b"\xff\xd8\xff", "image/jpeg"), (b"\x89PNG\r\n\x1a\n", "image/png"), (b"GIF8", "image/gif"),
+         (b"II*\x00", "image/tiff"), (b"MM\x00*", "image/tiff"), (b"BM", "image/bmp")]
+
+# A data URI: its media type, and whether it's base64.
+DATA_URI = re.compile(r"data:([^;,]*)((?:;[^;,]*)*),(.*)", re.DOTALL)
+
+
+@dataclasses.dataclass(frozen=True)
+class Photo:
+    """A card's photo: its bytes, their media type, and SHA-256, in hex,
+    by which an earlier import's image is found again."""
+    data: bytes
+    media_type: str
+    sha256: str
+
+
+def photo(p: vcard.Property) -> Optional[Photo]:
+    """Return a PHOTO's photo, if it's in the card, as base64 or a data
+    URI: None if it's a link, or can't be read."""
+    text = "".join(p.text().split())
+    media_type = next((PHOTO_TYPES[t] for t in sorted(p.types()) if t in PHOTO_TYPES), "")
+    try:
+        match = DATA_URI.fullmatch(text)
+        if match is not None:
+            if ";base64" not in match.group(2).lower():
+                return None
+            media_type = match.group(1).lower() or media_type
+            data = base64.b64decode(match.group(3), validate=True)
+        elif (p.param("ENCODING") or "").upper() in ("B", "BASE64"):
+            data = base64.b64decode(text, validate=True)
+        else:
+            return None
+    except (binascii.Error, ValueError):
+        return None
+    sniffed = next((m for magic, m in MAGIC if data.startswith(magic)), "")
+    if data[8:12] == b"WEBP" and data.startswith(b"RIFF"):
+        sniffed = "image/webp"
+    media_type = sniffed or media_type
+    if not data or not media_type.startswith("image/"):
+        return None
+    return Photo(data, media_type, hashlib.sha256(data).hexdigest())
+
 
 class Draft:
     """An entity read from cards, to be found or created in the KB.
@@ -96,6 +148,10 @@ class Draft:
 
         # The UIDs of the cards it's from, or that refer to it.
         self.cards: Set[str] = set()
+
+        # A person's photo, and its categories, the names of its tags.
+        self.photo: Optional[Photo] = None
+        self.tags: List[str] = []
 
     def key(self) -> str:
         """Its natural key, as text, for logging matches."""
@@ -225,6 +281,7 @@ class Importer:
             self.uids_of[entity.get_id()] = uid
 
         self.contacts(card, entity, show_as == "company")
+        self.extras(card, entity)
 
         for p in card.properties:
             if p.name not in HANDLED and p.name not in IGNORED:
@@ -396,6 +453,21 @@ class Importer:
             note = p.text().strip()
             if note:
                 entity.claim(wd.note, TextValue(note))
+
+    def extras(self, card: vcard.Card, entity: Item):
+        """Keep a card's photo, and its categories, with its draft."""
+        draft = self.drafts[entity.get_id()]
+        for p in card.all("PHOTO"):
+            found = photo(p)
+            if found is None:
+                self.unmapped["photo not in the card"] += 1
+            elif draft.photo is None:
+                draft.photo = found
+        for p in card.all("CATEGORIES"):
+            for name in p.values():
+                name = " ".join(name.split())
+                if name and fold(name) not in {fold(t) for t in draft.tags}:
+                    draft.tags.append(name)
 
     def claim(self,
               card: vcard.Card,

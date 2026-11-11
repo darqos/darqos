@@ -90,6 +90,13 @@
       "description": "A copy of a book, on a shelf or as a file, in the Knowledge Base.",
       "conforms_to": ["darq.entity"],
       "implemented": true
+    },
+    {
+      "id": "darq.tag",
+      "name": "Tag",
+      "description": "A tag, which anything can have: its page lists what has it.",
+      "conforms_to": ["darq.entity"],
+      "implemented": true
     }
   ]
 }

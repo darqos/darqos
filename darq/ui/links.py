@@ -43,6 +43,7 @@ TYPE_NAMES = {
     "darq.book.expression": ("Text", "Texts"),
     "darq.book.manifestation": ("Edition", "Editions"),
     "darq.book.item": ("Copy", "Copies"),
+    "darq.tag": ("Tag", "Tags"),
     **{kind: (k.name, k.plural) for kind, k in darq.items.KINDS.items()},
 }
 

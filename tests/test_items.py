@@ -203,3 +203,55 @@ def test_the_kb_type_implementation_ensures_the_vocabulary(implementation, kb): 
     created = kb.get(items.CREATED)
     assert isinstance(created, model.Property) and created.get_label() == "created"
     assert kb.get(items.IMAGE_FILE).get_label() == "image file"
+
+
+################################################################
+# Tags, depicts and image
+################################################################
+
+@pytest.fixture
+def tags(kb, implementation):  # noqa: F811
+    """The KB, to read, and written through the KB type implementation."""
+    from test_kb_type import Writer
+    return kb, model.KB(kb.client, Writer(implementation))
+
+
+def test_a_tag_is_made_once(tags):
+    reader, writer = tags
+    made = items.tag(reader, writer, "  To   read ")
+    tag = reader.get(made)
+    assert tag is not None and tag.get_label() == "To read"
+    assert model.kind_of(tag, reader.get) == items.TAG_TYPE
+    assert list(reader.instances(model.TAG_CLASS)) == [made]
+
+    # Found again by its name, whatever its case, or an alias.
+    assert items.tag(reader, writer, "to READ") == made
+    tag.add_alias("Reading list")
+    writer.put(tag)
+    assert items.tag(reader, writer, "reading list") == made
+    assert items.tag(reader, writer, "To") != made
+
+
+def test_a_tag_needs_a_name(tags):
+    with pytest.raises(ValueError):
+        items.tag(tags[0], tags[1], "   ")
+
+
+def test_tags_depicts_and_image_are_in_the_vocabulary(store):
+    for property_id, label in [(items.HAS_TAG, "has tag"), (items.DEPICTS, "depicts"), (items.IMAGE, "image")]:
+        found = store.get(property_id)
+        assert found is not None and found.get_label() == label
+        assert found.datatype == model.Datatype.Item
+    assert store.get(model.TAG_CLASS).get_label() == "tag"
+    assert links.type_name("darq.tag", 2) == "Tags"
+    for _, inverse, label in items.INVERSE_LABELS:
+        assert store.get(inverse).get_label() == label
+
+
+def test_what_has_a_tag_links_to_it(store, tags):
+    reader, writer = tags
+    made = items.tag(reader, writer, "Fiction")
+    book = items.create(store, "public.jpeg", KEY, label="Cover")
+    book.claim(items.HAS_TAG, model.EntityValue(made))
+    writer.put(book)
+    assert [(p, t, n) for p, _, t, n in store.link_counts(made)] == [(items.HAS_TAG, "public.jpeg", 1)]

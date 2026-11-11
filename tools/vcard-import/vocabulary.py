@@ -19,6 +19,7 @@ Wikidata on 2026-10-30."""
 
 from typing import Dict, List, Optional, Set, Tuple
 
+import darq.url
 from darq.kb import Datatype, Entity, EntityValue, Item, Property
 
 
@@ -192,7 +193,7 @@ class Vocabulary:
         # (see darq.kb.restate).
         self.qualifiers = frozenset({
             self.label, self.contact_type, self.service, self.department,
-            self.job_title, self.series_ordinal})
+            self.job_title, self.series_ordinal, darq.url.HASH})
 
         # Properties linking an entity to its addresses.
         self.addresses = (self.residence, self.work_location,

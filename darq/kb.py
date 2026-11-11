@@ -958,6 +958,10 @@ ENTITY_TYPE = "darq.entity"
 # ones.
 CONVERSATION = "4b73743b-b6d3-4091-9afc-71bcbc69d0e1"
 
+# The class of tags, a local one: what's tagged with one links to it (see
+# darq.items.HAS_TAG).
+TAG_CLASS = "2dd4c81c-0508-42f4-b861-952340702cbf"
+
 # Instant message, and URL.
 INSTANT_MESSAGE = "Q30070565"
 URL_CLASS = "Q42253"
@@ -985,6 +989,7 @@ KINDS = [
     ("darq.book.expression", EXPRESSION_CLASS),
     ("darq.book.manifestation", MANIFESTATION_CLASS),
     ("darq.book.item", COPY_CLASS),
+    ("darq.tag", TAG_CLASS),
 ]
 
 KIND_TYPES = [ENTITY_TYPE] + [kind for kind, _ in KINDS]
@@ -1008,6 +1013,7 @@ DEFAULT_INSTANCE_TYPES = [
     (EXPRESSION_CLASS, "expression", "darq.book.expression"),
     (MANIFESTATION_CLASS, "manifestation", "darq.book.manifestation"),
     (COPY_CLASS, "individual copy of a book", "darq.book.item"),
+    (TAG_CLASS, "tag", "darq.tag"),
 ]
 
 # Most classes searched for an entity's kind.

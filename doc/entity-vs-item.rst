@@ -368,10 +368,14 @@ measured, and documented as it's built.
    ``app_id`` (see :doc:`terminal`).  The entity lens is registered for
    ``public.item``, so an item with no lens of its own, as data, opens
    its page.
-6. **Facts about items.**  *Depicts* (P180) on an image's entity, and
-   the vCard import's PHOTO as image items, linked from their people, as
-   *image* (P18).  Tags as statements, *has tag*, brought forward from
-   Third Edition's Metadata question.
+6. **Facts about items** (built).  *Depicts* (P180) on an image's
+   entity, added on its page, and *image* (P18), which the vCard import
+   links its people to their photos with, made image items.  Tags are
+   entities of their own kind, ``darq.tag``, linked with *has tag*,
+   whose page lists what has them: the entity editor's picker makes a
+   new one by name, and the vCard and LibraryThing imports find or make
+   theirs (``darq.items.tag``).  The three have inverse labels, *depicted
+   in*, *image of* and *tag of*.
 7. **What it replaces.**  The Item identifier datatype's design, in the
    plan doc, and the Metadata service, in Third Edition (see
    :doc:`metadata`): names and tags are statements, and view state is

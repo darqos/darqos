@@ -13,6 +13,7 @@ import sys
 import pytest
 
 import darq
+import darq.items
 import darq.kb as model
 import darq.message
 import darq.url
@@ -257,6 +258,7 @@ class World:
             "P1329": ("phone number", model.Datatype.String),
             "P551": ("residence", model.Datatype.Item),
             "P248": ("stated in", model.Datatype.Item),
+            darq.items.HAS_TAG: ("has tag", model.Datatype.Item),
             model.START_TIME: ("start time", model.Datatype.Time),
             model.END_TIME: ("end time", model.Datatype.Time),
             model.REASON_FOR_DEPRECATED_RANK: ("reason for deprecated rank", model.Datatype.Item),
@@ -328,7 +330,9 @@ class FakeItem:
         if kind == Kind.PROPERTY:
             ids = [p for p, (label, _) in self.world.properties.items() if matches(label)]
         else:
-            ids = [e.id for e in self.world.entities.values() if matches(e.get_label() or "")]
+            # Only tags are found as instances of a class.
+            ids = [e.id for i, e in self.world.entities.items() if matches(e.get_label() or "")
+                   and (class_id != model.TAG_CLASS or i.startswith("darq.tag:"))]
         return FindEntitiesResponse(found=[self.world.linked(i) for i in sorted(ids)], status=wire.Status.OK)
 
     def suggest_properties(self, languages, max):
@@ -1025,3 +1029,82 @@ def test_entity_lens(live_pkernel, tmp_path):  # noqa: F811
     [lens_process] = [p for p in kernel._process_table.values() if p._image_path == str(LENS_PATH)]
     run_kernel_until(kernel, lambda: lens_process.get_status() == zombie, "the lens to exit")
     assert (lens_process.get_exit_status(), lens_process.get_exit_error()) == (0, None)
+
+
+def add_tag_statement(window, qt_app):
+    """Start a has tag statement, and return its value's editor."""
+    window.form.pick_statement()
+    settle(qt_app)
+    picker = window.form.start_picker
+    picker.line.setText("has tag")
+    picker.search()
+    assert picker.accept()
+    settle(qt_app)
+    return window.form.editors["new-statement:0"]
+
+
+def test_a_tag_is_chosen_from_the_tags(editing, world, qt_app):
+    world.add("darq.tag:fiction", "Fiction")
+    tag = add_tag_statement(editing, qt_app)
+    tag.picker.line.setText("fic")
+    tag.picker.search()
+    assert [(link.entity_id, link.label) for link in tag.picker.found] == [("fiction", "Fiction"),
+                                                                           ("", 'New tag "fic"')]
+    # Ada's found by "a", but she's not a tag.
+    tag.picker.line.setText("fiction")
+    tag.picker.search()
+    assert [link.entity_id for link in tag.picker.found] == ["fiction"]
+    assert tag.picker.accept()
+    settle(qt_app)
+    [made] = world.entities[ADA].get_statements(darq.items.HAS_TAG)
+    assert made.get_value().get_id() == "fiction"
+
+
+def test_a_new_tag_is_made(editing, entity_lens, world, qt_app):
+    made = []
+
+    def make(name, language):
+        made.append((name, language))
+        world.add("darq.tag:reading", name)
+        return Linked("reading", "darq.tag:reading", language, name)
+
+    entity_lens.tag_maker = make
+    tag = add_tag_statement(editing, qt_app)
+    tag.picker.line.setText("  To   read ")
+    tag.picker.search()
+    assert [link.label for link in tag.picker.found] == ['New tag "To read"']
+    assert tag.picker.accept()
+    settle(qt_app)
+    assert made == [("To read", editing.language)]
+    [tagged] = world.entities[ADA].get_statements(darq.items.HAS_TAG)
+    assert tagged.get_value().get_id() == "reading"
+
+
+def test_a_tag_that_cant_be_made(editing, entity_lens, world, qt_app):
+    def fail(name, language):
+        raise darq.DarqError("no KB")
+
+    entity_lens.tag_maker = fail
+    tag = add_tag_statement(editing, qt_app)
+    tag.picker.line.setText("later")
+    tag.picker.search()
+    assert not tag.picker.accept()
+    assert tag.picker.hint.text() == "Can't make it"
+    assert "Can't make a tag 'later': no KB" in editing.status.text()
+    assert world.entities[ADA].get_statements(darq.items.HAS_TAG) == []
+
+
+def test_making_a_tag_names_it(world, monkeypatch):
+    """A tag's created by the KB type implementation, and named through
+    its port, which is closed."""
+    world.add("darq.tag:t1", "")
+    created, closed = [], []
+    monkeypatch.setattr(lens.darq.launch, "create_item",
+                        lambda type_id: created.append(type_id) or ("darq.tag:t1", 77))
+    monkeypatch.setattr(lens.darq, "close_port", closed.append)
+    monkeypatch.setattr(lens.EntityItem, "Client", lambda port, timeout=None: FakeItem(world, port))
+    world.ports[77] = "darq.tag:t1"
+    made = lens.make_tag(" To  read ", "en")
+    assert created == [darq.items.TAG_TYPE] and closed == [77]
+    assert (made.entity_id, made.item_id, made.label) == ("t1", "darq.tag:t1", "To read")
+    assert world.entities["darq.tag:t1"].get_label() == "To read"

@@ -22,6 +22,10 @@
      - ``types/kb``
      - 2nd
      - Kinds, with ``lenses/book``: see :doc:`book`
+   * - ``darq.tag``
+     - ``types/kb``
+     - 2nd
+     - A kind, shown by the entity lens: see :doc:`kb-service`
    * - ``darq.ebook``
 
        ``darq.book.epub``

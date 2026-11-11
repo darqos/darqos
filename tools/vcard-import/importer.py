@@ -27,6 +27,12 @@ An address is found by where the earlier import led only if it's the
 same address: one that's changed is another address, so the old one can
 be kept, with the dates it was lived at.
 
+Between steps 2 and 3, a person's photo is made an image item, with
+CreateFrom, which the person links to as its image (P18), qualified by
+its SHA-256, so a later import finds it again rather than making another;
+and its categories are linked to as its tags, found or made by name (see
+darq.items.tag).
+
 A draft that fails is skipped, and its cards' UIDs logged; the import
 goes on.  Nothing is logged of a card but its UID, except for what's to
 be reviewed: matches by natural key, logged with their keys, and
@@ -38,7 +44,10 @@ import typing
 
 import darq
 import darq.history
+import darq.items
 import darq.kb as model
+import darq.launch
+import darq.url
 from darq.protocols.kb import EntityItem
 from darq.protocols.type import Implementation
 from darq.protocols.type import Status as TypeStatus
@@ -54,6 +63,23 @@ SOURCE = "vcard-import"
 
 # Entities read and written in each request.
 BATCH = 200
+
+# The image types, by media type, that a photo's made an item of.
+IMAGE_TYPES = {"image/jpeg": "public.jpeg", "image/png": "public.png", "image/gif": "com.compuserve.gif",
+               "image/webp": "org.webmproject.webp", "image/tiff": "public.tiff", "image/bmp": "com.microsoft.bmp",
+               "image/heic": "public.heic", "image/heif": "public.heif"}
+
+
+def make_image(photo: cards.Photo) -> str:
+    """Make an image item from a photo, and return its identifier.
+
+    :raises darq.DarqError: if it can't be made."""
+    type_id = IMAGE_TYPES.get(photo.media_type)
+    if type_id is None:
+        raise darq.DarqError(f"{photo.media_type} isn't an image type")
+    item_id, port = darq.launch.create_item_from(type_id, photo.data, media_type=photo.media_type)
+    darq.close_port(port)
+    return item_id
 
 # The order drafts are matched by natural key: a department's parent,
 # and an address's locality, before them.
@@ -215,6 +241,7 @@ class Import:
         self.drafts = drafts
         self.vocabulary()
         self.resolve(drafts)
+        self.extras(drafts)
         self.fill(drafts)
         self.clean_up()
         return self.result
@@ -436,6 +463,52 @@ class Import:
                 continue
             result.append(model.Statement(main, [q for q in qualifiers if q is not None], s.references, s.rank))
         return result
+
+    def extras(self, drafts: dict[str, cards.Draft]):
+        """State each person's tags, and photo, found or made."""
+        tags: dict[str, str] = {}
+        with_extras = [d for d in drafts.values() if d.entity.id in self.real and (d.tags or d.photo)]
+        for n, draft in enumerate(with_extras):
+            self.progress("Tags and photos", n, len(with_extras))
+            for name in draft.tags:
+                key = model.fold(name)
+                try:
+                    if key not in tags:
+                        tags[key] = darq.items.tag(self.kb, self.items, name)
+                except (darq.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError) as e:
+                    log.warning(f"Can't make a tag for card {min(draft.cards, default='')}: {e}")
+                    continue
+                draft.entity.claim(darq.items.HAS_TAG, model.EntityValue(tags[key]))
+            if draft.photo is not None:
+                image = self.image(draft, draft.photo)
+                if image:
+                    s = draft.entity.claim(darq.items.IMAGE, model.EntityValue(image))
+                    s.add_qualifier(darq.url.HASH, model.StringValue(draft.photo.sha256))
+        self.cache.clear()
+
+    def image(self, draft: cards.Draft, photo: cards.Photo) -> str:
+        """Return the entity of a person's photo: what an earlier import
+        made of it, if the person still links to it, or else one made now;
+        or "" if it can't be made."""
+        entity = self.get(self.real[draft.entity.id])
+        for s in entity.get_statements(darq.items.IMAGE) if entity is not None else []:
+            value = s.get_value()
+            if isinstance(value, model.EntityValue) and any(
+                    q.property_id == darq.url.HASH and isinstance(q.value, model.StringValue)
+                    and q.value.value == photo.sha256
+                    for q in s.qualifiers):
+                return value.entity_id
+        try:
+            item_id = make_image(photo)
+        except (darq.DarqError, TimeoutError) as e:
+            log.warning(f"Can't make an image of card {min(draft.cards, default='')}'s photo: {e}")
+            return ""
+        if self.history is not None:
+            try:
+                self.history.add_event(item_id=item_id, event=darq.history.CREATED, source=SOURCE)
+            except darq.DarqError as e:
+                log.warning(f"Can't record created for {item_id}: {e!r}")
+        return darq.split_item_id(item_id)[1]
 
     def fill(self, drafts: dict[str, cards.Draft]):
         """Replace each entity's statements from the address book with its

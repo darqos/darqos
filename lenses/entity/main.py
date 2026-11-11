@@ -48,6 +48,7 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QInputDialog, QLabel, QM
 
 import darq
 import darq.history
+import darq.items
 import darq.merging
 import darq.ui.kb_writer
 import darq.kb as model
@@ -448,10 +449,10 @@ class EntityWindow(QWidget):
             self.shown.linked.update((link.entity_id, link) for link in links)
         return links
 
-    def search(self, text: str, kind: Kind) -> list[Linked]:
+    def search(self, text: str, kind: Kind, class_id: str = "") -> list[Linked]:
         assert self.shown is not None
         try:
-            response = self.shown.client.find_entities(text=text, languages=self.chain, kind=kind, class_id="",
+            response = self.shown.client.find_entities(text=text, languages=self.chain, kind=kind, class_id=class_id,
                                                        max=MAX_FOUND, after="")
         except (darq.DarqError, TimeoutError) as e:
             self.show_status(f"Can't search: {e}")
@@ -460,6 +461,16 @@ class EntityWindow(QWidget):
             self.show_status(f"Can't search: {response.status.name}")
             return []
         return self.found(response.found)
+
+    def make_tag(self, name: str) -> Linked | None:
+        """Make a tag, an item of darq.tag, with a name, through the KB type
+        implementation, and return it, or None, saying why, if it can't be
+        made."""
+        try:
+            return self.lens.tag_maker(name, self.language)
+        except (darq.DarqError, TimeoutError, ValueError) as e:
+            self.show_status(f"Can't make a tag {name!r}: {e}")
+            return None
 
     def suggest(self) -> list[Linked]:
         assert self.shown is not None
@@ -989,6 +1000,28 @@ class LensServices:
         self.history = history
 
 
+def make_tag(name: str, language: str) -> Linked:
+    """Make a tag with a name, through darq.launch, which has the KB type
+    implementation create its item: it's named through its port.
+
+    :raises darq.DarqError: if it can't be made."""
+    name = " ".join(name.split())
+    if not name:
+        raise ValueError("a tag needs a name")
+    item_id, port = darq.launch.create_item(darq.items.TAG_TYPE)
+    try:
+        item = EntityItem.Client(port, timeout=TIMEOUT)
+        got = item.get_entity(languages=[language])
+        entity = model.entity_from_wire(got.entity)
+        entity.set_label(name, language)
+        if item.put_entity(model.entity_to_wire(entity)).status != KBStatus.OK:
+            raise darq.DarqError("the KB didn't take its name")
+        item.close()
+    finally:
+        darq.close_port(port)
+    return Linked(entity_id=entity.id, item_id=item_id, language=language, label=name)
+
+
 class EntityLens(LensHandler):
     """Answers the Lens protocol: uses one item, in a window, and is the
     Launcher's host, for items opened in new windows."""
@@ -1013,6 +1046,9 @@ class EntityLens(LensHandler):
         # How the KB's reached, for merging, on another thread, and what's
         # asked: tests replace these.
         self.connect_kb: typing.Callable[[], model.KB] = lambda: model.KB.connect(timeout=TIMEOUT)
+
+        # Makes a tag, for the editor's picker: tests replace it.
+        self.tag_maker: typing.Callable[[str, str], Linked] = make_tag
         self.items: typing.Callable[[model.KB], model.KB] = darq.ui.kb_writer.writer
         self.ask_text: typing.Callable[[str, str], str] = self.ask_for_text
         self.confirm: typing.Callable[[str], bool] = self.ask_to_confirm

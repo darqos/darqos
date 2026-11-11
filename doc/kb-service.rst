@@ -515,6 +515,9 @@ Type                           Entities
                                ``public.message``.
 ``public.url``                 Places on the web (see :doc:`url-type`),
                                with what's been fetched from them.
+``darq.tag``                   Tags, which anything can have, by *has
+                               tag*: a tag's page lists what has it,
+                               as *tag of*.
 =============================  =======================================
 
 The others conform to ``darq.entity``.  ``darq.entity`` doesn't
@@ -582,8 +585,10 @@ data in the KB, rather than code.  An entity's kind is the first of
 4. ``darq.organisation``,
 5. ``darq.group``,
 6. ``darq.conversation``,
-7. ``darq.message``, and
-8. ``public.url``
+7. ``darq.message``,
+8. ``public.url``,
+9. the book's four kinds (see :doc:`book`), and
+10. ``darq.tag``
 
 that any of its classes, or of their superclasses, by subclass of
 (P279), has as its instance type, or else ``darq.entity``.  Place comes
@@ -799,6 +804,10 @@ statements, DarqOS type, aren't shown, as they can't be changed.
   it's typed in (``FindEntities``), listing the best matches first,
   and the suggested properties before anything's typed.  Up, Down and
   Enter choose from the list.
+* A *has tag* value is chosen from the tags only, and if none has the
+  name typed, the list ends with *New tag "…"*, which makes one: an
+  item of ``darq.tag``, created by the KB type implementation, and
+  named in the language being edited.
 * Times are typed as they're said: 2024, June 2024, 30 June 2024,
   June 30, 2024, 30/6/2024 (day first), 1970s, or an ISO 8601 time,
   with "about" for ± 1 of the unit, and BCE.  The precision is what's
@@ -897,16 +906,18 @@ about them.
 Other Items
 ~~~~~~~~~~~
 
-KB statements refer to other DarqOS items with Item identifier values:
-a person's photo is an image item, and their emails, papers, and
-commits can be linked to them.  Other items refer to KB entities by
-their item identifiers.
+Every item has an entity (see :doc:`entity-vs-item`), so KB statements
+link to other DarqOS items as they link to anything: a person's photo
+is an image item, their *image* (P18), and their emails, papers, and
+commits can be linked to them.
 
 An entity's name is its label, in the KB, rather than in the Metadata
-service (see :doc:`metadata`).  That service is deferred to Third
-Edition, and may not be needed: tags, too, could be KB statements
-(*has tag*), leaving it only what isn't knowledge, such as view
-positions.
+service (see :doc:`metadata`), and its tags are statements too, *has
+tag*, linking to tags, entities of their own kind, ``darq.tag``.  An
+image says who and what's in it with *depicts* (P180), so a person's
+page lists the pictures they're in, as *depicted in*.  That leaves the
+Metadata service, deferred to Third Edition, only what isn't
+knowledge, such as view positions.
 
 Importing a vCard file is something done with a ``public.vcard`` item,
 by a tool or lens for it, which creates KB items.
@@ -1002,6 +1013,16 @@ The import is:
    entity whose address, by property and label, was replaced with
    another is noted, as an *address changed*, for its old address's end
    time and the new one's start time to be added.
+
+   Before they're written, a person's categories (``CATEGORIES``) become
+   *has tag* links, to tags found by name, ignoring case, or made (see
+   ``darq.items.tag``); and their photo (``PHOTO``), if it's in the
+   card, as base64 or a ``data:`` URI, becomes an image item, made with
+   the image type's ``CreateFrom``, recorded in History, and linked as
+   their *image* (P18), qualified by its SHA-256 (``darq.url.HASH``).
+   A re-import finds the image by its hash, rather than making another;
+   a new photo is another image, which replaces it.  A photo that's
+   only a link isn't fetched, and is counted as unmapped.
 4. Entities with statements from the address book, that it no longer
    has, lose them, and are destroyed if they've nothing left but their
    kind and classes.  An entity something else will still link to is
