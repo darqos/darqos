@@ -70,7 +70,8 @@ Not Yet
 ~~~~~~~
 
 * Undo and redo, and a cursor and mark, are the lens's.  A saved
-  cursor position belongs in the Metadata service.
+  cursor position is view state, kept in the item, as a reader's
+  position is (see :doc:`book`).
 * Clients aren't told of others' changes: they find out from a
   `CONFLICT`, or by asking for the version.
 * Once started, the implementation keeps running.  It could exit once
@@ -92,12 +93,9 @@ Not Yet
   ``viewed``, and ``edited`` when a change is saved, from the lens it was
   made through, which names itself with ``Viewed``.  The History service
   counts repeated events.
-* What Metadata is recorded?
-
-  * Things like the current cursor position within the text, the
-    screen position of the Lens, perhaps the creation and modification
-    timestamps? could all be recorded using the Metadata service.
-  * The real question is how and by what would they be used?
+* What's known of an item, its name and when it was made, is on its
+  entity (see :doc:`entity-vs-item`), and when it was changed, in
+  History.
 
     * They don't belong in the content: that should just be the
       characters of the text item themselves.
@@ -202,7 +200,7 @@ Not yet:
 * Paragraph movement.
 * A rectangular, graphical selection, and copying the item identifier.
 * A usage document, from the help.
-* Saving the cursor and window position, in the Metadata service.
+* Saving the cursor and window position, in the item.
 * Telling the lens of others' changes as they're made, rather than at
   its next change.
 * Each keystroke is a synchronous `Replace`, so a slow item stalls

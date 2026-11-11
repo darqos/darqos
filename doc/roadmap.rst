@@ -176,11 +176,6 @@ Services
 
   * Key-value blob store
 
-* Metadata
-
-  * Moved to Third Edition, if it's needed at all: the Knowledge Base
-    may do instead, with statements such as *has tag*)
-
 * Index  (DONE)
 
   * Submit text to for indexing
@@ -578,27 +573,6 @@ Services
   * Support for web browser, basically
   * Part of Security service?
 
-* Metadata (moved from First Edition)
-
-  * Is it needed at all?  The Knowledge Base may do instead, with
-    statements such as *has tag* (see :doc:`entity-vs-item`), leaving
-    only what isn't knowledge, such as view positions, which could be
-    kept by each type implementation.
-  * Two-level key?
-
-    * item_id / item_key
-
-  * Typed data
-
-    * Numbers, strings
-    * Lists (?)
-
-  * Where to store?
-
-    * blob?
-    * sqlite?
-    * other?
-
 * Diff / Merge
 
   * Add support to existing types for diff and merge operations
@@ -816,7 +790,7 @@ Services
 * Mail
 
   * IMAP, SMTP, JMAP, Exchange, etc, service
-  * Index, Metadata, Notification, and History providers
+  * Index, Knowledge Base, Notification, and History providers
 
     * Maybe Storage as well?
 
@@ -831,7 +805,7 @@ Services
 
   * Interface to external services: GChat, Slack, Discord, WhatsApp,
     Signal, etc
-  * Index, Metadata, Notification, and History providers
+  * Index, Knowledge Base, Notification, and History providers
 
     * Maybe Storage as well?
 

@@ -69,13 +69,18 @@ Content type.
 
 For more information on UTIs, see :doc:`types`.
 
-Item Metadata
--------------
+Facts About an Item
+-------------------
 
-The :doc:`Metadata Service <metadata>` can be used to store additional
-information about items.  This includes things like a canonical,
-human-oriented name for the item, any tags the operator
-might associate with it, etc.
+Every item is an entity in the Knowledge Base (see
+:doc:`entity-vs-item`), so what's known of it is said there: its
+name, a label, in any language; its kind; when it was made; its tags
+(*has tag*); and, for a picture, who and what it depicts.  Its entity
+links to other items as to any entity, and is edited on its page, in
+the entity lens (*Sys-i*).  What happened to it is in History.
+
+What isn't knowledge, such as where a reader's got to, is view state,
+kept by its type in the item.
 
 Item Storage
 ------------

@@ -57,10 +57,6 @@ URL                       A URL, such as a website or a ``mailto:``
                           address.
 External identifier       An identifier in another system, such as a
                           vCard UID.
-Item identifier           A DarqOS item identifier (see :doc:`item`),
-                          linking the KB to the rest of the system.
-                          This one isn't implemented yet: see
-                          :doc:`entity-vs-item`.
 ========================  ============================================
 
 An item's classes are given by *instance of* (P31) statements, and
@@ -465,8 +461,8 @@ Types
 DarqOS types and KB classes are different things:
 
 * An item has one type, which is part of its item identifier, and so
-  can't change: History, Index, and Metadata all refer to items by
-  their identifiers.  An entity can be an instance of several classes
+  can't change: History and the Index refer to items by their
+  identifiers.  An entity can be an instance of several classes
   (Hong Kong is a city, and a special administrative region of China),
   and its classes can change, as when a stub person turns out to be an
   organisation.
@@ -921,13 +917,12 @@ link to other DarqOS items as they link to anything: a person's photo
 is an image item, their *image* (P18), and their emails, papers, and
 commits can be linked to them.
 
-An entity's name is its label, in the KB, rather than in the Metadata
-service (see :doc:`metadata`), and its tags are statements too, *has
-tag*, linking to tags, entities of their own kind, ``darq.tag``.  An
-image says who and what's in it with *depicts* (P180), so a person's
-page lists the pictures they're in, as *depicted in*.  That leaves the
-Metadata service, deferred to Third Edition, only what isn't
-knowledge, such as view positions.
+An item's name is its entity's label, in the KB, and its tags are
+statements too, *has tag*, linking to tags, entities of their own
+kind, ``darq.tag``.  An image says who and what's in it with *depicts*
+(P180), so a person's page lists the pictures they're in, as *depicted
+in*.  What isn't knowledge, such as where a reader's got to, is view
+state, kept by each type in its items.
 
 Importing a vCard file is something done with a ``public.vcard`` item,
 by a tool or lens for it, which creates KB items.

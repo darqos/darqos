@@ -27,21 +27,31 @@ every item should be an entity, some should, or none.
 What's Built Now
 ----------------
 
-Items and entities are separate.  An entity with a kind is also an
-item, whose identifier is its kind and its entity identifier.  Content
-items (text and images, so far) aren't entities: they have no labels,
-and nothing can be stated about them.
+Every item is an entity: B, below, decided in Second Edition and built
+in seven steps (see The Plan).  An entity with a kind is an item,
+whose identifier is its kind and its entity identifier, and a content
+item, a text, image, PDF, e-book or data, has an entity too, made by
+its type, with its name, kind and when it was made.  Statements link
+to any item as they link to any entity, with an entity value, and
+what's said of an item, its name, tags and what it depicts, is said on
+its entity, on its page (Sys-i).
 
-Other items refer to KB entities by their item identifiers, which are
-just strings in the item's own data or metadata: an email's sender, a
-photo's subject.  The KB can't refer to content items at all, yet.
+What follows is how that was decided, kept as the record.
+
+Before, items and entities were separate: content items had no labels,
+and nothing could be stated about them.  Other items referred to KB
+entities by their item identifiers, just strings in the item's own
+data: an email's sender, a photo's subject.  The KB couldn't refer to
+content items at all.
 
 The Item Identifier Datatype
 ----------------------------
 
-The KB's design has an *Item identifier* datatype (see
-:doc:`kb-service`), not implemented: a statement whose value is a
-DarqOS item, such as
+*Not built: under B, every item's an entity, so a statement links to
+an item with an entity value, and this datatype isn't needed.*
+
+The KB's design had an *Item identifier* datatype, never implemented:
+a statement whose value is a DarqOS item, such as
 
 * Alice's photo is this image item (the nearest real case: the vCard
   import's PHOTO);
@@ -78,9 +88,7 @@ Some links are facts about an item, rather than about an entity:
 it on the file, as *depicts* (P180).  While a photo isn't an entity,
 it can't hold statements, which leaves:
 
-* storing it as metadata on the image item, in the Metadata service
-  (see :doc:`metadata`), which the KB's design keeps for what isn't
-  knowledge, such as tags and view state;
+* storing it on the image item, outside the KB, as its own data;
 * turning it around, as a statement on Alice (*appears in: this
   photo*), which is awkward, and doesn't scale to a photo of a crowd;
   or
@@ -114,8 +122,8 @@ through the DarqOS type statement and ``types/kb``.
 It gains:
 
 * names and descriptions for every item: labels, descriptions and
-  aliases, in any language, which is the *item name* the Metadata
-  service's notes ask for;
+  aliases, in any language: the *item name* that's been wanted since
+  First Edition;
 * facts about any item: *depicts: Alice*, *author*, *date taken*,
   *source*, each with qualifiers, references and ranks, and queries
   that span everything: photos of Alice from 2019, documents by people
@@ -186,11 +194,9 @@ Consequences
   the KB kinds' identifiers, its first properties (*image*, and
   perhaps *related item*), and how an identifier is entered (copying
   it from a lens, and pasting it, or a picker of recent items).
-* The Metadata service's role depends on it too.  It's deferred to
-  Third Edition, and may not be needed: the KB could hold tags (*has
-  tag*), as well as names and facts, under B or C, leaving only what
-  isn't knowledge, such as view state, which each type implementation
-  could keep.
+* Under B or C, the KB holds tags (*has tag*), as well as names and
+  facts, leaving only what isn't knowledge, such as view state, which
+  each type implementation keeps.
 
 The Decision
 ------------
@@ -376,11 +382,12 @@ measured, and documented as it's built.
    new one by name, and the vCard and LibraryThing imports find or make
    theirs (``darq.items.tag``).  The three have inverse labels, *depicted
    in*, *image of* and *tag of*.
-7. **What it replaces.**  The Item identifier datatype's design, in the
-   plan doc, and the Metadata service, in Third Edition (see
-   :doc:`metadata`): names and tags are statements, and view state is
-   each type's.  :doc:`item`, :doc:`types`, :doc:`kb-service`,
-   :doc:`metadata` and :doc:`roadmap` say so.
+7. **What it replaces** (built).  The Item identifier datatype, which
+   isn't needed, and a separate service for items' names, tags and
+   dates, which are statements on their entities: view state, such as
+   a reader's position, is each type's, in its items.  :doc:`item`,
+   :doc:`types`, :doc:`kb-service`, :doc:`storage` and :doc:`roadmap`
+   say so.
 
 Steps 1 and 2 are the bulk of it; 3 and 4 are migrations of the kind
 already done for merges; 5 and 6 are per lens and per import; and 7 is

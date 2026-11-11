@@ -102,7 +102,6 @@ Bootstrap
     * Like Storage, it keeps its database in the run directory, and
       registers `darq.history` (see :doc:`history`).
 
-  * Metadata
   * Index
   * Terminal
 

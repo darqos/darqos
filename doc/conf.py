@@ -9,7 +9,7 @@
 project = 'The Darq Book'
 copyright = '2023-2026, David Arnold'
 author = 'David Arnold'
-release = 'First Edition'
+release = 'Second Edition'
 
 
 templates_path = ['_templates']

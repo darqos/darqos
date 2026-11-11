@@ -20,8 +20,9 @@ It knows nothing about what they hold.
   :doc:`item`).  Types whose objects would be files on a Unix-like
   system, such as text documents, images and source code, keep it in
   Storage.  Others use the knowledge graph instead.
-* The link from an object to its blob, and the object's name, tags
-  and dates, are kept by the Metadata service (see :doc:`metadata`).
+* The link from an object to its blob is its item identifier, whose
+  specifier is the blob's key, and the object's name, tags and dates
+  are statements on its entity (see :doc:`entity-vs-item`).
   History, Index and Search make objects findable.  So Storage needs
   no names, and offers no listing.
 * All system storage, aside from early bootstrap, should use this
@@ -46,9 +47,10 @@ never choose them.
   reaching a blob by mistake.
 
 A process that needs to find a blob again, across a restart, must
-record its key somewhere: usually in Metadata, alongside the object.
-Services that start before Metadata, such as Type, find their keys in
-the boot vector (see Bootstrapping, below).
+record its key somewhere: usually in an item identifier, whose
+specifier is the key (see :doc:`item`).  Services that keep their own
+state, such as Type, find their keys in the boot vector (see
+Bootstrapping, below).
 
 Generations
 -----------

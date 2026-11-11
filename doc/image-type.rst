@@ -33,8 +33,8 @@ Metadata
 In addition to the image itself, the view should also have a way to
 display and edit any associated metadata encoded in the image.
 
-Future editions should determine how that metadata should be
-integrated with Darq's metadata service.
+What's knowledge, such as who's in it, is said on its entity, as
+*depicts* (see :doc:`entity-vs-item`).
 
 Types
 -----

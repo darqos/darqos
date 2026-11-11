@@ -13,7 +13,6 @@ In the First Edition, the following services exist:
 * HTTP (see :doc:`http-service`)
 
 ..
-   * Metadata
    * Index
    * Network
    * Configuration

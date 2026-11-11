@@ -16,7 +16,6 @@ p-kernel's name registry:
 * `darq.storage` : Storage
 * `darq.history` : History
 * `darq.security` : Security
-* `darq.metadata` : Metadata
 * `darq.index` : Index
 * `darq.type` : Type
 * `darq.terminal` : Terminal

@@ -590,8 +590,7 @@ Item's Page
 *Sys-i* opens the page of the item in the focused window: its entity,
 in the entity lens, where it's renamed, and anything else's said of it.
 Every item's an entity (see :doc:`entity-vs-item`), so its names, tags
-and facts are statements there, and the Metadata service isn't needed
-for them.
+and facts are statements there.
 
 The Terminal knows a window only by what the compositor tells it: its
 title, and its Wayland ``app_id``.  So every lens registers its Lens

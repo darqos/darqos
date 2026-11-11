@@ -373,7 +373,7 @@ Item Destruction
 A program may request that a Type Implementation destroy an Item.
 
 A fundamental characteristic of DarqOS is that items have lots of
-linkage and annotation throughout the system: metadata, index,
+linkage and annotation throughout the system: entities, index,
 history, etc, all enmesh items.  As a result, literal destruction
 of an item would cause either a rewriting of history, update of
 indexes, etc, or an acceptance of broken linkage.

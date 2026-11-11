@@ -76,7 +76,6 @@ Overview
 Services
 
 * `Storage <doc/storage.rst>`__
-* `Metadata <doc/metadata.rst>`__
 * `History <doc/history.rst>`__
 * `Index <doc/search-service.rst>`__
 * `Terminal <doc/terminal.rst>`__

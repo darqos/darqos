@@ -60,7 +60,6 @@ Services
 .. include:: security.rst
 .. include:: storage.rst
 .. include:: file.rst
-.. include:: metadata.rst
 .. include:: history.rst
 .. include:: search-service.rst
 .. include:: kb-service.rst

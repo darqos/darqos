@@ -79,29 +79,23 @@ The runtime environment for DarqOS applications consists of:
 create_object
 -------------
 
-* The most basic representation of an object is a collection of
-  metadata properties, including
-
-  * type
-  * name
-  * creation datetime
-  * last modified datetime
-  * a content link, be it to local storage or a URL.
+* An object is an item: its item identifier gives its type, and its
+  entity, in the Knowledge Base, its name, when it was made, and what
+  else is known of it (see :doc:`entity-vs-item`).  What happened to it
+  is in History.
 
 activate_object
 ---------------
-* An object "at rest" is an entry in the metadata database.  In order
+* An object "at rest" is an item, known by its identifier.  In order
   to "use" the object, it must be activated.  This involves:
 
-  * Fetch the object's metadata from the Metadata Service.
-  * Get the type from the metadata, and ask the Type Service to
+  * Get the type from its identifier, and ask the Type Service to
     activate it.
 
     * The Type Service will spawn the type implementation, if it's not
       already running.
-    * The type implementation will create the instance, using the
-      metadata to load any required content from storage or remote
-      URL.
+    * The type implementation will create the instance, loading any
+      required content from storage or remote URL.
     * The activation request must include a context for the instance:
 
       * User identity

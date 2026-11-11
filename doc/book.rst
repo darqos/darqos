@@ -384,9 +384,8 @@ What's been read has two parts:
 * Where you are in a file is view state, kept in the item, in a header
   in its Storage blob.  It's specific to that file, as pages don't
   line up between formats.  DarqOS is a single-user system, so an item
-  needs only one.  It stays in the item unless the Metadata Service
-  comes to be, and it's why ``GetPosition`` and ``SetPosition`` are calls
-  on a reader's protocol: lenses wouldn't change.
+  needs only one, and it's why ``GetPosition`` and ``SetPosition`` are
+  calls on a reader's protocol.
 
 A position is a string, which only the lens makes sense of: a page
 number for a PDF, and a part and how far through it for an e-book, as a
