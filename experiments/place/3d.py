@@ -1,16 +1,22 @@
 import sys
+import json
 import numpy as np
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, 
-    QLabel, QDoubleSpinBox, QPushButton, QGroupBox
+    QLabel, QDoubleSpinBox, QPushButton, QGroupBox, QFileDialog, QMessageBox
 )
 import pyqtgraph.opengl as gl
 
-class SpatialModeller(QMainWindow):
+class SpatialModellerJSON(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Simple PyQt6 3D Spatial Modeller")
-        self.resize(1024, 768)
+        self.setWindowTitle("3D Spatial Modeller with JSON Save/Load")
+        self.resize(1100, 768)
+
+        # Track data of all spawned items: [{"w":..., "d":..., "h":..., "x":..., "y":..., "z":...}, ...]
+        self.saved_objects_data = []
+        # Track the actual OpenGL items rendered on screen to allow clearing/reloading
+        self.rendered_mesh_items = []
 
         # Main Layout Setup
         central_widget = QWidget()
@@ -62,10 +68,24 @@ class SpatialModeller(QMainWindow):
 
         # Add button
         self.btn_add = QPushButton("Spawn Object")
-        self.btn_add.clicked.connect(self.add_cube)
+        self.btn_add.clicked.connect(self.handle_spawn_click)
         control_layout.addWidget(self.btn_add)
         
         sidebar.addWidget(control_group)
+
+        # File I/O Group
+        file_group = QGroupBox("Storage Commands")
+        file_layout = QVBoxLayout(file_group)
+
+        self.btn_save = QPushButton("💾 Save JSON Layout")
+        self.btn_save.clicked.connect(self.save_to_json)
+        file_layout.addWidget(self.btn_save)
+
+        self.btn_load = QPushButton("📁 Load JSON Layout")
+        self.btn_load.clicked.connect(self.load_from_json)
+        file_layout.addWidget(self.btn_load)
+
+        sidebar.addWidget(file_group)
         sidebar.addStretch()
 
         # 2. 3D GL Canvas Viewport
@@ -83,40 +103,106 @@ class SpatialModeller(QMainWindow):
         axes.setSize(x=5, y=5, z=5)
         self.view.addItem(axes)
 
-    def add_cube(self):
-        # Gather dimensions and coordinates from UI
+    def handle_spawn_click(self):
+        """Triggered when the user hits 'Spawn Object' manually."""
         w, d, h = self.spin_w.value(), self.spin_d.value(), self.spin_h.value()
         x, y, z = self.spin_x.value(), self.spin_y.value(), self.spin_z.value()
+        
+        # Save structural parameters to our layout dictionary
+        obj_data = {"w": w, "d": d, "h": h, "x": x, "y": y, "z": z}
+        self.saved_objects_data.append(obj_data)
+        
+        # Build the physical GL item
+        self.render_box_mesh(obj_data)
 
-        # Generate mesh structure for a solid cube bounding box
+    def render_box_mesh(self, data):
+        """Generates the 3D visual mesh and renders it onto the canvas."""
+        w, d, h = data["w"], data["d"], data["h"]
+        x, y, z = data["x"], data["y"], data["z"]
+
+        # Complete 3D corner coordinates for the prism geometry
         verts = np.array([
-            [0, 0, 0], [w, 0, 0], [w, d, 0], [0, d, 0],
-            [0, 0, h], [w, 0, h], [w, d, h], [0, d, h]
-        ])
-        faces = np.array([
-            [0, 1, 2], [0, 2, 3], # Bottom
-            [4, 5, 6], [4, 6, 7], # Top
-            [0, 1, 5], [0, 5, 4], # Front
-            [1, 2, 6], [1, 6, 5], # Right
-            [2, 3, 7], [2, 7, 6], # Back
-            [3, 0, 4], [3, 4, 7]  # Left
+            [0, 0, 0], [w, 0, 0], [w, d, 0], [0, d, 0],  # Bottom 4 vertices (0-3)
+            [0, 0, h], [w, 0, h], [w, d, h], [0, d, h]   # Top 4 vertices (4-7)
         ])
         
-        # Style faces with a semi-transparent layout color
+        # Triangular indices mapping out the 6 faces of the cube (2 triangles per face)
+        faces = np.array([
+            [0, 1, 2], [0, 2, 3], # Bottom Face
+            [4, 5, 6], [4, 6, 7], # Top Face
+            [0, 1, 5], [0, 5, 4], # Front Face
+            [1, 2, 6], [1, 6, 5], # Right Face
+            [2, 3, 7], [2, 7, 6], # Back Face
+            [3, 0, 4], [3, 4, 7]  # Left Face
+        ])
+        
+        # Style faces with a semi-transparent blue layout color
         colors = np.array([[0.2, 0.6, 1.0, 0.6]] * 12)
-
-        # Create mesh object
+        
+        # Create the visual Mesh object
         mesh_data = gl.MeshData(vertexes=verts, faces=faces, faceColors=colors)
         mesh_item = gl.GLMeshItem(meshdata=mesh_data, smooth=False, drawEdges=True, edgeColor=(1, 1, 1, 1))
         
-        # Translate to chosen spatial coordinates
+        # Translate the object out to its spatial coordinates
         mesh_item.translate(x, y, z)
-        
-        # Render onto 3D viewport canvas
         self.view.addItem(mesh_item)
+        
+        # Store a pointer to the live GL object so we can delete it during a clear/reload
+        self.rendered_mesh_items.append(mesh_item)
+
+    def save_to_json(self):
+        """Exports the tracked python list structure into a local JSON document."""
+        if not self.saved_objects_data:
+            QMessageBox.warning(self, "Empty Canvas", "There are no spatial objects to save.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Spatial Layout", "", "JSON Files (*.json)"
+        )
+        
+        if file_path:
+            # Ensure proper file extension
+            if not file_path.endswith('.json'):
+                file_path += '.json'
+                
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(self.saved_objects_data, f, indent=4)
+                
+            QMessageBox.information(self, "Success", "Layout successfully exported to JSON!")
+
+    def load_from_json(self):
+        """Imports spatial layout bounds from a JSON structure and recreates the scene."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Open Spatial Layout", "", "JSON Files (*.json)"
+        )
+        
+        if file_path:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    loaded_data = json.load(f)
+                
+                # Simple validation check
+                if not isinstance(loaded_data, list):
+                    raise ValueError("JSON data must contain a top-level list of elements.")
+
+                # 1. Clear old view elements
+                for item in self.rendered_mesh_items:
+                    self.view.removeItem(item)
+                self.rendered_mesh_items.clear()
+                self.saved_objects_data.clear()
+
+                # 2. Build the new scene
+                for obj_data in loaded_data:
+                    self.saved_objects_data.append(obj_data)
+                    self.render_box_mesh(obj_data)
+
+                QMessageBox.information(self, "Success", f"Loaded {len(loaded_data)} objects from JSON!")
+
+            except Exception as e:
+                QMessageBox.critical(self, "Error Loading File", f"Failed to parse JSON structure:\n{str(e)}")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = SpatialModeller()
+    window = SpatialModellerJSON()
     window.show()
     sys.exit(app.exec())
