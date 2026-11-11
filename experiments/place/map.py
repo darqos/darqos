@@ -1,19 +1,34 @@
-import sys
-import math
+"""Shows a street address on a pannable, zoomable map.
+
+The map is Leaflet, with OpenStreetMap tiles, in a QWebEngineView.
+Addresses are geocoded in Python: NSW address points first, for
+house-level positions in NSW, then Nominatim for everywhere else.
+"""
+
 import json
 import re
+import sys
 import urllib.parse
 import urllib.request
 from threading import Thread
-from PyQt6.QtCore import Qt, pyqtSignal, QObject
-from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QBrush
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLineEdit, QPushButton, QMessageBox, QGraphicsView, QGraphicsScene,
-    QGraphicsPixmapItem, QGraphicsEllipseItem
-)
-from geopy.geocoders import Nominatim
+
 from geopy.exc import GeocoderServiceError
+from geopy.geocoders import Nominatim
+from PyQt6.QtCore import QObject, QUrl, pyqtSignal
+from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWidgets import (
+    QApplication, QHBoxLayout, QLineEdit, QMainWindow, QMessageBox,
+    QPushButton, QVBoxLayout, QWidget,
+)
+
+# Identifies us to the tile and geocoding servers: both their usage
+# policies require it.
+USER_AGENT = "DarqOS-place-experiment/1.0"
+
+# The page needs a real origin: with setHtml()'s default, it has a null
+# origin, sends no Referer, and OpenStreetMap's tile servers refuse it.
+PAGE_BASE_URL = QUrl("https://darqos.local/place/")
 
 # NSW Spatial Services address points (G-NAF based): house-level positions.
 NSW_ADDRESS_URL = ("https://portal.spatial.nsw.gov.au/server/rest/services/"
@@ -30,6 +45,43 @@ STREET_TYPES = {
 # Trailing words that aren't part of the NSW address string.
 TRAILING_NOISE = {"NSW", "AUSTRALIA", "AU"}
 
+MAP_HTML = """<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<style>
+  html, body, #map { height: 100%; margin: 0; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<script>
+  const map = L.map('map').setView([0, 0], 2);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(map);
+  let marker = null;
+
+  // Called from Python: moves the marker to the place and centres on it.
+  function showPlace(lat, lon, label, zoom) {
+      if (marker === null) {
+          marker = L.marker([lat, lon]).addTo(map);
+      } else {
+          marker.setLatLng([lat, lon]);
+      }
+      marker.bindPopup(label);
+      map.setView([lat, lon], zoom);
+  }
+</script>
+</body>
+</html>
+"""
+
 
 def nsw_address_key(address):
     """Normalises '29 Hay St, Leichhardt NSW 2040' to '29 HAY STREET LEICHHARDT'."""
@@ -39,15 +91,14 @@ def nsw_address_key(address):
     return " ".join(STREET_TYPES.get(w, w) for w in words)
 
 
-class MapWorker(QObject):
-    """Handles both address geocoding and image tile streaming natively in pure Python threads."""
-    geocode_finished = pyqtSignal(float, float, str, bool)  # lat, lon, address, exact
-    tile_finished = pyqtSignal(int, int, int, bytes)  # generation, px, py, data
+class Geocoder(QObject):
+    """Looks up addresses in a background thread, reporting by signal."""
+    found = pyqtSignal(float, float, str, bool)  # lat, lon, address, exact
     error = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
-        self.geolocator = Nominatim(user_agent="PyQt6_Threaded2D_MapApp")
+        self.nominatim = Nominatim(user_agent=USER_AGENT)
 
     def lookup_nsw(self, address):
         """Returns (lat, lon, address) from NSW address points, or None."""
@@ -63,7 +114,7 @@ class MapWorker(QObject):
             "f": "json",
         })
         req = urllib.request.Request(f"{NSW_ADDRESS_URL}?{params}",
-                                     headers={'User-Agent': 'DarqOS-place-experiment/1.0'})
+                                     headers={"User-Agent": USER_AGENT})
         # The service is usually sub-second, but has occasional slow spells.
         with urllib.request.urlopen(req, timeout=20) as response:
             features = json.load(response).get("features") or []
@@ -72,153 +123,77 @@ class MapWorker(QObject):
         f = features[0]
         return f["geometry"]["y"], f["geometry"]["x"], f["attributes"]["address"]
 
-    def fetch_coordinates(self, address):
-        def run():
+    def lookup(self, address):
+        Thread(target=self._run, args=(address,), daemon=True).start()
+
+    def _run(self, address):
+        try:
             try:
-                try:
-                    found = self.lookup_nsw(address)
-                except Exception as e:
-                    print(f"NSW address lookup failed: {e}")
-                    found = None
-                if found:
-                    self.geocode_finished.emit(*found, True)
-                    return
-
-                location = self.geolocator.geocode(address, timeout=10, addressdetails=True)
-                if location:
-                    exact = "house_number" in location.raw.get("address", {})
-                    self.geocode_finished.emit(location.latitude, location.longitude,
-                                               location.address, exact)
-                else:
-                    self.error.emit("Address not found. Please try being more specific.")
-            except GeocoderServiceError:
-                self.error.emit("Could not connect to geocoding server.")
+                nsw = self.lookup_nsw(address)
             except Exception as e:
-                self.error.emit(f"Network error: {str(e)}")
-        Thread(target=run, daemon=True).start()
+                print(f"NSW address lookup failed: {e}")
+                nsw = None
+            if nsw:
+                self.found.emit(*nsw, True)
+                return
 
-    def fetch_tile(self, generation, zoom, tx, ty, px, py):
-        def run():
-            try:
-                url = f"https://a.tile.openstreetmap.org/{zoom}/{tx}/{ty}.png"
-                req = urllib.request.Request(url, headers={'User-Agent': 'PyQt6NativeTileEngine/1.0'})
-                with urllib.request.urlopen(req, timeout=5) as response:
-                    tile_bytes = response.read()
-                    self.tile_finished.emit(generation, px, py, tile_bytes)
-            except Exception as e:
-                print(f"Failed to fetch tile {tx},{ty}: {e}")
-        Thread(target=run, daemon=True).start()
+            location = self.nominatim.geocode(address, timeout=10, addressdetails=True)
+            if location:
+                exact = "house_number" in location.raw.get("address", {})
+                self.found.emit(location.latitude, location.longitude,
+                                location.address, exact)
+            else:
+                self.error.emit("Address not found. Please try being more specific.")
+        except GeocoderServiceError:
+            self.error.emit("Could not connect to geocoding server.")
+        except Exception as e:
+            self.error.emit(f"Network error: {e}")
 
-class InteractiveMapView(QGraphicsView):
-    """Custom canvas that handles mouse-drag panning and scroll-wheel zooming."""
-    def __init__(self, scene):
-        super().__init__(scene)
-        self.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.zoom_level = 1.0
 
-    def wheelEvent(self, event):
-        """Processes smooth programmatic zoom mapping via mouse scroll."""
-        zoom_factor = 1.25 if event.angleDelta().y() > 0 else 0.8
-        if 0.2 < (self.zoom_level * zoom_factor) < 10.0:
-            self.zoom_level *= zoom_factor
-            self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
-            self.scale(zoom_factor, zoom_factor)
+class MapPage(QWebEnginePage):
+    """Passes the page's JavaScript console messages on to stdout."""
 
-class NativeMapWidget(QWidget):
-    """Main application map layout handling tile loading and marker plotting."""
-    def __init__(self, worker):
-        super().__init__()
-        self.zoom = 16  
-        self.worker = worker
-        self.worker.tile_finished.connect(self.on_tile_downloaded)
+    def javaScriptConsoleMessage(self, level, message, line, source):
+        print(f"map.js:{line}: {message}")
 
-        self.scene = QGraphicsScene(self)
-        self.view = InteractiveMapView(self.scene)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.view)
+class MapView(QWebEngineView):
+    """A Leaflet map, with a single marker placed from Python."""
 
-        self.marker = None
-        self.generation = 0  # bumped per view, so late tiles from an old view are dropped
+    def __init__(self, profile, parent=None):
+        super().__init__(parent)
+        self.setPage(MapPage(profile, self))
+        self.loaded = False
+        self.pending = None  # a showPlace() call made before the page loaded
+        self.loadFinished.connect(self.on_load_finished)
+        self.setHtml(MAP_HTML, PAGE_BASE_URL)
 
-    def lat_lon_to_tile_exact(self, lat, lon, zoom):
-        """Calculates precise floating point tile coordinates to keep exact house offsets."""
-        lat_rad = math.radians(lat)
-        n = 2.0 ** zoom
-        xtile = (lon + 180.0) / 360.0 * n
-        ytile = (1.0 - math.log(math.tan(lat_rad) + (1 / math.cos(lat_rad))) / math.pi) / 2.0 * n
-        return xtile, ytile
-
-    def update_map_view(self, lat, lon):
-        self.scene.clear()
-        self.view.resetTransform()
-        self.view.zoom_level = 1.0
-        self.generation += 1
-
-        # 1. Get the precise fractional tile location for the address numbers
-        exact_x, exact_y = self.lat_lon_to_tile_exact(lat, lon, self.zoom)
-
-        # 2. Derive the integer grid coordinates for map tile downloading
-        center_xtile = math.floor(exact_x)
-        center_ytile = math.floor(exact_y)
-
-        # 3. Establish our local 2D layout drawing reference zero-point 
-        # (Using the top-left edge corner pixel of our center tile image block)
-        ref_pixel_x = center_xtile * 256
-        ref_pixel_y = center_ytile * 256
-
-        # 4. Stream background tiles relative to our integer tile grid boundaries
-        for dx in range(-2, 3):
-            for dy in range(-2, 3):
-                tx = center_xtile + dx
-                ty = center_ytile + dy
-                px = (tx * 256) - ref_pixel_x
-                py = (ty * 256) - ref_pixel_y
-                self.worker.fetch_tile(self.generation, self.zoom, tx, ty, px, py)
-
-        # Fix the scene to the whole tile grid now, so centring on the marker
-        # holds as the tiles arrive, rather than the scene growing under it.
-        self.scene.setSceneRect(-2 * 256, -2 * 256, 5 * 256, 5 * 256)
-
-        # 5. FIXED: Pin layout math calculations using exact decimals instead of truncation
-        marker_px = (exact_x * 256) - ref_pixel_x
-        marker_py = (exact_y * 256) - ref_pixel_y
-
-        # Plot a custom vector place marker exactly over the specific target location
-        self.marker = QGraphicsEllipseItem(-10, -10, 20, 20)
-        self.marker.setBrush(QBrush(QColor(231, 76, 60)))  
-        self.marker.setPen(QPen(QColor(255, 255, 255), 2)) 
-        self.marker.setZValue(10)                          
-        self.marker.setPos(marker_px, marker_py)           
-        self.scene.addItem(self.marker)
-        
-        # Shift camera perspective directly onto the pinpoint coordinate focus space
-        self.view.centerOn(marker_px, marker_py)
-
-    def on_tile_downloaded(self, generation, px, py, tile_bytes):
-        if generation != self.generation:
+    def on_load_finished(self, ok):
+        if not ok:
+            print("Map page failed to load")
             return
-        pixmap = QPixmap()
-        pixmap.loadFromData(tile_bytes)
-        item = QGraphicsPixmapItem(pixmap)
-        item.setPos(px, py)
-        item.setZValue(0)
-        self.scene.addItem(item)
+        self.loaded = True
+        if self.pending:
+            self.show_place(*self.pending)
+            self.pending = None
+
+    def show_place(self, lat, lon, label, zoom=18):
+        if not self.loaded:
+            self.pending = (lat, lon, label, zoom)
+            return
+        self.page().runJavaScript(
+            f"showPlace({lat!r}, {lon!r}, {json.dumps(label)}, {int(zoom)})")
+
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, profile):
         super().__init__()
-        self.setWindowTitle("PyQt6 Fixed 2D Address Map Application")
+        self.setWindowTitle("Address Map")
         self.setGeometry(100, 100, 1024, 768)
 
-        self.worker = MapWorker()
-        self.worker.geocode_finished.connect(self.on_geocode_success)
-        self.worker.error.connect(self.on_geocode_error)
+        self.geocoder = Geocoder()
+        self.geocoder.found.connect(self.on_found)
+        self.geocoder.error.connect(self.on_error)
 
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -226,46 +201,60 @@ class MainWindow(QMainWindow):
 
         search_layout = QHBoxLayout()
         self.address_input = QLineEdit()
-        self.address_input.setPlaceholderText("Enter an address (e.g., 29 Hay Street, Leichhardt)...")
+        self.address_input.setPlaceholderText(
+            "Enter an address (e.g., 29 Hay Street, Leichhardt)...")
         self.address_input.returnPressed.connect(self.search_address)
-        
         self.search_button = QPushButton("Search Location")
         self.search_button.clicked.connect(self.search_address)
-
         search_layout.addWidget(self.address_input)
         search_layout.addWidget(self.search_button)
         layout.addLayout(search_layout)
 
-        self.map_widget = NativeMapWidget(self.worker)
-        layout.addWidget(self.map_widget)
-        # Create the status bar now: added later, it would shrink the map
-        # view and push the marker off-centre.
-        self.statusBar()
+        self.map_view = MapView(profile)
+        layout.addWidget(self.map_view)
 
-        # Initial View
-        self.map_widget.update_map_view(-33.8688, 151.2093)
+        self.map_view.show_place(-33.8688, 151.2093, "Sydney", 13)
 
     def search_address(self):
         address = self.address_input.text().strip()
         if not address:
             return
         self.search_button.setEnabled(False)
-        self.worker.fetch_coordinates(address)
+        self.statusBar().showMessage(f"Looking up {address}...")
+        self.geocoder.lookup(address)
 
-    def on_geocode_success(self, lat, lon, full_address, exact):
+    def on_found(self, lat, lon, full_address, exact):
         self.search_button.setEnabled(True)
-        self.map_widget.update_map_view(lat, lon)
+        self.map_view.show_place(lat, lon, full_address, 18 if exact else 17)
         if exact:
             self.statusBar().showMessage(full_address)
         else:
-            self.statusBar().showMessage(f"House number not found, showing street: {full_address}")
+            self.statusBar().showMessage(
+                f"House number not found, showing street: {full_address}")
 
-    def on_geocode_error(self, message):
+    def on_error(self, message):
         self.search_button.setEnabled(True)
+        self.statusBar().clearMessage()
         QMessageBox.warning(self, "Search Failure", message)
 
-if __name__ == "__main__":
+
+def main():
     app = QApplication(sys.argv)
-    window = MainWindow()
+    app.setApplicationName("darqos-place")
+
+    # A named profile keeps its HTTP cache on disk, so tiles aren't
+    # fetched again on each run, as the OSM tile policy asks.
+    profile = QWebEngineProfile("map", app)
+    profile.setHttpUserAgent(USER_AGENT)
+
+    window = MainWindow(profile)
     window.show()
-    sys.exit(app.exec())
+    status = app.exec()
+
+    # The page must go before its profile, or WebEngine complains.
+    del window
+    sys.exit(status)
+
+
+if __name__ == "__main__":
+    main()
