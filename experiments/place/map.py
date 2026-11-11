@@ -1,9 +1,11 @@
 import sys
 import math
 import json
+import re
+import urllib.parse
 import urllib.request
 from threading import Thread
-from PyQt6.QtCore import Qt, QPointF, pyqtSignal, QObject
+from PyQt6.QtCore import Qt, pyqtSignal, QObject
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QBrush
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -13,22 +15,80 @@ from PyQt6.QtWidgets import (
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderServiceError
 
+# NSW Spatial Services address points (G-NAF based): house-level positions.
+NSW_ADDRESS_URL = ("https://portal.spatial.nsw.gov.au/server/rest/services/"
+                   "NSW_Geocoded_Addressing_Theme/MapServer/1/query")
+
+# Street-type abbreviations, expanded to the NSW service's full words.
+STREET_TYPES = {
+    "ST": "STREET", "RD": "ROAD", "AVE": "AVENUE", "AV": "AVENUE",
+    "PDE": "PARADE", "CRES": "CRESCENT", "CR": "CRESCENT", "DR": "DRIVE",
+    "PL": "PLACE", "LN": "LANE", "CT": "COURT", "HWY": "HIGHWAY",
+    "TCE": "TERRACE", "CL": "CLOSE", "ESP": "ESPLANADE", "BLVD": "BOULEVARD",
+}
+
+# Trailing words that aren't part of the NSW address string.
+TRAILING_NOISE = {"NSW", "AUSTRALIA", "AU"}
+
+
+def nsw_address_key(address):
+    """Normalises '29 Hay St, Leichhardt NSW 2040' to '29 HAY STREET LEICHHARDT'."""
+    words = re.sub(r"[,.]", " ", address).upper().split()
+    while words and (words[-1] in TRAILING_NOISE or re.fullmatch(r"\d{4}", words[-1])):
+        words.pop()
+    return " ".join(STREET_TYPES.get(w, w) for w in words)
+
+
 class MapWorker(QObject):
     """Handles both address geocoding and image tile streaming natively in pure Python threads."""
-    geocode_finished = pyqtSignal(float, float, str)
-    tile_finished = pyqtSignal(int, int, bytes)
+    geocode_finished = pyqtSignal(float, float, str, bool)  # lat, lon, address, exact
+    tile_finished = pyqtSignal(int, int, int, bytes)  # generation, px, py, data
     error = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
         self.geolocator = Nominatim(user_agent="PyQt6_Threaded2D_MapApp")
 
+    def lookup_nsw(self, address):
+        """Returns (lat, lon, address) from NSW address points, or None."""
+        key = nsw_address_key(address)
+        if not key or not key[0].isdigit():
+            return None
+        params = urllib.parse.urlencode({
+            "where": "address LIKE '{}%'".format(key.replace("'", "''")),
+            "outFields": "address",
+            "returnGeometry": "true",
+            "outSR": "4326",
+            "resultRecordCount": "1",
+            "f": "json",
+        })
+        req = urllib.request.Request(f"{NSW_ADDRESS_URL}?{params}",
+                                     headers={'User-Agent': 'DarqOS-place-experiment/1.0'})
+        # The service is usually sub-second, but has occasional slow spells.
+        with urllib.request.urlopen(req, timeout=20) as response:
+            features = json.load(response).get("features") or []
+        if not features:
+            return None
+        f = features[0]
+        return f["geometry"]["y"], f["geometry"]["x"], f["attributes"]["address"]
+
     def fetch_coordinates(self, address):
         def run():
             try:
-                location = self.geolocator.geocode(address, timeout=10)
+                try:
+                    found = self.lookup_nsw(address)
+                except Exception as e:
+                    print(f"NSW address lookup failed: {e}")
+                    found = None
+                if found:
+                    self.geocode_finished.emit(*found, True)
+                    return
+
+                location = self.geolocator.geocode(address, timeout=10, addressdetails=True)
                 if location:
-                    self.geocode_finished.emit(location.latitude, location.longitude, location.address)
+                    exact = "house_number" in location.raw.get("address", {})
+                    self.geocode_finished.emit(location.latitude, location.longitude,
+                                               location.address, exact)
                 else:
                     self.error.emit("Address not found. Please try being more specific.")
             except GeocoderServiceError:
@@ -37,18 +97,14 @@ class MapWorker(QObject):
                 self.error.emit(f"Network error: {str(e)}")
         Thread(target=run, daemon=True).start()
 
-    def fetch_tile(self, zoom, tx, ty, px, py):
+    def fetch_tile(self, generation, zoom, tx, ty, px, py):
         def run():
             try:
-                # Absolute, hard-coded clean string endpoint layout
                 url = f"https://a.tile.openstreetmap.org/{zoom}/{tx}/{ty}.png"
-                req = urllib.request.Request(
-                    url, 
-                    headers={'User-Agent': 'PyQt6NativeTileEngine/1.0'}
-                )
+                req = urllib.request.Request(url, headers={'User-Agent': 'PyQt6NativeTileEngine/1.0'})
                 with urllib.request.urlopen(req, timeout=5) as response:
                     tile_bytes = response.read()
-                    self.tile_finished.emit(px, py, tile_bytes)
+                    self.tile_finished.emit(generation, px, py, tile_bytes)
             except Exception as e:
                 print(f"Failed to fetch tile {tx},{ty}: {e}")
         Thread(target=run, daemon=True).start()
@@ -88,44 +144,52 @@ class NativeMapWidget(QWidget):
         layout.addWidget(self.view)
 
         self.marker = None
+        self.generation = 0  # bumped per view, so late tiles from an old view are dropped
 
-    def lat_lon_to_tile(self, lat, lon, zoom):
+    def lat_lon_to_tile_exact(self, lat, lon, zoom):
+        """Calculates precise floating point tile coordinates to keep exact house offsets."""
         lat_rad = math.radians(lat)
         n = 2.0 ** zoom
-        xtile = int((lon + 180.0) / 360.0 * n)
-        ytile = int((1.0 - math.log(math.tan(lat_rad) + (1 / math.cos(lat_rad))) / math.pi) / 2.0 * n)
+        xtile = (lon + 180.0) / 360.0 * n
+        ytile = (1.0 - math.log(math.tan(lat_rad) + (1 / math.cos(lat_rad))) / math.pi) / 2.0 * n
         return xtile, ytile
-
-    def lat_lon_to_pixel(self, lat, lon, zoom):
-        n = 2.0 ** zoom
-        x = (lon + 180.0) / 360.0 * n * 256
-        lat_rad = math.radians(lat)
-        y = (1.0 - math.log(math.tan(lat_rad) + (1 / math.cos(lat_rad))) / math.pi) / 2.0 * n * 256
-        return x, y
 
     def update_map_view(self, lat, lon):
         self.scene.clear()
         self.view.resetTransform()
         self.view.zoom_level = 1.0
+        self.generation += 1
 
-        center_xtile, center_ytile = self.lat_lon_to_tile(lat, lon, self.zoom)
-        ref_tile_x = center_xtile * 256
-        ref_tile_y = center_ytile * 256
+        # 1. Get the precise fractional tile location for the address numbers
+        exact_x, exact_y = self.lat_lon_to_tile_exact(lat, lon, self.zoom)
 
-        # Stream tiles inside background worker threads completely isolated from Qt networking
+        # 2. Derive the integer grid coordinates for map tile downloading
+        center_xtile = math.floor(exact_x)
+        center_ytile = math.floor(exact_y)
+
+        # 3. Establish our local 2D layout drawing reference zero-point 
+        # (Using the top-left edge corner pixel of our center tile image block)
+        ref_pixel_x = center_xtile * 256
+        ref_pixel_y = center_ytile * 256
+
+        # 4. Stream background tiles relative to our integer tile grid boundaries
         for dx in range(-2, 3):
             for dy in range(-2, 3):
                 tx = center_xtile + dx
                 ty = center_ytile + dy
-                px = (tx * 256) - ref_tile_x
-                py = (ty * 256) - ref_tile_y
-                
-                self.worker.fetch_tile(self.zoom, tx, ty, px, py)
+                px = (tx * 256) - ref_pixel_x
+                py = (ty * 256) - ref_pixel_y
+                self.worker.fetch_tile(self.generation, self.zoom, tx, ty, px, py)
 
-        target_abs_x, target_abs_y = self.lat_lon_to_pixel(lat, lon, self.zoom)
-        marker_px = target_abs_x - ref_tile_x
-        marker_py = target_abs_y - ref_tile_y
+        # Fix the scene to the whole tile grid now, so centring on the marker
+        # holds as the tiles arrive, rather than the scene growing under it.
+        self.scene.setSceneRect(-2 * 256, -2 * 256, 5 * 256, 5 * 256)
 
+        # 5. FIXED: Pin layout math calculations using exact decimals instead of truncation
+        marker_px = (exact_x * 256) - ref_pixel_x
+        marker_py = (exact_y * 256) - ref_pixel_y
+
+        # Plot a custom vector place marker exactly over the specific target location
         self.marker = QGraphicsEllipseItem(-10, -10, 20, 20)
         self.marker.setBrush(QBrush(QColor(231, 76, 60)))  
         self.marker.setPen(QPen(QColor(255, 255, 255), 2)) 
@@ -133,10 +197,12 @@ class NativeMapWidget(QWidget):
         self.marker.setPos(marker_px, marker_py)           
         self.scene.addItem(self.marker)
         
+        # Shift camera perspective directly onto the pinpoint coordinate focus space
         self.view.centerOn(marker_px, marker_py)
 
-    def on_tile_downloaded(self, px, py, tile_bytes):
-        """Converts raw byte data streams instantly into native graphic scene assets."""
+    def on_tile_downloaded(self, generation, px, py, tile_bytes):
+        if generation != self.generation:
+            return
         pixmap = QPixmap()
         pixmap.loadFromData(tile_bytes)
         item = QGraphicsPixmapItem(pixmap)
@@ -147,7 +213,7 @@ class NativeMapWidget(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("PyQt6 Threaded 2D Map Application")
+        self.setWindowTitle("PyQt6 Fixed 2D Address Map Application")
         self.setGeometry(100, 100, 1024, 768)
 
         self.worker = MapWorker()
@@ -160,7 +226,7 @@ class MainWindow(QMainWindow):
 
         search_layout = QHBoxLayout()
         self.address_input = QLineEdit()
-        self.address_input.setPlaceholderText("Enter an address (e.g., 38 Hay Street, Leichhardt)...")
+        self.address_input.setPlaceholderText("Enter an address (e.g., 29 Hay Street, Leichhardt)...")
         self.address_input.returnPressed.connect(self.search_address)
         
         self.search_button = QPushButton("Search Location")
@@ -172,7 +238,11 @@ class MainWindow(QMainWindow):
 
         self.map_widget = NativeMapWidget(self.worker)
         layout.addWidget(self.map_widget)
+        # Create the status bar now: added later, it would shrink the map
+        # view and push the marker off-centre.
+        self.statusBar()
 
+        # Initial View
         self.map_widget.update_map_view(-33.8688, 151.2093)
 
     def search_address(self):
@@ -182,9 +252,13 @@ class MainWindow(QMainWindow):
         self.search_button.setEnabled(False)
         self.worker.fetch_coordinates(address)
 
-    def on_geocode_success(self, lat, lon, full_address):
+    def on_geocode_success(self, lat, lon, full_address, exact):
         self.search_button.setEnabled(True)
         self.map_widget.update_map_view(lat, lon)
+        if exact:
+            self.statusBar().showMessage(full_address)
+        else:
+            self.statusBar().showMessage(f"House number not found, showing street: {full_address}")
 
     def on_geocode_error(self, message):
         self.search_button.setEnabled(True)
