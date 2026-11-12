@@ -36,13 +36,14 @@ LABEL_WIDTH = 110
 
 # Each level's fields: their attribute, and label.
 WORK_FIELDS = [("title", "Title"), ("subtitle", "Subtitle"), ("authors", "Authors"), ("series", "Series"),
-               ("volume", "Volume")]
+               ("volume", "Volume"), ("dewey", "Dewey"), ("lc_class", "LC class")]
 TEXT_FIELDS = [("text_title", "Title"), ("language", "Language"), ("translators", "Translators"),
                ("editors", "Editors"), ("started", "Started"), ("finished", "Finished")]
 EDITION_FIELDS = [("publisher", "Publisher"), ("imprint", "Imprint"), ("date", "Date published"),
                   ("edition", "Edition"), ("binding", "Binding"), ("isbn_13", "ISBN-13"), ("isbn_10", "ISBN-10"),
-                  ("pages", "Pages")]
+                  ("lccn", "LCCN"), ("pages", "Pages")]
 COPY_FIELDS = [("location", "Shelved at"), ("printing", "Printing"), ("printed", "Date printed"),
+               ("acquired", "Acquired"), ("acquired_from", "Acquired from"), ("price", "Price"), ("notes", "Notes"),
                ("content", "Content")]
 
 

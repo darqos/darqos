@@ -153,7 +153,8 @@ Other things to try:
 * Typing a URL into Search, such as a PDF's, and pressing Enter fetches
   it, keeps it as an item, and opens it (see :doc:`url-type`).  Web
   pages can't be kept yet: PDFs, images and text can.
-* *S-t* imports an address book, a ``.vcf`` file of vCards: the
+* *S-t* imports an address book, a ``.vcf`` file of vCards, from a URL,
+  an item, or a local file (see :doc:`tools`): the
   people and organisations in it are found by Search, by their names,
   and open in the entity lens (see :doc:`kb-service`), with their
   photos, and their categories as tags.

@@ -170,9 +170,28 @@ def make_export(path, messages=None):
     return path
 
 
-@pytest.fixture
-def export(tmp_path):
-    return slack_export.Export(make_export(tmp_path / "export"))
+def zipped(directory: pathlib.Path, under: str = "export") -> bytes:
+    """Return a zip of an export's directory, as an item holds it, with
+    its files under a directory of its own, as zip makes them."""
+    import io
+    import zipfile
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, "w") as archive:
+        for path in sorted(directory.rglob("*")):
+            if path.is_file():
+                archive.write(path, f"{under}/{path.relative_to(directory)}" if under else
+                              str(path.relative_to(directory)))
+    return data.getvalue()
+
+
+@pytest.fixture(params=["directory", "zip", "zip at its root"])
+def export(tmp_path, request):
+    """An export, read from its directory, or a zip of it, with or without
+    a directory of its own."""
+    directory = make_export(tmp_path / "export")
+    if request.param == "directory":
+        return slack_export.Export(directory)
+    return slack_export.Export(slack_export.Zipped(zipped(directory, "export" if request.param == "zip" else "")))
 
 
 def test_team(export):
@@ -198,10 +217,26 @@ def test_a_conversation_with_no_file_is_empty(export):
     assert export.messages("D3") == []
 
 
-def test_file_path(export):
-    assert export.file_path(export.files["F1"]).name == "a.pdf"
-    assert export.file_path(export.files["F3"]) is None
-    assert export.file_path({"local_path": "../../etc/passwd"}) is None
+def test_file(export):
+    found = export.file(export.files["F1"])
+    assert found is not None and (found.name, found.size, found.read()) == ("a.pdf", 4, b"data")
+    assert export.file(export.files["F3"]) is None
+    assert export.file({"local_path": "../../etc/passwd"}) is None
+
+
+def test_a_zip_thats_not_one():
+    with pytest.raises(ValueError, match="isn't a zip"):
+        slack_export.Zipped(b"not a zip")
+
+
+def test_an_export_missing_its_users():
+    import io
+    import zipfile
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, "w") as archive:
+        archive.writestr("readme.txt", "hello")
+    with pytest.raises(ValueError, match="has no users.json"):
+        slack_export.Export(slack_export.Zipped(data.getvalue()))
 
 
 def test_microseconds():
@@ -496,6 +531,8 @@ def test_nothing_of_a_message_is_logged(target, export, caplog):
 def test_slack_import(live_pkernel, tmp_path):  # noqa: F811
     kernel = live_pkernel
     export_path = make_export(tmp_path / "export")
+    zip_path = tmp_path / "export.zip"
+    zip_path.write_bytes(zipped(export_path))
 
     client_path = write_app(tmp_path / "client", f"""
         import importlib.util
@@ -503,6 +540,7 @@ def test_slack_import(live_pkernel, tmp_path):  # noqa: F811
         import sys
         import time
         import darq
+        import darq.items
         import darq.kb as model
         import darq.message
         from darq.protocols.type import Type
@@ -522,12 +560,24 @@ def test_slack_import(live_pkernel, tmp_path):  # noqa: F811
             tool = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(tool)
 
-            result = tool.run_import({str(export_path)!r}, "Example", lambda step, done, total: None)
+            # From its directory, and then from a zip of it, as an item.
+            from darq.ui import sources
+            directory = sources.Source(name="export", path={str(export_path)!r})
+            result = tool.run_import(directory, "Example", lambda step, done, total: None)
             if (result.created, result.failed, result.conversations) != (10, 0, 2):
                 return f"imported {{result.lines()!r}}"
-            again = tool.run_import({str(export_path)!r}, "Example", lambda step, done, total: None)
+            item = sources.import_file({str(zip_path)!r}, "slack-import")
+            again = tool.run_import(item, "Example", lambda step, done, total: None)
             if (again.created, again.updated, again.unchanged) != (0, 0, 10):
                 return f"again {{again.lines()!r}}"
+
+            # The workspace remembers the item.
+            kb = model.KB.connect(timeout=10)
+            [workspace] = [e for e in kb.find_by_label("Example")
+                           if kb.get(e).get_statements(darq.items.IMPORTED_FROM)]
+            last = sources.previous(kb, workspace)
+            if last is None or last.item_id != item.item_id:
+                return f"previous {{last!r}}"
             return 0
         """)
 

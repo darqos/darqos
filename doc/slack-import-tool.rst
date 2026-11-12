@@ -1,15 +1,20 @@
 Slack Import Tool
 =================
 
-This tool imports the history of a Slack workspace from an export on
-the host: an export directory, with messages, users, conversations and
-files in JSON, as ``experiments/slack/extract.py`` writes them.  It's
+This tool imports the history of a Slack workspace from an export: a
+directory, with messages, users, conversations and files in JSON, as
+``experiments/slack/extract.py`` writes them, or a zip of it, as an
+item.  It's
 not a Service: it's a one-shot tool, that can be run again if
 necessary, and it does *not* export anything from Darq to Slack.
 
 It's in ``tools/slack-import``, started from the Terminal's Tools
-panel (*Sys-t*): choose the export's directory, and name the
-workspace.  The Message type and Conversation lens are in
+panel (*Sys-t*): choose where the export comes from, and name the
+workspace.  It's a zip of the export's directory, as an item, fetched
+from a URL, chosen, or made from a local file; or, for development, the
+local directory, read as it is (see :doc:`tools`).  An item's read in one
+message, so a large export, with its files, is better read from its
+directory.  The workspace remembers the item it was imported from.  The Message type and Conversation lens are in
 :doc:`message-type`.
 
 What It Imports

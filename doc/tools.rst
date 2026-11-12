@@ -8,6 +8,33 @@ Examples are:
 * A spell-checker
 * A calculator
 
+Where Imports Come From
+-----------------------
+
+The imports, the vCard, LibraryThing and Slack tools on the Terminal's
+Tools panel (*Sys-t*), read an item, as everything else is, so what's
+imported is recorded, and can be imported again
+(``darq.ui.sources``).  Each window's *From* row says what's chosen,
+with buttons to choose it:
+
+* **URL**: fetched by the HTTP service, which makes it an item, as
+  Search's fetch does, and keeps it as the URL's latest snapshot.
+* **Item**: one of the items of its kind that came in, by name, newest
+  first, as History has them: vCards, JSON, or zips.
+* **Local file**: made an item, as the Terminal's *Import File* makes
+  one, and recorded as imported, from the import, with the file's path.
+  For development, while there's a Linux host underneath, Slack's can
+  instead be a **local directory**, an export as it is, read as it is.
+* **Fetch again**: for one that came from a URL, its latest.
+
+The item's read whole, with its type's ``Export``, in one message, so a
+large Slack export, with its files, is better read from its directory.
+Once it's imported, the import's own item, an address book, LibraryThing,
+or a Slack workspace, links to the item it came from, as *imported from*
+(read backwards, *imported into*), and the item's described as what it
+is, such as *vCard address book, imported as Personal*.  The next time,
+it's what's offered first.
+
 Spell Checker
 -------------
 

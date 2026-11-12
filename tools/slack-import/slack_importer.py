@@ -25,6 +25,7 @@ that wasn't an item now can be.  A batch that fails is logged, and the
 import goes on.  Nothing of a message's content is logged."""
 
 import logging
+import pathlib
 import typing
 import uuid
 
@@ -416,13 +417,13 @@ class Importer:
     def make_item(self, record: dict) -> str:
         """Make an item of a file, and return it, or an empty string if
         it can't be one."""
-        path = self.export.file_path(record)
-        if path is None or path.stat().st_size > MAX_FILE:
+        found = self.export.file(record)
+        if found is None or found.size > MAX_FILE:
             return ""
         media_type = record.get("mimetype", "")
-        extension = path.suffix.removeprefix(".")
+        extension = pathlib.PurePosixPath(found.name).suffix.removeprefix(".")
         try:
-            item_id = self.files.create(media_type, extension, path.read_bytes(), record.get("name") or path.name,
+            item_id = self.files.create(media_type, extension, found.read(), record.get("name") or found.name,
                                         TypeContext(event=darq.history.IMPORTED, source=SOURCE, note=self.name))
         except (OSError, darq.DarqError, TimeoutError) as e:
             log.warning(f"Can't make an item of {record['id']}: {e!r}")

@@ -7,7 +7,10 @@ one-shot tool, that can be run again, and it does *not* export anything
 from Darq to LibraryThing.
 
 It's in ``tools/librarything-import``, started from the Terminal's
-Tools panel (*Sys-t*): choose the export, and press Import.  Its summary
+Tools panel (*Sys-t*): choose where the export comes from, a URL, an
+item, or a local file (see :doc:`tools`), and press Import.  LibraryThing's
+source item remembers the item it was last imported from, and offers it
+again.  Its summary
 says what was made, and what's to be checked.
 
 What It Imports

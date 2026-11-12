@@ -1020,6 +1020,13 @@ DEFAULT_INSTANCE_TYPES = [
 MAX_CLASSES = 1000
 
 
+def first_string(entity: Entity, property_id: str) -> str:
+    """Return an entity's first string value for a property, preferred
+    first, or an empty string if it has none."""
+    found = _strings(entity, property_id)
+    return found[0] if found else ""
+
+
 def _strings(entity: Entity, property_id: str) -> List[str]:
     """Return an entity's string values for a property: those with
     preferred rank, if there are any, or else those with normal rank."""

@@ -713,8 +713,10 @@ Each item other than a thing, ``darq.thing``, that it creates or
 writes, with ``Create``, ``PutEntity`` or ``WriteEntities``, is
 published to the Index (see :doc:`search-service`): its labels and
 aliases, in every language, as names, and its descriptions as its
-body, with a message's text, so the Terminal's Search finds people,
-organisations and places by name, and messages by what they say.  One that's destroyed, or merged into another, is withdrawn,
+body, with a message's text, and a book's numbers (see :doc:`book`), so
+the Terminal's Search finds people, organisations and places by name,
+messages by what they say, and books by their ISBNs.  One that's
+destroyed, or merged into another, is withdrawn,
 as is one whose kind has changed, under the kind it was; the one it's
 merged into is published again.  ``IndexEntry`` gives the same entry,
 for a reindex, and is ``UNSUPPORTED`` for ``darq.thing``.
@@ -957,8 +959,10 @@ vCard Import
 ------------
 
 ``tools/vcard-import`` is a tool, started from the Terminal's Tools
-panel (*Sys-t*), with a window: choose a vCard file, and the
-address book's name, and import it.  The address book is an item, the
+panel (*Sys-t*), with a window: choose where the vCards come from, a
+URL, an item, or a local file (see :doc:`tools`), and the address book's
+name, and import it.  The address book remembers the item it was last
+imported from, and offers it again.  The address book is an item, the
 source its statements are stated in, so it can be imported again,
 updating what it imported before; other address books are imported
 under other names, and share what they have in common.

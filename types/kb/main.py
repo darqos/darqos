@@ -123,6 +123,13 @@ def vocabulary() -> list[model.Entity]:
     ]
 
 
+# A book's numbers, which are in its Index body, so that Search finds a
+# book by them: an edition's ISBNs, LCCN, ASIN and Open Library ID, a
+# work's LibraryThing number and classification numbers, and a copy's
+# LibraryThing ID.
+BOOK_NUMBERS = (darq.book.ISBN_13, darq.book.ISBN_10, darq.book.LCCN, darq.book.ASIN, darq.book.OPEN_LIBRARY,
+                darq.book.LIBRARYTHING_WORK, darq.book.DDC, darq.book.LCC, darq.book.LIBRARYTHING_BOOK)
+
 # Entities read and written at a time, renaming types.
 RENAME_BATCH = 200
 
@@ -410,7 +417,9 @@ def index_entry(entity: model.Entity) -> tuple[list[str], str]:
     texts = [text for s in entity.get_statements(darq.message.BODY)
              if isinstance(value := s.get_value(), model.TextValue)
              for text in value.text.values()]
-    return names, "\n".join(dict.fromkeys([*entity.descriptions.values(), *texts]))
+    numbers = [value.value for property_id in BOOK_NUMBERS for s in entity.get_statements(property_id)
+               if isinstance(value := s.get_value(), model.StringValue)]
+    return names, "\n".join(dict.fromkeys([*entity.descriptions.values(), *texts, *numbers]))
 
 
 def darq_main():

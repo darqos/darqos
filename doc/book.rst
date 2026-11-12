@@ -110,15 +110,26 @@ LRM Item isn't, but it's the nearest there is.  The fields are:
 Level          Properties
 =============  ==========================================================
 Work           Label (title), subtitle (P1680), author (P50), part of the
-               series (P179, with series ordinal P1545 for its volume)
+               series (P179, with series ordinal P1545 for its volume),
+               and its Dewey Decimal (P1036) and Library of Congress
+               (P1149) classification numbers, which classify what it's
+               about, so every edition's
 Expression     Language (P407), translator (P655), editor (P98), and
                local *started reading* and *finished reading*
 Manifestation  Publisher (P123), publication date (P577), edition number
-               (P393), ISBN-13 (P212), ISBN-10 (P957), number of pages
-               (P1104), and local *imprint* and *binding*
-LRM Item       Local *location* (Shelved at), *content*, *printing* and *date of printing*
-               (Date printed)
+               (P393), ISBN-13 (P212), ISBN-10 (P957), LCCN (P1144),
+               number of pages (P1104), and local *imprint* and *binding*
+LRM Item       Local *location* (Shelved at), *content*, *printing* and
+               *date of printing* (Date printed), *date acquired*,
+               *acquired from* and *price paid*, and *note* (Notes), in a
+               language, such as whose copy it is, the note any item can
+               have (``darq.items.NOTE``)
 =============  ==========================================================
+
+A book's numbers, its ISBNs, LCCN, ASIN, Open Library and LibraryThing
+IDs, and classification numbers, are in its levels' Index entries, so
+Search finds a book by them (see :doc:`kb-service`).  An ISBN's found
+as it's stored, its digits, without hyphens.
 
 An imprint is text, for now, unlike a publisher.  People, publishers,
 languages and series are items too, which can become Wikidata's, with a

@@ -153,6 +153,46 @@ def test_a_book_has_four_kinds():
             "darq.book.item"} <= set(model.KIND_TYPES)
 
 
+def test_classification_lccn_acquisition_and_notes():
+    """A work's Dewey and LC classification, an edition's LCCN, and how a
+    copy was acquired, with notes on it, are saved, read back, changed
+    and removed, as other fields are."""
+    store = MemoryStore()
+    book = bliss()
+    book.dewey, book.lc_class = "823.914", "PR9619.3.C36"
+    book.editions[1].lccn = "82012345"
+    book.editions[1].copies[0] = Copy(location="office", acquired="2020-03-04", acquired_from="A shop",
+                                      price="$9.95 (USD)", notes="Luba's copy")
+    darq.book.save(store, book)
+    read = read_book(store, store.item(book.work))
+    assert (read.dewey, read.lc_class) == ("823.914", "PR9619.3.C36")
+    picador = next(e for e in read.editions if e.publisher == "Picador")
+    copy = picador.copies[0]
+    assert picador.lccn == "82012345"
+    assert (copy.acquired, copy.acquired_from, copy.price, copy.notes) == \
+        ("2020-03-04", "A shop", "$9.95 (USD)", "Luba's copy")
+    work = store.entities[read.work.id]
+    assert values(work, darq.book.DDC)[0].value == "823.914"
+    assert [v.text for v in values(store.entities[copy.entity.id], darq.items.NOTE)] == [{"en": "Luba's copy"}]
+
+    copy.notes, copy.price = "Mine", ""
+    darq.book.save(store, read)
+    again = next(e for e in read_book(store, store.item(book.work)).editions if e.publisher == "Picador").copies[0]
+    assert (again.notes, again.price) == ("Mine", "")
+
+
+def test_an_acquisition_date_is_checked():
+    book = Book(title="T", editions=[Edition(copies=[Copy(acquired="soon")])])
+    assert "acquired" in darq.book.check(book)
+
+
+def test_a_copy_with_only_notes_is_made():
+    store = MemoryStore()
+    book = Book(title="T", editions=[Edition(copies=[Copy(notes="Luba's copy")])])
+    darq.book.save(store, book)
+    assert len(store.of_kind(darq.book.ITEM_TYPE)) == 1
+
+
 def test_saving_makes_the_levels():
     store, _ = saved()
     assert [len(store.of_kind(t)) for t in (darq.book.WORK_TYPE, darq.book.EXPRESSION_TYPE,
@@ -451,6 +491,20 @@ def test_vocabulary_has_no_repeats():
 def page(book: typing.Any) -> tuple[str, list[str]]:
     rendered = card.Page(book)
     return rendered.render(), rendered.targets
+
+
+def test_card_shows_classification_lccn_acquisition_and_notes():
+    book = bliss()
+    book.dewey, book.lc_class = "823.914", "PR9619.3.C36"
+    book.editions[1].lccn = "82012345"
+    book.editions[1].copies[0] = Copy(location="office", acquired="2020-03-04", acquired_from="A shop",
+                                      price="$9.95 (USD)", notes="Luba's copy")
+    text, _ = page(book)
+    for words in ("Dewey 823.914 · LC PR9619.3.C36", "LCCN 82012345",
+                  "acquired 2020-03-04, from A shop, for $9.95 (USD)", "Luba&#x27;s copy"):
+        assert words in text, words
+    assert card.acquisition(Copy(acquired_from="A shop")) == "acquired, from A shop"
+    assert card.acquisition(Copy()) == ""
 
 
 def test_card_shows_the_book():

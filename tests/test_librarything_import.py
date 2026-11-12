@@ -479,14 +479,20 @@ def test_librarything_import(live_pkernel, tmp_path):  # noqa: F811
             tool = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(tool)
 
-            result = tool.run_import({str(export_path)!r}, lambda step, done, total: None)
+            # The export's brought in as an item, and imported from, twice.
+            from darq.ui import sources
+            source = sources.import_file({str(export_path)!r}, "librarything-import")
+            result = tool.run_import(source, lambda step, done, total: None)
             if result.failed or result.created.get("darq.book.item") != 2:
                 return f"imported {{result.lines()!r}}"
-            again = tool.run_import({str(export_path)!r}, lambda step, done, total: None)
+            again = tool.run_import(source, lambda step, done, total: None)
             if again.created or again.updated:
                 return f"again {{again.lines()!r}}"
 
             kb = model.KB.connect(timeout=30)
+            last = sources.previous(kb, darq.book.LIBRARYTHING)
+            if last is None or last.item_id != source.item_id:
+                return f"previous {{last!r}}"
             [copy] = list(kb.find_by_value(darq.book.LIBRARYTHING_BOOK, "2"))
             item_id = model.item_id(copy, darq.book.ITEM_TYPE)
             store = book_store.ItemStore(["en"])

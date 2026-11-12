@@ -30,8 +30,8 @@ from .kb import Datatype, Entity, EntityValue, Item, Property, Reference, String
 
 # Control exports
 __all__ = ["BASE_TYPE", "CREATED", "DATA_TYPE", "DEPICTS", "FILE_EXTENSION", "FILE_NAME", "HAS_TAG", "IMAGE",
-           "INVERSE_LABELS", "KINDS", "MEDIA_TYPE", "TAG_TYPE", "Kind", "create", "destroy", "is_content", "item_of",
-           "label_for", "made", "names", "read", "rename", "tag", "vocabulary"]
+           "IMPORTED_FROM", "INVERSE_LABELS", "KINDS", "MEDIA_TYPE", "NOTE", "TAG_TYPE", "Kind", "create", "destroy",
+           "is_content", "item_of", "label_for", "made", "names", "read", "rename", "tag", "vocabulary"]
 
 
 # Properties: when an item was made, in DarqOS, and the name of the file
@@ -52,6 +52,15 @@ FILE_EXTENSION = "P1195"
 # picture that represents something (P18), Wikidata's.
 TAG_TYPE = "darq.tag"
 
+# What an import was last imported from: the item its data was read from,
+# on the import's own item, such as an address book (see
+# darq.ui.sources).
+IMPORTED_FROM = "ef5db13d-006a-44da-a51f-c7771c1130c0"
+
+# Notes on anything, in a language: a contact's, from an address book, or a
+# copy of a book's ("Luba's copy").  The vCard import's, which it was first.
+NOTE = "fea1107a-9668-4706-b784-fcf7f40867f7"
+
 # The type every item conforms to: the entity lens's, which shows any
 # item's entity.
 BASE_TYPE = "public.item"
@@ -64,6 +73,7 @@ INVERSE_LABELS = [
     (HAS_TAG, "f2295096-8f72-4dbe-8c1a-116a2424c45e", "tag of"),
     (DEPICTS, "f7524c95-4c70-4095-ae42-77521959959a", "depicted in"),
     (IMAGE, "e07939b2-289b-4bb2-9cdd-07f0ac9c232a", "image of"),
+    (IMPORTED_FROM, "a829512b-bf7f-40f8-9403-22991b84cb39", "imported into"),
 ]
 
 # Wikidata's classes of files: text file, image file, and computer file.
@@ -273,6 +283,8 @@ def vocabulary() -> list[Entity]:
         prop(MEDIA_TYPE, "media type", Datatype.String, "IANA-registered identifier for a file type"),
         prop(FILE_EXTENSION, "file extension", Datatype.String,
              "filename suffix that indicates the format of the file's contents"),
+        prop(NOTE, "note", Datatype.Text, "Notes on anything, in a language"),
+        prop(IMPORTED_FROM, "imported from", Datatype.Item, "The item an import's data was last read from"),
         prop(HAS_TAG, "has tag", Datatype.Item, "A tag on anything: an entity of its own, which lists what has it"),
         prop(DEPICTS, "depicts", Datatype.Item, "entity visually depicted in an image, literarily described in a work, "
              "or otherwise incorporated into an audiovisual or other medium"),

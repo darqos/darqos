@@ -546,22 +546,31 @@ class Loop:
         function()
 
 
+def inline(job, done):
+    """Runs a job, and then done, at once, as sources.runner does on a
+    thread of its own."""
+    try:
+        outcome = job()
+    except Exception as e:
+        outcome = e
+    done(outcome)
+
+
 def test_window(qt_app, monkeypatch, tmp_path):
     window = tool.ImportWindow(Loop())
+    window.run = inline
     window.begin()
-    assert "Choose a vCard file" in window.status.text()
+    assert "Choose where the vCards come from" in window.status.text()
 
-    path = tmp_path / "book.vcf"
-    path.write_text("BEGIN:VCARD\nEND:VCARD\n")
-    window.path.setText(str(path))
+    from darq.ui import sources
+    window.source.choose(sources.Source(item_id="public.data:0123456789abcdef0123456789abcdef", name="book.vcf"))
+    assert window.source.shown.text() == "book.vcf"
     result = importer.Result()
     result.created = 3
     result.reviews += [
         importer.Review(importer.MATCH, "u1", "darq.place:b1", "locality", "Brisbane", ["darq.place:b2"]),
         importer.Review(importer.ADDRESS_CHANGED, "u1", "darq.person:a", "residence", "darq.place:p1 -> darq.place:p2")]
     monkeypatch.setattr(tool, "run_import", lambda p, n, progress: (["1 cards"], result))
-    monkeypatch.setattr(tool, "start_thread", lambda job: job())
-    monkeypatch.setattr(darq, "release_reply_port", lambda: None)
     window.begin()
     text = window.summary.toPlainText()
     assert window.status.text() == "Imported." and "3 created" in text
@@ -590,6 +599,7 @@ def test_vcard_import(live_pkernel, tmp_path):  # noqa: F811
         import sys
         import time
         import darq
+        import darq.kb as model
         from darq.protocols.history import History
         from darq.protocols.type import Status, Type
 
@@ -607,19 +617,38 @@ def test_vcard_import(live_pkernel, tmp_path):  # noqa: F811
                     return "darq.person never registered"
                 time.sleep(0.05)
 
-            read, result = tool.run_import({str(path)!r}, "Test", lambda step, done, total: None)
+            # The file's brought in as an item, and imported from, twice.
+            from darq.ui import sources
+            source = sources.import_file({str(path)!r}, "vcard-import")
+            if not source.item_id.startswith("public.data:"):
+                return f"source {{source!r}}"
+            read, result = tool.run_import(source, "Test", lambda step, done, total: None)
             if result.created != 11 or result.failed:
                 return f"first: {{result.lines()}}"
-            read, result = tool.run_import({str(path)!r}, "Test", lambda step, done, total: None)
+            read, result = tool.run_import(source, "Test", lambda step, done, total: None)
             if result.created != 0 or result.updated != 0:
                 return f"again: {{result.lines()}}"
 
+            # The address book remembers it, and it's described.
+            kb = model.KB.connect(timeout=10)
+            last = sources.previous(kb, tool.address_book("Test"))
+            if last is None or last.item_id != source.item_id:
+                return f"previous {{last!r}}"
+            if kb.get(source.item_id.partition(":")[2]).get_description() != "vCard address book, imported as Test":
+                return "not described"
+
             history = History.Client(darq.connect("darq.history"), timeout=10)
-            events = history.get_events(sources=["vcard-import"]).events
-            kinds = sorted(e.item_id.partition(":")[0] for e in events)
-            if kinds != ["darq.organisation", "darq.organisational-unit", "darq.person", "darq.person",
-                         "darq.person", "darq.person", "darq.place", "darq.place"]:
-                return f"events: {{kinds}}"
+            deadline = time.monotonic() + 10
+            expected = ["darq.organisation", "darq.organisational-unit", "darq.person", "darq.person",
+                        "darq.person", "darq.person", "darq.place", "darq.place", "public.data"]
+            while True:
+                events = history.get_events(sources=["vcard-import"]).events
+                kinds = sorted(e.item_id.partition(":")[0] for e in events)
+                if kinds == expected:
+                    break
+                if time.monotonic() > deadline:
+                    return f"events: {{kinds}}"
+                time.sleep(0.05)
             return 0
         """)
 

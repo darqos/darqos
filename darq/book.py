@@ -18,6 +18,7 @@ import re
 import typing
 
 from . import identifier
+from . import items as darq_items
 from . import kb as model
 from .kb import Datatype, Entity, EntityValue, Item, Property, QuantityValue, StringValue, TextValue, TimeValue
 
@@ -332,6 +333,18 @@ class Copy:
     # Whether it's the one to read, of a book's formats.
     preferred: bool = False
 
+    # When, where from, and for what it was acquired, and notes on it,
+    # such as whose it is.
+    acquired: str = ""
+    acquired_from: str = ""
+    price: str = ""
+    notes: str = ""
+
+    def known(self) -> bool:
+        """Return whether anything's known of it, to make it of."""
+        return any(f.strip() for f in (self.location, self.content, self.printing, self.printed, self.acquired,
+                                       self.acquired_from, self.price, self.notes))
+
 
 @dataclasses.dataclass
 class Edition:
@@ -353,6 +366,9 @@ class Edition:
     # from, which isn't kept.
     cover: str = ""
     cover_url: str = ""
+
+    # Its Library of Congress Control Number.
+    lccn: str = ""
 
 
 @dataclasses.dataclass
@@ -382,6 +398,11 @@ class Book:
     title: str = ""
     subtitle: str = ""
     authors: list[str] = dataclasses.field(default_factory=list)
+
+    # Its Dewey Decimal and Library of Congress classification numbers,
+    # which classify what it's about, so every edition's.
+    dewey: str = ""
+    lc_class: str = ""
     series: str = ""
     volume: str = ""
     text_title: str = ""
@@ -484,7 +505,9 @@ def _item(store: Store, entity: Entity | None, property_id: str, old: str) -> st
 
 def _read_copy(store: Store, entity: Entity) -> Copy:
     return Copy(entity, _text(entity, LOCATION), _item(store, entity, CONTENT, OLD_CONTENT), _text(entity, PRINTING),
-                _text(entity, PRINTED), preferred=_preferred(entity))
+                _text(entity, PRINTED), preferred=_preferred(entity), acquired=_text(entity, ACQUIRED),
+                acquired_from=_text(entity, ACQUIRED_FROM), price=_text(entity, PRICE),
+                notes=_text(entity, darq_items.NOTE))
 
 
 def _read_edition(store: Store, entity: Entity, links: dict[str, str]) -> Edition:
@@ -494,7 +517,7 @@ def _read_edition(store: Store, entity: Entity, links: dict[str, str]) -> Editio
                    _text(entity, PUBLICATION_DATE), _text(entity, EDITION),
                    _text(entity, BINDING), _text(entity, ISBN_13), _text(entity, ISBN_10), _text(entity, PAGES),
                    _text(entity, OPEN_LIBRARY), [_read_copy(store, c) for c in copies],
-                   _item(store, entity, COVER, OLD_COVER))
+                   _item(store, entity, COVER, OLD_COVER), lccn=_text(entity, LCCN))
 
 
 def _edition_order(edition: Edition) -> tuple[bool, str]:
@@ -550,6 +573,7 @@ def read(store: Store, item_id: str) -> Book:
         expressions = store.children(model.item_id(work.id, WORK_TYPE), VERSION_OF, EXPRESSION_TYPE)
         book.title = work.get_label() or ""
         book.subtitle = _text(work, SUBTITLE)
+        book.dewey, book.lc_class = _text(work, DDC), _text(work, LCC)
         book.authors = _names(store, work, AUTHOR, book.links)
         series = _statements(work, SERIES)
         if series:
@@ -772,8 +796,7 @@ def add(store: Store, book: Book, match: Match) -> Book:
 
     :raises BookError: if it can't be done."""
     edition = book.editions[0] if book.editions else Edition(copies=[Copy()])
-    copies = [c for c in edition.copies if c.location.strip() or c.printing.strip() or c.printed.strip()
-              or c.content.strip()] or [Copy(wanted=True)]
+    copies = [c for c in edition.copies if c.known()] or [Copy(wanted=True)]
     if match.kind == ANOTHER_COPY and match.book is not None and match.edition is not None:
         match.edition.copies.extend(copies)
         target = match.book
@@ -816,6 +839,7 @@ def check(book: Book) -> str:
     for edition in book.editions:
         dated.append(("date", edition.date))
         dated += [("printed", copy.printed) for copy in edition.copies]
+        dated += [("acquired", copy.acquired) for copy in edition.copies]
         if edition.pages.strip() and not edition.pages.strip().isdigit():
             return f"Pages should be a number, not {edition.pages!r}"
     for name, text in dated:
@@ -951,8 +975,7 @@ def edition_label(edition: Edition) -> str:
 def _save_copy(store: Store, copy: Copy, manifestation: Entity):
     label = copy.location.strip() or COPY_LABEL
     if copy.entity is None:
-        if not (copy.wanted or copy.location.strip() or copy.content.strip() or copy.printing.strip()
-                or copy.printed.strip()):
+        if not (copy.wanted or copy.known()):
             return
         copy.entity = store.create(ITEM_TYPE, label)
         link = model.add_statement(copy.entity, EXEMPLAR_OF, EntityValue(manifestation.id), model.ENTITY_EDITOR)
@@ -966,6 +989,10 @@ def _save_copy(store: Store, copy: Copy, manifestation: Entity):
         *_link_edits(entity, CONTENT, OLD_CONTENT, copy.content),
         *_value_edits(entity, PRINTING, _string(copy.printing)),
         *_value_edits(entity, PRINTED, _time(copy.printed)),
+        *_value_edits(entity, ACQUIRED, _time(copy.acquired)),
+        *_value_edits(entity, ACQUIRED_FROM, _string(copy.acquired_from)),
+        *_value_edits(entity, PRICE, _string(copy.price)),
+        *_value_edits(entity, darq_items.NOTE, _subtitle(copy.notes)),
         *_preference_edits(entity, copy.preferred),
     ])
 
@@ -1028,10 +1055,8 @@ def move(store: Store, type_id: str, entity: Entity, parent: Entity) -> None:
 
 def _empty(edition: Edition) -> bool:
     fields = (edition.publisher, edition.imprint, edition.date, edition.edition, edition.binding, edition.isbn_13,
-              edition.isbn_10, edition.pages)
-    return not any(f.strip() for f in fields) and not any(c.entity or c.wanted or c.location.strip()
-                                                          or c.content.strip() or c.printing.strip()
-                                                          or c.printed.strip() for c in edition.copies)
+              edition.isbn_10, edition.pages, edition.lccn)
+    return not any(f.strip() for f in fields) and not any(c.entity or c.wanted or c.known() for c in edition.copies)
 
 
 def _save_edition(store: Store, edition: Edition, expression: Entity | None):
@@ -1057,6 +1082,7 @@ def _save_edition(store: Store, edition: Edition, expression: Entity | None):
         *_value_edits(entity, ISBN_10, _string(edition.isbn_10)),
         *_value_edits(entity, PAGES, _quantity(edition.pages)),
         *_value_edits(entity, OPEN_LIBRARY, _string(edition.open_library)),
+        *_value_edits(entity, LCCN, _string(edition.lccn)),
         *_link_edits(entity, COVER, OLD_COVER, edition.cover),
     ])
     for copy in edition.copies:
@@ -1093,6 +1119,8 @@ def save(store: Store, book: Book) -> None:
     book.work = store.change(work, [
         *_label_edits(work, title),
         *_value_edits(work, SUBTITLE, _subtitle(book.subtitle)),
+        *_value_edits(work, DDC, _string(book.dewey)),
+        *_value_edits(work, LCC, _string(book.lc_class)),
         *_names_edits(store, work, AUTHOR, book.authors, PERSON_TYPE),
         *_series_edits(store, work, book),
     ])

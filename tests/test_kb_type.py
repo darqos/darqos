@@ -953,3 +953,22 @@ def test_a_renamed_type_is_renamed_when_it_starts(kb, implementation):
     revision = renamed.revision
     implementation.start()
     assert kb.get("old").revision == revision
+
+
+def test_a_books_numbers_are_in_its_index_entry(kb, implementation):
+    """So Search finds an edition by its ISBN, and a work by its Dewey."""
+    edition_id, _ = create(implementation, darq.book.MANIFESTATION_TYPE)
+    edition = kb.get(darq.split_item_id(edition_id)[1])
+    edition.set_label("Picador, Paperback, 1982")
+    edition.claim(darq.book.ISBN_13, model.StringValue("9780330268035"))
+    edition.claim(darq.book.LCCN, model.StringValue("82012345"))
+    kb.put(edition)
+    assert index_entry(implementation, edition_id) == (["Picador, Paperback, 1982"], "9780330268035\n82012345")
+
+    work_id, _ = create(implementation, darq.book.WORK_TYPE)
+    work = kb.get(darq.split_item_id(work_id)[1])
+    work.set_label("Bliss")
+    work.set_description("novel by Peter Carey")
+    work.claim(darq.book.DDC, model.StringValue("823.914"))
+    kb.put(work)
+    assert index_entry(implementation, work_id) == (["Bliss"], "novel by Peter Carey\n823.914")

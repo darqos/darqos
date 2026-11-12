@@ -5,7 +5,10 @@
 # export, into the Knowledge Base (see doc/librarything-import-tool.rst).
 #
 # It's a tool (see tool.json), started from the Terminal's Tools panel,
-# Sys-t.  Choose the export.  It's read (lt_export.py), and imported
+# Sys-t.  Choose where the export comes from (darq.ui.sources): an item,
+# fetched from a URL, chosen, or made from a local file, which
+# LibraryThing's source item remembers, to offer again.  It's read
+# (lt_export.py), and imported
 # (lt_importer.py) on another thread: read from the KB service, and
 # created and written through the KB type implementation, which records
 # what's made in History.
@@ -19,15 +22,16 @@ import pathlib
 import sys
 import typing
 
-from PyQt6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
+from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QPlainTextEdit,
                              QProgressBar, QPushButton, QVBoxLayout, QWidget)
 
 import darq
+import darq.book
 import darq.kb as model
 from darq.loop import QtEventLoop
 from darq.protocols.kb import EntityWriter
 from darq.protocols.type import Status, Type
-from darq.ui.launcher import start_thread
+from darq.ui import sources
 
 # Its own modules are beside it.
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
@@ -38,13 +42,22 @@ import lt_importer  # noqa: E402
 # Seconds to wait for services' replies.
 TIMEOUT = 60.0
 
+# History's source of what it brings in, and the items it reads: JSON.
+SOURCE = lt_importer.SOURCE
+ACCEPTS = sources.accepting(["application/json"], ["json"])
 
-def run_import(path: str, progress: typing.Callable[[str, int, int], None]) -> lt_importer.Result:
-    """Read and import an export, on the calling thread.
 
-    :raises OSError, ValueError: if it can't be read.
+def run_import(source: sources.Source, progress: typing.Callable[[str, int, int], None]) -> lt_importer.Result:
+    """Read and import an export, from a source item, on the calling
+    thread, and remember it as what LibraryThing's was imported from.
+
+    :raises sources.SourceError, ValueError: if it can't be read.
     :raises darq.DarqError: if a service can't be reached."""
-    records = lt_export.read_export(pathlib.Path(path).read_text(encoding="utf-8"))
+    try:
+        text = sources.read(source).decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise ValueError(f"{source.name} isn't UTF-8 text: {e}") from None
+    records = lt_export.read_export(text)
     types = Type.Client(darq.connect("darq.type"), timeout=TIMEOUT)
     activated = types.activate(type_id=model.THING_TYPE)
     if activated.status != Status.OK or activated.implementation is None:
@@ -52,7 +65,10 @@ def run_import(path: str, progress: typing.Callable[[str, int, int], None]) -> l
     kb = model.KB.connect(timeout=TIMEOUT)
     items = model.KB(kb.client, EntityWriter.Client(activated.implementation, timeout=TIMEOUT))
 
-    return lt_importer.Importer(kb, items, records, progress).run()
+    result = lt_importer.Importer(kb, items, records, progress).run()
+    sources.remember(kb, darq.book.LIBRARYTHING, source)
+    sources.describe(source.item_id, "LibraryThing export")
+    return result
 
 
 def summary(outcome: lt_importer.Result) -> list[str]:
@@ -73,22 +89,21 @@ def summary(outcome: lt_importer.Result) -> list[str]:
 
 
 class ImportWindow(QWidget):
-    """Choose an export, import it, and show what happened."""
+    """Choose where an export comes from, import it, and show what
+    happened."""
 
     def __init__(self, loop: QtEventLoop):
         super().__init__()
         self.loop = loop
+        self.run = sources.runner(loop)
         self.setWindowTitle("Import LibraryThing")
         self.resize(760, 560)
 
         layout = QVBoxLayout()
+        self.source = sources.SourceChooser(self, SOURCE, ACCEPTS, self.run, "JSON (*.json);;All files (*)")
+        layout.addWidget(self.source)
         row = QHBoxLayout()
-        row.addWidget(QLabel("Export:"))
-        self.path = QLineEdit(self)
-        row.addWidget(self.path, 1)
-        self.browse = QPushButton("Browse ...", self)
-        self.browse.clicked.connect(self.choose)
-        row.addWidget(self.browse)
+        row.addStretch(1)
         self.start = QPushButton("Import", self)
         self.start.clicked.connect(self.begin)
         row.addWidget(self.start)
@@ -113,17 +128,10 @@ class ImportWindow(QWidget):
         # Set while an import's running.
         self.running = False
 
-    def choose(self):
-        # Qt's own dialog: the compositor has no file chooser portal.
-        path, _ = QFileDialog.getOpenFileName(self, "LibraryThing export", str(pathlib.Path.home()),
-                                              "JSON (*.json)", options=QFileDialog.Option.DontUseNativeDialog)
-        if path:
-            self.path.setText(path)
-
     def begin(self):
-        path = self.path.text().strip()
-        if not pathlib.Path(path).is_file():
-            self.status.setText("Choose an export.")
+        source = self.source.source
+        if source is None:
+            self.status.setText("Choose where the export comes from.")
             return
         self.set_running(True)
         self.summary.clear()
@@ -131,24 +139,12 @@ class ImportWindow(QWidget):
         def progress(step: str, done: int, total: int):
             self.loop.post(lambda: self.show_progress(step, done, total))
 
-        def job():
-            try:
-                outcome: typing.Any = run_import(path, progress)
-            except Exception as e:
-                logging.exception("Import failed")
-                outcome = e
-            darq.release_reply_port()
-            try:
-                self.loop.post(lambda: self.finished(outcome))
-            except RuntimeError:
-                logging.info("Import finished after the window")
-
-        start_thread(job)
+        self.run(lambda: run_import(source, progress), self.finished)
 
     def set_running(self, running: bool):
         self.running = running
-        for widget in (self.path, self.browse, self.start):
-            widget.setEnabled(not running)
+        self.start.setEnabled(not running)
+        self.source.set_enabled(not running)
 
     def show_progress(self, step: str, done: int, total: int):
         self.status.setText(f"{step} ...")
@@ -176,5 +172,6 @@ def darq_main():
     loop = QtEventLoop()
     window = ImportWindow(loop)
     window.show()
+    window.source.offer_previous(darq.book.LIBRARYTHING)
     app.exec()
     return 0

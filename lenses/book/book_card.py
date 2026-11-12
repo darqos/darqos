@@ -52,6 +52,17 @@ TYPES = {WORK: darq.book.WORK_TYPE, EXPRESSION: darq.book.EXPRESSION_TYPE,
          MANIFESTATION: darq.book.MANIFESTATION_TYPE, COPY: darq.book.ITEM_TYPE}
 
 
+def acquisition(copy: Copy) -> str:
+    """Return how a copy was acquired, in words: "acquired 2020-03-04, from
+    A shop, for $9.95"."""
+    parts = [f"acquired {copy.acquired}" if copy.acquired else "acquired" if copy.acquired_from or copy.price else ""]
+    if copy.acquired_from:
+        parts.append(f"from {copy.acquired_from}")
+    if copy.price:
+        parts.append(f"for {copy.price}")
+    return ", ".join(p for p in parts if p)
+
+
 @dataclasses.dataclass(frozen=True)
 class Add:
     """A link to add a level, to an entity of the one above."""
@@ -140,6 +151,8 @@ class Page:
             parts.append(f"{edition.pages} pages")
         if edition.isbn_13 or edition.isbn_10:
             parts.append(f"ISBN {edition.isbn_13 or edition.isbn_10}")
+        if edition.lccn:
+            parts.append(f"LCCN {edition.lccn}")
         return html.escape(" · ".join(parts))
 
     def about_copy(self, copy: Copy) -> str:
@@ -156,6 +169,9 @@ class Page:
             parts.append(html.escape(f"{printing}, {copy.printed}" if copy.printed else printing))
         elif copy.printed:
             parts.append(html.escape(f"printed {copy.printed}"))
+        acquired = acquisition(copy)
+        if acquired:
+            parts.append(html.escape(acquired))
         return " · ".join(parts)
 
     def edition(self, edition: Edition) -> str:
@@ -171,6 +187,8 @@ class Page:
         for copy in edition.copies:
             edit = self.edit_link(COPY, copy.entity)
             parts.append(f'<p class="copy{self.opened(copy.entity)}">{self.about_copy(copy)}{edit}</p>')
+            if copy.notes:
+                parts.append(f'<p class="copy detail">{html.escape(copy.notes)}</p>')
         if not edition.copies:
             parts.append('<p class="copy detail">No copies</p>')
 
@@ -200,6 +218,9 @@ class Page:
         if book.series:
             volume = f" {html.escape(book.volume)}" if book.volume else ""
             parts.append(f'<p class="detail">{self.names([book.series])}{volume}</p>')
+        classes = [f"Dewey {book.dewey}" if book.dewey else "", f"LC {book.lc_class}" if book.lc_class else ""]
+        if any(classes):
+            parts.append(f'<p class="detail">{html.escape(" · ".join(c for c in classes if c))}</p>')
         return "".join(parts)
 
     def text(self, text: Text, link: bool = False) -> str:
