@@ -409,6 +409,13 @@ alone, in its own keymap, and replaces the host's modifiers with it.
 (Tools on the host, like ``xev``, show the host's keymap, not the
 compositor's.)
 
+A touchpad, on real hardware, scrolls naturally, as content follows the
+fingers, and taps to click, as GNOME and macOS have them, rather than as
+libinput's defaults do: the compositor configures each as it's added.
+A mouse is left as it is, its wheel scrolling the usual way.  It's fixed
+for now, until there's a configuration panel.  Nested in another
+compositor, the host does this.
+
 For starters, only a US layout will be supported.
 
 Functions

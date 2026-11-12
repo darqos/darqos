@@ -49,8 +49,10 @@
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
+#include <libinput.h>
 #include <wayland-server-core.h>
 #include <wlr/backend.h>
+#include <wlr/backend/libinput.h>
 #include <wlr/backend/wayland.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/interfaces/wlr_pointer.h>
@@ -818,12 +820,31 @@ static void server_new_keyboard(struct tinywl_server *server,
 	wl_list_insert(&server->keyboards, &keyboard->link);
 }
 
+/* Configure a pointer on real hardware, a libinput device: a touchpad, one
+ * that can tap, scrolls naturally, as content follows the fingers, and taps
+ * to click, as GNOME and macOS have them, rather than libinput's defaults.
+ * A mouse is left as it is: its wheel scrolls the usual way.  Under another
+ * compositor, as a window, its devices aren't libinput's: its host does
+ * this.  Fixed for now: a setting waits for the system's configuration. */
+static void configure_pointer(struct wlr_input_device *device) {
+	if (!wlr_input_device_is_libinput(device)) {
+		return;
+	}
+	struct libinput_device *handle = wlr_libinput_get_device_handle(device);
+	if (libinput_device_config_tap_get_finger_count(handle) == 0) {
+		return;
+	}
+	if (libinput_device_config_scroll_has_natural_scroll(handle)) {
+		libinput_device_config_scroll_set_natural_scroll_enabled(handle, 1);
+	}
+	libinput_device_config_tap_set_enabled(handle, LIBINPUT_CONFIG_TAP_ENABLED);
+	wlr_log(WLR_INFO, "Touchpad %s: natural scrolling, and tap to click", device->name);
+}
+
 static void server_new_pointer(struct tinywl_server *server,
 		struct wlr_input_device *device) {
-	/* We don't do anything special with pointers. All of our pointer handling
-	 * is proxied through wlr_cursor. On another compositor, you might take this
-	 * opportunity to do libinput configuration on the device to set
-	 * acceleration, etc. */
+	/* All of our pointer handling is proxied through wlr_cursor. */
+	configure_pointer(device);
 	wlr_cursor_attach_input_device(server->cursor, device);
 }
 
