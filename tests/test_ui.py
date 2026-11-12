@@ -531,3 +531,35 @@ def test_once_stopped_nothings_said_and_a_gone_item_is_only_logged(viewing, capl
     item.dead = True
     shown.show(item)
     assert "Can't say it's viewed" in caplog.text
+
+
+################################################################
+# Dialogs (darq.ui.dialogs)
+################################################################
+
+def test_choosing_from_a_list(qt_app):
+    from darq.ui import dialogs
+    dialog = dialogs.ChooseDialog(None, "Wikidata", "Which?", ["Viv Albertine — British musician", "Someone else"])
+    assert dialog.chosen() == 0 and dialog.list.count() == 2
+    dialog.list.setCurrentRow(1)
+    assert dialog.chosen() == 1
+    assert dialog.styleSheet() == dialogs.STYLE
+    assert dialogs.ChooseDialog(None, "T", "Q", []).chosen() is None
+
+
+def test_a_line_starts_with_its_text(qt_app):
+    from darq.ui import dialogs
+    dialog = dialogs.TextDialog(None, "Merge", "Into?", "Bloomsbury")
+    assert dialog.line.text() == "Bloomsbury" and dialog.line.selectedText() == "Bloomsbury"
+
+
+@pytest.mark.parametrize("key, accepted", [("Key_Y", True), ("Key_N", False)])
+def test_confirming_by_key(qt_app, key, accepted):
+    from PyQt6.QtCore import QEvent, Qt
+    from PyQt6.QtGui import QKeyEvent
+    from PyQt6.QtWidgets import QDialog
+    from darq.ui import dialogs
+    dialog = dialogs.ConfirmDialog(None, "Merge", "Merge them?")
+    assert dialog.no.isDefault()
+    dialog.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, getattr(Qt.Key, key), Qt.KeyboardModifier.NoModifier))
+    assert dialog.result() == (QDialog.DialogCode.Accepted if accepted else QDialog.DialogCode.Rejected)

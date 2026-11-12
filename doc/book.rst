@@ -288,9 +288,13 @@ From a PDF's or an e-book's lens, B starts it (``darq.ui.catalogue``):
    no title asks for one.
 2. It looks for the book, by ISBN, and by title and author: each format
    often has an ISBN of its own, and older books may have none.
-3. If it might be one that's here, it asks whether it is: another copy
-   of an edition that's there (a new LRM Item), or another format (a new
-   Manifestation), or a new book.
+3. If it might be one that's here, it asks what it is, from a list:
+   another copy of an edition that's there, found by ISBN (a new LRM
+   Item); another edition of one of its texts (a new Manifestation of
+   that Expression), each described by its language and translators; a
+   new text of it, such as another translation (a new Expression of the
+   same Work); or a new book.  A text in another language than the
+   file's isn't offered.  Escape catalogues nothing.
 4. What's new's written, and its Book card opens, to be filled in.  The
    file's item doesn't change.  If it's been catalogued, B just opens
    its card.
@@ -319,10 +323,17 @@ Otherwise, it stops and asks:
   and N doesn't.  It may well be the same book scanned twice, or one
   that was imported, whose copy wants a location on its card instead.
   A copy changes nothing else on the card.
-* The same title and author is only a guess: M adds a new Manifestation
-  of that book, and N a new book.
-* If their languages differ, it's a text of its own: N adds a new book,
-  or Escape leaves it to be added from that book's card.
+* The same title and author is only a guess, so it asks what it is, by
+  number: another edition of one of the book's texts (a new
+  Manifestation of that Expression), each described by its language and
+  translators, or a new text of it, such as another translation (a new
+  Expression of the same Work); or N adds a new book.  A text in another
+  language than the one being added isn't offered, as it isn't for
+  guessing.
+
+Once it's added, it says what it was added to, and how many there are
+there now, and how many books it's added: *Added a copy of Bliss, now 2
+copies for this Manifestation.  Total 6 books added so far.*
 
 It asks on keys of their own, as a scanner usually sends Enter by itself,
 and a stray one mustn't count as a yes.  Other keys do nothing.  If a new

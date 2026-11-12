@@ -88,6 +88,9 @@ __all__ = [
     "NEW",
     "ANOTHER_COPY",
     "ANOTHER_EDITION",
+    "describe_text",
+    "edition_choices",
+    "main_text",
     "Match",
     "add",
     "add_copy",
@@ -672,18 +675,16 @@ ANOTHER_COPY = "copy"
 @dataclasses.dataclass
 class Match:
     """What a book being added is: book is the one that's here, if it's
-    of one, and edition which of its editions, if it's a copy of one."""
+    of one, and edition which of its editions, if it's a copy of one.  An
+    edition of a book that's here is of its text, the one it was read
+    with, unless text is another, one of its others; or of a new text,
+    such as another translation, with new_text."""
 
     kind: str = NEW
     book: Book | None = None
     edition: Edition | None = None
-
-    def language_differs(self, book: Book) -> bool:
-        """Return whether a book being added isn't in this one's language,
-        so it's a text of its own, which isn't for guessing."""
-        if self.book is None or not book.language.strip() or not self.book.language.strip():
-            return False
-        return book.language.strip().casefold() != self.book.language.strip().casefold()
+    text: Text | None = None
+    new_text: bool = False
 
 
 def _same_people(first: list[str], second: list[str]) -> bool:
@@ -713,6 +714,57 @@ def find_match(store: Store, book: Book) -> Match:
     return Match()
 
 
+def describe_text(text: Text) -> str:
+    """Return a text, an expression, in words: its language, and who
+    translated it, or its own title."""
+    words = f"the {text.language.strip()} text" if text.language.strip() else "the text"
+    if text.title.strip():
+        words += f", {text.title.strip()}"
+    if text.translators:
+        words += f", translated by {_and(text.translators)}"
+    return words
+
+
+def _and(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def main_text(book: Book) -> Text:
+    """Return the text a book was read with, as a Text."""
+    return Text(entity=book.expression, language=book.language, translators=list(book.translators),
+                editors=list(book.editors), title=book.text_title)
+
+
+def edition_choices(match: Match, book: Book | None = None) -> list[tuple[str, Match]]:
+    """Return what a book that might be another edition of one that's here
+    can be added as, in words: an edition of each of its texts, but those
+    in another language than the book being added, if both say; a new
+    text of it, such as another translation; or a new book."""
+    here = match.book
+    if here is None or match.kind != ANOTHER_EDITION:
+        return [("A new book", Match())]
+    title = here.title
+    texts = [main_text(here), *here.texts] if here.expression is not None else here.texts
+    language = book.language.strip().casefold() if book is not None else ""
+    texts = [t for t in texts if not language or not t.language.strip() or t.language.strip().casefold() == language]
+    choices = [(f"Another edition of {title}: {describe_text(t)}", Match(ANOTHER_EDITION, here, text=t))
+               for t in texts]
+    if not choices and here.expression is None:
+        choices = [(f"Another edition of {title}", Match(ANOTHER_EDITION, here))]
+    choices.append((f"A new text of {title}, such as another translation",
+                    Match(ANOTHER_EDITION, here, new_text=True)))
+    choices.append(("A new book", Match()))
+    return choices
+
+
+def _another_text(match: Match) -> bool:
+    """Return whether a match is to a text of its book other than the one
+    it was read with."""
+    text, here = match.text, match.book
+    return text is not None and text.entity is not None and here is not None and (
+        here.expression is None or text.entity.id != here.expression.id)
+
+
 def add(store: Store, book: Book, match: Match) -> Book:
     """Save a book being added, as a match says, and return it as saved.
     The first of its editions and copies is what's added: what's here
@@ -725,6 +777,23 @@ def add(store: Store, book: Book, match: Match) -> Book:
     if match.kind == ANOTHER_COPY and match.book is not None and match.edition is not None:
         match.edition.copies.extend(copies)
         target = match.book
+    elif match.kind == ANOTHER_EDITION and match.book is not None and match.book.work is not None and (
+            match.new_text or _another_text(match)):
+        # Of another text, or a new one: the edition's added under it.
+        if match.new_text:
+            expression = add_text(store, match.book.work, Text(language=book.language, translators=book.translators,
+                                                               editors=book.editors, title=book.text_title))
+        else:
+            assert match.text is not None and match.text.entity is not None
+            expression = match.text.entity
+        edition.copies = copies
+        try:
+            _save_edition(store, edition, expression)
+        except BookError:
+            if match.new_text:
+                _clear_away(store, expression, EXPRESSION_TYPE)
+            raise
+        return read(store, model.item_id(expression.id, EXPRESSION_TYPE))
     elif match.kind == ANOTHER_EDITION and match.book is not None:
         edition.copies = copies
         match.book.editions.append(edition)

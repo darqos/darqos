@@ -251,10 +251,16 @@ def files() -> MemoryStore:
     return MemoryStore().content("darq.book.epub:a", "com.adobe.pdf:b", "public.jpeg:c")
 
 
-def add_content(store, content="darq.book.epub:a", title="Bliss", authors=("Peter Carey",), isbn="", answer=True,
-                **details):
-    return catalogue.add_content(store, content, catalogue.Details(title, list(authors), isbn, **details),
-                                 lambda match: answer)
+def add_content(store, content="darq.book.epub:a", title="Bliss", authors=("Peter Carey",), isbn="",
+                answer: bool | int = True, **details):
+    """Catalogue a file: if it might be a book that's here, it is, the first
+    choice, with answer, or else a new book, or the choice answer is."""
+    def choose(offered):
+        if isinstance(answer, int) and not isinstance(answer, bool):
+            return offered[answer][1]
+        return offered[0][1] if answer else offered[-1][1]
+
+    return catalogue.add_content(store, content, catalogue.Details(title, list(authors), isbn, **details), choose)
 
 
 def test_a_new_file_is_a_new_book():
@@ -283,11 +289,59 @@ def test_saying_its_not_that_book_makes_a_new_one():
     assert len(store.of_kind(darq.book.WORK_TYPE)) == 2
 
 
+def test_another_translation_is_a_new_text_of_the_book():
+    """Demian, in two translations: a second e-book can be a new text of the
+    same Work, rather than an edition of the first's text."""
+    store = files()
+    first = add_content(store, title="Demian", authors=("Hermann Hesse",), translators=["W. J. Strachan"],
+                        language="English")
+    offered = catalogue.choices(darq.book.find_match(store, darq.book.Book(title="Demian", authors=["Hermann Hesse"],
+                                                                           language="English")),
+                                darq.book.Book(language="English"))
+    assert [said for said, _ in offered] == [
+        "Another edition of Demian: the English text, translated by W. J. Strachan",
+        "A new text of Demian, such as another translation",
+        "A new book"]
+
+    second = add_content(store, "com.adobe.pdf:b", title="Demian", authors=("Hermann Hesse",),
+                         translators=["N. H. Priday"], language="English", answer=1)
+    assert len(store.of_kind(darq.book.WORK_TYPE)) == 1
+    assert len(store.of_kind(darq.book.EXPRESSION_TYPE)) == 2
+    assert first == second
+    book = read_book(store, first)
+    assert [t.translators for t in book.texts] == [["N. H. Priday"]]
+    assert [c.content for t in book.texts for e in t.editions for c in e.copies] == ["com.adobe.pdf:b"]
+
+    # A third goes under the text chosen: the second's.
+    third = add_content(store, "public.jpeg:c", title="Demian", authors=("Hermann Hesse",), language="English",
+                        answer=1)
+    assert third == first and len(store.of_kind(darq.book.EXPRESSION_TYPE)) == 2
+    assert sorted(c.content for t in read_book(store, first).texts for e in t.editions for c in e.copies) == [
+        "com.adobe.pdf:b", "public.jpeg:c"]
+
+
+def test_a_text_in_another_language_isnt_offered():
+    store = files()
+    add_content(store, language="English")
+    match = darq.book.find_match(store, darq.book.Book(title="Bliss", authors=["Peter Carey"]))
+    offered = catalogue.choices(match, darq.book.Book(language="Latin"))
+    assert [said for said, _ in offered] == ["A new text of Bliss, such as another translation", "A new book"]
+
+
+def test_not_choosing_catalogues_nothing():
+    store = files()
+    add_content(store)
+    with pytest.raises(darq.book.BookError, match="Not catalogued"):
+        catalogue.add_content(store, "com.adobe.pdf:b", catalogue.Details("Bliss", ["Peter Carey"]),
+                              lambda offered: None)
+    assert len(store.of_kind(darq.book.MANIFESTATION_TYPE)) == 1
+
+
 def test_it_asks_only_if_theres_a_match():
     store = files()
     asked = []
     catalogue.add_content(store, "darq.book.epub:a", catalogue.Details("Bliss"),
-                          lambda match: asked.append(match) or True)
+                          lambda offered: asked.append(offered) or offered[0][1])
     assert asked == []
 
 

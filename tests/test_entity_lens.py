@@ -715,6 +715,8 @@ def test_merged_note(entity_lens, world):
     world.entities["darq.person:old"] = world.entities[ADA]
     use(entity_lens, world, "darq.person:old")
     assert "old was merged into this." in entity_lens.window.browser.toPlainText()
+    # Its identifier is the entity's own, not the one asked for.
+    assert entity_lens.window.item_label.text() == ADA
 
 
 ################################################################

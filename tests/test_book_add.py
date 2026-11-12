@@ -306,7 +306,38 @@ def test_enter_adds_and_readies_the_next(loop):
     assert view.fields["title"].text() == "" and view.query.text() == ""
     assert view.fields["location"].text() == "study, shelf 3"
     assert view.focusWidget() is view.query
-    assert "1 so far" in used.window.status.text()
+    assert used.window.status.text() == "Added Head First design patterns.  Total 1 book added so far."
+
+
+def test_what_a_copy_says_is_how_many_copies_and_books(loop):
+    """It counts the Manifestation's copies, and, apart, the books added."""
+    used, store, view = loop
+    by_title(view, title="Illywhacker")
+    used.add_shown()
+    look_up(view, ISBN)
+    used.add_shown()
+    look_up(view, ISBN)
+    used.add_shown()
+    key(view, "Key_Y")
+    assert used.window.status.text() == \
+        "Added a copy of Head First design patterns, now 2 copies for this Manifestation.  " \
+        "Total 3 books added so far."
+
+
+def test_what_an_edition_and_a_text_say(loop):
+    used, store, view = loop
+    by_title(view, language="English")
+    used.add_shown()
+    by_title(view, language="English")
+    used.add_shown()
+    key(view, "Key_1")
+    assert used.window.status.text() == "Added an edition of Bliss, now 2 editions of this text.  " \
+        "Total 2 books added so far."
+    by_title(view, language="English")
+    used.add_shown()
+    key(view, "Key_2")
+    assert used.window.status.text() == "Added a new text of Bliss, now 2 texts of this Work.  " \
+        "Total 3 books added so far."
 
 
 def test_the_first_book_uses_the_new_work(loop):
@@ -412,9 +443,25 @@ def test_a_title_match_asks(loop):
     used.add_shown()
     by_title(view, language="English")
     used.add_shown()
-    assert view.asking and "M adds it as a new Manifestation" in view.question.text()
-    key(view, "Key_M")
+    question = view.question.text()
+    assert view.asking and "1 adds it as another edition of Bliss: the English text" in question
+    assert "2 adds it as a new text of Bliss, such as another translation" in question
+    key(view, "Key_1")
     assert len(store.of_kind(darq.book.WORK_TYPE)) == 1
+    assert len(store.of_kind(darq.book.EXPRESSION_TYPE)) == 1
+    assert len(store.of_kind(darq.book.MANIFESTATION_TYPE)) == 2
+
+
+def test_a_title_match_can_be_a_new_text(loop):
+    """As another translation: a new Expression of the same Work."""
+    used, store, view = loop
+    by_title(view, language="English")
+    used.add_shown()
+    by_title(view, language="English")
+    used.add_shown()
+    key(view, "Key_2")
+    assert len(store.of_kind(darq.book.WORK_TYPE)) == 1
+    assert len(store.of_kind(darq.book.EXPRESSION_TYPE)) == 2
     assert len(store.of_kind(darq.book.MANIFESTATION_TYPE)) == 2
 
 
@@ -434,11 +481,14 @@ def test_another_language_cant_go_on_the_same_text(loop):
     used.add_shown()
     by_title(view, language="Latin")
     used.add_shown()
-    assert view.asking and "is in English, and this is in Latin" in view.question.text()
+    question = view.question.text()
+    assert view.asking and "the English text" not in question
+    assert "1 adds it as a new text of Bliss" in question
     key(view, "Key_M")
     assert view.asking and len(store.of_kind(darq.book.MANIFESTATION_TYPE)) == 1
-    key(view, "Key_N")
-    assert len(store.of_kind(darq.book.WORK_TYPE)) == 2
+    key(view, "Key_1")
+    assert len(store.of_kind(darq.book.WORK_TYPE)) == 1
+    assert len(store.of_kind(darq.book.EXPRESSION_TYPE)) == 2
 
 
 def test_a_title_offers_a_choice(loop):

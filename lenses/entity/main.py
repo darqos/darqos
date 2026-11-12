@@ -46,7 +46,7 @@ import typing
 
 from PyQt6 import QtCore
 from PyQt6.QtGui import QKeyEvent, QMouseEvent
-from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QInputDialog, QLabel, QMenu, QMessageBox, QPushButton,
+from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMenu, QPushButton,
                              QScrollArea, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget)
 
 import darq
@@ -62,6 +62,7 @@ from darq.protocols.kb import Context as KBContext
 from darq.protocols.type import Context as TypeContext
 from darq.protocols.kb import Status as KBStatus
 from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
+from darq.ui import dialogs
 from darq.ui import links as grouped
 from darq.ui.lens import LensHandler, Viewing, announce
 from darq.ui import style
@@ -269,6 +270,17 @@ class EntityWindow(QWidget):
         logging.info(f"Showing {item_id}")
         return True
 
+    @staticmethod
+    def entity_item_id(shown: "Shown") -> str:
+        """Return the item identifier of the entity shown: the one asked
+        for, unless it's been merged into another, when it's that one's,
+        of its kind, or else of the kind asked for."""
+        type_id, requested = darq.split_item_id(shown.item_id)
+        if shown.entity.id == requested:
+            return shown.item_id
+        recorded = model.recorded_type(shown.entity)
+        return model.item_id(shown.entity.id, recorded if recorded != model.THING_TYPE else type_id)
+
     def read(self, shown: Shown, links: bool = True) -> bool:
         """Read an item's entity, and those it refers to, and, with links,
         those that link to it: False if it can't be read."""
@@ -348,8 +360,11 @@ class EntityWindow(QWidget):
         assert self.shown is not None
         self.title.setText(title)
         self.setWindowTitle(title)
-        self.item_label.setText(self.shown.item_id)
-        self.kind.setText(render.kind_name(self.shown.item_id))
+        # The entity's own item, which, once one's been merged into another,
+        # isn't the one asked for: the note under the title says that one.
+        item_id = self.entity_item_id(self.shown)
+        self.item_label.setText(item_id)
+        self.kind.setText(render.kind_name(item_id))
         self.edit_button.setEnabled(self.view is None)
         self.browser.setHtml(html)
         bar = self.browser.verticalScrollBar()
@@ -1090,16 +1105,13 @@ class EntityLens(LensHandler):
         self.run(run)
 
     def ask_to_choose(self, question: str, choices: list[str], title: str = "Wikidata") -> int | None:
-        chosen, ok = QInputDialog.getItem(self.window, title, question, choices, 0, False)
-        return choices.index(chosen) if ok and chosen in choices else None
+        return dialogs.choose(self.window, title, question, choices)
 
     def ask_for_text(self, question: str, text: str) -> str:
-        answer, ok = QInputDialog.getText(self.window, "Merge", question, text=text)
-        return answer.strip() if ok else ""
+        return dialogs.ask_text(self.window, "Merge", question, text) or ""
 
     def ask_to_confirm(self, question: str) -> bool:
-        answer = QMessageBox.question(self.window, "Merge", question)
-        return answer == QMessageBox.StandardButton.Yes
+        return dialogs.confirm(self.window, "Merge", question)
 
     def use(self, request: UseRequest, source: int) -> UseResponse:
         if self.window is not None:

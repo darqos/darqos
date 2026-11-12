@@ -850,7 +850,9 @@ publisher (``darq.merging``).  W, for one on Wikidata, is described in
   are different, and one already merged, aren't merged, and it says why.
 * The KB's type implementation records both items in History as
   ``merged``, from ``entity-lens``, and the page shows the one that's
-  left, with a note that the other was merged into it.
+  left, with a note that the other was merged into it.  Opening the old
+  one's item, as from History, shows the one it was merged into, with
+  that note, and with its own item identifier, not the old one's.
 
 Edits are operations: setting a label, description, or aliases, in a
 language; adding or removing a statement; and setting a statement's

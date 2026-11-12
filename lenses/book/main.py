@@ -31,10 +31,8 @@ from PyQt6.QtGui import QImage, QKeyEvent, QMouseEvent, QTextDocument
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
-    QInputDialog,
     QLabel,
     QMenu,
-    QMessageBox,
     QStackedWidget,
     QTextBrowser,
     QVBoxLayout,
@@ -54,7 +52,7 @@ from darq.protocols.image import Image as ImageItem
 from darq.protocols.http import Http
 from darq.protocols.http import Status as HttpStatus
 from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
-from darq.ui import book_store, catalogue, style
+from darq.ui import book_store, catalogue, dialogs, style
 from darq.ui.lens import LensHandler, Viewing, announce
 from darq.ui.launcher import Launcher, start_thread
 from darq.ui.style import CONTROLS
@@ -378,6 +376,28 @@ class LensServices:
         self.launch = darq.launch
 
 
+def plural(count: int, noun: str, nouns: str = "") -> str:
+    """Return a count of a noun, in its singular or plural."""
+    return f"{count} {noun}" if count == 1 else f"{count} {nouns or noun + 's'}"
+
+
+def added_message(saved: Book, match: darq.book.Match, added: int) -> str:
+    """Return what's said once a book's added: what it was added to, with
+    how many there are of it there now, and how many books this lens has
+    added.  So a copy says how many copies its Manifestation has, which
+    isn't the number added."""
+    if match.kind == darq.book.ANOTHER_COPY:
+        copies = len(match.edition.copies) if match.edition is not None else 1
+        said = f"Added a copy of {saved.title}, now {plural(copies, 'copy', 'copies')} for this Manifestation."
+    elif match.kind == darq.book.ANOTHER_EDITION and match.new_text:
+        said = f"Added a new text of {saved.title}, now {plural(1 + len(saved.texts), 'text')} of this Work."
+    elif match.kind == darq.book.ANOTHER_EDITION:
+        said = f"Added an edition of {saved.title}, now {plural(len(saved.editions), 'edition')} of this text."
+    else:
+        said = f"Added {saved.title}."
+    return f"{said}  Total {plural(added, 'book')} added so far."
+
+
 class BookLens(LensHandler):
     """The lens port: it uses one item, for the life of the process."""
 
@@ -547,15 +567,16 @@ class BookLens(LensHandler):
             window.adding.ask(f"You have this: {title}{f' ({where})' if where else ''}.\n"
                               "Y adds another copy, and N doesn't.",
                               {Key.Key_Y: lambda: self.commit(book, match), Key.Key_N: self.declined})
-        elif match.kind == darq.book.ANOTHER_EDITION and match.language_differs(book):
-            here = match.book.language if match.book is not None else ""
-            window.adding.ask(f"{title} is in {here}, and this is in {book.language}.\n"
-                              "N adds it as a new book.  Escape, and add it from that book's card, if it's a "
-                              "text of that one.", {Key.Key_N: lambda: self.commit(book, new)})
         elif match.kind == darq.book.ANOTHER_EDITION:
-            window.adding.ask(f"This might be {title}.\nM adds it as a new Manifestation of that book, "
-                              "and N as a new book.",
-                              {Key.Key_M: lambda: self.commit(book, match), Key.Key_N: lambda: self.commit(book, new)})
+            # Another edition of one of its texts, or a new text, such as
+            # another translation, by number; or a new book, N.
+            offered = [c for c in darq.book.edition_choices(match, book) if c[1].kind != darq.book.NEW][:9]
+            lines = [f"{n} adds it as {said[0].lower()}{said[1:]}" for n, (said, _) in enumerate(offered, 1)]
+            keys: dict[typing.Any, typing.Callable[[], None]] = {
+                getattr(Key, f"Key_{n}"): (lambda chosen=chosen: self.commit(book, chosen))
+                for n, (_, chosen) in enumerate(offered, 1)}
+            keys[Key.Key_N] = lambda: self.commit(book, new)
+            window.adding.ask(f"This might be {title}.\n" + "\n".join(lines) + "\nN adds it as a new book.", keys)
         else:
             self.commit(book, match)
             return
@@ -593,9 +614,7 @@ class BookLens(LensHandler):
         if edition is not None and edition.entity is not None and edition.cover_url:
             self.fetch_cover(edition.entity, edition.cover_url)
         window.adding.start()
-        said = {darq.book.NEW: "Added", darq.book.ANOTHER_EDITION: "Added an edition of",
-                darq.book.ANOTHER_COPY: "Added a copy of"}[match.kind]
-        self.show_status(f"{said} {saved.title}: {self.added} so far")
+        self.show_status(added_message(saved, match, self.added))
 
     # Adding a level, from a card's links
 
@@ -811,16 +830,13 @@ class BookLens(LensHandler):
         return options[chosen][0] if chosen is not None else None
 
     def ask_for_text(self, question: str) -> str | None:
-        text, ok = QInputDialog.getText(self.window, "Book", question)
-        return text.strip() if ok and text.strip() else None
+        return dialogs.ask_text(self.window, "Book", question) or None
 
     def ask_to_choose(self, question: str, choices: list[str]) -> int | None:
-        chosen, ok = QInputDialog.getItem(self.window, "Book", question, choices, 0, False)
-        return choices.index(chosen) if ok and chosen in choices else None
+        return dialogs.choose(self.window, "Book", question, choices)
 
     def ask_to_confirm(self, question: str) -> bool:
-        answer = QMessageBox.question(self.window, "Book", question)
-        return answer == QMessageBox.StandardButton.Yes
+        return dialogs.confirm(self.window, "Book", question)
 
     def stop_adding(self):
         """Stop adding: show the last book, or close if there's nothing to

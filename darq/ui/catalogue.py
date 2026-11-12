@@ -12,7 +12,7 @@ import dataclasses
 import logging
 import typing
 
-from PyQt6.QtWidgets import QInputDialog, QWidget
+from PyQt6.QtWidgets import QWidget
 
 import darq
 import darq.book
@@ -20,7 +20,7 @@ import darq.kb as model
 import darq.launch
 from darq.book import ANOTHER_COPY, ANOTHER_EDITION, Book, BookError, Copy, Edition, Match
 from darq.protocols.http import Http
-from darq.ui import book_store
+from darq.ui import book_store, dialogs
 from darq.ui.launcher import Launcher
 
 
@@ -43,6 +43,7 @@ class Details:
     publisher: str = ""
     date: str = ""
     language: str = ""
+    translators: list[str] = dataclasses.field(default_factory=list)
 
     # The image item of its cover, if it has one.
     cover: str = ""
@@ -79,13 +80,24 @@ def describe(match: Match) -> str:
     return "A new book"
 
 
+def choices(match: Match, book: darq.book.Book) -> list[tuple[str, Match]]:
+    """Return what a book that might be one that's here can be added as, in
+    words: another copy of its edition, found by ISBN; another edition of
+    one of its texts, or a new text, such as another translation; or a new
+    book."""
+    if match.kind == ANOTHER_COPY:
+        return [(describe(match), match), ("A new book", Match())]
+    return darq.book.edition_choices(match, book)
+
+
 def add_content(store: darq.book.Store, content: str, details: Details,
-                choose: typing.Callable[[Match], bool]) -> str:
+                choose: typing.Callable[[list[tuple[str, Match]]], Match | None]) -> str:
     """Catalogue an item as the content of a copy.
 
-    :param choose: Asked, if it might be a book that's here, whether it is.
+    :param choose: Asked, if it might be a book that's here, which of the
+                   choices it is, or None, to catalogue nothing.
     :returns: The item of the book's work.
-    :raises BookError: if it can't be done."""
+    :raises BookError: if it can't be done, or isn't chosen."""
     edition = Edition(publisher=details.publisher, date=details.date,
                       binding=darq.book.content_format(Copy(content=content)), copies=[Copy(content=content)],
                       cover=details.cover)
@@ -93,10 +105,14 @@ def add_content(store: darq.book.Store, content: str, details: Details,
         edition.isbn_13 = details.isbn
     elif details.isbn:
         edition.isbn_10 = details.isbn
-    book = Book(title=details.title, authors=details.authors, language=details.language, editions=[edition])
+    book = Book(title=details.title, authors=details.authors, language=details.language,
+                translators=list(details.translators), editions=[edition])
     match = darq.book.find_match(store, book)
-    if match.kind != darq.book.NEW and not choose(match):
-        match = Match()
+    if match.kind != darq.book.NEW:
+        chosen = choose(choices(match, book))
+        if chosen is None:
+            raise BookError("Not catalogued")
+        match = chosen
     saved = darq.book.add(store, book, match)
     if saved.work is None:
         raise BookError("It wasn't saved")
@@ -126,15 +142,13 @@ def catalogue(window: QWidget, launcher: Launcher, content: str, details: Detail
         launcher.use(copy)
         return ""
     if not details.title:
-        details.title, ok = QInputDialog.getText(window, "Catalogue", "Title:")
-        details.title = details.title.strip()
-        if not ok or not details.title:
+        details.title = dialogs.ask_text(window, "Catalogue", "Title:") or ""
+        if not details.title:
             return "Not catalogued"
 
-    def choose(match: Match) -> bool:
-        choices = [describe(match), "A new book"]
-        chosen, ok = QInputDialog.getItem(window, "Catalogue", "This is:", choices, 0, False)
-        return ok and chosen == choices[0]
+    def choose(offered: list[tuple[str, Match]]) -> Match | None:
+        chosen = dialogs.choose(window, "Catalogue", "This is:", [said for said, _ in offered])
+        return offered[chosen][1] if chosen is not None else None
 
     store = book_store.ItemStore([darq.book.OWN_LANGUAGE], source=source)
     try:

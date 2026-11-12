@@ -32,7 +32,8 @@ Finding a Match
 * **Find on Wikidata**, W in the entity lens, or its menu, on any
   entity's page: it searches Wikidata by the entity's label, shows the
   candidates, with their descriptions ("Australian novelist (born
-  1943)"), and asks which, if any, it is.  On one that's matched, it
+  1943)"), and asks which, if any, it is, in a list (``darq.ui.dialogs``,
+  whose choosing, typing and confirming every lens's questions use).  On one that's matched, it
   refreshes its facts instead.
 * **Match with Wikidata**, a tool (``tools/wikidata-match``), lists the
   people and organisations that aren't matched yet, to be worked through
