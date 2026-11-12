@@ -40,9 +40,10 @@ UNIT_DIR=/etc/systemd/system
 CONF_DIR=/etc/darqos
 SKIP=" ${DARQOS_INSTALL_SKIP:-} "
 
-# The code's directories, copied whole; and its files.
+# The code's directories, copied whole; and its files: what it needs, its
+# version, and what's changed in it.
 CODE="bin darq kernel lib services types lenses tools compositor"
-FILES="requirements.txt VERSION"
+FILES="requirements.txt VERSION RELEASE_NOTES.md"
 
 # The units, from kernel/.
 UNITS="darqos-pkernel.service darqos.target darqos-backup.service darqos-backup.timer"

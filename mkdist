@@ -22,7 +22,7 @@
 set -euo pipefail
 
 # What's distributed: as install(8) copies it.
-PATHS="bin darq kernel lib services types lenses tools compositor man requirements.txt"
+PATHS="bin darq kernel lib services types lenses tools compositor man requirements.txt RELEASE_NOTES.md"
 
 root=$(cd "$(dirname "$0")" && pwd)
 cd "$root"

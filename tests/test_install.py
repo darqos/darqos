@@ -44,7 +44,7 @@ def repo(tmp_path):
     repo = tmp_path / "repo"
     for path, text in [("darq/__init__.py", "# darq\n"), ("services/storage/main.py", "# storage\n"),
                        ("bin/install", "#! /bin/sh\n"), ("man/install.8", ".TH INSTALL 8\n"),
-                       ("requirements.txt", "PyQt6\n"), ("doc/index.rst", "Docs\n"),
+                       ("requirements.txt", "PyQt6\n"), ("RELEASE_NOTES.md", "# Notes\n"), ("doc/index.rst", "Docs\n"),
                        ("RELEASE", "edition=2\nbuild=16\n"),
                        ("experiments/x.py", "# mine\n")]:
         (repo / path).parent.mkdir(parents=True, exist_ok=True)
@@ -74,8 +74,8 @@ def test_mkdist(repo, tmp_path):
     with tarfile.open(tarball(out)) as tar:
         members = {m.name: m for m in tar.getmembers() if m.isfile()}
     # The installed directories' tracked files, owned by root.
-    assert sorted(members) == ["darq/VERSION", "darq/bin/install", "darq/darq/__init__.py", "darq/man/install.8",
-                               "darq/requirements.txt", "darq/services/storage/main.py"]
+    assert sorted(members) == ["darq/RELEASE_NOTES.md", "darq/VERSION", "darq/bin/install", "darq/darq/__init__.py",
+                               "darq/man/install.8", "darq/requirements.txt", "darq/services/storage/main.py"]
     assert {(m.uid, m.gid) for m in members.values()} == {(0, 0)}
     head = git(repo, "rev-parse", "--short", "HEAD").stdout.strip()
     fields = version_file(tarball(out))
@@ -190,6 +190,14 @@ def test_install(dist, tmp_path):
     # Logged.
     [log] = (tmp_path / "log").glob("install-*.log")
     assert "Ok: installed" in log.read_text()
+
+
+def test_the_release_notes_are_installed(dist, tmp_path):
+    """What's changed is installed beside the code, as /darq/RELEASE_NOTES.md."""
+    (dist / "RELEASE_NOTES.md").write_text("# DarqOS Release Notes\n")
+    root = tmp_path / "darq"
+    install(dist, root)
+    assert (root / "RELEASE_NOTES.md").read_text() == "# DarqOS Release Notes\n"
 
 
 def test_update(dist, tmp_path):

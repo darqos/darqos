@@ -16,7 +16,8 @@ Making a Distribution
 ``dist/darqos-2ed-snapYYYYMMDD-b17.tar.gz`` (or in the directory given):
 the files git tracks in the directories that are installed (``bin``,
 ``darq``, ``kernel``, ``lib``, ``services``, ``types``, ``lenses``,
-``tools``, ``compositor``, ``man``, and ``requirements.txt``), as they
+``tools``, ``compositor``, ``man``, ``requirements.txt``, and
+``RELEASE_NOTES.md``, what's changed in each release), as they
 are in the working tree, under ``darq/``, owned by root.  Its
 ``VERSION`` file gives its version, the commit, and the date.
 
@@ -71,8 +72,9 @@ updates.  Install:
    writable only by root (whatever its modes in the distribution), with
    ``rsync --delete``, so what's gone from the distribution goes, with
    its compiled ``__pycache__`` too (a perishable exclusion), while the
-   caches of what's still there are kept; and the manual pages, by
-   section;
+   caches of what's still there are kept; ``requirements.txt``, its
+   ``VERSION``, and its release notes, as ``/darq/RELEASE_NOTES.md``; and
+   the manual pages, by section;
 5. builds the compositor, in ``/darq/compositor/build``;
 6. makes, or updates, the Python environment, ``/darq/env``, from
    ``requirements.txt`` (PyQt6 included);
