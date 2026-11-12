@@ -7,13 +7,17 @@
 #
 # The lock screen asks for the password, or, on the first boot, for a new
 # one, twice.  What's typed is passed to the Terminal, which asks the
-# Security service: the screens just show what it says.
+# Security service: the screens just show what it says.  In its lower
+# right corner, it shows the machine's name and network addresses, so it
+# can be reached, read again every minute while it's locked.
 
 import typing
 
 from PyQt6 import QtCore
 from PyQt6.QtGui import QColor, QGuiApplication, QKeyEvent, QPaintEvent, QPainter, QScreen
-from PyQt6.QtWidgets import QLabel, QLineEdit, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
+
+import darq.host
 
 
 Key = QtCore.Qt.Key
@@ -46,6 +50,13 @@ HEADINGS = {
     UNAVAILABLE: "Locked",
 }
 
+
+# Milliseconds between readings of the machine's addresses, while it's
+# locked.
+ADDRESS_INTERVAL = 60_000
+
+# How they're shown: dull, so they don't stand out.
+ADDRESS_STYLE = "color: #5a6066; font-size: 14px"
 
 # The power prompt's answers, by key.
 POWER_KEYS: dict[int, str] = {Key.Key_S.value: "shutdown", Key.Key_B.value: "reboot"}
@@ -116,12 +127,19 @@ class LockWindow(QWidget):
         self.message.ensurePolished()
         self.message.setFixedHeight(MESSAGE_LINES * self.message.fontMetrics().lineSpacing())
 
+        self.address = QLabel(screens.address)
+        self.address.setStyleSheet(ADDRESS_STYLE)
+
         column = QVBoxLayout()
         column.addStretch()
         for widget in (self.heading, self.password, self.confirm, self.message):
             widget.setFixedWidth(400)
             column.addWidget(widget, alignment=QtCore.Qt.AlignmentFlag.AlignHCenter)
         column.addStretch()
+        corner = QHBoxLayout()
+        corner.addStretch()
+        corner.addWidget(self.address)
+        column.addLayout(corner)
         self.setLayout(column)
 
     def paintEvent(self, a0: QPaintEvent | None):
@@ -195,7 +213,26 @@ class Screens:
         self.busy = False
         self.windows: dict[QScreen, tuple[Background, LockWindow]] = {}
 
+        # The machine's name and addresses, as shown, and what reads them:
+        # tests replace it.  They're read again every minute while it's
+        # locked, as a DHCP lease can change them.
+        self.address = ""
+        self.read_address: typing.Callable[[], str] = lambda: darq.host.describe(darq.host.name(),
+                                                                                 darq.host.addresses())
+        self.address_timer = QtCore.QTimer()
+        self.address_timer.setInterval(ADDRESS_INTERVAL)
+        self.address_timer.timeout.connect(self.update_address)
+
+    def update_address(self):
+        """Read the machine's name and addresses again, and show them."""
+        self.address = self.read_address()
+        for lock in self.locks():
+            lock.address.setText(self.address)
+
     def start(self):
+        if self.locked:
+            self.update_address()
+            self.address_timer.start()
         for screen in self.app.screens():
             self.add(screen)
         self.app.screenAdded.connect(self.add)
@@ -233,6 +270,8 @@ class Screens:
 
     def lock(self):
         self.locked = True
+        self.update_address()
+        self.address_timer.start()
         self.show(ENTER if self.mode == ENTER else self.mode, clear=True)
         for lock in self.locks():
             lock.prompting = False
@@ -241,6 +280,7 @@ class Screens:
 
     def unlock_screens(self):
         self.locked = False
+        self.address_timer.stop()
         self.show(message="", clear=True)
         for lock in self.locks():
             lock.prompting = False

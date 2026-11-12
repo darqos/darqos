@@ -142,8 +142,29 @@ def security():
     return FakeSecurity()
 
 
+class FakeHost:
+    """Stands in for the host's name and addresses (darq.host)."""
+
+    def __init__(self):
+        self.found = ["192.0.2.1"]
+        self.reads = 0
+
+    def addresses(self):
+        self.reads += 1
+        return list(self.found)
+
+
 @pytest.fixture
-def terminal(qt_app, security):
+def host(monkeypatch):
+    import darq.host
+    fake = FakeHost()
+    monkeypatch.setattr(darq.host, "name", lambda: "testbox")
+    monkeypatch.setattr(darq.host, "addresses", fake.addresses)
+    return fake
+
+
+@pytest.fixture
+def terminal(qt_app, security, host):
     """A started Terminal, locked, and the compositor's end of its
     channel, with the hotkey bindings read."""
     ours, theirs = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
@@ -991,3 +1012,30 @@ def test_terminal_at_boot(live_pkernel, monkeypatch):  # noqa: F811
         for path in runtime.iterdir():
             path.unlink()
         runtime.rmdir()
+
+
+
+################################################################
+# The lock screen's address
+################################################################
+
+def test_the_lock_screen_shows_the_machines_address(terminal, host):
+    lock = terminal.screens.locks()[0]
+    assert lock.address.text() == "testbox  ·  192.0.2.1"
+    assert terminal.screens.address_timer.isActive()
+    assert terminal.screens.address_timer.interval() == 60_000
+
+
+def test_its_read_again_while_locked_and_not_while_unlocked(terminal, host):
+    lock = terminal.screens.locks()[0]
+    host.found = ["192.0.2.7"]
+    terminal.screens.address_timer.timeout.emit()
+    assert lock.address.text() == "testbox  ·  192.0.2.7"
+
+    unlock(terminal)
+    assert not terminal.screens.address_timer.isActive()
+    reads = host.reads
+    host.found = []
+    terminal.screens.lock()
+    assert host.reads == reads + 1 and terminal.screens.address_timer.isActive()
+    assert lock.address.text() == "testbox  ·  No network"

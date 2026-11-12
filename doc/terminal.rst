@@ -100,10 +100,14 @@ instead, with status 1 (the count is kept across the reboot, which is
 an ``exec``, in ``DARQ_TERMINAL_FAILURES``).
 
 Once initialised, the terminal displays the lock screen: a password
-field, and nothing else (sleep, and the volume control, come later).
-On the first boot, it asks for a new password instead, and sets it
-with the Security service.  1st Edition has only a password: there are
-no user names.
+field, and, in its lower right corner, dull, the machine's name and
+network addresses, such as *darqos · 192.168.86.172*, so it can be
+reached (sleep, and the volume control, come later).  The addresses
+are the global IPv4 ones, or, if there are none, IPv6, from the host's
+``ip`` (``darq.host``), read as it locks, and every minute while it's
+locked, as a DHCP lease can change them.  On the first boot, it asks
+for a new password instead, and sets it with the Security service.
+1st Edition has only a password: there are no user names.
 
 Once the password is accepted, the Terminal hides the lock screen, and
 the hotkeys (see :doc:`ux`) are available.  If *firstrun* mode is
