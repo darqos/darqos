@@ -4,6 +4,8 @@ Summary notes on newly added features for each release.
 
 ## Unreleased
 
+## 2.9, build 9 (2026-11-13)
+
 - **Updating from within DarqOS.**  *Update DarqOS*, on the Tools panel,
   shows what's installed, the newest stable release, and the newest
   pre-release, and updates to one, or reinstalls what's installed.  It
