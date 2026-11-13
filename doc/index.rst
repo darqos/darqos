@@ -49,6 +49,7 @@ Runtime
 .. include:: runtime.rst
 .. include:: ipc.rst
 .. include:: processes.rst
+.. include:: language.rst
 
 
 ************************************************************************

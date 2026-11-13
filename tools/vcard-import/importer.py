@@ -508,38 +508,53 @@ class Import:
 
     def fill(self, drafts: dict[str, cards.Draft]):
         """Replace each entity's statements from the address book with its
-        draft's, and write those that changed."""
-        resolved = [d for d in drafts.values() if d.entity.id in self.real]
+        drafts', and write those that changed.
+
+        An entity can have several drafts: two cards for one person, whose
+        entities were merged, are both found, by their UIDs, in the one
+        they were merged into.  Its statements from the address book are
+        theirs together, so that each card's last."""
+        groups: dict[str, list[cards.Draft]] = {}
+        for draft in drafts.values():
+            if draft.entity.id in self.real:
+                groups.setdefault(self.real[draft.entity.id], []).append(draft)
+        ids = list(groups)
         self.cache.clear()
-        for n in range(0, len(resolved), BATCH):
-            self.progress("Writing", n, len(resolved))
-            batch = resolved[n:n + BATCH]
-            current = {e.id: e for e in self.get_many(self.real[d.entity.id] for d in batch)}
+        for n in range(0, len(ids), BATCH):
+            self.progress("Writing", n, len(ids))
+            batch = ids[n:n + BATCH]
+            current = {e.id: e for e in self.get_many(batch)}
             changed = []
-            for draft in batch:
-                entity = current.get(self.real[draft.entity.id])
+            for entity_id in batch:
+                group = groups[entity_id]
+                entity = current.get(entity_id)
                 if entity is None:
-                    self.fail(draft, "its entity has gone")
+                    for draft in group:
+                        self.fail(draft, "its entity has gone")
                     continue
                 touched = False
-                for language, label in draft.entity.labels.items():
-                    if language not in entity.labels:
-                        entity.set_label(label, language)
-                        touched = True
-                for language, description in draft.entity.descriptions.items():
-                    if language not in entity.descriptions:
-                        entity.set_description(description, language)
-                        touched = True
-                restated = model.restate(entity, self.source, self.rewrite(draft.entity.statements),
-                                         self.wd.qualifiers)
-                self.review_addresses(draft, entity, restated)
+                for draft in group:
+                    for language, label in draft.entity.labels.items():
+                        if language not in entity.labels:
+                            entity.set_label(label, language)
+                            touched = True
+                    for language, description in draft.entity.descriptions.items():
+                        if language not in entity.descriptions:
+                            entity.set_description(description, language)
+                            touched = True
+                if len(group) > 1:
+                    uids = sorted(set().union(*(d.cards for d in group)))
+                    log.info(f"{self.item_id(entity)} is from {len(group)} entries: cards {', '.join(uids)}")
+                statements = [s for draft in group for s in self.rewrite(draft.entity.statements)]
+                restated = model.restate(entity, self.source, statements, self.wd.qualifiers)
+                self.review_addresses(group, entity, restated)
                 if restated or touched:
-                    changed.append((draft, entity))
+                    changed.append((group, entity))
                 else:
                     self.result.unchanged += 1
             self.write(changed)
 
-    def review_addresses(self, draft: cards.Draft, entity: model.Entity, restated: model.Restated):
+    def review_addresses(self, group: list[cards.Draft], entity: model.Entity, restated: model.Restated):
         """Note an entity's addresses replaced with others, by property and
         label, for their dates to be added."""
         wd = self.wd
@@ -560,13 +575,14 @@ class Import:
                 old = [s for s in dropped if label(s) == name]
                 new = [s for s in added if label(s) == name]
                 what = wd.entities[property_id].labels.get("en", property_id)
-                review = Review(ADDRESS_CHANGED, min(draft.cards) if draft.cards else "", self.item_id(entity),
+                uids = set().union(*(d.cards for d in group))
+                review = Review(ADDRESS_CHANGED, min(uids) if uids else "", self.item_id(entity),
                                 f"{what} ({name})" if name else what, f"{items(old)} -> {items(new)}")
                 self.result.reviews.append(review)
                 log.info(f"Address changed for card {review.card}: {review.item_id} {review.what}: "
                          f"{review.detail}")
 
-    def write(self, changed: list[tuple[cards.Draft, model.Entity]]):
+    def write(self, changed: list[tuple[list[cards.Draft], model.Entity]]):
         """Write entities, all at once, or else one at a time, to find
         those that fail."""
         if not changed:
@@ -577,12 +593,13 @@ class Import:
             return
         except (darq.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError):
             pass
-        for draft, entity in changed:
+        for group, entity in changed:
             try:
                 self.items.put(entity)
                 self.result.updated += 1
             except (darq.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError) as e:
-                self.fail(draft, f"writing: {e}")
+                for draft in group:
+                    self.fail(draft, f"writing: {e}")
 
     def clean_up(self):
         """Remove the address book's statements from entities it no longer

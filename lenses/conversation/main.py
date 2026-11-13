@@ -23,7 +23,6 @@
 # records that in History.
 
 import logging
-import os
 import pathlib
 import sys
 import typing
@@ -63,9 +62,6 @@ USE_TIMEOUT = 60.0
 # Pixels from an end of what's held at which more is read.
 NEAR_END = 200
 
-# Fallback languages, when the locale doesn't say.
-DEFAULT_LANGUAGE = "en"
-
 # Reads failing, from items and the timeline.
 READ_ERRORS = (darq.DarqError, TimeoutError, ValueError, timeline.TimelineError)
 
@@ -78,13 +74,6 @@ F5                    Read the newest messages
 F1                    Help
 F11                   Full screen
 Ctrl+W                Close"""
-
-
-def languages() -> list[str]:
-    """Return the locale's chain of languages."""
-    tag = (os.environ.get("LANG", "") or DEFAULT_LANGUAGE).split(".")[0].replace("_", "-")
-    chain = [tag, tag.split("-")[0], DEFAULT_LANGUAGE]
-    return [t for n, t in enumerate(chain) if t and t not in chain[:n]]
 
 
 def label(entity: model.Entity, chain: list[str]) -> str:
@@ -397,7 +386,7 @@ class ConversationLens(LensHandler):
         self.services = typing.cast(typing.Any, LensServices())
         self.launcher = Launcher(self, SOURCE, loop.post)
         self.opener: Opener = opener if opener is not None else LaunchOpener(self.launcher)
-        self.chain = languages()
+        self.chain = darq.languages()
 
         # The ports it has open: closed with their items.
         self.ports: dict[int, EntityItem.Client] = {}

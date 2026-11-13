@@ -4,6 +4,21 @@ Summary notes on newly added features for each release.
 
 ## Unreleased
 
+- **Merging finds imported people again.**  Merge into (M, in the entity
+  lens) found nothing on a system whose locale isn't plain English, such
+  as `en_AU`, as it searched only that locale's language, and imports
+  label in English.  It now searches all of the operator's languages.
+- **The operator's languages** are a chain, best first, from the host's
+  locale: `LANGUAGE`'s list, such as `en_AU:de_CH`, or else `LANG`'s.
+  That's en-AU, en, de-CH, de, then English and `mul`, Wikidata's code for
+  every language, which it keeps many people's names in.  An entity from
+  Wikidata with only a `mul` name is now labelled with it, rather than
+  with its Q-number.
+- **Two cards merged stay merged.**  When two address book cards' people
+  are merged, re-importing the address book keeps both cards' statements
+  in the one kept, rather than each replacing the other's, which lost a
+  card's UID and made it again on the next import.
+
 - **A server that doesn't answer in HTTP** is said to: such as
   `python3 -m http.server -p 8000`, whose `-p` is the protocol, not the
   port.  It was reported as "only http and https".

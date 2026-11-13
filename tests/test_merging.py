@@ -92,6 +92,19 @@ def test_candidates_are_of_its_kind_by_name(items):
     assert bloomsbury is not None
 
 
+def test_candidates_are_found_in_any_of_the_operators_languages(items):
+    """As an import labels in English, and the operator's chain starts with
+    en-AU: the label's found, and shown, in the first language that has
+    one."""
+    this = made(items, "Robin Avery Calder (b 2025)", type_id="darq.person")
+    other = made(items, "Robin Avery Calder", type_id="darq.person")
+    assert [c.id for c in merging.candidates(items, this, "Robin Avery Calder", ["en-AU"])] == []
+    [found] = merging.candidates(items, this, "Robin Avery Calder", ["en-AU", "en", "mul"])
+    assert (found.id, found.label) == (other.id, "Robin Avery Calder")
+    question = merging.plan(this, other).question(["en-AU", "en", "mul"])
+    assert question.startswith(f"Merge Robin Avery Calder (b 2025) ({this.id}) into Robin Avery Calder ({other.id})?")
+
+
 def test_an_untyped_wikidata_entity_is_offered_and_gains_the_type(items):
     """As one made minimally, for what a person's facts refer to, is."""
     local = made(items, "Pan Macmillan UK")

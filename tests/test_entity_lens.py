@@ -66,12 +66,6 @@ ACME = "darq.organisation:acme"
 # Rendering
 ################################################################
 
-def test_languages():
-    assert render.languages("en_AU.UTF-8") == ["en-AU", "en"]
-    assert render.languages("fr_FR") == ["fr-FR", "fr", "en"]
-    assert render.languages("en") == ["en"]
-
-
 @pytest.mark.parametrize("time, text", [
     (model.TimeValue.parse("1974"), "1974"),
     (model.TimeValue.parse("1974-03"), "March 1974"),

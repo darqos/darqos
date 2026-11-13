@@ -77,9 +77,6 @@ MAX_ANSWER = 4 * 1024 * 1024
 # Where books are looked up: a test's server, or Open Library.
 LOOKUP_BASE = "DARQ_OPEN_LIBRARY"
 
-# Fallback language, when the locale doesn't say.
-DEFAULT_LANGUAGE = "en"
-
 Key = QtCore.Qt.Key
 Modifier = QtCore.Qt.KeyboardModifier
 
@@ -100,13 +97,6 @@ While adding:
 Enter                 Look up, then add
 Y, N, M               Answer what's asked
 Escape                Clear, then finish"""
-
-
-def languages() -> list[str]:
-    """Return the chain of languages, best first."""
-    tag = os.environ.get("LANG", "").split(".")[0].replace("_", "-")
-    chain = [tag, tag.split("-")[0], DEFAULT_LANGUAGE]
-    return [t for n, t in enumerate(chain) if t and t not in chain[:n]]
 
 
 def fetch_url(url: str) -> bytes:
@@ -408,7 +398,7 @@ class BookLens(LensHandler):
         self.services = typing.cast(typing.Any, LensServices())
         self.launcher = Launcher(self, SOURCE, loop.post)
         self.opener: Opener = opener if opener is not None else LaunchOpener(self.launcher)
-        self.store = store if store is not None else book_store.ItemStore(languages(), source=SOURCE)
+        self.store = store if store is not None else book_store.ItemStore(darq.languages(), source=SOURCE)
         self.item_id = ""
         self.book = Book()
 

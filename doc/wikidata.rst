@@ -73,6 +73,9 @@ Organisation   Inception (P571), dissolved (P576), country (P17),
                headquarters location (P159), parent organisation (P749)
 =============  ============================================================
 
+* An entity made here is labelled in English, or, if Wikidata hasn't
+  an English label, in ``mul``, its code for every language, which it
+  keeps many people's names in (see :doc:`language`).
 * Of several values, Wikidata's best rank's taken: its preferred ones,
   or else its normal ones, and never its deprecated ones.
 * Dates keep their precision, and their calendar.

@@ -6,6 +6,7 @@ doc/kb-service.rst): what it might be merged into, and which of two
 survives, or why they can't be merged."""
 
 import dataclasses
+import typing
 
 import darq.kb as model
 import darq.wikidata
@@ -17,6 +18,9 @@ __all__ = ["Candidate", "MergeError", "Plan", "candidates", "plan"]
 
 # Most candidates offered: a name in many is too vague to choose from.
 MOST = 50
+
+# The chain of languages, if none's given.
+ENGLISH = ("en",)
 
 
 class MergeError(Exception):
@@ -46,9 +50,10 @@ class Plan:
     new: model.Entity
     reversed: bool
 
-    def question(self, language: str = "en") -> str:
-        """Return what's asked, to confirm it."""
-        old, new = label_of(self.old, language), label_of(self.new, language)
+    def question(self, chain: typing.Sequence[str] = ENGLISH) -> str:
+        """Return what's asked, to confirm it, with labels in a chain of
+        languages."""
+        old, new = label_of(self.old, chain), label_of(self.new, chain)
         text = (f"Merge {old} ({self.old.id}) into {new} ({self.new.id})?\n\n"
                 f"Its names and statements move there, and what links to it is changed to link there.  "
                 f"This can't be undone.")
@@ -57,8 +62,14 @@ class Plan:
         return text
 
 
-def label_of(entity: model.Entity, language: str = "en") -> str:
-    return entity.labels.get(language) or next(iter(entity.labels.values()), entity.id)
+def best(texts: dict[str, str], chain: typing.Sequence[str]) -> str:
+    """Return the text in the first language of a chain that has one, or
+    else any, or else empty."""
+    return next((texts[language] for language in chain if language in texts), next(iter(texts.values()), ""))
+
+
+def label_of(entity: model.Entity, chain: typing.Sequence[str] = ENGLISH) -> str:
+    return best(entity.labels, chain) or entity.id
 
 
 def alike(this: model.Entity, other: model.Entity) -> bool:
@@ -69,17 +80,20 @@ def alike(this: model.Entity, other: model.Entity) -> bool:
     return len(kinds) == 1 or model.THING_TYPE in kinds
 
 
-def candidates(kb: model.KB, entity: model.Entity, text: str, language: str = "en") -> list[Candidate]:
+def candidates(kb: model.KB, entity: model.Entity, text: str,
+               chain: typing.Sequence[str] = ENGLISH) -> list[Candidate]:
     """Return the entities, of a kind to be merged with one, with labels or aliases
-    with words starting with a text's, that it might be merged into."""
+    with words starting with a text's, in any language of a chain, that it
+    might be merged into."""
     found: list[model.Entity] = []
-    ids = [i for i in kb.find_by_label(text, language, words=True) if i != entity.id]
+    matched = {i for language in chain for i in kb.find_by_label(text, language, words=True)}
+    ids = sorted(matched - {entity.id})
     for start in range(0, len(ids), 200):
         got, _ = kb.get_entities(ids[start:start + 200], follow=False)
         found += [e for e in got if e.redirect is None and not e.destroyed and alike(entity, e)]
         if len(found) >= MOST:
             break
-    return [Candidate(e.id, label_of(e, language), e.descriptions.get(language, ""),
+    return [Candidate(e.id, label_of(e, chain), best(e.descriptions, chain),
                       sum(count for *_, count in kb.link_counts(e.id)))
             for e in found[:MOST]]
 

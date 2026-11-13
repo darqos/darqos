@@ -3,7 +3,8 @@
 
 """What DarqOS asks of the host Linux, for want of an API of its own:
 the machine's name and network addresses, which the lock screen shows,
-so the machine can be reached (see doc/terminal.rst); and updating
+so the machine can be reached (see doc/terminal.rst); the operator's
+locales, for their languages (see darq.language); and updating
 DarqOS, by asking darqos-update(8), which runs as root, through files in
 the run directory (see doc/distribution.rst).
 
@@ -20,7 +21,8 @@ import typing
 
 
 # Control exports
-__all__ = ["addresses", "can_update", "describe", "name", "parse_addresses", "request_update", "update_result"]
+__all__ = ["addresses", "can_update", "describe", "locales", "name", "parse_addresses", "request_update",
+           "update_result"]
 
 # Seconds to wait for ip(8).
 TIMEOUT = 2.0
@@ -70,6 +72,13 @@ def addresses(run: typing.Callable[..., typing.Any] = subprocess.run) -> list[st
         logging.warning(f"ip failed, {done.returncode}: {done.stderr.strip()}")
         return []
     return parse_addresses(done.stdout)
+
+
+def locales(environment: typing.Mapping[str, str] = os.environ) -> list[str]:
+    """Return the operator's locales, best first, as the host has them:
+    LANGUAGE's list, such as en_AU:de_CH, or else LANG's one."""
+    listed = [name for name in environment.get("LANGUAGE", "").split(":") if name]
+    return listed or [name for name in (environment.get("LANG", ""),) if name]
 
 
 def update_dir() -> pathlib.Path:

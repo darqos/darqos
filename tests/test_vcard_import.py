@@ -404,6 +404,64 @@ def test_hand_changes_survive(target):
     assert find(client, "Brisbane") == [] and find(client, "Brisbane City") == [brisbane]
 
 
+FAMILY = """BEGIN:VCARD
+VERSION:3.0
+UID:robin-b
+FN:Robin Avery Calder (b 2025)
+N:Calder;Robin;Avery;;
+item1.X-ABRELATEDNAMES:Sam Calder
+item1.X-ABLABEL:_$!<Brother>!$_
+item2.X-ABRELATEDNAMES:Kit Calder
+item2.X-ABLABEL:_$!<Sister>!$_
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+UID:robin
+FN:Robin Avery Calder
+N:Calder;Robin;Avery;;
+TEL;type=HOME:+1 555 0105
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+UID:sam
+FN:Sam Calder
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+UID:kit
+FN:Kit Calder
+END:VCARD
+"""
+
+
+def test_two_cards_merged_stay_merged(target):
+    """Two cards for one person, whose entities are merged: a re-import
+    finds both in the one kept, by their UIDs, and keeps both cards'
+    statements there, so the next finds them too."""
+    client, adapter, _ = target
+    people = list(vcard.parse(FAMILY))
+    run(target, people)
+    [kept] = find(client, "Robin Avery Calder (b 2025)")
+    other = next(i for i in find(client, "Robin Avery Calder") if i != kept)
+    wd = vocabulary.Vocabulary()
+    model.KB(client.client, Writer(adapter.handler)).merge(other, kept)
+
+    def check():
+        robin = client.get(kept)
+        assert robin.labels["en"] == "Robin Avery Calder (b 2025)"
+        assert "Robin Avery Calder" in robin.get_aliases()
+        assert sorted(s.get_value().value for s in robin.get_statements(wd.vcard_uid)) == ["robin", "robin-b"]
+        assert len(robin.get_statements(wd.sibling)) == 2
+        assert list(client.find_by_value("P1329", "+15550105")) == [kept]
+
+    check()
+    for _ in range(2):
+        result = run(target, people)
+        assert result.created == 0
+        assert list(client.find_by_label("Robin Avery Calder", words=True)) == [kept]
+        check()
+
+
 def residence(client, entity_id):
     [s] = client.get(entity_id).get_statements("P551")
     return s

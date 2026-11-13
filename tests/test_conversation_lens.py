@@ -397,15 +397,6 @@ def test_conversation_of():
     assert lens.conversation_of(model.Item("m")) == ""
 
 
-def test_languages(monkeypatch):
-    monkeypatch.setenv("LANG", "en_AU.UTF-8")
-    assert lens.languages() == ["en-AU", "en"]
-    monkeypatch.setenv("LANG", "fr_FR")
-    assert lens.languages() == ["fr-FR", "fr", "en"]
-    monkeypatch.delenv("LANG")
-    assert lens.languages() == ["en"]
-
-
 ################################################################
 # The window, offscreen
 ################################################################

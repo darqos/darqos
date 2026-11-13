@@ -101,8 +101,10 @@ class Candidate:
 
 @dataclasses.dataclass
 class Facts:
-    """What's taken of an entity: its label, description and aliases, in
-    English, its statements, and the entities they refer to."""
+    """What's taken of an entity: its label, in English, or else in mul,
+    Wikidata's code for a label in every language, as many people's names
+    are; its description and aliases, in English; its statements; and the
+    entities they refer to."""
 
     id: str
     label: str = ""
@@ -110,6 +112,7 @@ class Facts:
     aliases: list[str] = dataclasses.field(default_factory=list)
     statements: list[Statement] = dataclasses.field(default_factory=list)
     classes: list[str] = dataclasses.field(default_factory=list)
+    label_language: str = "en"
 
     def refers_to(self) -> list[str]:
         """Return the entities the statements' values are."""
@@ -181,12 +184,12 @@ def search(text: str, fetch: Fetch, agent: str) -> list[Candidate]:
 
 def entities_url(ids: list[str], properties: str) -> str:
     return API + "?" + urllib.parse.urlencode({
-        "action": "wbgetentities", "ids": "|".join(ids), "props": properties, "languages": "en",
+        "action": "wbgetentities", "ids": "|".join(ids), "props": properties, "languages": "en|mul",
         "sitefilter": "enwiki", "format": "json"})
 
 
-def english(values: typing.Any) -> str:
-    return str(values.get("en", {}).get("value", "")) if isinstance(values, dict) else ""
+def english(values: typing.Any, language: str = "en") -> str:
+    return str(values.get(language, {}).get("value", "")) if isinstance(values, dict) else ""
 
 
 def time_of(value: dict) -> TimeValue | None:
@@ -242,8 +245,12 @@ def parse_facts(body: bytes, entity_id: str, properties: list[str], retrieved: d
     if not isinstance(record, dict) or "missing" in record:
         raise WikidataError(f"Wikidata has no {entity_id}")
     claims = record.get("claims") or {}
-    made = Facts(entity_id, english(record.get("labels")), english(record.get("descriptions")),
-                 [str(a.get("value")) for a in (record.get("aliases") or {}).get("en", ()) if a.get("value")])
+    label, label_language = english(record.get("labels")), "en"
+    if not label and english(record.get("labels"), "mul"):
+        label, label_language = english(record.get("labels"), "mul"), "mul"
+    made = Facts(entity_id, label, english(record.get("descriptions")),
+                 [str(a.get("value")) for a in (record.get("aliases") or {}).get("en", ()) if a.get("value")],
+                 label_language=label_language)
     made.classes = [v.entity_id for s in best(claims.get(model.INSTANCE_OF)) if isinstance(v := value_of(s.get(
         "mainsnak", {})), EntityValue)]
     for property_id in properties:
@@ -371,7 +378,7 @@ class Linker:
         made = []
         for fact in minimal(missing, self.fetch, self.agent):
             entity = Item(fact.id)
-            entity.set_label(fact.label or fact.id)
+            entity.set_label(fact.label or fact.id, fact.label_language)
             if fact.description:
                 entity.set_description(fact.description)
             made.append((entity, fact.classes))
@@ -393,7 +400,7 @@ class Linker:
         got = facts(wikidata_id, self.fetch, self.agent)
         if self.kb.get(wikidata_id, follow=False) is None:
             entity = Item(wikidata_id)
-            entity.set_label(got.label or wikidata_id)
+            entity.set_label(got.label or wikidata_id, got.label_language)
             self.kb.put(entity)
         if local_id != wikidata_id:
             self.items.merge(local_id, wikidata_id)

@@ -53,14 +53,6 @@ class Link(typing.NamedTuple):
     label: str
 
 
-def languages(locale_name: str) -> list[str]:
-    """Return the chain of languages for a locale, such as en_AU: its
-    language tag, then its language, then English."""
-    tag = locale_name.split(".")[0].replace("_", "-")
-    chain = [tag, tag.split("-")[0], "en"]
-    return [t for n, t in enumerate(chain) if t and t not in chain[:n]]
-
-
 def best(texts: dict[str, str], chain: list[str]) -> str | None:
     """Return the text in the first language of a chain, or else any."""
     for language in chain:

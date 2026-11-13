@@ -777,8 +777,8 @@ entity in it (see :doc:`terminal`).
   it, in groups (see below).  A property's statements are in order by
   series ordinal (P1545), where they have one, as names are
   (``darq.kb.in_order``), and then as they are.  Deprecated statements
-  are counted, and shown, struck through, with D.  Labels and text are in the locale's
-  languages, falling back to English.
+  are counted, and shown, struck through, with D.  Labels and text are in the operator's
+  languages (see :doc:`language`), or else any.
 * A link to another entity's item follows it in the same window,
   like a web browser, with Back (Alt+Left, or Backspace) to return.
   Ctrl+click, or a link's context menu, opens it in a new window, with
@@ -839,8 +839,9 @@ publisher (``darq.merging``).  W, for one on Wikidata, is described in
 :doc:`wikidata`.
 
 * It asks for the other's name, starting with this one's label, to be
-  shortened or changed, and lists the entities whose labels or aliases
-  have words starting with it: those of the same DarqOS type, or of
+  shortened or changed, and lists the entities whose labels or aliases,
+  in any of the operator's languages (see :doc:`language`), have words
+  starting with each of its words: those of the same DarqOS type, or of
   none, as one made minimally from Wikidata's has none.  Each has its
   description, or else how many link to it, and its identifier, to look
   it up, marked if it's Wikidata's.
@@ -991,7 +992,9 @@ The import is:
    and the vocabulary's statements stated in Wikidata.
 2. Each draft's entity is found, or else created:
 
-   * a person, group, or organisation with a card, by its vCard UID;
+   * a person, group, or organisation with a card, by its vCard UID:
+     two cards whose entities were merged are both found in the one
+     they were merged into, which holds both UIDs;
    * by where the address book's statements led before, on a
      re-import: by property, and label, and qualifier, and where a
      property has several values, by their labels; this finds what's
@@ -1017,7 +1020,9 @@ The import is:
      statements aren't.
 
 3. Each entity's statements from the address book are restated from
-   its draft, keeping any others, in batches written through the type
+   its drafts, keeping any others: from all of them together, for an
+   entity that's more than one card's, so that each card's statements,
+   and its UID, last, in batches written through the type
    implementation's ``WriteEntities``, with its label and description,
    if it hasn't one.  Its labels, contact types, services,
    departments, job titles and series ordinals are the qualifiers it

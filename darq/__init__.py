@@ -10,6 +10,7 @@
 
 from .errors import *
 from .identifier import *
+from .language import languages
 from .loop import *
 from .process import *
 from .system import *

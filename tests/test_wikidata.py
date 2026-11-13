@@ -500,3 +500,17 @@ def test_the_tool_links_and_goes_on(qt_app, linker):
     assert window.found.count() == 0
     assert linker.kb.get("Q313254").get_label() == "Peter Carey"
     window.close()
+
+
+
+def test_a_name_only_in_mul_is_taken():
+    """Wikidata keeps many people's names in mul, its code for every
+    language, rather than in English."""
+    answer = {"entities": {"Q1": {"id": "Q1", "labels": {"mul": {"language": "mul", "value": "Robin Calder"}},
+                                  "claims": {}}}}
+    got = wd.parse_facts(json.dumps(answer).encode(), "Q1", [], TODAY)
+    assert (got.label, got.label_language) == ("Robin Calder", "mul")
+    answer["entities"]["Q1"]["labels"]["en"] = {"language": "en", "value": "Robin A. Calder"}
+    got = wd.parse_facts(json.dumps(answer).encode(), "Q1", [], TODAY)
+    assert (got.label, got.label_language) == ("Robin A. Calder", "en")
+    assert "languages=en%7Cmul" in wd.entities_url(["Q1"], "labels")

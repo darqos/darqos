@@ -39,7 +39,6 @@
 # to items are synchronous, on queued reply ports.
 
 import logging
-import os
 import pathlib
 import sys
 import typing
@@ -168,7 +167,7 @@ class EntityWindow(QWidget):
         self.viewing = Viewing(self, SOURCE)
         self.lens = lens
         self.on_closed = on_closed
-        self.chain = render.languages(os.environ.get("LANG", "") or "en")
+        self.chain = darq.languages()
 
         # The item shown, the places to go back to, and the group of what
         # links to the item that's shown in place of its page, if one is.
@@ -911,8 +910,8 @@ class EntityWindow(QWidget):
         if not text:
             return
         self.show_status(f"Looking for {text} ...")
-        language = self.chain[0] if self.chain else "en"
-        self.lens.in_kb(lambda kb: darq.merging.candidates(kb, entity, text, language),
+        chain = self.chain
+        self.lens.in_kb(lambda kb: darq.merging.candidates(kb, entity, text, chain),
                         lambda found: self.merge_found(entity, found))
 
     def merge_found(self, entity: model.Entity, found: typing.Any):
@@ -939,7 +938,7 @@ class EntityWindow(QWidget):
         except darq.merging.MergeError as e:
             self.show_status(str(e))
             return
-        if not self.lens.confirm(plan.question(self.chain[0] if self.chain else "en")):
+        if not self.lens.confirm(plan.question(self.chain)):
             return
         old, new = plan.old, plan.new
         self.show_status("Merging ...")
