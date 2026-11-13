@@ -310,6 +310,32 @@ When should the help file be built?+
   host/ip-address.+
   (2026-11-13)
 
+- When adding a given name to a person entity in the entity editor,
+  you cannot give it a name that is a sub-string of an existing name.
+  Any names for which it is a sub-string show in the completion
+  drop-down, and you are forced to choose one (the first is selected
+  by default).+
+  (2026-11-13)
+
+- In the Entity Browser, when showing the reverse relationships at the
+  bottom, it appears that deprecated relationships are always
+  included.+
+  (2026-11-13)
+
+- There's no obvious way to mark a person as deleted, or to mark their
+  IID as a tombstone for a replacement entity.+
+  (2026-11-13)
+
+- When searching, using S-space, the first character appears when
+  typed, but subsequent characters tend to have a long (>1s) delay
+  until they (and the values matching the first character) appear.
+  Should we only start completions after two (? more?) characters are
+  typed?  Should the completions fill in from a background thread?
+  Something is needed: it's very disconcerting as it is.+
+  (2026-11-13)
+
+- 
+
 
 === Closed
 
