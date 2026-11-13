@@ -44,6 +44,7 @@ class Status(IntEnum):
     CANCELLED = 6
     NO_TYPE = 7
     FAILED = 8
+    NOT_HTTP = 9
 
 
 ################################################################

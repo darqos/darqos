@@ -43,11 +43,17 @@ NETWORK = "network"
 TIMEOUT = "timeout"
 CANCELLED = "cancelled"
 FAILED = "failed"
+NOT_HTTP = "not http"
 
-# Which of those each of libcurl's errors is: others are NETWORK.
+# Which of those each of libcurl's errors is: others are NETWORK.  The
+# scheme's checked before libcurl's asked, and it's limited to http and
+# https, so its unsupported protocol is a reply that isn't HTTP, such as
+# HTTP/0.9, or a status line with no version; as is a weird server reply
+# (pycurl has it by its old name, for FTP, but it's any protocol's).
 CURL_ERRORS = {
     pycurl.E_URL_MALFORMAT: INVALID_URL,
-    pycurl.E_UNSUPPORTED_PROTOCOL: UNSUPPORTED_SCHEME,
+    pycurl.E_UNSUPPORTED_PROTOCOL: NOT_HTTP,
+    pycurl.E_FTP_WEIRD_SERVER_REPLY: NOT_HTTP,
     pycurl.E_OPERATION_TIMEDOUT: TIMEOUT,
     pycurl.E_PARTIAL_FILE: TIMEOUT,
     pycurl.E_ABORTED_BY_CALLBACK: CANCELLED,

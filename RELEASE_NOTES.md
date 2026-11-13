@@ -4,6 +4,10 @@ Summary notes on newly added features for each release.
 
 ## Unreleased
 
+- **A server that doesn't answer in HTTP** is said to: such as
+  `python3 -m http.server -p 8000`, whose `-p` is the protocol, not the
+  port.  It was reported as "only http and https".
+
 ## 2.9, build 9 (2026-11-13)
 
 - **Updating from within DarqOS.**  *Update DarqOS*, on the Tools panel,

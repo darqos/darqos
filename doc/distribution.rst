@@ -75,8 +75,9 @@ Publishing
 
 Releases are published on GitHub, ``darqos/darqos``, with ``gh``.
 ``mkdist --publish`` makes a build, signs it, and publishes it as a
-pre-release, tagged with its version, such as ``v2.17``, with the
-Unreleased section of ``RELEASE_NOTES.md`` as its notes: the tarball and
+pre-release, tagged with its version, such as ``v2.17``, with its
+section of ``RELEASE_NOTES.md`` as its notes, headed ``## 2.17, ...``, or
+else the Unreleased section: the tarball and
 its signature, under their own names, and as ``darqos.tar.gz`` and
 ``darqos.tar.gz.sig``.  The commit must be pushed, and what's
 distributed committed.

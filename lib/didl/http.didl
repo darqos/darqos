@@ -31,6 +31,9 @@ enum Status : uint32 {
 
     // Something else went wrong.
     FAILED = 8;
+
+    // The server's reply isn't HTTP.
+    NOT_HTTP = 9;
 }
 
 struct Header {

@@ -251,6 +251,34 @@ def test_a_redirect_loop_stops(web, tmp_path):
     assert len(web.requests) == fetcher.MAX_REDIRECTS + 1
 
 
+def test_a_reply_that_isnt_http_says_so(tmp_path):
+    """As from "python3 -m http.server -p 8000", whose -p is the protocol,
+    not the port: its status line is "8000 200 OK"."""
+    class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "8000"
+
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", "5")
+            self.end_headers()
+            self.wfile.write(b"Hello")
+
+        def log_message(self, format, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}/x"
+        with pytest.raises(fetcher.FetchError) as e:
+            fetcher.fetch("GET", url, [], b"", 1 << 20, USER_AGENT, tmp_path / "body")
+        assert e.value.kind == fetcher.NOT_HTTP
+        assert "HTTP/0.9" in str(e.value)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_a_redirect_cant_leave_http(web, tmp_path):
     with pytest.raises(fetcher.FetchError) as e:
         get(web, "/to-file", tmp_path)

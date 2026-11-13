@@ -47,7 +47,8 @@ an ``id`` of its own, and a ``listener``.
 
 ``status`` says whether the fetch itself worked: ``OK``,
 ``INVALID_URL``, ``UNSUPPORTED_SCHEME``, ``TOO_LARGE``, ``NETWORK`` (for
-names, connections and TLS), ``TIMEOUT``, ``CANCELLED``, ``NO_TYPE``, or
+names, connections and TLS), ``TIMEOUT``, ``CANCELLED``, ``NO_TYPE``,
+``NOT_HTTP`` (a reply that isn't HTTP, such as HTTP/0.9), or
 ``FAILED``.  ``http_status`` is the server's answer: a 404 is a fetch
 that worked, so it's ``OK``, with ``http_status`` 404.
 

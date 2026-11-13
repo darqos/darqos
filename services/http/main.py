@@ -71,6 +71,7 @@ STATUSES = {
     fetcher.TIMEOUT: Status.TIMEOUT,
     fetcher.CANCELLED: Status.CANCELLED,
     fetcher.FAILED: Status.FAILED,
+    fetcher.NOT_HTTP: Status.NOT_HTTP,
     snapshots.NO_TYPE: Status.NO_TYPE,
 }
 

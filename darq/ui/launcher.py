@@ -40,6 +40,7 @@ FETCH_FAILURES = {
     HttpStatus.CANCELLED: "Stopped fetching {url}",
     HttpStatus.NO_TYPE: "No type can hold {url}",
     HttpStatus.FAILED: "Can't fetch {url}",
+    HttpStatus.NOT_HTTP: "{url} didn't answer in HTTP",
 }
 
 

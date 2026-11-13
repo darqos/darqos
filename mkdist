@@ -28,8 +28,9 @@
 # but can't update a system.
 #
 # --publish publishes it on GitHub, with gh(1), as a pre-release, tagged
-# v<version>, such as v2.17, with the Unreleased section of
-# RELEASE_NOTES.md as its notes: the tarball and its signature, under
+# v<version>, such as v2.17, with its section of RELEASE_NOTES.md as its
+# notes (headed "## 2.17, ..."), or else the Unreleased section: the
+# tarball and its signature, under
 # their own names, and as darqos.tar.gz, for the update tool and dui(8).
 # The commit must be pushed, and the tarball signed and not dirty.
 # --stable TAG declares a published release stable: GitHub's Latest.
@@ -169,10 +170,15 @@ printf 'edition=%s\nbuild=%s\n' "$edition" "$build" > "$release.new"
 mv "$release.new" "$release"
 echo "Ok: $out/$name ($version, $(find "$stage/darq" -type f | wc -l) files$signed)"
 
-# Published as a pre-release: its notes are what hasn't been released.
+# Published as a pre-release: its notes are its own section, or else what
+# hasn't been released.
 if [ "$publish" = 1 ]; then
     notes="$stage/notes.md"
-    awk '/^## Unreleased/ {on = 1; next} /^## / {on = 0} on' RELEASE_NOTES.md > "$notes"
+    section() {
+        awk -v heading="$1" 'index($0, heading) == 1 {on = 1; next} /^## / {on = 0} on' RELEASE_NOTES.md
+    }
+    section "## $version," > "$notes"
+    grep -q '[^[:space:]]' "$notes" || section "## Unreleased" > "$notes"
     cp "$out/$name" "$stage/darqos.tar.gz"
     cp "$out/$name.sig" "$stage/darqos.tar.gz.sig"
     gh release create "v$version" --repo "$REPOSITORY" --target "$(git rev-parse HEAD)" --prerelease \

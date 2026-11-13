@@ -214,3 +214,9 @@ def test_the_chooser_offers_items_of_its_kind(chooser, monkeypatch):
     chooser.ask_item()
     assert chooser.source == offered[1]
     assert chooser.shown.text() == "Other.vcf"
+
+
+def test_every_fetch_failure_is_described():
+    from darq.protocols.http import Status
+    from darq.ui.launcher import FETCH_FAILURES
+    assert set(FETCH_FAILURES) == set(Status) - {Status.OK}
