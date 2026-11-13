@@ -66,3 +66,25 @@ def test_describe():
     assert host.describe("darqos", ["10.0.0.5", "192.0.2.1"]) == "darqos  ·  10.0.0.5  ·  192.0.2.1"
     assert host.describe("darqos", []) == "darqos  ·  No network"
     assert host.describe("", ["192.0.2.1"]) == "192.0.2.1"
+
+
+def test_an_update_request(tmp_path):
+    directory = tmp_path / "update"
+    host.request_update(b"tarball", b"signature", "reinstall", directory)
+    assert sorted(p.name for p in directory.iterdir()) == ["darqos.tar.gz", "darqos.tar.gz.sig", "request"]
+    assert (directory / "request").read_text() == "action=reinstall\n"
+    assert (directory / "darqos.tar.gz").read_bytes() == b"tarball"
+
+
+def test_an_updates_result_is_given_once(tmp_path):
+    assert host.update_result(tmp_path) is None
+    (tmp_path / "result").write_text("outcome=ok\nto=2.9\nmessage=updated from 2.8 to 2.9\n")
+    assert host.update_result(tmp_path) == {"outcome": "ok", "to": "2.9", "message": "updated from 2.8 to 2.9"}
+    assert host.update_result(tmp_path) is None
+    assert (tmp_path / "result.shown").exists()
+
+
+def test_only_an_installed_system_can_update(tmp_path):
+    assert not host.can_update(tmp_path / "darqos-update.path")
+    (tmp_path / "darqos-update.path").write_text("[Path]\n")
+    assert host.can_update(tmp_path / "darqos-update.path")

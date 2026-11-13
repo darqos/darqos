@@ -1,11 +1,12 @@
 .\" darqos
 .\" Copyright (C) 2026 David Arnold
-.TH INSTALL 8 2026-11-03 DarqOS "DarqOS System Manager's Manual"
+.TH INSTALL 8 2026-11-13 DarqOS "DarqOS System Manager's Manual"
 .SH NAME
 install \- install or update DarqOS from an unpacked distribution
 .SH SYNOPSIS
 .B /darq/dist/darq/bin/install
 .RB [ \-\-boot ]
+.RB [ \-\-update ]
 .br
 .B /darq/bin/install
 .RB [ \-\-boot ]
@@ -74,8 +75,21 @@ Create the run directory,
 .IR /darq/run ,
 owned by
 .BR darq ,
-mode 0700.
+mode 0700, with its update directory,
+.IR /darq/run/update ,
+where updates are requested from within DarqOS.
 .IP 8.
+Unless it's
+.BR \-\-update ,
+install the distribution's release key,
+.IR keys/release_key.pub ,
+as
+.IR /etc/darqos/allowed_signers ,
+which
+.BR darqos\-update (8)
+checks updates with: a manual install trusts the distribution it's
+given.
+.IP 9.
 Copy the
 .BR systemd (1)
 units into
@@ -83,16 +97,18 @@ units into
 and create
 .I /etc/darqos/backup.conf
 if it doesn't exist.
-.IP 9.
-Enable the daily backup,
-.IR darqos-backup.timer .
 .IP 10.
+Enable the daily backup,
+.IR darqos-backup.timer ,
+and updates,
+.IR darqos-update.path .
+.IP 11.
 With
 .BR \-\-boot ,
 enable the p-kernel's unit, and make
 .I darqos.target
 the default boot target.
-.IP 11.
+.IP 12.
 Start DarqOS again, if it was running.
 .SH OPTIONS
 .TP
@@ -100,12 +116,23 @@ Start DarqOS again, if it was running.
 Make DarqOS the machine's default boot.
 Without it, DarqOS starts only when asked
 .RB ( "systemctl start darqos-pkernel" ).
+.TP
+.B \-\-update
+Install as an update, which
+.BR darqos\-update (8)
+has checked with the installed release key: the distribution's key
+isn't installed.
 .SH ENVIRONMENT
 .TP
 .B DARQ
 Installation root.
 Default:
 .IR /darq .
+.TP
+.B CONF_DIR
+Where the configuration and release key go.
+Default:
+.IR /etc/darqos .
 .TP
 .B LOG_DIR
 Where the install is logged.
@@ -121,8 +148,10 @@ For tests: the steps to skip, separated by spaces: any of
 .BR owner " (of the run directory),"
 .BR compositor ,
 .BR venv ,
+.BR key ,
 .BR units ,
 .BR backup ,
+.BR updates ,
 .B boot
 and
 .BR start .
@@ -178,5 +207,6 @@ and errors as lines starting
 Storage in the run directory isn't yet migrated to a new version.
 .SH SEE ALSO
 .BR darqos-backup (8),
+.BR darqos\-update (8),
 .BR dui (8),
 .BR pkernel (8)

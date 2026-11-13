@@ -1,0 +1,14 @@
+# DarqOS
+# Copyright (C) 2026, David Arnold
+
+# Check, and install, an update requested from within DarqOS (see
+# darqos-update(8)): started by darqos-update.path.  It runs as root, as
+# installing does, and outside DarqOS's own unit, which installing stops.
+
+[Unit]
+Description=DarqOS update
+After=local-fs.target network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/darq/bin/darqos-update

@@ -1,0 +1,57 @@
+.\" darqos
+.\" Copyright (C) 2026 David Arnold
+.TH Intro 7 2026-11-12 DarqOS "Miscellaneous Manual"
+.SH NAME
+Intro \- Introduction to the DarqOS manual
+.SH LIBRARY
+.I darq
+.SH SYNOPSIS
+.BR get_version() -> Version
+
+class \fIVersion\fP:
+    version: \fIstr\fP
+    edition: \fIint\fP
+    build: \fIint\fP
+ 
+.SH DESCRIPTION
+In the tradition of Unix and Plan9, Darq includes manual pages for
+various aspects of the system.  The manual pages provide reference
+information in more detail than available from automatically-generated
+API summaries, while remaining a succinct format unlike a more
+discursive tutorial or contextual discussion paper.
+.LP
+Since its first edition, Unix has had a set of manual pages, divided
+into sections.
+.TP
+.B 1 Commands
+Commands that can be executed from a shell.
+
+
+
+.SH RETURN VALUE
+.SH ERRORS
+.SH VERSIONS
+This is the first version of this system call.
+.SH STANDARDS
+None
+.SH HISTORY
+Introduced in \fISecond Edition\fP.
+.LP
+Similar to the Unix
+.BR uname( 2 )
+system call.
+.\"
+.SH ENVIRONMENT
+None
+.SH NOTES
+None
+.SH EXAMPLES
+.EX
+import darq
+v = darq.get_version()
+print(f"Darq version {v.version}, {v.edition}ed, build {v.build}")
+.EE
+.SH BUGS
+None known.
+.SH SEE ALSO
+.BR pkernel (8)

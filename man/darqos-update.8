@@ -1,0 +1,112 @@
+.\" darqos
+.\" Copyright (C) 2026 David Arnold
+.TH DARQOS-UPDATE 8 2026-11-13 DarqOS "DarqOS System Manager's Manual"
+.SH NAME
+darqos\-update \- install an update requested from within DarqOS
+.SH SYNOPSIS
+.B /darq/bin/darqos\-update
+.SH DESCRIPTION
+.B darqos\-update
+installs an update that the
+.I Update DarqOS
+tool, on the Terminal's Tools panel, has requested.
+DarqOS runs as
+.BR darq ,
+which can't install anything, so the tool leaves a distribution
+tarball,
+.IR darqos.tar.gz ,
+its signature,
+.IR darqos.tar.gz.sig ,
+and a request,
+.IR request ,
+in
+.IR /darq/run/update .
+.I darqos\-update.path
+sees the request, and starts
+.IR darqos\-update.service ,
+which runs
+.B darqos\-update
+as root.
+The request is
+.B action=update
+or
+.BR action=reinstall .
+.PP
+It performs these steps, stopping, with a result that says why, if any
+fails:
+.IP 1. 4
+Copy the tarball and its signature into
+.IR /var/lib/darqos/update ,
+out of
+.BR darq 's
+reach, so what's checked is what's installed, and remove the request.
+.IP 2.
+Check the signature, with
+.BR "ssh\-keygen \-Y verify" ,
+in the
+.B darqos\-release
+namespace, against the installed release key,
+.IR /etc/darqos/allowed_signers .
+An update never changes the key: a new key is installed by hand, with
+.BR dui (8).
+.IP 3.
+Refuse a tarball whose version is older than what's installed, by
+edition and then build, or the same, unless it's a reinstall: going
+back is done by hand, with
+.BR dui (8).
+.IP 4.
+Back up, with
+.IR darqos\-backup.service ,
+and stop if the backup fails.
+.IP 5.
+Run the tarball's own
+.BR dui (8),
+with
+.BR \-\-update ,
+which stops DarqOS, installs it, and starts DarqOS again.
+.IP 6.
+Leave a result,
+.IR /darq/run/update/result ,
+for the Terminal, which shows it once, after unlocking:
+.B outcome=ok
+or
+.BR outcome=failed ,
+with what was installed, what is now, why, and the log.
+.PP
+With no request, it does nothing.
+.SH ENVIRONMENT
+For tests:
+.BR DARQ ,
+the installation root;
+.BR LOG_DIR ;
+.BR CONF_DIR ,
+where the release key is;
+.BR DARQOS_UPDATE_STAGING ,
+in place of
+.IR /var/lib/darqos/update ;
+.BR DARQOS_BACKUP ,
+a command in place of the backup; and
+.BR DARQOS_DUI ,
+a command in place of the tarball's
+.BR dui .
+.SH FILES
+.TP
+.I /darq/run/update
+The request, the tarball and its signature, and the result.
+.TP
+.I /var/lib/darqos/update
+Where the tarball's checked, and installed from.
+.TP
+.I /etc/darqos/allowed_signers
+The installed release key.
+.TP
+.I /var/log/darqos/update-*.log
+What it did.
+.SH EXIT STATUS
+0 if it installed, or there was nothing to do; 1 if it refused, or
+failed.
+.SH SEE ALSO
+.BR dui (8),
+.BR install (8),
+.BR darqos\-backup (8),
+.BR ssh\-keygen (1)

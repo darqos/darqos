@@ -1,0 +1,144 @@
+#! /bin/bash
+# DarqOS
+# Copyright (C) 2026 David Arnold
+
+# Install an update requested from within DarqOS (see darqos-update(8)):
+# run as root by darqos-update.service, when the Update DarqOS tool has
+# left a request in the run directory's update directory, with a
+# distribution, darqos.tar.gz, and its signature, darqos.tar.gz.sig.
+#
+# The request's "action=update" or "action=reinstall".  It:
+#
+# - moves them out of darq's reach, into a directory of root's, so what's
+#   checked is what's installed;
+# - checks the signature with the installed release key
+#   (/etc/darqos/allowed_signers), which an update never changes;
+# - refuses a build older than the installed one, or the same build, but
+#   for a reinstall: going back is done by hand, with dui(8);
+# - backs up, and stops if the backup fails;
+# - runs the distribution's own dui(8), with --update, which installs it,
+#   stopping DarqOS, and starting it again; and
+# - leaves a result, for the Terminal to show: "outcome=ok" or
+#   "outcome=failed", with what it was, what it is, and why.
+#
+# DARQ, LOG_DIR, CONF_DIR, DARQOS_UPDATE_STAGING, DARQOS_BACKUP (a command)
+# and DARQOS_DUI (a command, given the distribution) override what it
+# uses, for tests.
+
+set -euo pipefail
+
+DARQ=${DARQ:-/darq}
+REQUESTS=$DARQ/run/update
+STAGING=${DARQOS_UPDATE_STAGING:-/var/lib/darqos/update}
+CONF_DIR=${CONF_DIR:-/etc/darqos}
+SIGNERS=$CONF_DIR/allowed_signers
+LOG_DIR=${LOG_DIR:-/var/log/darqos}
+BACKUP=${DARQOS_BACKUP:-systemctl start darqos-backup.service}
+DARQ_USER=darq
+NAMESPACE=darqos-release
+
+[ -f "$REQUESTS/request" ] || exit 0
+
+mkdir -p "$LOG_DIR"
+LOG="$LOG_DIR/update-$(date +%Y%m%d-%H%M%S).log"
+exec > >(tee -a "$LOG") 2>&1
+
+# The installed version.
+field() { sed -n "s/^$1=//p"; }
+current=$(field version 2>/dev/null < "$DARQ/VERSION" || true)
+new=""
+
+# Leave a result, for the Terminal, and stop.
+finish() {
+    local outcome=$1 message=$2
+    {
+        echo "outcome=$outcome"
+        echo "from=$current"
+        echo "to=$new"
+        echo "message=$message"
+        echo "log=$LOG"
+        echo "time=$(date +%s)"
+    } > "$REQUESTS/result.new"
+    if [ "$(id -u)" = 0 ]; then
+        chown "$DARQ_USER:$DARQ_USER" "$REQUESTS/result.new"
+    fi
+    chmod 600 "$REQUESTS/result.new"
+    mv "$REQUESTS/result.new" "$REQUESTS/result"
+    echo "${outcome^}: $message"
+    if [ "$outcome" = ok ]; then
+        exit 0
+    fi
+    exit 1
+}
+
+# Out of darq's reach: what's checked is what's installed.
+action=$(field action < "$REQUESTS/request")
+rm -rf "$STAGING"
+mkdir -p -m 700 "$STAGING"
+for file in darqos.tar.gz darqos.tar.gz.sig; do
+    if [ -f "$REQUESTS/$file" ] && [ ! -L "$REQUESTS/$file" ]; then
+        cp "$REQUESTS/$file" "$STAGING/$file"
+    fi
+done
+rm -f "$REQUESTS/request" "$REQUESTS/darqos.tar.gz" "$REQUESTS/darqos.tar.gz.sig"
+echo "Ok: requested $action, of what's installed, $current"
+
+case "$action" in
+    update|reinstall) ;;
+    *) finish failed "the request is for nothing it knows: ${action:-nothing}" ;;
+esac
+if [ ! -f "$STAGING/darqos.tar.gz" ] || [ ! -f "$STAGING/darqos.tar.gz.sig" ]; then
+    finish failed "the request has no distribution, or no signature"
+fi
+
+# Signed with the installed release key.
+if [ ! -f "$SIGNERS" ]; then
+    finish failed "no release key is installed: install by hand, with dui"
+fi
+if ! ssh-keygen -Y verify -f "$SIGNERS" -I "$NAMESPACE" -n "$NAMESPACE" -s "$STAGING/darqos.tar.gz.sig" \
+        < "$STAGING/darqos.tar.gz"; then
+    finish failed "its signature isn't the release key's"
+fi
+
+# Newer than what's installed, by edition and then build; or the same,
+# to reinstall.
+if ! version_file=$(tar -xzOf "$STAGING/darqos.tar.gz" darq/VERSION 2>/dev/null); then
+    finish failed "it isn't a DarqOS distribution"
+fi
+new=$(echo "$version_file" | field version)
+edition=$(echo "$version_file" | field edition)
+build=$(echo "$version_file" | field build)
+installed_edition=$(field edition 2>/dev/null < "$DARQ/VERSION" || true)
+installed_build=$(field build 2>/dev/null < "$DARQ/VERSION" || true)
+installed_edition=${installed_edition:-0}
+installed_build=${installed_build:-0}
+order=$(( edition == installed_edition ? (build > installed_build) - (build < installed_build)
+                                         : (edition > installed_edition) - (edition < installed_edition) ))
+if [ "$order" -lt 0 ]; then
+    finish failed "$new is older than $current: go back by hand, with dui"
+fi
+if [ "$order" = 0 ] && [ "$action" != reinstall ]; then
+    finish failed "$new is what's installed"
+fi
+
+# Backed up first: that's the way back.
+if ! $BACKUP; then
+    finish failed "the backup failed, so nothing was installed"
+fi
+echo "Ok: backed up"
+
+# Its own dui, which installs it, and starts DarqOS again.
+if [ -n "${DARQOS_DUI:-}" ]; then
+    dui=($DARQOS_DUI)
+else
+    tar -C "$STAGING" -xzf "$STAGING/darqos.tar.gz" darq/bin/dui
+    dui=(bash "$STAGING/darq/bin/dui")
+fi
+if ! "${dui[@]}" --update "$STAGING/darqos.tar.gz"; then
+    finish failed "installing $new failed"
+fi
+rm -rf "$STAGING"
+if [ "$action" = reinstall ]; then
+    finish ok "reinstalled $new"
+fi
+finish ok "updated from $current to $new"

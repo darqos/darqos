@@ -4,6 +4,17 @@ Summary notes on newly added features for each release.
 
 ## Unreleased
 
+- **Updating from within DarqOS.**  *Update DarqOS*, on the Tools panel,
+  shows what's installed, the newest stable release, and the newest
+  pre-release, and updates to one, or reinstalls what's installed.  It
+  asks a root updater to install it, which checks it's signed with the
+  release key, backs up first, and restarts DarqOS; the Terminal then says
+  how it went.  `dui` installs the stable release from GitHub by default,
+  or the newest pre-release.
+- **Releases** are signed, and published on GitHub: each build as a
+  pre-release, tagged with its version, until one's declared stable.
+  Builds are counted within an edition, from 0: 3.0 follows 2.125.
+
 - **Release notes**, this file, are installed with each release, as
   `/darq/RELEASE_NOTES.md`.
 

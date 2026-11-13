@@ -1,0 +1,17 @@
+# DarqOS
+# Copyright (C) 2026, David Arnold
+
+# Updates requested from within DarqOS (see darqos-update(8)): the Update
+# DarqOS tool, running as darq, leaves a signed distribution, and a
+# request, in the run directory's update directory, and this starts
+# darqos-update.service, as root, to check and install it.
+
+[Unit]
+Description=DarqOS updates requested from within DarqOS
+
+[Path]
+PathExists=/darq/run/update/request
+Unit=darqos-update.service
+
+[Install]
+WantedBy=multi-user.target

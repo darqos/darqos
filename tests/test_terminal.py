@@ -172,6 +172,7 @@ def terminal(qt_app, security, host):
     services.security = security
     started = main.Terminal(qt_app, PolicyChannel(ours), services)
     started.launcher.run = started.launcher.post = inline
+    started.update_result = lambda: None
     started.start()
     compositor = Compositor(theirs)
     started.bindings = compositor.received()
@@ -1039,3 +1040,26 @@ def test_its_read_again_while_locked_and_not_while_unlocked(terminal, host):
     terminal.screens.lock()
     assert host.reads == reads + 1 and terminal.screens.address_timer.isActive()
     assert lock.address.text() == "testbox  ·  No network"
+
+
+
+################################################################
+# After an update
+################################################################
+
+@pytest.mark.parametrize("result, said", [
+    ({"outcome": "ok", "message": "updated from 2.8 to 2.9"}, "DarqOS updated from 2.8 to 2.9"),
+    ({"outcome": "failed", "message": "its signature isn't the release key's", "log": "/var/log/darqos/u.log"},
+     "Update failed: its signature isn't the release key's.  See /var/log/darqos/u.log"),
+])
+def test_how_an_update_went_is_said_after_unlocking(terminal, result, said):
+    results = [result]
+    terminal.update_result = lambda: results.pop() if results else None
+    unlock(terminal)
+    assert terminal.notice.isVisible() and terminal.notice.message.text() == said
+    # Once.
+    terminal.notice.hide()
+    terminal.lock()
+    terminal.compositor.received()
+    unlock(terminal)
+    assert not terminal.notice.isVisible()

@@ -61,6 +61,7 @@ include = [
     "tools/slack-import/*.py",
     "tools/wikidata-match/*.py",
     "tools/vcard-import/*.py",
+    "tools/update/*.py",
     "bench/*.py",
 ]
 line-length = 120
@@ -91,7 +92,11 @@ include = [
     "darq/wikidata.py",
     "darq/merging.py",
     "darq/items.py",
-    "darq/entity_type.py",
+    "darq/item_type.py",
+    "darq/history.py",
+    "darq/host.py",
+    "darq/ui/dialogs.py",
+    "darq/ui/sources.py",
     "darq/pcall.py",
     "darq/process.py",
     "darq/protocols",
@@ -132,6 +137,7 @@ include = [
     "tools/slack-import/*.py",
     "tools/wikidata-match/*.py",
     "tools/vcard-import/*.py",
+    "tools/update/*.py",
     "bench/*.py",
     "tests",
 ]

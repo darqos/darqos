@@ -85,7 +85,7 @@ def test_importing_a_local_file(tmp_path, monkeypatch):
 
     monkeypatch.setattr(darq.launch, "import_data", import_data)
     assert sources.import_file(str(path), "vcard-import") == sources.Source(item_id=f"public.data:{VCF}",
-                                                                           name="Contacts.vcf")
+                                                                           name="Contacts.vcf", file=str(path))
     assert made == [("text/vcard", "vcf", b"BEGIN:VCARD\nEND:VCARD\n", "Contacts.vcf", "imported", "vcard-import",
                      str(path))]
 

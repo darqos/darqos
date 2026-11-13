@@ -7,31 +7,92 @@
 # working tree, under darq/, with a VERSION file giving its version.
 # Files git doesn't track are left out, with a warning.
 #
-#     mkdist [output directory]
+#     mkdist [--edition N] [--publish] [output directory]
+#     mkdist --stable TAG
 #
 # It's written to dist/ (or the directory given), as
-# darqos-2ed-snapYYYYMMDD-b17.tar.gz.  Uncommitted changes to them make a
-# "-dirty" version, with a warning: a release should be made from a
-# commit.
+# darqos-2ed-snapYYYYMMDD-b17.tar.gz, signed, beside it, with the release
+# key (.sig).  Uncommitted changes to them make a "-dirty" version, with
+# a warning: a release should be made from a commit.
 #
 # Each tarball is a new build: RELEASE, at the top of the tree, has the
-# edition, and the last build, which never goes back to 1.  It's written
-# once the tarball's made, and committed with everything else.
-# DARQ_RELEASE names another file to use, as the tests do.
+# edition, and the last build, counted within the edition, so its version
+# is the edition and the build, such as 2.17.  --edition N starts an
+# edition, at build 0: 3.0.  RELEASE is written once the tarball's made,
+# and committed with everything else.  DARQ_RELEASE names another file to
+# use, as the tests do.
+#
+# The release key is DARQ_RELEASE_KEY, if it's set (empty, for none), or
+# else keys/release_key, or else ~/.config/darqos/release_key: with none,
+# the tarball isn't signed, with a warning, and can be installed by hand,
+# but can't update a system.
+#
+# --publish publishes it on GitHub, with gh(1), as a pre-release, tagged
+# v<version>, such as v2.17, with the Unreleased section of
+# RELEASE_NOTES.md as its notes: the tarball and its signature, under
+# their own names, and as darqos.tar.gz, for the update tool and dui(8).
+# The commit must be pushed, and the tarball signed and not dirty.
+# --stable TAG declares a published release stable: GitHub's Latest.
 
 set -euo pipefail
 
-# What's distributed: as install(8) copies it.
-PATHS="bin darq kernel lib services types lenses tools compositor man requirements.txt RELEASE_NOTES.md"
+# What's distributed: as install(8) copies it, with the release key's
+# public half, which a manual install trusts.
+PATHS="bin darq kernel lib services types lenses tools compositor man requirements.txt RELEASE_NOTES.md
+       keys/release_key.pub"
+
+# The namespace signatures are made in, which darqos-update(8) checks.
+NAMESPACE=darqos-release
+
+# The GitHub repository releases are published to.
+REPOSITORY=darqos/darqos
+
+usage() {
+    echo "Usage: mkdist [--edition N] [--publish] [output directory]" >&2
+    echo "       mkdist --stable TAG" >&2
+    exit 2
+}
+
+new_edition=
+publish=0
+stable=
+out_arg=
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --edition) [ $# -ge 2 ] || usage; new_edition=$2; shift ;;
+        --publish) publish=1 ;;
+        --stable) [ $# -ge 2 ] || usage; stable=$2; shift ;;
+        -*) usage ;;
+        *) [ -z "$out_arg" ] || usage; out_arg=$1 ;;
+    esac
+    shift
+done
 
 root=$(cd "$(dirname "$0")" && pwd)
 cd "$root"
-out=$(mkdir -p "${1:-dist}" && cd "${1:-dist}" && pwd)
 
-# The edition, and this build.
+# Declaring a release stable: it's GitHub's Latest, and no longer a
+# pre-release.  Nothing's built.
+if [ -n "$stable" ]; then
+    gh release edit "$stable" --repo "$REPOSITORY" --prerelease=false --latest
+    echo "Ok: $stable is the stable release"
+    exit 0
+fi
+
+out=$(mkdir -p "${out_arg:-dist}" && cd "${out_arg:-dist}" && pwd)
+
+# The edition, and this build: the first of a new edition is 0.
 release=${DARQ_RELEASE:-$root/RELEASE}
-edition=$(sed -n 's/^edition=//p' "$release")
-build=$(( $(sed -n 's/^build=//p' "$release") + 1 ))
+if [ -n "$new_edition" ]; then
+    case "$new_edition" in
+        ''|*[!0-9]*) echo "Error: an edition is a number, not $new_edition" >&2; exit 2 ;;
+    esac
+    edition=$new_edition
+    build=0
+else
+    edition=$(sed -n 's/^edition=//p' "$release")
+    build=$(( $(sed -n 's/^build=//p' "$release") + 1 ))
+fi
 
 # The version, "-dirty" if what's distributed has changed since the
 # commit; and a warning about files git doesn't track, which are left
@@ -48,6 +109,28 @@ untracked=$(git ls-files --others --exclude-standard -- $PATHS)
 if [ -n "$untracked" ]; then
     echo "Warning: files git doesn't track, left out:" >&2
     echo "$untracked" | sed 's/^/    /' >&2
+fi
+
+# Publishing needs a release: signed, of a pushed commit, and not dirty.
+if [ "$publish" = 1 ]; then
+    case "$version" in
+        *-dirty) echo "Error: can't publish uncommitted changes" >&2; exit 1 ;;
+    esac
+    if [ -z "$(git branch -r --contains HEAD 2>/dev/null)" ]; then
+        echo "Error: can't publish a commit that isn't pushed" >&2
+        exit 1
+    fi
+fi
+
+# The release key, if there is one.
+if [ "${DARQ_RELEASE_KEY+set}" = set ]; then
+    key=$DARQ_RELEASE_KEY
+elif [ -f "$root/keys/release_key" ]; then
+    key=$root/keys/release_key
+elif [ -f "$HOME/.config/darqos/release_key" ]; then
+    key=$HOME/.config/darqos/release_key
+else
+    key=
 fi
 
 stage=$(mktemp -d)
@@ -67,7 +150,33 @@ printf 'version=%s\nedition=%s\nbuild=%s\ncommit=%s\ndate=%s\n' \
 name="darqos-${edition}ed-snap$(date +%Y%m%d)-b$build.tar.gz"
 tar -C "$stage" --owner=0 --group=0 --sort=name -czf "$out/$name" darq
 
+# Signed, beside it.
+rm -f "$out/$name.sig"
+if [ -n "$key" ]; then
+    ssh-keygen -q -Y sign -f "$key" -n "$NAMESPACE" "$out/$name"
+    signed=", signed"
+else
+    echo "Warning: no release key: it isn't signed, so it can't update a system" >&2
+    signed=""
+    if [ "$publish" = 1 ]; then
+        echo "Error: can't publish what isn't signed" >&2
+        exit 1
+    fi
+fi
+
 # Only now is the number used.
 printf 'edition=%s\nbuild=%s\n' "$edition" "$build" > "$release.new"
 mv "$release.new" "$release"
-echo "Ok: $out/$name ($version, $(find "$stage/darq" -type f | wc -l) files)"
+echo "Ok: $out/$name ($version, $(find "$stage/darq" -type f | wc -l) files$signed)"
+
+# Published as a pre-release: its notes are what hasn't been released.
+if [ "$publish" = 1 ]; then
+    notes="$stage/notes.md"
+    awk '/^## Unreleased/ {on = 1; next} /^## / {on = 0} on' RELEASE_NOTES.md > "$notes"
+    cp "$out/$name" "$stage/darqos.tar.gz"
+    cp "$out/$name.sig" "$stage/darqos.tar.gz.sig"
+    gh release create "v$version" --repo "$REPOSITORY" --target "$(git rev-parse HEAD)" --prerelease \
+        --title "DarqOS $version" --notes-file "$notes" \
+        "$out/$name" "$out/$name.sig" "$stage/darqos.tar.gz" "$stage/darqos.tar.gz.sig"
+    echo "Ok: published v$version, as a pre-release"
+fi

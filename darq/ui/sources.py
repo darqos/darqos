@@ -64,12 +64,14 @@ class SourceError(Exception):
 class Source:
     """Where an import's data comes from: an item, or, for development, a
     local directory, read as it is; with the URL it was fetched from, if
-    it was, to fetch again."""
+    it was, to fetch again, or the local file it was made from, if it
+    was, beside which there can be more, as a signature."""
 
     item_id: str = ""
     name: str = ""
     path: str = ""
     url: str = ""
+    file: str = ""
 
 
 # Says whether an item's of the kind an import reads: its media type, and
@@ -124,7 +126,7 @@ def import_file(path: str, source: str) -> Source:
         raise SourceError(f"Can't import {name}: {e}") from None
     if item_id is None:
         raise SourceError(f"No type can hold {name}")
-    return Source(item_id=item_id, name=name)
+    return Source(item_id=item_id, name=name, file=path)
 
 
 def read(source: Source) -> bytes:

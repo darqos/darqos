@@ -110,7 +110,10 @@ for a new password instead, and sets it with the Security service.
 1st Edition has only a password: there are no user names.
 
 Once the password is accepted, the Terminal hides the lock screen, and
-the hotkeys (see :doc:`ux`) are available.  If *firstrun* mode is
+the hotkeys (see :doc:`ux`) are available.  After an update from within
+DarqOS, which restarts it, it then says, once, how the update went: what
+it's updated to, or why it failed, and where its log is (see
+:doc:`distribution`).  If *firstrun* mode is
 active, the manpage reader application should be started to show the
 *intro* page, giving the user an overview of the system controls.
 
@@ -466,7 +469,8 @@ Tools
 The tools panel, invoked with *Sys-t*, runs the installed tools: the
 programs under `tools/` with a `tool.json` manifest, their name and
 description, `{"name": ..., "description": ...}`, such as the
-imports, Reindex, and Give Items Entities (``darq.ui.tools``).  Typing
+imports, Reindex, Give Items Entities, and Update DarqOS (see
+:doc:`distribution`) (``darq.ui.tools``).  Typing
 filters them, by name or description, the arrow keys move through
 them, and Enter, or a double-click, runs the selected one.
 

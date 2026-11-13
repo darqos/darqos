@@ -4,26 +4,37 @@
 
 # DarqOS Updater/Installer (see dui(8))
 #
-#     dui [--boot] [TARBALL]
+#     dui [--boot] [--pre-release] [--update] [TARBALL]
 #
 # Installs, or updates, DarqOS from a distribution tarball, made by
-# mkdist: a local file, or by default the latest, downloaded.  It
-# unpacks it into /darq/dist, and runs the install(8) script it holds,
-# passing it --boot.
+# mkdist: a local file, or by default the stable release, downloaded from
+# GitHub, or, with --pre-release, the newest pre-release.  It unpacks it
+# into /darq/dist, and runs the install(8) script it holds, passing it
+# --boot, and --update, as darqos-update(8) does.
+#
+# It checks the distribution's signature, beside it (.sig), with the
+# installed release key, and says what it found; but, run by hand, it
+# installs it all the same, and its key with it: a manual install trusts
+# the distribution it's given.
 
 set -euo pipefail
 
 DARQ=${DARQ:-/darq}
 DIST=${DIST:-$DARQ/dist}
-DIST_FILE=${DIST_FILE:-darqos-latest.tar.gz}
-DIST_BASE=${DIST_BASE:-https://www.0x1.org/d/darq}
+CONF_DIR=${CONF_DIR:-/etc/darqos}
+RELEASES=${DARQOS_RELEASES:-https://api.github.com/repos/darqos/darqos/releases}
+STABLE=${DARQOS_STABLE:-https://github.com/darqos/darqos/releases/latest/download/darqos.tar.gz}
+NAMESPACE=darqos-release
 
 options=()
 tarball=
+pre_release=0
 for arg in "$@"; do
     case "$arg" in
         --boot) options+=(--boot) ;;
-        -*) echo "Usage: dui [--boot] [TARBALL]" >&2; exit 2 ;;
+        --update) options+=(--update) ;;
+        --pre-release) pre_release=1 ;;
+        -*) echo "Usage: dui [--boot] [--pre-release] [--update] [TARBALL]" >&2; exit 2 ;;
         *) tarball=$(realpath "$arg") ;;
     esac
 done
@@ -33,15 +44,43 @@ if [ "$(id -u)" != 0 ]; then
     exit 1
 fi
 
-# Fetch the tarball, unless it's given.
+# Fetch the tarball, and its signature, unless it's given: the stable
+# release, or the newest pre-release, which GitHub's API lists.
 if [ -z "$tarball" ]; then
-    tarball=/tmp/$DIST_FILE
-    rm -f "$tarball"
-    if ! wget -O "$tarball" "$DIST_BASE/$DIST_FILE"; then
-        echo "Error: couldn't download $DIST_BASE/$DIST_FILE" >&2
+    url=$STABLE
+    if [ "$pre_release" = 1 ]; then
+        url=$(wget -q -O - "$RELEASES" | python3 -c '
+import json, sys
+for release in json.load(sys.stdin):
+    if release.get("prerelease"):
+        print(next(a["browser_download_url"] for a in release["assets"] if a["name"] == "darqos.tar.gz"))
+        break') || true
+        if [ -z "$url" ]; then
+            echo "Error: there's no pre-release" >&2
+            exit 1
+        fi
+    fi
+    tarball=/tmp/darqos.tar.gz
+    rm -f "$tarball" "$tarball.sig"
+    if ! wget -q -O "$tarball" "$url"; then
+        echo "Error: couldn't download $url" >&2
         exit 1
     fi
-    echo "Ok: downloaded $DIST_BASE/$DIST_FILE"
+    wget -q -O "$tarball.sig" "$url.sig" || rm -f "$tarball.sig"
+    echo "Ok: downloaded $url"
+fi
+
+# Signed with the installed release key?  By hand, it's said, not
+# required: darqos-update(8) requires it.
+if [ ! -f "$tarball.sig" ]; then
+    echo "Warning: $tarball isn't signed"
+elif [ ! -f "$CONF_DIR/allowed_signers" ]; then
+    echo "Ok: signed, but there's no installed release key to check it with"
+elif ssh-keygen -Y verify -f "$CONF_DIR/allowed_signers" -I "$NAMESPACE" -n "$NAMESPACE" -s "$tarball.sig" \
+        < "$tarball" >/dev/null 2>&1; then
+    echo "Ok: signed with the release key"
+else
+    echo "Warning: its signature isn't the installed release key's: installing it, and its key, as asked"
 fi
 if [ ! -f "$tarball" ]; then
     echo "Error: no tarball $tarball" >&2

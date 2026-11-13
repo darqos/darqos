@@ -6,11 +6,13 @@
 # install(8), and doc/distribution.rst): normally /darq/dist/darq, run
 # by dui(8), as root, on Debian 13.
 #
-#     install [--boot]
+#     install [--boot] [--update]
 #
 # It installs from the distribution it's in, into /darq; or, run from
 # /darq itself (as "/darq/bin/install --boot"), does everything but
-# copying the code:
+# copying the code.  --update is for darqos-update(8), which has checked
+# the distribution's signature with the installed release key: the key
+# the distribution carries isn't installed then, only by hand.  It:
 #
 # - stop DarqOS, if it's running;
 # - install the Debian packages it needs;
@@ -19,8 +21,9 @@
 # - build the compositor;
 # - make or update the Python environment, /darq/env;
 # - create the run directory, /darq/run, owned by darq;
+# - install the release key, unless it's --update;
 # - install the systemd units, and the backup configuration;
-# - enable the daily backup;
+# - enable the daily backup, and updates requested from within DarqOS;
 # - with --boot, make DarqOS the machine's default boot; and
 # - start DarqOS again, if it was running.
 #
@@ -28,7 +31,8 @@
 #
 # DARQ and LOG_DIR override where it installs and logs.  For tests,
 # DARQOS_INSTALL_SKIP names steps to skip: any of root, stop, packages,
-# user, owner, compositor, venv, units, backup, boot and start.
+# user, owner, compositor, venv, key, units, backup, updates, boot and
+# start.  CONF_DIR overrides where the configuration goes.
 
 set -euo pipefail
 
@@ -37,7 +41,7 @@ DARQ=${DARQ:-/darq}
 DARQ_USER=darq
 LOG_DIR=${LOG_DIR:-/var/log/darqos}
 UNIT_DIR=/etc/systemd/system
-CONF_DIR=/etc/darqos
+CONF_DIR=${CONF_DIR:-/etc/darqos}
 SKIP=" ${DARQOS_INSTALL_SKIP:-} "
 
 # The code's directories, copied whole; and its files: what it needs, its
@@ -46,7 +50,11 @@ CODE="bin darq kernel lib services types lenses tools compositor"
 FILES="requirements.txt VERSION RELEASE_NOTES.md"
 
 # The units, from kernel/.
-UNITS="darqos-pkernel.service darqos.target darqos-backup.service darqos-backup.timer"
+UNITS="darqos-pkernel.service darqos.target darqos-backup.service darqos-backup.timer
+       darqos-update.service darqos-update.path"
+
+# The namespace release signatures are made in (see mkdist).
+NAMESPACE=darqos-release
 
 # Debian packages: for building the compositor; for running it, and
 # Qt (whose wheels bring Qt, but not these); polkit, without which
@@ -64,10 +72,12 @@ PACKAGES="
 "
 
 BOOT=0
+UPDATE=0
 for arg in "$@"; do
     case "$arg" in
         --boot) BOOT=1 ;;
-        *) echo "Usage: install [--boot]" >&2; exit 2 ;;
+        --update) UPDATE=1 ;;
+        *) echo "Usage: install [--boot] [--update]" >&2; exit 2 ;;
     esac
 done
 
@@ -181,13 +191,28 @@ if step venv; then
 fi
 
 # The run directory, and its files, whatever umask made them: only
-# darq may read them.
-mkdir -p "$DARQ/run"
+# darq may read them.  Updates are requested in its update directory.
+mkdir -p "$DARQ/run/update"
 chmod -R go-rwx "$DARQ/run"
 if step owner; then
     chown -R "$DARQ_USER:$DARQ_USER" "$DARQ/run"
 fi
 echo "Ok: run directory $DARQ/run"
+
+# The release key: what a manual install trusts, from the distribution,
+# and darqos-update(8) checks updates with.  An update doesn't change it.
+if [ "$UPDATE" = 0 ] && step key; then
+    if [ -f "$DIST/keys/release_key.pub" ]; then
+        mkdir -p "$CONF_DIR"
+        printf '%s namespaces="%s" %s\n' "$NAMESPACE" "$NAMESPACE" "$(cat "$DIST/keys/release_key.pub")" \
+            > "$CONF_DIR/allowed_signers.new"
+        chmod 644 "$CONF_DIR/allowed_signers.new"
+        mv "$CONF_DIR/allowed_signers.new" "$CONF_DIR/allowed_signers"
+        echo "Ok: installed the release key"
+    else
+        echo "Warning: no release key: DarqOS can't update itself"
+    fi
+fi
 
 if step units; then
     for unit in $UNITS; do
@@ -207,6 +232,11 @@ fi
 if step backup; then
     systemctl enable --now darqos-backup.timer
     echo "Ok: enabled the daily backup"
+fi
+
+if step updates; then
+    systemctl enable --now darqos-update.path
+    echo "Ok: enabled updates"
 fi
 
 if [ "$BOOT" = 1 ] && step boot; then

@@ -1,11 +1,13 @@
 .\" darqos
 .\" Copyright (C) 2026 David Arnold
-.TH DUI 8 2026-11-03 DarqOS "DarqOS System Manager's Manual"
+.TH DUI 8 2026-11-13 DarqOS "DarqOS System Manager's Manual"
 .SH NAME
 dui \- install or update DarqOS from a distribution tarball
 .SH SYNOPSIS
 .B dui
 .RB [ \-\-boot ]
+.RB [ \-\-pre\-release ]
+.RB [ \-\-update ]
 .RI [ tarball ]
 .SH DESCRIPTION
 .B dui
@@ -14,9 +16,12 @@ made by
 .BR mkdist :
 the
 .I tarball
-given, or the latest, downloaded.
+given, or the stable release, downloaded from GitHub, or, with
+.BR \-\-pre\-release ,
+the newest pre-release.
 It is used both for the first install on a host and for later
-updates.
+updates, by hand, and by
+.BR darqos\-update (8).
 It must be run as root.
 .PP
 .B dui
@@ -24,22 +29,31 @@ performs these steps, stopping with an error if any fails:
 .IP 1. 4
 Without a
 .IR tarball ,
-download
-.B $DIST_BASE/$DIST_FILE
-into
+download the release, and its signature, into
 .I /tmp
 with
 .BR wget (1).
 .IP 2.
+Check the tarball's signature, beside it
+.RI ( tarball .sig),
+with the installed release key,
+.IR /etc/darqos/allowed_signers ,
+and say what it found.
+Run by hand, it installs the tarball all the same, as it's asked, and
+its release key with it: a manual install trusts the distribution it's
+given.
+.IP 3.
 Remove any existing
 .BR $DIST ,
 and unpack the tarball into it, owned by root.
-.IP 3.
+.IP 4.
 Run
 .BR $DIST/darq/bin/install ,
 passing it
-.BR \-\-boot .
-.IP 4.
+.B \-\-boot
+and
+.BR \-\-update .
+.IP 5.
 Remove
 .BR $DIST .
 .SH OPTIONS
@@ -47,6 +61,18 @@ Remove
 .B \-\-boot
 Make DarqOS the machine's default boot: see
 .BR install (8).
+.TP
+.B \-\-pre\-release
+Without a
+.IR tarball ,
+download the newest pre-release, rather than the stable release:
+pre-releases are for trying out, not for a system whose data can't be
+lost.
+.TP
+.B \-\-update
+Install as an update, which
+.BR darqos\-update (8)
+has checked: the release key isn't installed.
 .SH ENVIRONMENT
 .TP
 .B DARQ
@@ -59,20 +85,29 @@ Staging directory for the unpacked distribution.
 Default:
 .BR $DARQ/dist .
 .TP
-.B DIST_FILE
-Name of the tarball to download.
+.B CONF_DIR
+Where the release key is installed.
 Default:
-.IR darqos-latest.tar.gz .
+.IR /etc/darqos .
 .TP
-.B DIST_BASE
-URL of the directory to download it from.
+.B DARQOS_STABLE
+URL of the stable release's tarball.
 Default:
-.IR https://www.0x1.org/d/darq .
+.IR https://github.com/darqos/darqos/releases/latest/download/darqos.tar.gz .
+.TP
+.B DARQOS_RELEASES
+URL of GitHub's list of releases, to find the newest pre-release.
+Default:
+.IR https://api.github.com/repos/darqos/darqos/releases .
 .SH FILES
 .TP
-.BI /tmp/ DIST_FILE
-The downloaded tarball.
-It is not removed afterwards.
+.I /tmp/darqos.tar.gz
+The downloaded tarball, with its signature,
+.IR /tmp/darqos.tar.gz.sig .
+They aren't removed afterwards.
+.TP
+.I /etc/darqos/allowed_signers
+The installed release key.
 .TP
 .I $DIST/darq/bin/install
 The install script run.
@@ -82,8 +117,12 @@ option.
 .SH DIAGNOSTICS
 Progress is written to standard output as lines starting
 .RB \(lq Ok: \(rq,
+or
+.RB \(lq Warning: \(rq,
 and errors to standard error as lines starting
 .RB \(lq Error: \(rq.
 .SH SEE ALSO
 .BR install (8),
+.BR darqos\-update (8),
+.BR ssh\-keygen (1),
 .BR wget (1)

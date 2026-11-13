@@ -55,6 +55,7 @@ from darq.protocols.compositor import (
     WindowRemoved,
     WindowRetitled,
 )
+import darq.host
 import darq.items
 import darq.ui.types
 from darq.protocols.lens import Lens
@@ -129,6 +130,9 @@ class Terminal:
         # Their Wayland app_ids: a lens's is its Lens port's name (see
         # darq.ui.lens.announce), so Sys-i asks it what it's showing.
         self.app_ids: dict[int, str] = {}
+
+        # Reads how the last update went, once: tests replace it.
+        self.update_result: typing.Callable[[], dict[str, str] | None] = darq.host.update_result
         self.focused = 0
 
         # While the switcher's showing: the windows it offers, and the
@@ -369,6 +373,18 @@ class Terminal:
 
         self.launcher.background(ask, asked)
 
+    def show_update_result(self):
+        """Say how the last update went, once, after an update's restarted
+        DarqOS (see darqos-update(8))."""
+        result = self.update_result()
+        if result is None:
+            return
+        if result.get("outcome") == "ok":
+            self.say(f"DarqOS {result.get('message', 'updated')}")
+        else:
+            log = result.get("log", "/var/log/darqos")
+            self.say(f"Update failed: {result.get('message', 'see the log')}.  See {log}")
+
     def say(self, message: str):
         """Tell the operator something, in a notice."""
         logging.info(message)
@@ -453,6 +469,7 @@ class Terminal:
         self.locked = False
         self.screens.unlock_screens()
         self.channel.send(Unlock())
+        self.show_update_result()
 
     def power(self, choice: str):
         logging.info(f"{choice} requested")

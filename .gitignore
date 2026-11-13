@@ -25,3 +25,8 @@ snapshots/darqos-*.tar.gz
 
 # Personal data used by experiments, such as address books
 experiments/**/*.vcf
+
+# The release signing key's private half (see doc/distribution.rst): its
+# public half, keys/release_key.pub, is tracked.  A copy is kept in
+# ~/.config/darqos too.
+/keys/release_key

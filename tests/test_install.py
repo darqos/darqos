@@ -22,12 +22,14 @@ from darq import version as darq_version
 ROOT = pathlib.Path(__file__).parent.parent
 
 # The install steps that change the host, or need root.
-HOST_STEPS = "root stop packages user owner compositor venv units backup boot start"
+HOST_STEPS = "root stop packages user owner compositor venv units backup updates boot start"
 
 
 def run(*command, env=None, cwd=None, check=True):
+    """Run a command: with no release key, unless one's given, so that
+    nothing's signed with this machine's own."""
     result = subprocess.run([str(c) for c in command], capture_output=True, text=True, cwd=cwd,
-                            env=None if env is None else {**os.environ, **env})
+                            env={**os.environ, "DARQ_RELEASE_KEY": "", **(env or {})})
     if check:
         assert result.returncode == 0, result.stdout + result.stderr
     return result
@@ -45,6 +47,7 @@ def repo(tmp_path):
     for path, text in [("darq/__init__.py", "# darq\n"), ("services/storage/main.py", "# storage\n"),
                        ("bin/install", "#! /bin/sh\n"), ("man/install.8", ".TH INSTALL 8\n"),
                        ("requirements.txt", "PyQt6\n"), ("RELEASE_NOTES.md", "# Notes\n"), ("doc/index.rst", "Docs\n"),
+                       ("keys/release_key.pub", "ssh-ed25519 AAAA test\n"),
                        ("RELEASE", "edition=2\nbuild=16\n"),
                        ("experiments/x.py", "# mine\n")]:
         (repo / path).parent.mkdir(parents=True, exist_ok=True)
@@ -67,15 +70,16 @@ def version_file(path: pathlib.Path) -> dict[str, str]:
     return dict(line.split("=", 1) for line in text.splitlines())
 
 
-def test_mkdist(repo, tmp_path):
+def test_mkdist(repo, tmp_path, release_key):
     out = tmp_path / "out"
-    result = run(repo / "mkdist", out, cwd=repo)
+    result = run(repo / "mkdist", out, cwd=repo, env={"DARQ_RELEASE_KEY": str(release_key[0])})
     assert result.stderr == ""
     with tarfile.open(tarball(out)) as tar:
         members = {m.name: m for m in tar.getmembers() if m.isfile()}
     # The installed directories' tracked files, owned by root.
     assert sorted(members) == ["darq/RELEASE_NOTES.md", "darq/VERSION", "darq/bin/install", "darq/darq/__init__.py",
-                               "darq/man/install.8", "darq/requirements.txt", "darq/services/storage/main.py"]
+                               "darq/keys/release_key.pub", "darq/man/install.8", "darq/requirements.txt",
+                               "darq/services/storage/main.py"]
     assert {(m.uid, m.gid) for m in members.values()} == {(0, 0)}
     head = git(repo, "rev-parse", "--short", "HEAD").stdout.strip()
     fields = version_file(tarball(out))
@@ -97,11 +101,58 @@ def test_mkdist_counts_builds(repo, tmp_path):
     assert version_file(tarball(tmp_path / "two"))["version"] == "2.18"
 
 
-def test_mkdist_builds_go_on_across_editions(repo, tmp_path):
-    (repo / "RELEASE").write_text("edition=3\nbuild=17\n")
+def test_mkdist_starts_an_edition_at_0(repo, tmp_path):
+    """A new edition's builds count from 0: 3.0 follows 2.16."""
     out = tmp_path / "out"
-    run(repo / "mkdist", out, cwd=repo)
-    assert version_file(tarball(out))["version"] == "3.18"
+    run(repo / "mkdist", "--edition", "3", out, cwd=repo)
+    fields = version_file(tarball(out))
+    assert (fields["version"], fields["edition"], fields["build"]) == ("3.0", "3", "0")
+    assert tarball(out).name.startswith("darqos-3ed-snap") and tarball(out).name.endswith("-b0.tar.gz")
+    assert (repo / "RELEASE").read_text() == "edition=3\nbuild=0\n"
+    run(repo / "mkdist", tmp_path / "next", cwd=repo)
+    assert version_file(tarball(tmp_path / "next"))["version"] == "3.1"
+    assert run(repo / "mkdist", "--edition", "three", cwd=repo, check=False).returncode == 2
+
+
+def test_versions_are_ordered_by_edition_then_build():
+    assert darq_version.parse("version=3.0\nedition=3\nbuild=0\n").order() > \
+        darq_version.parse("version=2.125\nedition=2\nbuild=125\n").order()
+    with pytest.raises(ValueError, match="no build"):
+        darq_version.parse("version=2.1\nedition=2\n")
+
+
+@pytest.fixture
+def release_key(tmp_path):
+    """A release key, made for the test, and its allowed signers."""
+    key = tmp_path / "keys" / "release_key"
+    key.parent.mkdir()
+    run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "test", "-f", key)
+    signers = tmp_path / "allowed_signers"
+    signers.write_text(f'darqos-release namespaces="darqos-release" {(key.parent / "release_key.pub").read_text()}')
+    return key, signers
+
+
+def test_mkdist_signs_with_the_release_key(repo, tmp_path, release_key):
+    key, signers = release_key
+    out = tmp_path / "out"
+    result = run(repo / "mkdist", out, cwd=repo, env={"DARQ_RELEASE_KEY": str(key)})
+    assert "signed)" in result.stdout
+    dist = tarball(out)
+    signature = dist.with_name(dist.name + ".sig")
+    with open(dist, "rb") as data:
+        verified = subprocess.run(["ssh-keygen", "-Y", "verify", "-f", str(signers), "-I", "darqos-release",
+                                   "-n", "darqos-release", "-s", str(signature)], stdin=data, capture_output=True)
+    assert verified.returncode == 0, verified.stderr
+
+
+def test_mkdist_without_a_key_warns_and_cant_publish(repo, tmp_path):
+    out = tmp_path / "out"
+    result = run(repo / "mkdist", out, cwd=repo)
+    assert "isn't signed" in result.stderr
+    assert not list(out.glob("*.sig"))
+    # Publishing needs a pushed commit, before anything's built.
+    result = run(repo / "mkdist", "--publish", tmp_path / "other", cwd=repo, check=False)
+    assert result.returncode == 1 and "isn't pushed" in result.stderr
 
 
 def test_mkdist_keeps_the_number_if_it_fails(repo, tmp_path):
@@ -115,10 +166,11 @@ def test_mkdist_keeps_the_number_if_it_fails(repo, tmp_path):
     assert (repo / "RELEASE").read_text() == "edition=2\nbuild=16\n"
 
 
-def test_mkdist_doesnt_call_a_new_build_a_change(repo, tmp_path):
+def test_mkdist_doesnt_call_a_new_build_a_change(repo, tmp_path, release_key):
     # RELEASE isn't distributed, so it doesn't make the next one dirty.
-    run(repo / "mkdist", tmp_path / "one", cwd=repo)
-    result = run(repo / "mkdist", tmp_path / "two", cwd=repo)
+    signed = {"DARQ_RELEASE_KEY": str(release_key[0])}
+    run(repo / "mkdist", tmp_path / "one", cwd=repo, env=signed)
+    result = run(repo / "mkdist", tmp_path / "two", cwd=repo, env=signed)
     assert result.stderr == ""
     assert "RELEASE" not in [name.split("/")[-1] for name in tarfile.open(tarball(tmp_path / "two")).getnames()]
 
@@ -158,7 +210,8 @@ def dist(tmp_path):
 
 def install(dist, root, *args, check=True):
     return run(dist / "bin" / "install", *args, check=check,
-               env={"DARQ": str(root), "LOG_DIR": str(root.parent / "log"), "DARQOS_INSTALL_SKIP": HOST_STEPS})
+               env={"DARQ": str(root), "LOG_DIR": str(root.parent / "log"), "DARQOS_INSTALL_SKIP": HOST_STEPS,
+                    "CONF_DIR": str(root.parent / "etc")})
 
 
 def test_install(dist, tmp_path):
@@ -190,6 +243,29 @@ def test_install(dist, tmp_path):
     # Logged.
     [log] = (tmp_path / "log").glob("install-*.log")
     assert "Ok: installed" in log.read_text()
+
+
+def test_a_manual_install_trusts_its_release_key(dist, tmp_path):
+    """The distribution's key is installed by hand, first or after; an
+    update, which darqos-update(8) checked with the installed key, leaves
+    it as it is."""
+    (dist / "keys").mkdir(exist_ok=True)
+    (dist / "keys" / "release_key.pub").write_text("ssh-ed25519 AAAAfirst release\n")
+    root = tmp_path / "darq"
+    signers = tmp_path / "etc" / "allowed_signers"
+    assert "Ok: installed the release key" in install(dist, root).stdout
+    assert signers.read_text() == 'darqos-release namespaces="darqos-release" ssh-ed25519 AAAAfirst release\n'
+    assert (root / "run" / "update").is_dir()
+
+    (dist / "keys" / "release_key.pub").write_text("ssh-ed25519 AAAAsecond release\n")
+    assert "release key" not in install(dist, root, "--update").stdout
+    assert "AAAAfirst" in signers.read_text()
+    install(dist, root)
+    assert "AAAAsecond" in signers.read_text()
+
+    (dist / "keys" / "release_key.pub").unlink()
+    assert "Warning: no release key" in install(dist, root).stdout
+    assert "AAAAsecond" in signers.read_text()
 
 
 def test_the_release_notes_are_installed(dist, tmp_path):

@@ -1,0 +1,48 @@
+.\" darqos
+.\" Copyright (C) 2026 David Arnold
+.TH get_version 2 2026-11-11 DarqOS "DarqOS Kernel API Manual"
+.SH NAME
+get_version \- Get DarqOS version
+.SH LIBRARY
+.I darq
+.SH SYNOPSIS
+.BR get_version() -> Version
+
+class \fIVersion\fP:
+    version: \fIstr\fP
+    edition: \fIint\fP
+    build: \fIint\fP
+ 
+.SH DESCRIPTION
+The
+.BR get_version ()
+system call is used to obtain the system software version number.  The
+value is available both in pre-composed string form, and as an integer
+\fIedition\fP and \fIbuild\fP pair.
+.SH RETURN VALUE
+.SH ERRORS
+.SH VERSIONS
+This is the first version of this system call.
+.SH STANDARDS
+None
+.SH HISTORY
+Introduced in \fISecond Edition\fP.
+.LP
+Similar to the Unix
+.BR uname( 2 )
+system call.
+.\"
+.SH ENVIRONMENT
+None
+.SH NOTES
+None
+.SH EXAMPLES
+.EX
+import darq
+v = darq.get_version()
+print(f"Darq version {v.version}, {v.edition}ed, build {v.build}")
+.EE
+.SH BUGS
+None known.
+.SH SEE ALSO
+.BR pkernel (8)
