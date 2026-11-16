@@ -4,6 +4,16 @@ Summary notes on newly added features for each release.
 
 ## Unreleased
 
+- **Related names find people by nickname and maiden name.**  The vCard
+  import linked a related name, such as a sister's, only to a card with
+  exactly that full name, and otherwise made a stub person.  Now, failing
+  that, it links to the one person known by it: by given name or nickname
+  and family name (*Libby Arnold* for Elizabeth Marianne Arnold, nicknamed
+  Libby), by all their given names, or with their maiden name.  Each such
+  link is listed in the window, to check.  Re-importing removes the stubs
+  this makes unnecessary, and a person's nicknamed and maiden names become
+  aliases, so a search finds them by those.
+
 - **Merging finds imported people again.**  Merge into (M, in the entity
   lens) found nothing on a system whose locale isn't plain English, such
   as `en_AU`, as it searched only that locale's language, and imports

@@ -508,7 +508,8 @@ class Import:
 
     def fill(self, drafts: dict[str, cards.Draft]):
         """Replace each entity's statements from the address book with its
-        drafts', and write those that changed.
+        drafts', give it their labels and descriptions, if it hasn't any,
+        and aliases, if it hasn't them, and write those that changed.
 
         An entity can have several drafts: two cards for one person, whose
         entities were merged, are both found, by their UIDs, in the one
@@ -542,6 +543,13 @@ class Import:
                         if language not in entity.descriptions:
                             entity.set_description(description, language)
                             touched = True
+                    # Aliases are added, and never removed, as one can be
+                    # added by hand, or by a merge.
+                    for language, aliases in draft.entity.aliases.items():
+                        for alias in aliases:
+                            if alias != entity.labels.get(language) and alias not in entity.get_aliases(language):
+                                entity.add_alias(alias, language)
+                                touched = True
                 if len(group) > 1:
                     uids = sorted(set().union(*(d.cards for d in group)))
                     log.info(f"{self.item_id(entity)} is from {len(group)} entries: cards {', '.join(uids)}")

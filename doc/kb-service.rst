@@ -980,6 +980,23 @@ under other names, and share what they have in common.
   given names (P735), then additional names, and family names (P734),
   are numbered in the card's order, with series ordinals (P1545), as
   Wikidata orders names.
+* A related name (``X-ABRELATEDNAMES``), such as a sister's, is linked
+  to the person whose card has it as its full name (FN), if there's one.
+  Failing that, it's linked to the person who has it as one of their
+  *other names*, if only one does: their first given name, or a
+  nickname (``NICKNAME``), with their family name, as *Elizabeth
+  Arnold* or *Libby Arnold*; all their given and additional names with
+  their family name; and those with their maiden name
+  (``X-MAIDENNAME``) in place of their family name, or their maiden name
+  itself, if it's a full name.  Otherwise, it's a stub person: shared,
+  for a full name, and the related person's own, for a single word.
+  Names are compared with their case folded and their spaces squashed.
+  Each link by an other name is logged, and listed in the window, with
+  how it was made, to be checked.  A person's other names by nickname or
+  maiden name are their aliases too, so they're found by them.  On a
+  re-import, a stub no longer needed, as its name's now linked to a
+  card, isn't stated by the address book any more, so it's destroyed,
+  unless something else links to it.
 * ``importer.py`` imports them, as a client of the KB service, which
   it reads, and writes the vocabulary to, and of the KB type
   implementation, which creates the drafts' entities, and through

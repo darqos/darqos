@@ -462,6 +462,90 @@ def test_two_cards_merged_stay_merged(target):
         check()
 
 
+def person_card(uid, fn, n="", nickname="", maiden="", related=()):
+    lines = ["BEGIN:VCARD", "VERSION:3.0", f"UID:{uid}", f"FN:{fn}"]
+    lines += [f"N:{n}"] if n else []
+    lines += [f"NICKNAME:{nickname}"] if nickname else []
+    lines += [f"X-MAIDENNAME:{maiden}"] if maiden else []
+    for i, (label, name) in enumerate(related, 1):
+        lines += [f"item{i}.X-ABRELATEDNAMES:{name}", f"item{i}.X-ABLABEL:_$!<{label}>!$_"]
+    return "\n".join([*lines, "END:VCARD", ""])
+
+
+LIBBY = person_card("libby", "Elizabeth Marianne Arnold", n="Arnold;Elizabeth;Marianne;;", nickname="Libby",
+                    maiden="Smith")
+
+
+def read(*texts):
+    reader = cards.Importer(vocabulary.Vocabulary())
+    reader.read(list(vcard.parse("".join(texts))))
+    return reader
+
+
+def related_to(reader, uid):
+    """Return the labels of what a card's person is related to."""
+    wd = reader.wd
+    [person] = [d.entity for d in reader.drafts.values() if d.category == "card" and uid in d.cards
+                and d.entity.get_statements(wd.vcard_uid)
+                and d.entity.get_statements(wd.vcard_uid)[0].get_value().value == uid]
+    targets = [s.get_value().entity_id for s in person.statements if s.get_property_id() in reader.relations.values()]
+    return [reader.drafts[t].entity.get_label() for t in targets]
+
+
+def test_a_persons_other_names():
+    assert cards.other_names(["Elizabeth"], ["Marianne"], ["Arnold"], ["Libby"], ["Smith"]) == [
+        ("Elizabeth Arnold", cards.GIVEN), ("Elizabeth Marianne Arnold", cards.FULL),
+        ("Libby Arnold", cards.NICKNAME), ("Elizabeth Smith", cards.MAIDEN),
+        ("Elizabeth Marianne Smith", cards.MAIDEN), ("Libby Smith", cards.MAIDEN)]
+    # A maiden name of more than one word is a full name; one word names nobody.
+    assert cards.other_names(["Ann"], [], ["Lee"], [], ["Ann Marie Smith"]) == [
+        ("Ann Marie Smith", cards.MAIDEN), ("Ann Lee", cards.GIVEN)]
+    assert cards.other_names(["Cher"], [], [], ["Cher"], []) == []
+
+
+@pytest.mark.parametrize("name, how", [("Libby Arnold", "nickname"), ("Elizabeth Arnold", "given name"),
+                                       ("Libby Smith", "maiden name"), ("elizabeth  smith", "maiden name")])
+def test_a_related_name_is_linked_by_another_name(name, how):
+    reader = read(LIBBY, person_card("tom", "Tom Arnold", related=[("Sister", name)]))
+    assert related_to(reader, "tom") == ["Elizabeth Marianne Arnold"]
+    assert reader.stub_count == 0
+    assert reader.linked_by_other == [("tom", name, "Elizabeth Marianne Arnold", how)]
+    libby = next(d.entity for d in reader.drafts.values() if d.label == "Elizabeth Marianne Arnold")
+    assert sorted(libby.get_aliases()) == ["Elizabeth Marianne Smith", "Elizabeth Smith", "Libby Arnold", "Libby Smith"]
+    assert any("by other names" in line for line in cards.summary(reader))
+
+
+def test_an_ambiguous_other_name_is_a_stub():
+    reader = read(LIBBY, person_card("libby2", "Elizabeth Jane Arnold", n="Arnold;Elizabeth;Jane;;", nickname="Libby"),
+                  person_card("tom", "Tom Arnold", related=[("Sister", "Libby Arnold")]))
+    assert related_to(reader, "tom") == ["Libby Arnold"]
+    assert reader.stub_count == 1 and reader.linked_by_other == []
+
+
+def test_a_card_named_so_comes_first():
+    reader = read(LIBBY, person_card("other", "Libby Arnold"),
+                  person_card("tom", "Tom Arnold", related=[("Sister", "Libby Arnold")]))
+    assert related_to(reader, "tom") == ["Libby Arnold"]
+    assert reader.stub_count == 0 and reader.linked_by_other == []
+
+
+def test_a_stub_goes_once_its_names_linked(target):
+    """As an address book imported before related names were linked by
+    other names: its stub's destroyed, and the relation's to the card."""
+    client, _, _ = target
+    plain = person_card("libby", "Elizabeth Marianne Arnold", n="Arnold;Elizabeth;Marianne;;")
+    tom = person_card("tom", "Tom Arnold", related=[("Sister", "Libby Arnold")])
+    run(target, list(vcard.parse(plain + tom)))
+    [stub] = find(client, "Libby Arnold")
+    result = run(target, list(vcard.parse(LIBBY + tom)))
+    assert result.destroyed == 1 and client.get(stub, follow=False).destroyed
+    [libby] = find(client, "Elizabeth Marianne Arnold")
+    [tom_id] = find(client, "Tom Arnold")
+    sibling = vocabulary.Vocabulary().sibling
+    assert [s.get_value().entity_id for s in client.get(tom_id).get_statements(sibling)] == [libby]
+    assert list(client.find_by_label("Libby Arnold", words=True)) == [libby]
+
+
 def residence(client, entity_id):
     [s] = client.get(entity_id).get_statements("P551")
     return s

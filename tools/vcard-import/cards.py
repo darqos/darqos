@@ -22,6 +22,7 @@ import binascii
 import collections
 import dataclasses
 import hashlib
+import logging
 import re
 
 from typing import Counter, Dict, List, Optional, Set, Tuple
@@ -31,6 +32,8 @@ import vocabulary
 
 from darq.kb import (EntityValue, Item, Rank, Statement, StringValue,
                      TextValue, TimeValue, Value, fold, key_id)
+
+log = logging.getLogger("vcard-import")
 
 
 # Properties read, and properties skipped as bookkeeping or images.
@@ -218,6 +221,13 @@ class Importer:
         self.linked = 0
         self.stub_count = 0
 
+        # People, by their other full names, from their names, nicknames
+        # and maiden names, with how each was made; and the related names
+        # linked by them, to be checked: the card, the name, whose it is,
+        # and how.
+        self.other_names: Dict[str, List[Tuple[Item, str]]] = {}
+        self.linked_by_other: List[Tuple[str, str, str, str]] = []
+
     def read(self, cards: List[vcard.Card]):
         """Read cards, then resolve their related names and members."""
         for card in cards:
@@ -294,29 +304,45 @@ class Importer:
         person = self.item(key, "card", fn or None)
         person.claim(wd.instance_of, EntityValue(wd.human))
         if fn:
-            self.people.setdefault(fn.casefold(), []).append(person)
+            self.people.setdefault(name_key(fn), []).append(person)
 
         n = card.get("N")
+        given: List[str] = []
+        additional: List[str] = []
+        family: List[str] = []
         if n is not None:
             # Names are numbered in order, with series ordinals: given
             # names, then additional ones, as Wikidata has them.
-            family, given, additional = n.components(3)[:3]
+            family_text, given_text, additional_text = n.components(3)[:3]
+            given, additional, family = (
+                [name.strip() for name in text.split(",") if name.strip()]
+                for text in (given_text, additional_text, family_text))
             for property_id, cls, names in [
-                    (wd.given_name, wd.given_name_class, given.split(",") + additional.split(",")),
-                    (wd.family_name, wd.family_name_class, family.split(","))]:
-                names = [name.strip() for name in names if name.strip()]
+                    (wd.given_name, wd.given_name_class, given + additional),
+                    (wd.family_name, wd.family_name_class, family)]:
                 for ordinal, name in enumerate(names, 1):
                     item = self.name(cls, name)
                     person.claim(property_id, EntityValue(item.get_id())).add_qualifier(
                         wd.series_ordinal, StringValue(str(ordinal)))
 
-        for p in card.all("NICKNAME"):
-            for name in p.values():
-                if name.strip():
-                    person.claim(wd.nickname, TextValue(name.strip()))
-        for p in card.all("X-MAIDENNAME"):
-            if p.text().strip():
-                person.claim(wd.birth_name, TextValue(p.text().strip()))
+        nicknames = [name.strip() for p in card.all("NICKNAME") for name in p.values() if name.strip()]
+        for name in nicknames:
+            person.claim(wd.nickname, TextValue(name))
+        maiden = [p.text().strip() for p in card.all("X-MAIDENNAME") if p.text().strip()]
+        for name in maiden:
+            person.claim(wd.birth_name, TextValue(name))
+
+        for name, how in other_names(given, additional, family, nicknames, maiden):
+            key = name_key(name)
+            if key == name_key(fn):
+                continue
+            known = self.other_names.setdefault(key, [])
+            if all(p is not person for p, _ in known):
+                known.append((person, how))
+            # A name by nickname or maiden name is one they're known by:
+            # an alias, so it's found by its label too.
+            if how != GIVEN and how != FULL and name not in person.get_aliases():
+                person.add_alias(name)
 
         # Employers, with their departments and the job title.
         employers: List[Tuple[str, Statement]] = []
@@ -559,9 +585,21 @@ class Importer:
         """Link a person to a related name.
 
         The name is linked to the card with that name, if there's only
-        one; otherwise, to a stub person."""
-        matches = [p for p in self.people.get(name.casefold(), [])
+        one; or else, if no card has it, to the person with it as one of
+        their other names (see other_names), if there's only one;
+        otherwise, to a stub person."""
+        matches = [p for p in self.people.get(name_key(name), [])
                    if p is not person]
+        how = ""
+        if not matches:
+            others = {p.get_id(): (p, why) for p, why in self.other_names.get(name_key(name), [])
+                      if p is not person}
+            if len(others) == 1:
+                [(found, how)] = others.values()
+                matches = [found]
+                self.linked_by_other.append((self.card_uid, name, found.get_label() or found.get_id(), how))
+                log.info(f"Related name {name!r}, on card {self.card_uid}, linked to "
+                         f"{found.get_label() or found.get_id()}, by {how}")
         if len(matches) == 1:
             target = matches[0]
             self.linked += 1
@@ -720,6 +758,50 @@ class Importer:
         return place
 
 
+def name_key(name: str) -> str:
+    """Return a name as it's matched: case folded, and its spaces
+    squashed."""
+    return " ".join(name.split()).casefold()
+
+
+# How a person's other name was made.
+GIVEN = "given name"
+FULL = "full name"
+NICKNAME = "nickname"
+MAIDEN = "maiden name"
+
+
+def other_names(given: List[str], additional: List[str], family: List[str], nicknames: List[str],
+                maiden: List[str]) -> List[Tuple[str, str]]:
+    """Return the full names, of two or more words, a person might be
+    called by, from their card's names, nicknames and maiden names, with
+    how each was made: their first given name, or their nickname, and
+    their family name, as Elizabeth Arnold or Libby Arnold; all their
+    given and additional names, and their family name; and those with
+    their maiden name in place of their family name.  A maiden name of
+    more than one word is a full name already."""
+    surnames = [(" ".join(family), "")] if family else []
+    found: List[Tuple[str, str]] = []
+    for name in maiden:
+        if len(name.split()) > 1:
+            found.append((name, MAIDEN))
+        else:
+            surnames.append((name, MAIDEN))
+    for surname, why in surnames:
+        if given:
+            found.append((f"{given[0]} {surname}", why or GIVEN))
+        if len(given) + len(additional) > 1:
+            found.append((" ".join([*given, *additional, surname]), why or FULL))
+        for nickname in nicknames:
+            found.append((f"{nickname} {surname}", why or NICKNAME))
+    names: List[Tuple[str, str]] = []
+    for name, how in found:
+        name = " ".join(name.split())
+        if len(name.split()) > 1 and name_key(name) not in {name_key(n) for n, _ in names}:
+            names.append((name, how))
+    return names
+
+
 def summary(importer: Importer) -> List[str]:
     """Return counts of what was read, and what couldn't be mapped."""
     lines = []
@@ -731,10 +813,15 @@ def summary(importer: Importer) -> List[str]:
                                      for d in importer.drafts.values())
     lines.append(f"{len(importer.drafts)} entities: " + ", ".join(
         f"{n} {category}" for category, n in categories.most_common()))
-    lines.append(f"Related names: {importer.linked} linked to cards, "
+    lines.append(f"Related names: {importer.linked} linked to cards "
+                 f"({len(importer.linked_by_other)} by other names), "
                  f"{importer.stub_count} stub people")
     unmapped = importer.unmapped
     lines.append(f"{sum(unmapped.values())} values not mapped" + (
         ": " + ", ".join(f"{n} {what}" for what, n in unmapped.most_common())
         if unmapped else ""))
+    if importer.linked_by_other:
+        lines += ["", "Related names linked by other names, to check:"]
+        lines += [f"  {name!r}, on card {uid}: {whose}, by {how}"
+                  for uid, name, whose, how in importer.linked_by_other]
     return lines
