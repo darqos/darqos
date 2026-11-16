@@ -198,7 +198,8 @@ In future editions:
 UI Styling
 ----------
 
-* No window decorations
+* No window decorations, but a shadow, darker under the focused window
+  (see :doc:`terminal`)
 * No window borders
 * No menu bars
 * No toolbars

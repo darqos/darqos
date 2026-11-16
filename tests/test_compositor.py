@@ -601,6 +601,45 @@ def test_geometry(compositor):
     assert not [g for g in compositor.geometry if isinstance(g, WindowGeometry) and g.window != a]
 
 
+def test_a_shadow_isnt_the_windows(compositor):
+    """Windows have shadows, which the pointer goes through: a point in the
+    focused window's shadow, over another window, is the other's."""
+    unlocked(compositor)
+    move(compositor, 10, 10)
+    client(compositor, "a")
+    a = receive(compositor).window
+    assert receive(compositor) == WindowFocused(window=a)
+    client(compositor, "b")
+    b = receive(compositor).window
+    assert receive(compositor) == WindowFocused(window=b)
+    compositor.channel.send(SetGeometry(window=a, x=100, y=100, width=0, height=0))
+    compositor.channel.send(SetGeometry(window=b, x=290, y=100, width=0, height=0))
+    expect_geometry(compositor, WindowGeometry(window=b, x=290, y=100, width=200, height=100))
+
+    # 5 left of b, under its shadow, and over a.
+    move(compositor, 285, 150)
+    assert receive(compositor) == WindowFocused(window=a)
+    move(compositor, 295, 150)
+    assert receive(compositor) == WindowFocused(window=b)
+
+
+@pytest.mark.parametrize("value, logged", [
+    ("16,0.4,0", False), ("0,0,0", False), ("big", True), ("24,1.5,4", True), ("24,0.5,4,9", True),
+])
+def test_shadow_styles_from_the_environment(tmp_path, value, logged):
+    env = headless(tmp_path / "run") | {"DARQ_SHADOW_FOCUSED": value, "DARQ_SHADOW_UNFOCUSED": value}
+    log_path = tmp_path / "compositor.log"
+    with open(log_path, "w") as log:
+        harness = Harness(Compositor.start(env=env, stderr=log), env)
+        try:
+            assert receive(harness) == Ready()
+        finally:
+            assert harness.stop() == 0
+    log_text = log_path.read_text()
+    assert (f'DARQ_SHADOW_FOCUSED "{value}" isn\'t blur' in log_text) == logged
+    assert (f'DARQ_SHADOW_UNFOCUSED "{value}" isn\'t blur' in log_text) == logged
+
+
 @pytest.mark.parametrize("debug", [None, "0", "1"])
 def test_debug_log(tmp_path, debug):
     # wlroots' debug messages only with DARQ_COMPOSITOR_DEBUG set.

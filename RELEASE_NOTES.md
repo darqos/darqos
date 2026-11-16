@@ -4,6 +4,12 @@ Summary notes on newly added features for each release.
 
 ## Unreleased
 
+- **Windows have shadows.**  A soft shadow sets each window, and each of
+  the Terminal's panels, off from what's under it, and a darker one shows
+  which has the keyboard.  `DARQ_SHADOW_FOCUSED` and
+  `DARQ_SHADOW_UNFOCUSED` change them, as *blur,opacity,offset*: the
+  defaults are `24,0.55,0` and `24,0.3,0`.
+
 - **Scripts can drive the Terminal.**  The Terminal serves a protocol,
   `darq.terminal`, so a script, and later the REPL, can do what the
   operator does: list the windows, with the items their lenses show, and

@@ -21,6 +21,8 @@ wlroots = dependency('wlroots-0.18')
 wayland_server = dependency('wayland-server')
 xkbcommon = dependency('xkbcommon')
 libinput = dependency('libinput')
+# erfc(), for windows' shadows.
+maths = meson.get_compiler('c').find_library('m')
 
 # wlroots' headers include the server headers for the protocols they
 # implement, which the compositor generates.
@@ -59,6 +61,6 @@ policy_c = custom_target('compositor_c',
 # source tree, which it isn't.
 executable('darq-compositor',
 	['compositor.c', darq_root / 'lib' / 'c' / 'darq' / 'dipc.c', policy_c] + protocol_headers,
-	dependencies: [wlroots, wayland_server, xkbcommon, libinput],
+	dependencies: [wlroots, wayland_server, xkbcommon, libinput, maths],
 	c_args: ['-I' + (darq_root / 'lib' / 'c')],
 	install: true)

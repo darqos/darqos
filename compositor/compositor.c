@@ -21,7 +21,10 @@
 // - Focus follows the mouse, and a click raises.  While Sys-w is held,
 //   the focused application window moves with the mouse or the arrow
 //   keys, and t, s, b and n resize it.
-// - Server-side decorations (xdg-decoration), which it doesn't draw.
+// - Server-side decorations (xdg-decoration), which it doesn't draw, but
+//   for a soft shadow under each application window and panel: darker
+//   under the focused one.  DARQ_SHADOW_FOCUSED and DARQ_SHADOW_UNFOCUSED,
+//   as "blur,opacity,offset", such as "24,0.55,0", change them.
 // - Our keymap: System, on Left Control, is a modifier of its own
 //   (darq:system, in xkb/), and keys pressed with it never reach
 //   clients.  Without a policy channel, Sys-Escape exits.
@@ -57,6 +60,9 @@
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/interfaces/wlr_pointer.h>
 #include <wlr/render/allocator.h>
+#include <drm_fourcc.h>
+#include <math.h>
+#include <wlr/interfaces/wlr_buffer.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_compositor.h>
@@ -89,6 +95,43 @@
 /* How many messages can wait to be sent to the Terminal: more, and
  * it's assumed to be stuck. */
 #define MAX_POLICY_QUEUE 4096
+
+/* Windows' shadows: how far they spread beyond the window, how dark they
+ * are there, and how far down they're cast, under the focused window and
+ * under the others; and the limits of each, from the environment. */
+#define SHADOW_FOCUSED_BLUR 24
+#define SHADOW_FOCUSED_OPACITY 0.55f
+#define SHADOW_FOCUSED_OFFSET 0
+#define SHADOW_UNFOCUSED_BLUR 24
+#define SHADOW_UNFOCUSED_OPACITY 0.3f
+#define SHADOW_UNFOCUSED_OFFSET 0
+#define MAX_SHADOW_BLUR 128
+#define MAX_SHADOW_OFFSET 64
+
+/* A shadow's pieces: the corners and edges of a blurred rectangle, and
+ * its middle, mostly under the window. */
+enum shadow_piece {
+	SHADOW_TOP_LEFT,
+	SHADOW_TOP_RIGHT,
+	SHADOW_BOTTOM_LEFT,
+	SHADOW_BOTTOM_RIGHT,
+	SHADOW_TOP,
+	SHADOW_BOTTOM,
+	SHADOW_LEFT,
+	SHADOW_RIGHT,
+	SHADOW_MIDDLE,
+	SHADOW_PIECES,
+};
+
+struct darq_shadow_style {
+	int blur;
+	float opacity;
+	int offset;
+
+	/* Its pieces, drawn once, shared by every window: the edges and the
+	 * middle are stretched to fit. */
+	struct wlr_buffer *pieces[SHADOW_PIECES];
+};
 
 /* The largest size SetGeometry asks a client for. */
 #define MAX_WINDOW_SIZE 32767
@@ -214,6 +257,12 @@ struct tinywl_server {
 	 * loop's idle (see geometry_changed), while it's pending. */
 	struct wl_event_source *geometry_idle;
 
+	/* Windows' shadows, focused and not; and the window whose shadow is
+	 * drawn as the focused one's. */
+	struct darq_shadow_style shadow_focused;
+	struct darq_shadow_style shadow_unfocused;
+	struct tinywl_toplevel *shadowed_focus;
+
 	/* The System modifier's mask, in the keymap's modifiers. */
 	xkb_mod_mask_t system_mask;
 
@@ -263,6 +312,12 @@ struct tinywl_toplevel {
 	/* Its place and size, as last reported. */
 	struct wlr_box reported_box;
 	bool geometry_reported;
+
+	/* Its shadow, under its surfaces, if it's an application's window or
+	 * a panel; and the style it's drawn in. */
+	struct wlr_scene_tree *shadow;
+	struct wlr_scene_buffer *shadow_pieces[SHADOW_PIECES];
+	const struct darq_shadow_style *shadow_style;
 
 	/* Its layer, decided on its first commit.  Background and lock
 	 * windows fill an output. */
@@ -467,6 +522,224 @@ static void geometry_changed(struct tinywl_server *server) {
 	}
 }
 
+/* Pixels in memory, as a buffer the scene can show: a shadow's pieces. */
+struct darq_pixels {
+	struct wlr_buffer base;
+	uint32_t *data;
+	size_t stride;
+};
+
+static void pixels_destroy(struct wlr_buffer *buffer) {
+	struct darq_pixels *pixels = wl_container_of(buffer, pixels, base);
+	free(pixels->data);
+	free(pixels);
+}
+
+static bool pixels_begin_access(struct wlr_buffer *buffer, uint32_t flags,
+		void **data, uint32_t *format, size_t *stride) {
+	struct darq_pixels *pixels = wl_container_of(buffer, pixels, base);
+	if (flags & WLR_BUFFER_DATA_PTR_ACCESS_WRITE) {
+		return false;
+	}
+	*data = pixels->data;
+	*format = DRM_FORMAT_ARGB8888;
+	*stride = pixels->stride;
+	return true;
+}
+
+static void pixels_end_access(struct wlr_buffer *buffer) {
+}
+
+static const struct wlr_buffer_impl pixels_impl = {
+	.destroy = pixels_destroy,
+	.begin_data_ptr_access = pixels_begin_access,
+	.end_data_ptr_access = pixels_end_access,
+};
+
+static double shadow_falloff(double distance, double sigma) {
+	/* How much of a blurred edge's shadow there is at a distance outside
+	 * it (negative, inside): a Gaussian blur of a step. */
+	return 0.5 * erfc(distance / (sqrt(2.0) * sigma));
+}
+
+static struct wlr_buffer *shadow_piece(const struct darq_shadow_style *style,
+		enum shadow_piece piece) {
+	/* Draw a piece of a shadow, in black, premultiplied: a corner is
+	 * 2 x blur square, centred on the shadow's corner; an edge, 2 x blur
+	 * across, and a pixel along, to be stretched; and the middle, a
+	 * pixel. */
+	int span = 2 * style->blur;
+	int width = 1, height = 1;
+	switch (piece) {
+	case SHADOW_TOP_LEFT: case SHADOW_TOP_RIGHT:
+	case SHADOW_BOTTOM_LEFT: case SHADOW_BOTTOM_RIGHT:
+		width = height = span;
+		break;
+	case SHADOW_TOP: case SHADOW_BOTTOM:
+		height = span;
+		break;
+	case SHADOW_LEFT: case SHADOW_RIGHT:
+		width = span;
+		break;
+	default:
+		break;
+	}
+	struct darq_pixels *pixels = calloc(1, sizeof(*pixels));
+	pixels->stride = width * sizeof(uint32_t);
+	pixels->data = calloc(width * height, sizeof(uint32_t));
+	double sigma = style->blur / 3.0;
+	for (int y = 0; y < height; y++) {
+		for (int x = 0; x < width; x++) {
+			/* Distances outside the shadow's edges, from the piece's
+			 * middle, which is on them: HUGE_VAL inside, for none. */
+			double across = x + 0.5 - style->blur, down = y + 0.5 - style->blur;
+			double dx = -HUGE_VAL, dy = -HUGE_VAL;
+			switch (piece) {
+			case SHADOW_TOP_LEFT: dx = -across; dy = -down; break;
+			case SHADOW_TOP_RIGHT: dx = across; dy = -down; break;
+			case SHADOW_BOTTOM_LEFT: dx = -across; dy = down; break;
+			case SHADOW_BOTTOM_RIGHT: dx = across; dy = down; break;
+			case SHADOW_TOP: dy = -down; break;
+			case SHADOW_BOTTOM: dy = down; break;
+			case SHADOW_LEFT: dx = -across; break;
+			case SHADOW_RIGHT: dx = across; break;
+			default: break;
+			}
+			double alpha = style->opacity *
+				(dx == -HUGE_VAL ? 1.0 : shadow_falloff(dx, sigma)) *
+				(dy == -HUGE_VAL ? 1.0 : shadow_falloff(dy, sigma));
+			pixels->data[y * width + x] = (uint32_t)lround(alpha * 255.0) << 24;
+		}
+	}
+	wlr_buffer_init(&pixels->base, &pixels_impl, width, height);
+	return &pixels->base;
+}
+
+static void shadow_style_init(struct darq_shadow_style *style, const char *variable,
+		int blur, float opacity, int offset) {
+	/* A style, from the environment, as "blur,opacity,offset", or else
+	 * the defaults; and its pieces, drawn. */
+	style->blur = blur;
+	style->opacity = opacity;
+	style->offset = offset;
+	const char *value = getenv(variable);
+	if (value != NULL && *value != '\0') {
+		int b, o;
+		float a;
+		char extra;
+		if (sscanf(value, "%d,%f,%d%c", &b, &a, &o, &extra) == 3 && b >= 0 && b <= MAX_SHADOW_BLUR &&
+				a >= 0.0f && a <= 1.0f && o >= -MAX_SHADOW_OFFSET && o <= MAX_SHADOW_OFFSET) {
+			style->blur = b;
+			style->opacity = a;
+			style->offset = o;
+		} else {
+			wlr_log(WLR_ERROR, "%s \"%s\" isn't blur (0-%d),opacity (0-1),offset (+/-%d): "
+				"using %d,%.2f,%d", variable, value, MAX_SHADOW_BLUR, MAX_SHADOW_OFFSET,
+				blur, opacity, offset);
+		}
+	}
+	for (int piece = 0; piece < SHADOW_PIECES; piece++) {
+		style->pieces[piece] = style->blur > 0 ? shadow_piece(style, piece) : NULL;
+	}
+}
+
+static void shadow_style_finish(struct darq_shadow_style *style) {
+	for (int piece = 0; piece < SHADOW_PIECES; piece++) {
+		if (style->pieces[piece] != NULL) {
+			wlr_buffer_drop(style->pieces[piece]);
+			style->pieces[piece] = NULL;
+		}
+	}
+}
+
+static bool shadow_accepts_no_input(struct wlr_scene_buffer *buffer, double *sx, double *sy) {
+	/* A shadow isn't the window's: the pointer's on what's under it. */
+	return false;
+}
+
+static void update_shadow(struct tinywl_toplevel *toplevel) {
+	/* Fit a window's shadow to its content, in the focused window's style
+	 * or the others', or hide it, for a full-screen window. */
+	if (toplevel == NULL || toplevel->shadow == NULL) {
+		return;
+	}
+	struct tinywl_server *server = toplevel->server;
+	const struct darq_shadow_style *style = toplevel == server->shadowed_focus ?
+		&server->shadow_focused : &server->shadow_unfocused;
+	struct wlr_box geo_box;
+	wlr_xdg_surface_get_geometry(toplevel->xdg_toplevel->base, &geo_box);
+	bool shown = style->blur > 0 && style->opacity > 0.0f && !toplevel->xdg_toplevel->current.fullscreen &&
+		geo_box.width > 0 && geo_box.height > 0;
+	wlr_scene_node_set_enabled(&toplevel->shadow->node, shown);
+	if (!shown) {
+		return;
+	}
+	if (style != toplevel->shadow_style) {
+		toplevel->shadow_style = style;
+		for (int piece = 0; piece < SHADOW_PIECES; piece++) {
+			wlr_scene_buffer_set_buffer(toplevel->shadow_pieces[piece], style->pieces[piece]);
+		}
+	}
+
+	/* The shadow's a blurred rectangle, the window's content cast down:
+	 * its pieces are centred on its edges.  A window narrower than the
+	 * blur has no edges, and its corners overlap. */
+	int blur = style->blur, span = 2 * blur;
+	int left = geo_box.x, top = geo_box.y + style->offset;
+	int right = left + geo_box.width, bottom = top + geo_box.height;
+	int inner_width = geo_box.width - span, inner_height = geo_box.height - span;
+	struct { int x, y, width, height; } places[SHADOW_PIECES] = {
+		[SHADOW_TOP_LEFT] = {left - blur, top - blur, span, span},
+		[SHADOW_TOP_RIGHT] = {right - blur, top - blur, span, span},
+		[SHADOW_BOTTOM_LEFT] = {left - blur, bottom - blur, span, span},
+		[SHADOW_BOTTOM_RIGHT] = {right - blur, bottom - blur, span, span},
+		[SHADOW_TOP] = {left + blur, top - blur, inner_width, span},
+		[SHADOW_BOTTOM] = {left + blur, bottom - blur, inner_width, span},
+		[SHADOW_LEFT] = {left - blur, top + blur, span, inner_height},
+		[SHADOW_RIGHT] = {right - blur, top + blur, span, inner_height},
+		[SHADOW_MIDDLE] = {left + blur, top + blur, inner_width, inner_height},
+	};
+	for (int piece = 0; piece < SHADOW_PIECES; piece++) {
+		struct wlr_scene_buffer *buffer = toplevel->shadow_pieces[piece];
+		bool fits = places[piece].width > 0 && places[piece].height > 0;
+		wlr_scene_node_set_enabled(&buffer->node, fits);
+		if (fits) {
+			wlr_scene_node_set_position(&buffer->node, places[piece].x, places[piece].y);
+			wlr_scene_buffer_set_dest_size(buffer, places[piece].width, places[piece].height);
+		}
+	}
+}
+
+static void add_shadow(struct tinywl_toplevel *toplevel) {
+	/* Give a window a shadow, under its surfaces, once its layer's
+	 * known: an application's window, or a panel, has one. */
+	if (toplevel->shadow != NULL ||
+			(toplevel->layer != LAYER_APPS && toplevel->layer != LAYER_OVERLAY)) {
+		return;
+	}
+	toplevel->shadow = wlr_scene_tree_create(toplevel->scene_tree);
+	wlr_scene_node_lower_to_bottom(&toplevel->shadow->node);
+	for (int piece = 0; piece < SHADOW_PIECES; piece++) {
+		struct wlr_scene_buffer *buffer = wlr_scene_buffer_create(toplevel->shadow, NULL);
+		buffer->point_accepts_input = shadow_accepts_no_input;
+		toplevel->shadow_pieces[piece] = buffer;
+	}
+	toplevel->shadow_style = NULL;
+	update_shadow(toplevel);
+}
+
+static void shade_focus(struct tinywl_server *server) {
+	/* Draw the focused window's shadow as the focused one's, and the
+	 * one that was's as the others'. */
+	if (server->shadowed_focus == server->focused) {
+		return;
+	}
+	struct tinywl_toplevel *was = server->shadowed_focus;
+	server->shadowed_focus = server->focused;
+	update_shadow(was);
+	update_shadow(server->focused);
+}
+
 static void raise_toplevel(struct tinywl_toplevel *toplevel) {
 	/* Move the toplevel to the front of its layer */
 	wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
@@ -528,6 +801,7 @@ static void focus_toplevel(struct tinywl_toplevel *toplevel) {
 		wlr_seat_keyboard_notify_enter(seat, surface, NULL, 0, NULL);
 	}
 	report_focus(server, toplevel->reported ? toplevel->window : 0);
+	shade_focus(server);
 }
 
 static void refocus(struct tinywl_server *server) {
@@ -548,6 +822,7 @@ static void refocus(struct tinywl_server *server) {
 	server->focused = NULL;
 	wlr_seat_keyboard_notify_clear_focus(server->seat);
 	report_focus(server, 0);
+	shade_focus(server);
 }
 
 static void end_window_mode(struct tinywl_server *server);
@@ -1514,10 +1789,11 @@ static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 	/* Called when a new surface state is committed. */
 	struct tinywl_toplevel *toplevel = wl_container_of(listener, toplevel, commit);
 
-	/* A commit can bring a new size. */
+	/* A commit can bring a new size, or full screen. */
 	if (toplevel->reported) {
 		geometry_changed(toplevel->server);
 	}
+	update_shadow(toplevel);
 
 	if (toplevel->xdg_toplevel->base->initial_commit) {
 		/* When an xdg_surface performs an initial commit, the compositor must
@@ -1526,6 +1802,7 @@ static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 		 * Background and lock windows fill an output; others pick their
 		 * own size. */
 		set_layer(toplevel);
+		add_shadow(toplevel);
 		if (fills_output(toplevel)) {
 			fit_to_output(toplevel, true);
 		} else {
@@ -1577,6 +1854,10 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 	if (toplevel->decoration) {
 		wl_list_remove(&toplevel->decoration_destroy.link);
 	}
+	if (toplevel->server->shadowed_focus == toplevel) {
+		toplevel->server->shadowed_focus = NULL;
+	}
+	wlr_scene_node_destroy(&toplevel->scene_tree->node);
 
 	free(toplevel);
 }
@@ -1683,8 +1964,10 @@ static void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 	toplevel->xdg_toplevel = xdg_toplevel;
 	toplevel->window = server->next_window++;
 	toplevel->layer = LAYER_APPS;
-	toplevel->scene_tree =
-		wlr_scene_xdg_surface_create(server->layers[LAYER_APPS], xdg_toplevel->base);
+	/* Its tree holds its shadow, if it has one (see add_shadow), under
+	 * its surfaces' tree, which wlroots keeps. */
+	toplevel->scene_tree = wlr_scene_tree_create(server->layers[LAYER_APPS]);
+	wlr_scene_xdg_surface_create(toplevel->scene_tree, xdg_toplevel->base);
 	toplevel->scene_tree->node.data = toplevel;
 	xdg_toplevel->base->data = toplevel->scene_tree;
 
@@ -2131,6 +2414,10 @@ int main(int argc, char *argv[]) {
 	 * necessary.
 	 */
 	server.scene = wlr_scene_create();
+	shadow_style_init(&server.shadow_focused, "DARQ_SHADOW_FOCUSED",
+		SHADOW_FOCUSED_BLUR, SHADOW_FOCUSED_OPACITY, SHADOW_FOCUSED_OFFSET);
+	shadow_style_init(&server.shadow_unfocused, "DARQ_SHADOW_UNFOCUSED",
+		SHADOW_UNFOCUSED_BLUR, SHADOW_UNFOCUSED_OPACITY, SHADOW_UNFOCUSED_OFFSET);
 	server.scene_layout = wlr_scene_attach_output_layout(server.scene, server.output_layout);
 
 	/* The layers, bottom to top: it starts locked. */
@@ -2288,6 +2575,8 @@ int main(int argc, char *argv[]) {
 	 * server. */
 	wl_display_destroy_clients(server.wl_display);
 	wlr_scene_node_destroy(&server.scene->tree.node);
+	shadow_style_finish(&server.shadow_focused);
+	shadow_style_finish(&server.shadow_unfocused);
 	wlr_xcursor_manager_destroy(server.cursor_mgr);
 	wlr_cursor_destroy(server.cursor);
 	wlr_allocator_destroy(server.allocator);

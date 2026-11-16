@@ -164,7 +164,33 @@ The compositor adds:
   windows pick their own size, and are centred on the cursor's output
   when they're mapped.
 - No decorations: it tells clients that it draws decorations
-  (xdg-decoration, server-side mode), and then draws nothing.
+  (xdg-decoration, server-side mode), and then draws nothing, but a
+  shadow.
+- A soft shadow under each application window and panel, which sets it
+  off from what's under it: darker under the focused window, which shows
+  where the keyboard is, as windows have no title bars.  It's a blurred
+  rectangle, the window's content, cast down by the offset, drawn once
+  at startup, in pieces: its corners, and its edges
+  and middle, which are stretched to fit each window, under its
+  surfaces, so it moves with it.  The pointer goes through it, to what's
+  under it.  Background, lock and full-screen windows have none, and
+  its corners are square, as windows' are: rounding them would mean
+  clipping clients' surfaces, which wlroots' scene can't do.
+
+  =========  ====  =======  ======
+  Window     Blur  Opacity  Offset
+  =========  ====  =======  ======
+  Focused    24    0.55     0
+  Others     24    0.3      0
+  =========  ====  =======  ======
+
+  The blur is how far, in pixels, it spreads beyond the window; the
+  opacity, how dark it is at the window's edge, black at 1; and the
+  offset, how far down it's cast.  ``DARQ_SHADOW_FOCUSED`` and
+  ``DARQ_SHADOW_UNFOCUSED``, in the compositor's environment, change
+  them, as *blur,opacity,offset*, such as ``32,0.6,6``; a blur or
+  opacity of 0 draws none.  A value that isn't one is logged, and the
+  default's used.
 - Focus follows the mouse, sloppily: into application and overlay
   windows, but not into the background, or out of an overlay window
   (one of the Terminal's panels keeps the focus until it's gone).  A
