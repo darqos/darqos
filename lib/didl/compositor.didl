@@ -53,6 +53,20 @@ protocol Display {
     // The keyboard focus moved to a window, or to none of them (0): to
     // nothing, or to one of the Terminal's own.
     7: WindowFocused(uint32 window);
+
+    // A window's place and size, in the output layout's coordinates:
+    // its content, without any shadow the client draws.  Sent after
+    // WindowAdded, and whenever it moves or is resized, at most once
+    // per turn of the compositor's loop.
+    8: WindowGeometry(uint32 window, int32 x, int32 y, uint32 width, uint32 height);
+
+    // An output was added, or moved or resized in the layout: its name,
+    // such as eDP-1 or WL-1, and its place and size, in the layout's
+    // coordinates.
+    9: OutputChanged(string name, int32 x, int32 y, uint32 width, uint32 height);
+
+    // An output was removed.
+    10: OutputRemoved(string name);
 }
 
 // Sent by the Terminal to the compositor.
@@ -74,4 +88,11 @@ protocol Policy {
     5: FocusWindow(uint32 window);
     6: RaiseWindow(uint32 window);
     7: CloseWindow(uint32 window);
+
+    // Move an application window, in the layout's coordinates, and ask
+    // its client for a size, within its limits; a width or height of 0
+    // leaves that as it is.  Others, such as the Terminal's, and
+    // unknown windows, are ignored.  WindowGeometry says what it came
+    // to, once the client's taken the size.
+    8: SetGeometry(uint32 window, int32 x, int32 y, uint32 width, uint32 height);
 }

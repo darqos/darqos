@@ -46,25 +46,30 @@ from darq.protocols.compositor import (
     HotkeyPressed,
     Lock,
     Modifier,
+    OutputChanged,
+    OutputRemoved,
     RaiseWindow,
     Ready,
     SystemReleased,
     Unlock,
     WindowAdded,
     WindowFocused,
+    WindowGeometry,
     WindowRemoved,
     WindowRetitled,
 )
+from darq.protocols import terminal as protocol
+from darq.protocols.terminal import Rect
 import darq.host
 import darq.items
 import darq.ui.types
-from darq.protocols.lens import Lens
 from darq.ui import Services
 from darq.ui.launcher import Launcher
 
 from panels import (HistoryPanel, NewPanel, NoticePanel, Panel, PowerPanel, SearchPanel, SwitcherPanel, TbdPanel,
                     ToolsPanel)
 from screens import CHOOSE, ENTER, UNAVAILABLE, WAITING, Screens
+from automation import LENS_NAME_PREFIX, NAME, TerminalService, lens_shows
 
 
 # History source for the events it records.
@@ -100,11 +105,6 @@ HOTKEYS: dict[tuple[int, int], str] = {
     (XK_t, 0): "show_tools",
 }
 
-# What a lens's Lens port's name starts with (see darq.ui.lens), and
-# seconds to wait for it to say what it's showing.
-LENS_NAME_PREFIX = "lens."
-LENS_TIMEOUT = 5.0
-
 # Where the tools are, under DARQ_ROOT (see darq.ui.tools).
 DEFAULT_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 
@@ -131,6 +131,16 @@ class Terminal:
         # darq.ui.lens.announce), so Sys-i asks it what it's showing.
         self.app_ids: dict[int, str] = {}
 
+        # Their places and sizes; and the outputs', by name (see
+        # automation.py).
+        self.geometry: dict[int, Rect] = {}
+        self.outputs: dict[str, Rect] = {}
+
+        # The ports of scripts watching what happens, and what answers
+        # them (see automation.py).
+        self.watchers: set[int] = set()
+        self.service = TerminalService(self)
+
         # Reads how the last update went, once: tests replace it.
         self.update_result: typing.Callable[[], dict[str, str] | None] = darq.host.update_result
         self.focused = 0
@@ -149,7 +159,8 @@ class Terminal:
         self.power_panel = PowerPanel(self.power)
         self.tbd = TbdPanel()
         self.notice = NoticePanel()
-        self.tools = ToolsPanel(self, pathlib.Path(os.environ.get("DARQ_ROOT", DEFAULT_ROOT)))
+        self.root = pathlib.Path(os.environ.get("DARQ_ROOT", DEFAULT_ROOT))
+        self.tools = ToolsPanel(self, self.root)
         self.panels: list[Panel] = [self.new, self.history, self.search, self.switcher, self.power_panel,
                                     self.tbd, self.notice, self.tools]
 
@@ -285,17 +296,34 @@ class Terminal:
             self.app_ids[message.window] = message.app_id
             if message.window not in self.recent:
                 self.recent.append(message.window)
+            self.tell(protocol.WindowAdded(window=self.service.window(message.window)))
+            self.service.window_added(message.window, message.app_id)
         elif isinstance(message, WindowRemoved):
             self.window_removed(message.window)
+            self.tell(protocol.WindowRemoved(window=message.window))
         elif isinstance(message, WindowRetitled):
             if message.window in self.windows:
                 self.windows[message.window] = message.title
                 self.show_switcher()
+                self.tell(protocol.WindowChanged(window=self.service.window(message.window)))
+        elif isinstance(message, WindowGeometry):
+            if message.window in self.windows:
+                self.geometry[message.window] = Rect(x=message.x, y=message.y, width=message.width,
+                                                     height=message.height)
+                self.tell(protocol.WindowChanged(window=self.service.window(message.window)))
         elif isinstance(message, WindowFocused):
             self.focused = message.window
             if message.window in self.recent:
                 self.recent.remove(message.window)
                 self.recent.insert(0, message.window)
+            self.tell(protocol.WindowFocused(window=message.window))
+        elif isinstance(message, OutputChanged):
+            box = Rect(x=message.x, y=message.y, width=message.width, height=message.height)
+            self.outputs[message.name] = box
+            self.tell(protocol.OutputChanged(output=protocol.Output(name=message.name, geometry=box)))
+        elif isinstance(message, OutputRemoved):
+            self.outputs.pop(message.name, None)
+            self.tell(protocol.OutputRemoved(name=message.name))
         elif not isinstance(message, Ready):
             logging.warning(f"Unexpected message from the compositor: {message!r}")
 
@@ -349,16 +377,6 @@ class Terminal:
             self.say("Sys-i shows the entity of the item in the focused window: this isn't one")
             return
 
-        def ask() -> tuple[str, bool]:
-            handle = darq.lookup_name(name, blocking=False)
-            if handle is None:
-                raise darq.DarqError(f"{name} isn't there")
-            try:
-                shown = Lens.Client(handle, timeout=LENS_TIMEOUT).shown()
-            finally:
-                darq.close_port(handle)
-            return shown.item_id, shown.entity
-
         def asked(result: tuple[str, bool] | None, error: Exception | None):
             if error is not None or result is None:
                 self.say(f"Can't ask the window what it's showing: {error}")
@@ -371,7 +389,7 @@ class Terminal:
             else:
                 self.launcher.use(item_id, lens_for=darq.items.BASE_TYPE)
 
-        self.launcher.background(ask, asked)
+        self.launcher.background(lambda: lens_shows(name), asked)
 
     def show_update_result(self):
         """Say how the last update went, once, after an update's restarted
@@ -394,10 +412,11 @@ class Terminal:
     def show_tools(self):
         self.show_panel(self.tools)
 
-    def tool_finished(self, message: str):
+    def tool_finished(self, name: str, message: str):
         """A tool's finished: say how, in the Tools panel, or, if it's
         closed, as a tool that opens windows of its own closes it, a
-        notice."""
+        notice; and tell those watching."""
+        self.tell(protocol.ToolFinished(name=name, outcome=message))
         if self.tools.isVisible():
             self.tools.set_status(message)
         else:
@@ -438,6 +457,7 @@ class Terminal:
     def window_removed(self, window: int):
         self.windows.pop(window, None)
         self.app_ids.pop(window, None)
+        self.geometry.pop(window, None)
         if window in self.recent:
             self.recent.remove(window)
         if self.switching is not None and window in self.switching:
@@ -462,6 +482,7 @@ class Terminal:
         self.locked = True
         self.channel.send(Lock())
         self.screens.lock()
+        self.tell(protocol.Locked())
 
     def unlock(self):
         if not self.locked:
@@ -469,7 +490,32 @@ class Terminal:
         self.locked = False
         self.screens.unlock_screens()
         self.channel.send(Unlock())
+        self.tell(protocol.Unlocked())
         self.show_update_result()
+
+    def tell(self, message: Message):
+        """Tell those watching what's happened: one that's gone, or can't
+        be told, is forgotten."""
+        for port in list(self.watchers):
+            try:
+                darq.send(port, message)
+            except darq.DarqError as e:
+                logging.info(f"A watcher's gone: {e}")
+                self.watchers.discard(port)
+                try:
+                    darq.close_port(port)
+                except darq.DarqError:
+                    pass
+
+    def serve(self) -> darq.Server:
+        """Answer the Terminal protocol, registered as darq.terminal, on
+        Qt's loop."""
+        port = darq.open_port()
+        server = darq.Server()
+        server.add(port, self.service)
+        server.attach(self.loop)
+        darq.register_name(NAME, port)
+        return server
 
     def power(self, choice: str):
         logging.info(f"{choice} requested")
@@ -514,6 +560,14 @@ def darq_main(compositor_path: typing.Any = COMPOSITOR):
         app.setQuitOnLastWindowClosed(False)
         terminal = Terminal(app, compositor.channel, Services())
         terminal.start()
-        return app.exec()
+        try:
+            server = terminal.serve()
+        except darq.DarqError as e:
+            # Scripts can't reach it: it's no reason not to be the Terminal.
+            logging.error(f"Can't serve {NAME}: {e!r}")
+            server = None
+        result = app.exec()
+        del server
+        return result
     finally:
         compositor.stop()

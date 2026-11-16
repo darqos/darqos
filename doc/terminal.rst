@@ -300,6 +300,15 @@ From the compositor to the Terminal (protocol ``Display``):
   its title and app_id.
 - ``WindowFocused``: the keyboard focus moved to a window, or to none
   (0), which includes the Terminal's own.
+- ``WindowGeometry``: a window's place and size, in the output layout's
+  coordinates, without any shadow its client draws: after
+  ``WindowAdded``, and whenever it moves or is resized, at most once
+  per turn of the compositor's loop, so a drag's many moves are one
+  message a turn.
+- ``OutputChanged`` and ``OutputRemoved``: an output, by name, such as
+  ``eDP-1``, with its place and size in the layout: sent after
+  ``Ready`` for those there already, and whenever one's added, moved,
+  resized, or removed.
 
 From the Terminal to the compositor (protocol ``Policy``):
 
@@ -310,6 +319,9 @@ From the Terminal to the compositor (protocol ``Policy``):
 - ``FocusWindow``, ``RaiseWindow`` and ``CloseWindow`` (which asks the
   window's client to close it).  An unknown window, such as one just
   removed, is ignored.
+- ``SetGeometry``: move an application window, and ask its client for a
+  size, within its limits, as *Sys-w* does; a width or height of 0
+  keeps that as it is.  The Terminal's windows aren't moved.
 
 The compositor never blocks on the channel: what the socket has no
 room for is queued, and if the queue reaches 4096 messages, the
@@ -319,7 +331,7 @@ dropped.  Window titles and app_ids aren't always valid UTF-8, or
 short: invalid UTF-8 is replaced, and they're cut at 1024 bytes.
 
 Nothing else talks to the compositor: anything wanting a window raised
-or the screen locked asks the Terminal.
+or the screen locked asks the Terminal (see Automation, below).
 
 Session and Login
 ~~~~~~~~~~~~~~~~~
@@ -633,6 +645,86 @@ it might be a more traditional library-based approach.
 
 
 
+
+Automation
+----------
+
+What the operator does with the Terminal's panels and hotkeys, a
+script can do, or the REPL, by asking the Terminal, which serves the
+Terminal protocol (``lib/didl/terminal.didl``), registered as
+``darq.terminal``.  ``darq.terminal`` is its client, a function for
+each request:
+
+.. code-block:: python
+
+   import darq.terminal as terminal
+
+   terminal.source = "tidy-windows"
+   for window in terminal.windows():
+       if window.item_id:
+           terminal.set_geometry(window.window, 0, 0, 800, 600)
+   window = terminal.open_item(item_id)
+
+It's only what the Terminal, or the compositor it runs, knows or owns.
+Search is the Index's, and History the History service's: a script
+asks them itself.  Shutting down and rebooting are any process's
+system calls.
+
+==============================  =========================================
+Request                         Does
+==============================  =========================================
+``State``                       Whether it's locked, the focused window,
+                                and the system's version.
+``Lock``                        Locks the screen, as *Sys-l*.
+``Notify``                      Tells the operator something, in a
+                                notice.
+``ListWindows``                 The windows, most recently focused first:
+                                each one's title, app_id, place and size,
+                                whether it's focused, and, for a lens's,
+                                the item it's showing, as it says when
+                                asked.
+``ListOutputs``                 The screens, by name, with their places
+                                and sizes.
+``Focus``                       Raises and focuses a window, as the
+                                switcher does.
+``SetGeometry``                 Moves and resizes a window, as *Sys-w*
+                                does: its client may not take the size
+                                asked for.
+``Close``                       Closes a window, as *Sys-x*.
+``Watch``                       Sends what happens to a listener port
+                                (protocol ``Watcher``): windows added,
+                                removed, changed and focused, outputs
+                                changed and removed, locking and
+                                unlocking, and tools finishing.
+``OpenItem``                    Opens an item, in its lens, or another
+                                type's, such as ``darq.thing``, for its
+                                entity.
+``CreateItem``                  Creates an item of a type, as New does.
+``ImportFile``                  Imports a file on the host, as New's
+                                *Import File...* does.
+``OpenUrl``                     Fetches, keeps and opens what's at a URL,
+                                as Search does.
+``OpenEntity``                  Opens the entity of what a lens's window
+                                is showing, as *Sys-i*.
+``ListTools``, ``RunTool``      The tools, and running one, as the Tools
+                                panel does.
+==============================  =========================================
+
+* Each request that makes or opens something names its source, such as
+  the script's name, which an item's type records in History as what
+  created or imported it, in place of the Terminal.
+* The requests that open an item answer once the lens's window is
+  shown, with its number: a lens's windows' app_id is ``lens.<dpid>``,
+  and the Terminal knows the DPID of the lens it started.  It waits up
+  to two minutes.
+* While the screen's locked, every request but ``State``, ``Lock``,
+  ``Watch`` and ``ListOutputs`` is refused, ``LOCKED``.  There's no
+  ``Unlock``: that needs the password, which a script isn't to hold.
+* A watcher stops by closing its port: the Terminal forgets a watcher
+  it can't send to.
+* ``services/terminal/automation.py`` answers it, on Qt's thread, as the
+  panels are: what would block, such as starting a lens, or asking one
+  what it's showing, is done by a launcher, off it, and answered later.
 
 Architecture
 ------------

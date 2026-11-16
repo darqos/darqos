@@ -614,7 +614,7 @@ def test_text_lens(live_pkernel, tmp_path):  # noqa: F811
             item = Text.Client(port, timeout=10)
             item.replace(start=0, end=0, text="Hello", expected=0)
 
-            lens = Lens.Client(darq.launch.use_item(item_id, port), timeout=10)
+            lens = Lens.Client(darq.launch.use_item(item_id, port).port, timeout=10)
 
             # It's created, and viewed through the lens: its type records
             # both, as they come, one way.

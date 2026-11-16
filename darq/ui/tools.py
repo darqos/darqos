@@ -103,7 +103,7 @@ class Host(typing.Protocol):
 
     def show_status(self, message: str) -> None: ...
 
-    def tool_finished(self, message: str) -> None:
+    def tool_finished(self, name: str, message: str) -> None:
         """A tool's finished: say how, in words, as outcome gives it."""
         ...
 
@@ -216,7 +216,7 @@ class ToolList(QWidget):
         def finished(message: str):
             self.running.discard(tool.name)
             self.mark(tool, "")
-            self.host.tool_finished(message)
+            self.host.tool_finished(tool.name, message)
 
         run_tool(self.host.launcher, tool, finished, self.spawn, self.wait)
 

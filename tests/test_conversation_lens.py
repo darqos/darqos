@@ -636,7 +636,7 @@ def test_conversation_lens(live_pkernel, tmp_path):  # noqa: F811
             kb.create("darq.message", new)
 
             item_id = f"darq.message:{new.id}"
-            lens = Lens.Client(darq.launch.use_item(item_id), timeout=30)
+            lens = Lens.Client(darq.launch.use_item(item_id).port, timeout=30)
             # Its type records it viewed, as it comes, one way.
             history = History.Client(darq.connect("darq.history"), timeout=10)
             deadline = time.monotonic() + 10

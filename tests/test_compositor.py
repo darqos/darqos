@@ -28,16 +28,24 @@ from darq.protocols.compositor import (
     HotkeyPressed,
     Lock,
     Modifier,
+    OutputChanged,
+    OutputRemoved,
     RaiseWindow,
     Ready,
+    SetGeometry,
     SystemReleased,
     UnbindHotkey,
     Unlock,
     WindowAdded,
     WindowFocused,
+    WindowGeometry,
     WindowRemoved,
     WindowRetitled,
 )
+
+# Messages that say where things are, which the tests set aside unless
+# they're waiting for one (see receive).
+GEOMETRY = (WindowGeometry, OutputChanged, OutputRemoved)
 
 
 SOURCE = pathlib.Path(__file__).parent.parent / "compositor"
@@ -225,6 +233,9 @@ class Harness:
         self.env = env
         self.clients: list[Client] = []
 
+        # Geometry messages received, and set aside (see receive).
+        self.geometry: list = []
+
     def stop(self) -> int:
         return self.started.stop()
 
@@ -254,18 +265,38 @@ def compositor(tmp_path):
 
 
 def receive(compositor, timeout: float = 10):
-    """The next message from the compositor."""
+    """The next message from the compositor, setting geometry messages
+    aside, in compositor.geometry."""
     deadline = time.monotonic() + timeout
-    while (message := compositor.channel.receive()) is None:
+    while True:
+        while (message := compositor.channel.receive()) is None:
+            left = deadline - time.monotonic()
+            assert left > 0, "no message from the compositor"
+            select.select([compositor.channel], [], [], left)
+        if not isinstance(message, GEOMETRY):
+            return message
+        compositor.geometry.append(message)
+
+
+def expect_geometry(compositor, wanted, timeout: float = 10):
+    """Wait for a geometry message, setting the others aside: as a size
+    is the client's to take, there can be others first."""
+    deadline = time.monotonic() + timeout
+    while wanted not in compositor.geometry:
         left = deadline - time.monotonic()
-        assert left > 0, "no message from the compositor"
+        assert left > 0, f"no {wanted}, only {compositor.geometry}"
         select.select([compositor.channel], [], [], left)
-    return message
+        while (message := compositor.channel.receive()) is not None:
+            assert isinstance(message, GEOMETRY), f"{message} while waiting for {wanted}"
+            compositor.geometry.append(message)
+    compositor.geometry.clear()
 
 
 def nothing_more(compositor, wait: float = 0.3):
     select.select([compositor.channel], [], [], wait)
-    assert compositor.channel.receive() is None
+    while (message := compositor.channel.receive()) is not None:
+        assert isinstance(message, GEOMETRY), f"unexpected {message}"
+        compositor.geometry.append(message)
 
 
 def settle():
@@ -534,6 +565,40 @@ def test_window_mode(compositor):
     # Sys-w keys aren't hotkeys, or a client's.
     assert not [line for line in b_client.printed(0) if line.startswith("key")]
     nothing_more(compositor)
+
+
+def test_geometry(compositor):
+    assert receive(compositor) == Ready()
+    expect_geometry(compositor, OutputChanged(name="HEADLESS-1", x=0, y=0, width=OUTPUT[0], height=OUTPUT[1]))
+    compositor.channel.send(Unlock())
+    settle()
+
+    # A window's reported where it's placed: centred on the cursor's
+    # output, 200 by 100.
+    move(compositor, 10, 10)
+    app = client(compositor, "a")
+    a = receive(compositor).window
+    assert receive(compositor) == WindowFocused(window=a)
+    centre = ((OUTPUT[0] - 200) // 2, (OUTPUT[1] - 100) // 2)
+    expect_geometry(compositor, WindowGeometry(window=a, x=centre[0], y=centre[1], width=200, height=100))
+
+    # Moved and resized; then only moved, its size kept.
+    compositor.channel.send(SetGeometry(window=a, x=10, y=20, width=300, height=150))
+    app.expect("size 300 150")
+    expect_geometry(compositor, WindowGeometry(window=a, x=10, y=20, width=300, height=150))
+    compositor.channel.send(SetGeometry(window=a, x=-50, y=60, width=0, height=0))
+    expect_geometry(compositor, WindowGeometry(window=a, x=-50, y=60, width=300, height=150))
+
+    # Sys-w's steps, of 16, are reported too.
+    move(compositor, 0, 100)
+    keys(compositor, (KEY_LEFTCTRL, 1), (KEY_W, 1), (KEY_RIGHT, 1), (KEY_RIGHT, 0), (KEY_W, 0), (KEY_LEFTCTRL, 0))
+    expect_geometry(compositor, WindowGeometry(window=a, x=-34, y=60, width=300, height=150))
+
+    # The Terminal's windows, and unknown ones, aren't moved.
+    client(compositor, "darq:background", terminal=True)
+    compositor.channel.send(SetGeometry(window=a + 100, x=0, y=0, width=10, height=10))
+    nothing_more(compositor)
+    assert not [g for g in compositor.geometry if isinstance(g, WindowGeometry) and g.window != a]
 
 
 @pytest.mark.parametrize("debug", [None, "0", "1"])

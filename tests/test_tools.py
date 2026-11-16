@@ -83,7 +83,8 @@ def test_a_tool_thats_running_isnt_started_again(qt_app, tmp_path):
     launcher = Later()
     statuses: list[str] = []
     finished: list[str] = []
-    host = types.SimpleNamespace(launcher=launcher, show_status=statuses.append, tool_finished=finished.append)
+    host = types.SimpleNamespace(launcher=launcher, show_status=statuses.append,
+                                 tool_finished=lambda name, message: finished.append(message))
     shown = tools.ToolList(typing.cast(typing.Any, host), tmp_path, spawn=lambda path: 9,
                            wait=lambda dpid: darq.ChildStatus(dpid, darq.ExitReason.EXITED, 0, None))
     shown.refresh()

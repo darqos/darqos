@@ -1,0 +1,133 @@
+.\" darqos
+.\" Copyright (C) 2026 David Arnold
+.TH DARQ.TERMINAL 3 2026-11-16 DarqOS "DarqOS Programmer's Manual"
+.SH NAME
+darq.terminal \- ask the Terminal to do what the operator does
+.SH SYNOPSIS
+.nf
+.B import darq.terminal as terminal
+.PP
+.BI "terminal.source = " name
+.B terminal.state()
+.B terminal.lock()
+.BI terminal.notify( text )
+.B terminal.windows()
+.B terminal.outputs()
+.BI terminal.focus( window )
+.BI terminal.set_geometry( window ", " x ", " y ", " width "=0, " height =0)
+.BI terminal.close( window )
+.BI terminal.open_item( item_id ", lens_for=\(dq\(dq)"
+.BI terminal.create_item( type_id )
+.BI terminal.import_file( path )
+.BI terminal.open_url( url )
+.BI terminal.open_entity( window )
+.B terminal.tools()
+.BI terminal.run_tool( name )
+.BI terminal.watch( handler ", " loop )
+.fi
+.SH DESCRIPTION
+.B darq.terminal
+is the client of the Terminal protocol
+.RI ( lib/didl/terminal.didl ),
+which the Terminal serves, registered as
+.BR darq.terminal ,
+so that a script, or the REPL, can do what the operator does with its
+panels and hotkeys.
+It's only what the Terminal, or the compositor it runs, knows or owns:
+search is the Index's, History the History service's, and shutting
+down and rebooting are system calls.
+.PP
+Windows are the compositor's numbers.
+.BR windows ()
+returns them most recently focused first, as
+.B Window
+records: each one's
+.IR title ,
+.IR app_id ,
+.I geometry
+(a
+.B Rect
+of
+.IR x ,
+.IR y ,
+.I width
+and
+.IR height ,
+in the output layout's coordinates),
+whether it's
+.IR focused ,
+and, for a lens's window, the
+.I item_id
+it's showing, and whether that's an
+.IR entity .
+.PP
+.BR set_geometry ()
+moves a window, and asks its client for a size: a
+.I width
+or
+.I height
+of 0 keeps that as it is, and the client may not take the size asked
+for.
+.PP
+.BR open_item (),
+.BR create_item (),
+.BR import_file (),
+.BR open_url ()
+and
+.BR open_entity ()
+start a lens, as the Terminal's own child, and return once its window
+is shown: the window, and, but for
+.BR open_item (),
+the item.
+Each names
+.B source
+as what did it: an item's type records it in History, as what created
+or imported the item.
+.PP
+.BR watch ()
+serves a
+.B Watcher
+handler on an event loop, and asks the Terminal to send it what
+happens: windows added, removed, changed and focused, outputs changed
+and removed, locking and unlocking, and tools finishing.
+It's heard until the returned server's port is closed.
+.SH ERRORS
+Each function raises
+.B TerminalError
+when the Terminal says no, with its
+.IR status :
+.B LOCKED
+while the screen's locked, for all but
+.BR state (),
+.BR lock (),
+.BR outputs ()
+and
+.BR watch ();
+.B NOT_FOUND
+for an unknown window, tool or item, or a window that isn't a lens's;
+.B FAILED
+with its
+.I message
+saying why; or
+.B RUNNING
+for a tool that's running already.
+It raises
+.B DarqError
+or
+.B TimeoutError
+if the Terminal can't be asked.
+There's no
+.BR unlock ():
+that needs the password.
+.SH EXAMPLES
+.nf
+import darq.terminal as terminal
+
+terminal.source = "tidy-windows"
+for window in terminal.windows():
+    if window.item_id:
+        terminal.set_geometry(window.window, 0, 0, 800, 600)
+.fi
+.SH SEE ALSO
+.BR didl (5),
+.BR intro (7)

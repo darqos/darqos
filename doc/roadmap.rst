@@ -375,8 +375,8 @@ Key features of Second Edition are:
 
 Documents and books: fetch them by URL, catalogue them in the
 Knowledge Base, find them again with search, and read them; and a
-REPL.  Web browsing, with the HTML type and credentials, moved to
-Third Edition.
+REPL.
+
 
 Infrastructure
 
@@ -454,6 +454,15 @@ Types
   * This is likely to be the platform for all system documentation:
     papers, books, man pages, online help.  This type should
     facilitate self-hosting of the documentation chain.
+
+* Markdown
+
+  * View
+  * Edit
+    * Source editing only?
+  * CommonMark + GFM support
+  * Split screen option (source, rendered)
+  
     
 * Book
 
@@ -497,6 +506,9 @@ Types
     necessary part of the daily driver goal.
   * This will likely be a prototype exploration exercise, rather than
     a solid design implementation (or moreso than usual).
+  * Contact point for settings?
+  * Contact point for health/load monitoring?
+  * Hardware inventory (PCI, USB, CPU, GPU, RAM, storage, etc)
 
 
 Story

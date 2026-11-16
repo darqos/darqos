@@ -4,6 +4,18 @@ Summary notes on newly added features for each release.
 
 ## Unreleased
 
+- **Scripts can drive the Terminal.**  The Terminal serves a protocol,
+  `darq.terminal`, so a script, and later the REPL, can do what the
+  operator does: list the windows, with the items their lenses show, and
+  focus, move, resize and close them; open, create and import items, and
+  open URLs and entities, each answered with the new lens's window; run
+  tools; lock the screen; show a notice; and watch what happens.  The
+  `darq.terminal` module is its client (`man darq.terminal`).  What a
+  script creates is recorded in History as the script's doing.  While the
+  screen's locked, it's refused.
+- **The compositor reports where windows are**, and the screens, and can
+  place and size an application window, for the Terminal.
+
 - **Related names find people by nickname and maiden name.**  The vCard
   import linked a related name, such as a sister's, only to a card with
   exactly that full name, and otherwise made a stub person.  Now, failing

@@ -6,6 +6,7 @@
 # tests, the launcher's, and those of the parts themselves.
 
 from darq.errors import DarqError, LaunchError
+from darq.launch import StartedLens
 from darq.protocols.history import Event, GetEventsResponse
 from darq.protocols.history import Status as HistoryStatus
 from darq.protocols.http import SnapshotResponse
@@ -81,7 +82,7 @@ class FakeLaunch:
         if self.fail:
             raise LaunchError(f"No lens for {item_id}")
         self.used.append((item_id, item) if not lens_for else (item_id, item, lens_for))
-        return 7
+        return StartedLens(port=7, dpid=70)
 
     # Types by extension, for find_types, and those whose create_item_from
     # refuses data.

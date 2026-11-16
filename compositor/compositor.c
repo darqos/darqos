@@ -90,6 +90,9 @@
  * it's assumed to be stuck. */
 #define MAX_POLICY_QUEUE 4096
 
+/* The largest size SetGeometry asks a client for. */
+#define MAX_WINDOW_SIZE 32767
+
 /* How far Sys-w's keys move or resize a window, in pixels, and their
  * repeat delay and rate (as the keyboard's), in milliseconds. */
 #define WINDOW_STEP 16
@@ -207,6 +210,10 @@ struct tinywl_server {
 	xkb_keysym_t repeat_sym;
 	struct wl_event_source *repeat_timer;
 
+	/* Reports windows' and outputs' geometry that changed, once the
+	 * loop's idle (see geometry_changed), while it's pending. */
+	struct wl_event_source *geometry_idle;
+
 	/* The System modifier's mask, in the keymap's modifiers. */
 	xkb_mod_mask_t system_mask;
 
@@ -225,6 +232,10 @@ struct tinywl_output {
 	struct wl_listener frame;
 	struct wl_listener request_state;
 	struct wl_listener destroy;
+
+	/* Its place and size in the layout, as last reported. */
+	struct wlr_box reported_box;
+	bool box_reported;
 };
 
 struct tinywl_toplevel {
@@ -248,6 +259,10 @@ struct tinywl_toplevel {
 	 * while it's mapped, if it isn't the Terminal's own. */
 	uint32_t window;
 	bool reported;
+
+	/* Its place and size, as last reported. */
+	struct wlr_box reported_box;
+	bool geometry_reported;
 
 	/* Its layer, decided on its first commit.  Background and lock
 	 * windows fill an output. */
@@ -379,6 +394,77 @@ static void report_focus(struct tinywl_server *server, uint32_t window) {
 	struct darq_builder *builder = policy_builder(server);
 	darq_compositor_window_focused_init(builder, 0)->window = window;
 	policy_send(server, builder);
+}
+
+static void toplevel_box(struct tinywl_toplevel *toplevel, struct wlr_box *box) {
+	/* Its content's place and size, in the layout. */
+	struct wlr_box geo_box;
+	wlr_xdg_surface_get_geometry(toplevel->xdg_toplevel->base, &geo_box);
+	box->x = toplevel->scene_tree->node.x + geo_box.x;
+	box->y = toplevel->scene_tree->node.y + geo_box.y;
+	box->width = geo_box.width;
+	box->height = geo_box.height;
+}
+
+static bool same_box(const struct wlr_box *a, const struct wlr_box *b) {
+	return a->x == b->x && a->y == b->y && a->width == b->width && a->height == b->height;
+}
+
+static void send_geometry(void *data) {
+	/* Report each window's and output's geometry that's changed since
+	 * it was last reported. */
+	struct tinywl_server *server = data;
+	server->geometry_idle = NULL;
+	struct tinywl_toplevel *toplevel;
+	wl_list_for_each(toplevel, &server->toplevels, link) {
+		if (!toplevel->reported) {
+			continue;
+		}
+		struct wlr_box box;
+		toplevel_box(toplevel, &box);
+		if (toplevel->geometry_reported && same_box(&box, &toplevel->reported_box)) {
+			continue;
+		}
+		toplevel->reported_box = box;
+		toplevel->geometry_reported = true;
+		struct darq_builder *builder = policy_builder(server);
+		struct darq_compositor_window_geometry *message =
+			darq_compositor_window_geometry_init(builder, 0);
+		message->window = toplevel->window;
+		message->x = box.x;
+		message->y = box.y;
+		message->width = box.width < 0 ? 0 : box.width;
+		message->height = box.height < 0 ? 0 : box.height;
+		policy_send(server, builder);
+	}
+	struct tinywl_output *output;
+	wl_list_for_each(output, &server->outputs, link) {
+		struct wlr_box box;
+		wlr_output_layout_get_box(server->output_layout, output->wlr_output, &box);
+		if (wlr_box_empty(&box) || (output->box_reported && same_box(&box, &output->reported_box))) {
+			continue;
+		}
+		output->reported_box = box;
+		output->box_reported = true;
+		struct darq_builder *builder = policy_builder(server);
+		struct darq_compositor_output_changed *message =
+			darq_compositor_output_changed_init(builder, 0);
+		set_client_string(builder, &message->name, output->wlr_output->name);
+		message->x = box.x;
+		message->y = box.y;
+		message->width = box.width;
+		message->height = box.height;
+		policy_send(server, builder);
+	}
+}
+
+static void geometry_changed(struct tinywl_server *server) {
+	/* A window or output may have moved or been resized: report it once
+	 * the loop's idle, so a drag's many moves are one message a turn. */
+	if (server->geometry_idle == NULL && server->policy_fd >= 0) {
+		server->geometry_idle = wl_event_loop_add_idle(
+			wl_display_get_event_loop(server->wl_display), send_geometry, server);
+	}
 }
 
 static void raise_toplevel(struct tinywl_toplevel *toplevel) {
@@ -649,6 +735,7 @@ static bool window_step(struct tinywl_server *server, xkb_keysym_t sym) {
 	}
 	if (dx || dy) {
 		wlr_scene_node_set_position(node, node->x + dx, node->y + dy);
+		geometry_changed(server);
 		/* Keep the mouse's hold on it. */
 		server->grab_x -= dx;
 		server->grab_y -= dy;
@@ -944,6 +1031,7 @@ static void process_cursor_move(struct tinywl_server *server, uint32_t time) {
 	wlr_scene_node_set_position(&toplevel->scene_tree->node,
 		server->cursor->x - server->grab_x,
 		server->cursor->y - server->grab_y);
+	geometry_changed(server);
 }
 
 static void process_cursor_resize(struct tinywl_server *server, uint32_t time) {
@@ -992,6 +1080,7 @@ static void process_cursor_resize(struct tinywl_server *server, uint32_t time) {
 	wlr_xdg_surface_get_geometry(toplevel->xdg_toplevel->base, &geo_box);
 	wlr_scene_node_set_position(&toplevel->scene_tree->node,
 		new_left - geo_box.x, new_top - geo_box.y);
+	geometry_changed(server);
 
 	int new_width = new_right - new_left;
 	int new_height = new_bottom - new_top;
@@ -1161,6 +1250,13 @@ static void output_request_state(struct wl_listener *listener, void *data) {
 static void output_destroy(struct wl_listener *listener, void *data) {
 	struct tinywl_output *output = wl_container_of(listener, output, destroy);
 
+	if (output->box_reported) {
+		struct darq_builder *builder = policy_builder(output->server);
+		set_client_string(builder, &darq_compositor_output_removed_init(builder, 0)->name,
+			output->wlr_output->name);
+		policy_send(output->server, builder);
+	}
+
 	wl_list_remove(&output->frame.link);
 	wl_list_remove(&output->request_state.link);
 	wl_list_remove(&output->destroy.link);
@@ -1258,6 +1354,7 @@ static void server_new_output(struct wl_listener *listener, void *data) {
 		wlr_output);
 	struct wlr_scene_output *scene_output = wlr_scene_output_create(server->scene, wlr_output);
 	wlr_scene_output_layout_add_output(server->scene_layout, l_output, scene_output);
+	geometry_changed(server);
 }
 
 static bool fills_output(struct tinywl_toplevel *toplevel) {
@@ -1313,6 +1410,7 @@ static void fit_to_output(struct tinywl_toplevel *toplevel, bool initial) {
 	wlr_xdg_toplevel_set_fullscreen(toplevel->xdg_toplevel, true);
 	wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel, box.width, box.height);
 	wlr_scene_node_set_position(node, box.x, box.y);
+	geometry_changed(server);
 }
 
 static void place_centred(struct tinywl_toplevel *toplevel) {
@@ -1328,12 +1426,14 @@ static void place_centred(struct tinywl_toplevel *toplevel) {
 	wlr_scene_node_set_position(&toplevel->scene_tree->node,
 		box.x + (box.width - geo_box.width) / 2 - geo_box.x,
 		box.y + (box.height - geo_box.height) / 2 - geo_box.y);
+	geometry_changed(server);
 }
 
 static void layout_change(struct wl_listener *listener, void *data) {
 	/* Outputs were added, removed, or resized: refit the windows that
 	 * fill them. */
 	struct tinywl_server *server = wl_container_of(listener, server, layout_change);
+	geometry_changed(server);
 	struct tinywl_toplevel *toplevel;
 	wl_list_for_each(toplevel, &server->toplevels, link) {
 		if (fills_output(toplevel)) {
@@ -1359,6 +1459,7 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 		set_client_string(builder, &message->title, toplevel->xdg_toplevel->title);
 		set_client_string(builder, &message->app_id, toplevel->xdg_toplevel->app_id);
 		policy_send(server, builder);
+		geometry_changed(server);
 	}
 
 	if (toplevel->layer == LAYER_APPS || toplevel->layer == LAYER_OVERLAY) {
@@ -1386,6 +1487,7 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 
 	if (toplevel->reported) {
 		toplevel->reported = false;
+		toplevel->geometry_reported = false;
 		struct darq_builder *builder = policy_builder(server);
 		darq_compositor_window_removed_init(builder, 0)->window = toplevel->window;
 		policy_send(server, builder);
@@ -1411,6 +1513,11 @@ static void xdg_toplevel_set_title(struct wl_listener *listener, void *data) {
 static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 	/* Called when a new surface state is committed. */
 	struct tinywl_toplevel *toplevel = wl_container_of(listener, toplevel, commit);
+
+	/* A commit can bring a new size. */
+	if (toplevel->reported) {
+		geometry_changed(toplevel->server);
+	}
 
 	if (toplevel->xdg_toplevel->base->initial_commit) {
 		/* When an xdg_surface performs an initial commit, the compositor must
@@ -1825,6 +1932,31 @@ static void handle_close_window(void *context, const struct darq_compositor_clos
 	}
 }
 
+static void handle_set_geometry(void *context, const struct darq_compositor_set_geometry *message,
+		const uint64_t *handles, size_t num_handles) {
+	/* Only an application window, as Sys-w moves only them. */
+	struct tinywl_server *server = context;
+	struct tinywl_toplevel *toplevel = find_window(server, message->window);
+	if (toplevel == NULL || toplevel->layer != LAYER_APPS) {
+		return;
+	}
+	struct wlr_box geo_box;
+	wlr_xdg_surface_get_geometry(toplevel->xdg_toplevel->base, &geo_box);
+	wlr_scene_node_set_position(&toplevel->scene_tree->node,
+		message->x - geo_box.x, message->y - geo_box.y);
+	if (message->width > 0 || message->height > 0) {
+		struct wlr_xdg_toplevel_state *current = &toplevel->xdg_toplevel->current;
+		int width = message->width == 0 ? geo_box.width :
+			message->width > MAX_WINDOW_SIZE ? MAX_WINDOW_SIZE : (int)message->width;
+		int height = message->height == 0 ? geo_box.height :
+			message->height > MAX_WINDOW_SIZE ? MAX_WINDOW_SIZE : (int)message->height;
+		wlr_xdg_toplevel_set_size(toplevel->xdg_toplevel,
+			clamp_size(width, current->min_width, current->max_width),
+			clamp_size(height, current->min_height, current->max_height));
+	}
+	geometry_changed(server);
+}
+
 static const struct darq_compositor_policy_handler policy_handler = {
 	.handle_bind_hotkey = handle_bind_hotkey,
 	.handle_unbind_hotkey = handle_unbind_hotkey,
@@ -1833,6 +1965,7 @@ static const struct darq_compositor_policy_handler policy_handler = {
 	.handle_focus_window = handle_focus_window,
 	.handle_raise_window = handle_raise_window,
 	.handle_close_window = handle_close_window,
+	.handle_set_geometry = handle_set_geometry,
 };
 
 static int handle_policy(int fd, uint32_t mask, void *data) {
@@ -2120,6 +2253,8 @@ int main(int argc, char *argv[]) {
 		struct darq_builder *builder = policy_builder(&server);
 		darq_compositor_ready_init(builder, 0);
 		policy_send(&server, builder);
+		/* The outputs the backend's made already. */
+		geometry_changed(&server);
 	}
 
 	if (test_keyboard) {

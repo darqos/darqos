@@ -70,6 +70,8 @@ def load():
 
 
 main = load()
+# What answers the Terminal protocol, which main imported.
+automation = sys.modules["automation"]
 panels = sys.modules["panels"]
 
 
@@ -595,7 +597,7 @@ def focused_lens(terminal, monkeypatch, app_id="lens.12", shown=(DOC, False), fo
     monkeypatch.setattr(main.darq, "lookup_name", lookup_name)
     monkeypatch.setattr(main.darq, "close_port", lambda handle: None)
     monkeypatch.setattr(FakeLensClient, "shown_as", shown)
-    monkeypatch.setattr(main, "Lens", python_types.SimpleNamespace(Client=FakeLensClient))
+    monkeypatch.setattr(automation, "Lens", python_types.SimpleNamespace(Client=FakeLensClient))
     terminal.handle(WindowAdded(window=3, title="A note", app_id=app_id))
     terminal.handle(WindowFocused(window=3))
     return looked_up

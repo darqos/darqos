@@ -1,0 +1,136 @@
+// darqos
+// Copyright (C) 2026 David Arnold
+//
+// The Terminal's protocol: what a script, or the REPL, can ask of it,
+// to do what the operator does with its panels and hotkeys.  See
+// doc/terminal.rst, "Automation".
+//
+// It's only what the Terminal, or the compositor it runs, knows or
+// owns: the windows, the session, the lenses it starts, and the tools.
+// Search is the Index's, History the History service's, and the types
+// the Type service's: a script asks them itself.
+//
+// Each request that makes or opens something names its source, such
+// as the script's name, which History records as what did it, in
+// place of the Terminal.  While the screen's locked, every request but
+// State, Lock, Watch and ListOutputs is refused, LOCKED: there's no
+// Unlock.
+
+library darq.terminal;
+
+enum Status : uint32 {
+    OK = 0;
+
+    // The screen's locked.
+    LOCKED = 1;
+
+    // No such window, tool, or item; or the window isn't a lens's.
+    NOT_FOUND = 2;
+
+    // It couldn't be done: the message says why.
+    FAILED = 3;
+
+    // The tool's running already.
+    RUNNING = 4;
+}
+
+// A place and size, in the output layout's coordinates.
+struct Rect {
+    int32 x;
+    int32 y;
+    uint32 width;
+    uint32 height;
+}
+
+// A window: the compositor's, other than the Terminal's own.  Its item,
+// and whether that's an entity, are a lens's, as it says when it's
+// asked: only ListWindows asks, and they're empty otherwise.
+struct Window {
+    uint32 window;
+    string title;
+    string app_id;
+    Rect geometry;
+    bool focused;
+    string item_id;
+    bool entity;
+}
+
+// An output: a screen, by its name, such as eDP-1.
+struct Output {
+    string name;
+    Rect geometry;
+}
+
+// An installed tool, as the Tools panel lists it.
+struct Tool {
+    string name;
+    string description;
+    bool running;
+}
+
+// The Terminal, registered as "darq.terminal".
+protocol Terminal {
+    // Whether it's locked, the focused window (0 for none), and the
+    // system's version.
+    1: State() -> (bool locked, uint32 focused, string version);
+
+    // Lock the screen, as Sys-l does.
+    2: Lock() -> (Status status);
+
+    // Tell the operator something, in a notice.
+    3: Notify(string text, string source) -> (Status status);
+
+    // The windows, most recently focused first; and the outputs.
+    4: ListWindows() -> (sequence<Window> windows, Status status);
+    5: ListOutputs() -> (sequence<Output> outputs, Status status);
+
+    // Raise and focus a window, as the switcher does; move and resize
+    // one, as Sys-w does, a width or height of 0 keeping that as it is
+    // (the window's client may not take the size asked for: a
+    // WindowChanged says what it came to); and close one, as Sys-x
+    // does.
+    6: Focus(uint32 window) -> (Status status);
+    7: SetGeometry(uint32 window, Rect geometry) -> (Status status);
+    8: Close(uint32 window) -> (Status status);
+
+    // Send what happens to a listener, which serves Watcher, till it's
+    // closed.
+    9: Watch(port listener) -> (Status status);
+
+    // Open an item, in its lens, or the lens of another type, such as
+    // darq.thing for its entity; create an item of a type; import a
+    // file on the host, as the New panel's Import File does; fetch, keep
+    // and open what's at a URL, as Search does; or open the entity of
+    // what a lens's window is showing, as Sys-i does.  Each returns the
+    // item, and the lens's window, once it's shown.
+    10: OpenItem(string item_id, string lens_for, string source) -> (uint32 window, Status status, string message);
+    11: CreateItem(string type_id, string source) -> (string item_id, uint32 window, Status status, string message);
+    12: ImportFile(string path, string source) -> (string item_id, uint32 window, Status status, string message);
+    13: OpenUrl(string url, string source) -> (string item_id, uint32 window, Status status, string message);
+    14: OpenEntity(uint32 window, string source) -> (string item_id, uint32 entity_window, Status status, string message);
+
+    // The tools, as the Tools panel lists them; and run one, as it
+    // does: its finish is sent to watchers, as ToolFinished.
+    15: ListTools() -> (sequence<Tool> tools, Status status);
+    16: RunTool(string name, string source) -> (Status status);
+}
+
+// Served by a watcher, to hear what happens.  All one-way.
+protocol Watcher {
+    1: WindowAdded(Window window);
+    2: WindowRemoved(uint32 window);
+
+    // Its title, or its place or size, changed.
+    3: WindowChanged(Window window);
+
+    // The focus moved to a window, or to none of them (0).
+    4: WindowFocused(uint32 window);
+
+    5: OutputChanged(Output output);
+    6: OutputRemoved(string name);
+    7: Locked();
+    8: Unlocked();
+
+    // A tool finished: how, as the Tools panel says it.
+    9: ToolFinished(string name, string outcome);
+}

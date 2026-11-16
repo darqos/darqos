@@ -1288,7 +1288,7 @@ def test_book_lens(live_pkernel, tmp_path):  # noqa: F811
             top.close()
 
             # Its type records it viewed, as it comes, one way.
-            lens = Lens.Client(darq.launch.use_item(copy_item), timeout=30)
+            lens = Lens.Client(darq.launch.use_item(copy_item).port, timeout=30)
             deadline = time.monotonic() + 10
             while True:
                 events = [(e.event, e.source) for e in history.get_events(item_ids=[copy_item]).events]

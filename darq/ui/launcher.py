@@ -59,18 +59,23 @@ class Launcher:
     it, and error is None if a lens is using the item."""
 
     def __init__(self, host: Host, source: str, post: typing.Callable[[typing.Callable[[], None]], None],
-                 run: typing.Callable[[typing.Callable[[], None]], None] = start_thread):
+                 run: typing.Callable[[typing.Callable[[], None]], None] = start_thread,
+                 started: typing.Callable[[int], None] | None = None):
         """Constructor.
 
         :param source: The History source of the items it creates, which
                        their types record (see doc/history.rst).
         :param post: Calls a function on the UI's thread, from any thread
                      (such as QtEventLoop.post).
-        :param run: Runs a job: on a thread, unless tests say otherwise."""
+        :param run: Runs a job: on a thread, unless tests say otherwise.
+        :param started: Told each lens's DPID, as it's started, on the
+                        launch's thread, before the host's told it was:
+                        its windows are named by it."""
         self.host = host
         self.source = source
         self.post = post
         self.run = run
+        self.started = started
 
     def create(self, type_id: str, name: str, context: object = None,
                done: typing.Callable[[], None] | None = None):
@@ -171,11 +176,13 @@ class Launcher:
         went wrong, if anything."""
         try:
             if lens_for:
-                self.host.services.launch.use_item(item_id, item, lens_for=lens_for)
+                lens = self.host.services.launch.use_item(item_id, item, lens_for=lens_for)
             else:
-                self.host.services.launch.use_item(item_id, item)
+                lens = self.host.services.launch.use_item(item_id, item)
         except (darq.DarqError, TimeoutError) as e:
             return str(e)
+        if self.started is not None:
+            self.started(lens.dpid)
         return None
 
     def start(self, job: typing.Callable[[], tuple[str | None, str | None]], context: object,

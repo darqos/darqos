@@ -436,7 +436,7 @@ def test_ebook_lens(live_pkernel, tmp_path, monkeypatch):  # noqa: F811
                     return f"lens for {{type_id}} is {{path}}"
 
             item_id, port = darq.launch.create_item_from("darq.book.epub", open({str(epub)!r}, "rb").read())
-            lens = Lens.Client(darq.launch.use_item(item_id, port), timeout=30)
+            lens = Lens.Client(darq.launch.use_item(item_id, port).port, timeout=30)
             time.sleep(6)
             history = History.Client(darq.connect("darq.history"), timeout=10)
             events = [(e.event, e.source) for e in history.get_events(item_ids=[item_id]).events]

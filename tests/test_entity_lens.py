@@ -1010,7 +1010,7 @@ def test_entity_lens(live_pkernel, tmp_path):  # noqa: F811
             person.claim("P108", model.EntityValue(darq.split_item_id(org_id)[1]))
             kb.put(person)
 
-            lens = Lens.Client(darq.launch.use_item(person_id, person_port), timeout=10)
+            lens = Lens.Client(darq.launch.use_item(person_id, person_port).port, timeout=10)
             # Its type records it viewed, as it comes, one way.
             history = History.Client(darq.connect("darq.history"), timeout=10)
             deadline = time.monotonic() + 10

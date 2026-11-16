@@ -8,6 +8,7 @@
 # take a second or so for a Qt lens.
 
 import time
+import typing
 
 from . import dipc
 from .errors import DarqError, LaunchError, MessageDecodingError
@@ -153,16 +154,24 @@ def find_lens(type_id: str, context: str = "terminal") -> str:
     return response.lenses[0]
 
 
-def start_lens(path: str, timeout: float = READY_TIMEOUT) -> int:
+class StartedLens(typing.NamedTuple):
+    """A lens that's been started: a handle for its Lens port, and its
+    process's DPID, which names its windows (see darq.ui.lens.announce)."""
+
+    port: int
+    dpid: int
+
+
+def start_lens(path: str, timeout: float = READY_TIMEOUT) -> StartedLens:
     """Spawn a lens, and wait for it to report Ready.
 
     :param path: The lens's directory.
-    :returns: A handle for its port.
+    :returns: It.
     :raises LaunchError: if it couldn't be spawned, or wasn't Ready in time."""
     bootstrap = open_port()
     try:
         try:
-            spawn_process(path, bootstrap=bootstrap)
+            dpid = spawn_process(path, bootstrap=bootstrap)
         except DarqError as e:
             raise LaunchError(f"Can't start lens {path}: {e}") from e
 
@@ -182,12 +191,12 @@ def start_lens(path: str, timeout: float = READY_TIMEOUT) -> int:
             except MessageDecodingError:
                 continue
             if ready.lens is not None:
-                return ready.lens
+                return StartedLens(ready.lens, dpid)
     finally:
         close_port(bootstrap)
 
 
-def use_item(item_id: str, item: int | None = None, context: str = "terminal", lens_for: str = "") -> int:
+def use_item(item_id: str, item: int | None = None, context: str = "terminal", lens_for: str = "") -> StartedLens:
     """Start a lens to use an item.
 
     :param item_id: The item's identifier.
@@ -195,7 +204,7 @@ def use_item(item_id: str, item: int | None = None, context: str = "terminal", l
                  lens takes over; or None to open it.
     :param context: Context to use it in.
     :param lens_for: A type to use the lens of, instead of the item's own.
-    :returns: A handle for the lens's port.
+    :returns: The lens.
     :raises LaunchError: if the item couldn't be opened, or the lens
                          started, or it can't use the item."""
     type_id, _ = split_item_id(item_id)
@@ -208,7 +217,7 @@ def use_item(item_id: str, item: int | None = None, context: str = "terminal", l
         _close_item(item)
         raise
 
-    client = lens_protocol.Lens.Client(lens, timeout=TIMEOUT)
+    client = lens_protocol.Lens.Client(lens.port, timeout=TIMEOUT)
     try:
         status = client.use(item_id=item_id, item=item).status
     except (DarqError, TimeoutError) as e:

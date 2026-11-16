@@ -21,14 +21,18 @@ __all__ = [
     "HotkeyPressed",
     "Lock",
     "Modifier",
+    "OutputChanged",
+    "OutputRemoved",
     "Policy",
     "RaiseWindow",
     "Ready",
+    "SetGeometry",
     "SystemReleased",
     "UnbindHotkey",
     "Unlock",
     "WindowAdded",
     "WindowFocused",
+    "WindowGeometry",
     "WindowRemoved",
     "WindowRetitled",
 ]
@@ -251,6 +255,134 @@ class WindowFocused(Message):
         return
 
 
+class WindowGeometry(Message):
+    """Display.WindowGeometry one-way message."""
+
+    METHOD = 8
+    BODY_FORMAT = "<IiiII"
+    BODY_START = 8
+    LENGTH = 28
+
+    def __init__(self,
+                 txid: int = 0,
+                 window: int = 0,
+                 x: int = 0,
+                 y: int = 0,
+                 width: int = 0,
+                 height: int = 0):
+        super().__init__(txid)
+        self.window = window
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        buf += struct.pack(self.BODY_FORMAT,
+                           self.window,
+                           self.x,
+                           self.y,
+                           self.width,
+                           self.height)
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        self.window = bits[0]
+        self.x = bits[1]
+        self.y = bits[2]
+        self.width = bits[3]
+        self.height = bits[4]
+        return
+
+
+class OutputChanged(Message):
+    """Display.OutputChanged one-way message."""
+
+    METHOD = 9
+    BODY_FORMAT = "<IIiiII"
+    BODY_START = 8
+    LENGTH = 32
+    DATA_START = 32
+
+    def __init__(self,
+                 txid: int = 0,
+                 name: str = '',
+                 x: int = 0,
+                 y: int = 0,
+                 width: int = 0,
+                 height: int = 0):
+        super().__init__(txid)
+        self.name = name
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.name),
+                           self.x,
+                           self.y,
+                           self.width,
+                           self.height)
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.name = inp.string(bits[0], bits[1])
+        self.x = bits[2]
+        self.y = bits[3]
+        self.width = bits[4]
+        self.height = bits[5]
+        return
+
+
+class OutputRemoved(Message):
+    """Display.OutputRemoved one-way message."""
+
+    METHOD = 10
+    BODY_FORMAT = "<II"
+    BODY_START = 8
+    LENGTH = 16
+    DATA_START = 16
+
+    def __init__(self, txid: int = 0, name: str = ''):
+        super().__init__(txid)
+        self.name = name
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.name))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.name = inp.string(bits[0], bits[1])
+        return
+
+
 class BindHotkey(Message):
     """Policy.BindHotkey one-way message."""
 
@@ -433,6 +565,52 @@ class CloseWindow(Message):
         return
 
 
+class SetGeometry(Message):
+    """Policy.SetGeometry one-way message."""
+
+    METHOD = 8
+    BODY_FORMAT = "<IiiII"
+    BODY_START = 8
+    LENGTH = 28
+
+    def __init__(self,
+                 txid: int = 0,
+                 window: int = 0,
+                 x: int = 0,
+                 y: int = 0,
+                 width: int = 0,
+                 height: int = 0):
+        super().__init__(txid)
+        self.window = window
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        buf += struct.pack(self.BODY_FORMAT,
+                           self.window,
+                           self.x,
+                           self.y,
+                           self.width,
+                           self.height)
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        self.window = bits[0]
+        self.x = bits[1]
+        self.y = bits[2]
+        self.width = bits[3]
+        self.height = bits[4]
+        return
+
+
 ################################################################
 # Protocols
 ################################################################
@@ -449,6 +627,9 @@ class Display:
         5: WindowRemoved,
         6: WindowRetitled,
         7: WindowFocused,
+        8: WindowGeometry,
+        9: OutputChanged,
+        10: OutputRemoved,
     }
 
     RESPONSES = {}
@@ -484,6 +665,28 @@ class Display:
             """Display.WindowFocused, one-way."""
             self.send(WindowFocused(window=window))
 
+        def window_geometry(self,
+                            window: int = 0,
+                            x: int = 0,
+                            y: int = 0,
+                            width: int = 0,
+                            height: int = 0) -> None:
+            """Display.WindowGeometry, one-way."""
+            self.send(WindowGeometry(window=window, x=x, y=y, width=width, height=height))
+
+        def output_changed(self,
+                           name: str = '',
+                           x: int = 0,
+                           y: int = 0,
+                           width: int = 0,
+                           height: int = 0) -> None:
+            """Display.OutputChanged, one-way."""
+            self.send(OutputChanged(name=name, x=x, y=y, width=width, height=height))
+
+        def output_removed(self, name: str = '') -> None:
+            """Display.OutputRemoved, one-way."""
+            self.send(OutputRemoved(name=name))
+
     class Handler(system.Handler):
         """protocol Display: base class for a service's handler."""
 
@@ -495,6 +698,9 @@ class Display:
             5: (WindowRemoved, "window_removed"),
             6: (WindowRetitled, "window_retitled"),
             7: (WindowFocused, "window_focused"),
+            8: (WindowGeometry, "window_geometry"),
+            9: (OutputChanged, "output_changed"),
+            10: (OutputRemoved, "output_removed"),
         }
 
         def ready(self, request: Ready, source: int) -> None:
@@ -525,6 +731,18 @@ class Display:
             """Handle Display.WindowFocused, one-way."""
             raise NotImplementedError
 
+        def window_geometry(self, request: WindowGeometry, source: int) -> None:
+            """Handle Display.WindowGeometry, one-way."""
+            raise NotImplementedError
+
+        def output_changed(self, request: OutputChanged, source: int) -> None:
+            """Handle Display.OutputChanged, one-way."""
+            raise NotImplementedError
+
+        def output_removed(self, request: OutputRemoved, source: int) -> None:
+            """Handle Display.OutputRemoved, one-way."""
+            raise NotImplementedError
+
 
 class Policy:
     """protocol Policy: message classes by method number, and its Client and Handler."""
@@ -537,6 +755,7 @@ class Policy:
         5: FocusWindow,
         6: RaiseWindow,
         7: CloseWindow,
+        8: SetGeometry,
     }
 
     RESPONSES = {}
@@ -572,6 +791,15 @@ class Policy:
             """Policy.CloseWindow, one-way."""
             self.send(CloseWindow(window=window))
 
+        def set_geometry(self,
+                         window: int = 0,
+                         x: int = 0,
+                         y: int = 0,
+                         width: int = 0,
+                         height: int = 0) -> None:
+            """Policy.SetGeometry, one-way."""
+            self.send(SetGeometry(window=window, x=x, y=y, width=width, height=height))
+
     class Handler(system.Handler):
         """protocol Policy: base class for a service's handler."""
 
@@ -583,6 +811,7 @@ class Policy:
             5: (FocusWindow, "focus_window"),
             6: (RaiseWindow, "raise_window"),
             7: (CloseWindow, "close_window"),
+            8: (SetGeometry, "set_geometry"),
         }
 
         def bind_hotkey(self, request: BindHotkey, source: int) -> None:
@@ -611,4 +840,8 @@ class Policy:
 
         def close_window(self, request: CloseWindow, source: int) -> None:
             """Handle Policy.CloseWindow, one-way."""
+            raise NotImplementedError
+
+        def set_geometry(self, request: SetGeometry, source: int) -> None:
+            """Handle Policy.SetGeometry, one-way."""
             raise NotImplementedError

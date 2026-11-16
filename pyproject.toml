@@ -95,6 +95,8 @@ include = [
     "darq/item_type.py",
     "darq/history.py",
     "darq/host.py",
+    "darq/language.py",
+    "darq/terminal.py",
     "darq/ui/dialogs.py",
     "darq/ui/sources.py",
     "darq/pcall.py",
