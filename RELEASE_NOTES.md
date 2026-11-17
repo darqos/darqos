@@ -4,6 +4,21 @@ Summary notes on newly added features for each release.
 
 ## Unreleased
 
+- **The REPL's namespace tree.**  On the left of the REPL is what's bound:
+  the session's names, its results, and the built-ins, with a badge for
+  each kind of thing, and modules, classes and objects to expand.
+  Clicking one edits it: a function's, method's or variable's source, or a
+  class's header.  Ctrl+S saves it, changing what exists in place, so
+  instances and what holds a function see the change.  Library code is
+  shown, but not changed.  What isn't saved is kept as a draft, marked in
+  the tree.
+
+- **A Python REPL**, with *Sys-s*, or from the Tools panel: Python, a cell
+  at a time, with the darq API ready (`darq`, and `terminal`, to drive the
+  Terminal), syntax highlighting, completion
+  with Tab, and `$3` for cell 3's result.  There's one session, which
+  ends when its window's closed: *Sys-s* focuses it while it's open.
+
 - **Windows have shadows.**  A soft shadow sets each window, and each of
   the Terminal's panels, off from what's under it, and a darker one shows
   which has the keyboard.  `DARQ_SHADOW_FOCUSED` and

@@ -11,3 +11,7 @@ pycurl
 setproctitle
 vobject
 
+# The REPL's completion and highlighting.
+jedi
+pygments
+

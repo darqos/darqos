@@ -845,6 +845,61 @@ def test_a_tool_that_finishes_once_the_panels_closed_says_so_in_a_notice(termina
     assert terminal.notice.message.text() == "Reindex was stopped"
 
 
+def repl_installed(terminal, tmp_path, finishes):
+    """The REPL's tool, quiet, as tools/repl's manifest says, with its
+    finish kept for the test to give."""
+    root = tmp_path
+    (root / "tools" / "repl").mkdir(parents=True)
+    (root / "tools" / "repl" / "tool.json").write_text(json.dumps({"name": "Python REPL", "quiet": True}))
+    terminal.root = root
+    spawned = tools_at(terminal, root, finishes)
+    running: list = []
+    terminal.launcher.background = lambda job, done: running.append((job, done))
+    return spawned, running
+
+
+def test_sys_s_starts_the_repl_once(terminal, tmp_path):
+    unlock(terminal)
+    spawned, running = repl_installed(terminal, tmp_path, main.darq.ChildStatus(7, main.darq.ExitReason.EXITED, 0,
+                                                                                 None))
+    hotkey(terminal, main.XK_s)
+    hotkey(terminal, main.XK_s)
+    assert spawned == [] and len(running) == 1
+    [(job, done)] = running
+    done(job(), None)
+    assert spawned == [str(tmp_path / "tools" / "repl")]
+
+    # Closed as it should be, it's not said.
+    assert visible(terminal) == []
+
+
+def test_sys_s_focuses_the_repls_window(terminal, tmp_path):
+    unlock(terminal)
+    spawned, running = repl_installed(terminal, tmp_path, None)
+    terminal.handle(WindowAdded(window=4, title="Python REPL", app_id=main.REPL_APP_ID))
+    terminal.compositor.received()
+    hotkey(terminal, main.XK_s)
+    assert terminal.compositor.received() == [RaiseWindow(window=4), FocusWindow(window=4)]
+    assert running == []
+
+
+def test_a_repl_that_fails_says_so(terminal, tmp_path):
+    unlock(terminal)
+    spawned, running = repl_installed(terminal, tmp_path, main.darq.ChildStatus(
+        7, main.darq.ExitReason.EXITED, 1, "Traceback (most recent call last):\nImportError: no jedi\n"))
+    hotkey(terminal, main.XK_s)
+    [(job, done)] = running
+    done(job(), None)
+    assert terminal.notice.message.text() == "Python REPL failed: ImportError: no jedi"
+
+
+def test_without_the_repl_sys_s_says_so(terminal, tmp_path):
+    terminal.root = tmp_path
+    unlock(terminal)
+    hotkey(terminal, main.XK_s)
+    assert terminal.notice.message.text() == "The REPL isn't installed"
+
+
 def test_a_tool_that_cant_be_started_says_so(terminal, tmp_path):
     root = installed(tmp_path, ("reindex", "Reindex", ""))
     tools_at(terminal, root, None)

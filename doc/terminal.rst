@@ -55,7 +55,8 @@ run `python`), and the tree on `PYTHONPATH` (for the p-kernel's own
 The Terminal is started at boot, unless `DARQ_TERMINAL=0` is set: then
 there's no user interface, which is for tests.  Everything's done with
 its hotkeys: New (*Sys-n*), History (*Sys-h*), Search (*Sys-space*),
-Tools (*Sys-t*), and shutting down or rebooting (*Sys-b*).
+Tools (*Sys-t*), the REPL (*Sys-s*), and shutting down or rebooting
+(*Sys-b*).
 
 First Edition had a development Terminal, ``tools/devterm``, an ordinary
 window with New, History, Search and Tools, written to try types and
@@ -470,8 +471,8 @@ The Terminal Service is responsible for providing several crucial
 functions of the user interface, each invoked by a hotkey (see
 :doc:`ux`).  *Sys-e* (Events) shows a "TBD" panel, for now: Events
 needs an events source.  The Search panel (*Sys-space*) shows the time
-and date: there's no clock elsewhere, and no status bar.  The REPL
-(*Sys-s*) is in Second Edition.
+and date: there's no clock elsewhere, and no status bar.  *Sys-s*
+opens the REPL, or focuses its window if it's open (see :doc:`repl`).
 
 Every item's shown by its name (``darq.ui.names``): its entity's label,
 or, if it has none, its kind and when it was made, such as *Text File,
@@ -506,7 +507,9 @@ Tools
 
 The tools panel, invoked with *Sys-t*, runs the installed tools: the
 programs under `tools/` with a `tool.json` manifest, their name and
-description, `{"name": ..., "description": ...}`, such as the
+description, `{"name": ..., "description": ...}`, and, for one whose
+finishing is said only if it fails, as the REPL's, ``"quiet": true``,
+such as the
 imports, Reindex, Give Items Entities, and Update DarqOS (see
 :doc:`distribution`) (``darq.ui.tools``).  Typing
 filters them, by name or description, the arrow keys move through

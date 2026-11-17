@@ -65,6 +65,7 @@ import darq.items
 import darq.ui.types
 from darq.ui import Services
 from darq.ui.launcher import Launcher
+from darq.ui.tools import find_tools
 
 from panels import (HistoryPanel, NewPanel, NoticePanel, Panel, PowerPanel, SearchPanel, SwitcherPanel, TbdPanel,
                     ToolsPanel)
@@ -86,6 +87,7 @@ XK_h = 0x68
 XK_i = 0x69
 XK_l = 0x6c
 XK_n = 0x6e
+XK_s = 0x73
 XK_t = 0x74
 XK_x = 0x78
 XK_Tab = 0xff09
@@ -93,6 +95,7 @@ XK_Tab = 0xff09
 # Hotkeys, with System and these modifiers, and the method each calls.
 HOTKEYS: dict[tuple[int, int], str] = {
     (XK_n, 0): "show_new",
+    (XK_s, 0): "show_repl",
     (XK_h, 0): "show_history",
     (XK_Tab, 0): "switch_forward",
     (XK_Tab, Modifier.SHIFT): "switch_back",
@@ -104,6 +107,11 @@ HOTKEYS: dict[tuple[int, int], str] = {
     (XK_i, 0): "show_item_info",
     (XK_t, 0): "show_tools",
 }
+
+# The REPL's tool, by its directory, and its windows' app_id (see
+# tools/repl).
+REPL_TOOL = "repl"
+REPL_APP_ID = "darq.repl"
 
 # Where the tools are, under DARQ_ROOT (see darq.ui.tools).
 DEFAULT_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
@@ -412,11 +420,34 @@ class Terminal:
     def show_tools(self):
         self.show_panel(self.tools)
 
+    def show_repl(self):
+        """Sys-s: focus the REPL's window, or, if it isn't running, start
+        it, as the Tools panel does: there's one session.  While it's
+        starting, it does nothing."""
+        window = next((w for w, app_id in self.app_ids.items() if app_id == REPL_APP_ID), 0)
+        if window:
+            self.hide_panels()
+            self.channel.send(RaiseWindow(window=window))
+            self.channel.send(FocusWindow(window=window))
+            return
+        tool = next((t for t in find_tools(self.root) if os.path.basename(t.path) == REPL_TOOL), None)
+        if tool is None:
+            self.say("The REPL isn't installed")
+            return
+        tools = self.tools.tools
+        if tool.name not in tools.running:
+            self.hide_panels()
+            tools.run(tool)
+
     def tool_finished(self, name: str, message: str):
         """A tool's finished: say how, in the Tools panel, or, if it's
         closed, as a tool that opens windows of its own closes it, a
-        notice; and tell those watching."""
+        notice, unless it's a quiet one that finished as it should; and
+        tell those watching."""
         self.tell(protocol.ToolFinished(name=name, outcome=message))
+        if message == f"{name} finished" and any(t.name == name and t.quiet for t in find_tools(self.root)):
+            logging.info(message)
+            return
         if self.tools.isVisible():
             self.tools.set_status(message)
         else:

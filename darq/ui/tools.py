@@ -37,25 +37,29 @@ RUNNING = "Running"
 @dataclasses.dataclass(frozen=True)
 class Tool:
     """An installed tool: its name, what it does, and its directory, which
-    is spawned to run it."""
+    is spawned to run it; and whether finishing is said only if it
+    fails, as for the REPL, which finishes when its window's closed."""
     name: str
     description: str
     path: str
+    quiet: bool = False
 
 
 def find_tools(root: pathlib.Path) -> list[Tool]:
     """Return the installed tools, by name: those under tools/ with a
-    tool.json manifest, {"name": ..., "description": ...}."""
+    tool.json manifest, {"name": ..., "description": ...}, and, if it's
+    to be said only if it fails, "quiet": true."""
     tools = []
     for manifest in sorted((root / "tools").glob("*/tool.json")):
         try:
             data = json.loads(manifest.read_text())
             name = str(data.get("name") or manifest.parent.name)
             description = str(data.get("description") or "")
+            quiet = data.get("quiet") is True
         except (OSError, ValueError, AttributeError) as e:
             logging.warning(f"Can't read {manifest}: {e}")
             continue
-        tools.append(Tool(name, description, str(manifest.parent)))
+        tools.append(Tool(name, description, str(manifest.parent), quiet))
     return sorted(tools, key=lambda t: t.name.casefold())
 
 

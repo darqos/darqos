@@ -33,8 +33,10 @@ def test_tools_are_found_by_their_manifests(tmp_path):
 
 
 def test_the_installed_tools_are_found():
-    names = [tool.name for tool in tools.find_tools(pathlib.Path(__file__).parent.parent)]
-    assert "Import vCards" in names and "Give Items Entities" in names
+    found = {tool.name: tool for tool in tools.find_tools(pathlib.Path(__file__).parent.parent)}
+    assert "Import vCards" in found and "Give Items Entities" in found
+    # The REPL says so only if it fails.
+    assert found["Python REPL"].quiet and not found["Reindex"].quiet
 
 
 @pytest.mark.parametrize("finished, said", [
