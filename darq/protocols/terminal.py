@@ -31,6 +31,7 @@ __all__ = [
     "FocusResponse",
     "ImportFileRequest",
     "ImportFileResponse",
+    "ItemFinished",
     "ListOutputsRequest",
     "ListOutputsResponse",
     "ListToolsRequest",
@@ -52,6 +53,8 @@ __all__ = [
     "OutputChanged",
     "OutputRemoved",
     "Rect",
+    "RunItemRequest",
+    "RunItemResponse",
     "RunToolRequest",
     "RunToolResponse",
     "SetGeometryRequest",
@@ -1232,6 +1235,78 @@ class RunToolRequest(Message):
         return
 
 
+class RunItemResponse(Message):
+    """Terminal.RunItem response."""
+
+    METHOD = 17
+    BODY_FORMAT = "<III"
+    BODY_START = 8
+    LENGTH = 20
+    DATA_START = 24
+
+    def __init__(self, txid: int = 0, status: Status = Status.OK, message: str = ''):
+        super().__init__(txid)
+        self.status = status
+        self.message = message
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           self.status,
+                           *out.string(self.message))
+        buf += b'\0' * 4
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.status = self.decode_enum(Status, bits[0])
+        self.message = inp.string(bits[1], bits[2])
+        return
+
+
+class RunItemRequest(Message):
+    """Terminal.RunItem request."""
+
+    METHOD = 17
+    RESPONSE = RunItemResponse
+    BODY_FORMAT = "<IIII"
+    BODY_START = 8
+    LENGTH = 24
+    DATA_START = 24
+
+    def __init__(self, txid: int = 0, item_id: str = '', source: str = ''):
+        super().__init__(txid)
+        self.item_id = item_id
+        self.source = source
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.item_id),
+                           *out.string(self.source))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.item_id = inp.string(bits[0], bits[1])
+        self.source = inp.string(bits[2], bits[3])
+        return
+
+
 class WindowAdded(Message):
     """Watcher.WindowAdded one-way message."""
 
@@ -1539,6 +1614,41 @@ class ToolFinished(Message):
         return
 
 
+class ItemFinished(Message):
+    """Watcher.ItemFinished one-way message."""
+
+    METHOD = 10
+    BODY_FORMAT = "<IIII"
+    BODY_START = 8
+    LENGTH = 24
+    DATA_START = 24
+
+    def __init__(self, txid: int = 0, item_id: str = '', outcome: str = ''):
+        super().__init__(txid)
+        self.item_id = item_id
+        self.outcome = outcome
+
+    def encode(self) -> tuple[bytes, list[int]]:
+        buf, handles = super().encode()
+        out = Encoder(self.DATA_START, handles)
+        buf += struct.pack(self.BODY_FORMAT,
+                           *out.string(self.item_id),
+                           *out.string(self.outcome))
+        buf += out.data
+        return buf, handles
+
+    def decode(self, buffer: bytes, handles: typing.Sequence[int] = ()):
+        super().decode(buffer, handles)
+        if len(buffer) < self.LENGTH:
+            raise MessageDecodingError("buffer too short for message")
+
+        bits = struct.unpack_from(self.BODY_FORMAT, buffer, self.BODY_START)
+        inp = Decoder(buffer, self.DATA_START, handles)
+        self.item_id = inp.string(bits[0], bits[1])
+        self.outcome = inp.string(bits[2], bits[3])
+        return
+
+
 ################################################################
 # Protocols
 ################################################################
@@ -1564,6 +1674,7 @@ class Terminal:
         14: OpenEntityRequest,
         15: ListToolsRequest,
         16: RunToolRequest,
+        17: RunItemRequest,
     }
 
     RESPONSES = {
@@ -1583,6 +1694,7 @@ class Terminal:
         14: OpenEntityResponse,
         15: ListToolsResponse,
         16: RunToolResponse,
+        17: RunItemResponse,
     }
 
     class Client(system.Client):
@@ -1659,6 +1771,10 @@ class Terminal:
             """Terminal.RunTool."""
             return self.call(RunToolRequest(name=name, source=source), RunToolResponse)
 
+        def run_item(self, item_id: str = '', source: str = '') -> RunItemResponse:
+            """Terminal.RunItem."""
+            return self.call(RunItemRequest(item_id=item_id, source=source), RunItemResponse)
+
     class Handler(system.Handler):
         """protocol Terminal: base class for a service's handler."""
 
@@ -1679,6 +1795,7 @@ class Terminal:
             14: (OpenEntityRequest, "open_entity"),
             15: (ListToolsRequest, "list_tools"),
             16: (RunToolRequest, "run_tool"),
+            17: (RunItemRequest, "run_item"),
         }
 
         def state(self, request: StateRequest, source: int) -> StateResponse | system.Deferred:
@@ -1765,6 +1882,12 @@ class Terminal:
             """Handle Terminal.RunTool."""
             raise NotImplementedError
 
+        def run_item(self,
+                     request: RunItemRequest,
+                     source: int) -> RunItemResponse | system.Deferred:
+            """Handle Terminal.RunItem."""
+            raise NotImplementedError
+
 
 class Watcher:
     """protocol Watcher: message classes by method number, and its Client and Handler."""
@@ -1779,6 +1902,7 @@ class Watcher:
         7: Locked,
         8: Unlocked,
         9: ToolFinished,
+        10: ItemFinished,
     }
 
     RESPONSES = {}
@@ -1822,6 +1946,10 @@ class Watcher:
             """Watcher.ToolFinished, one-way."""
             self.send(ToolFinished(name=name, outcome=outcome))
 
+        def item_finished(self, item_id: str = '', outcome: str = '') -> None:
+            """Watcher.ItemFinished, one-way."""
+            self.send(ItemFinished(item_id=item_id, outcome=outcome))
+
     class Handler(system.Handler):
         """protocol Watcher: base class for a service's handler."""
 
@@ -1835,6 +1963,7 @@ class Watcher:
             7: (Locked, "locked"),
             8: (Unlocked, "unlocked"),
             9: (ToolFinished, "tool_finished"),
+            10: (ItemFinished, "item_finished"),
         }
 
         def window_added(self, request: WindowAdded, source: int) -> None:
@@ -1871,4 +2000,8 @@ class Watcher:
 
         def tool_finished(self, request: ToolFinished, source: int) -> None:
             """Handle Watcher.ToolFinished, one-way."""
+            raise NotImplementedError
+
+        def item_finished(self, request: ItemFinished, source: int) -> None:
+            """Handle Watcher.ItemFinished, one-way."""
             raise NotImplementedError

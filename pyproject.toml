@@ -53,6 +53,7 @@ include = [
     "types/ebook/mobifile.py",
     "types/pdf/*.py",
     "types/data/*.py",
+    "types/python/*.py",
     "types/text/main.py",
     "tools/reindex/main.py",
     "tools/item-entities/main.py",
@@ -62,7 +63,7 @@ include = [
     "tools/wikidata-match/*.py",
     "tools/vcard-import/*.py",
     "tools/update/*.py",
-    "tools/repl/*.py",
+    "lenses/repl/*.py",
     "bench/*.py",
 ]
 line-length = 120
@@ -99,6 +100,9 @@ include = [
     "darq/language.py",
     "darq/terminal.py",
     "darq/repl.py",
+    "darq/packages.py",
+    "darq/vocabulary.py",
+    "darq/sessions.py",
     "darq/ui/dialogs.py",
     "darq/ui/sources.py",
     "darq/pcall.py",
@@ -133,6 +137,7 @@ include = [
     "types/ebook/mobifile.py",
     "types/pdf/*.py",
     "types/data/*.py",
+    "types/python/*.py",
     "types/text/main.py",
     "tools/reindex/main.py",
     "tools/item-entities/main.py",
@@ -142,7 +147,7 @@ include = [
     "tools/wikidata-match/*.py",
     "tools/vcard-import/*.py",
     "tools/update/*.py",
-    "tools/repl/*.py",
+    "lenses/repl/*.py",
     "bench/*.py",
     "tests",
 ]

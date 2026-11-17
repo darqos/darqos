@@ -23,6 +23,7 @@ darq.terminal \- ask the Terminal to do what the operator does
 .BI terminal.open_entity( window )
 .B terminal.tools()
 .BI terminal.run_tool( name )
+.BI terminal.run_item( item_id )
 .BI terminal.watch( handler ", " loop )
 .fi
 .SH DESCRIPTION
@@ -89,7 +90,8 @@ serves a
 .B Watcher
 handler on an event loop, and asks the Terminal to send it what
 happens: windows added, removed, changed and focused, outputs changed
-and removed, locking and unlocking, and tools finishing.
+and removed, locking and unlocking, and tools, and packages run,
+finishing.
 It's heard until the returned server's port is closed.
 .SH ERRORS
 Each function raises

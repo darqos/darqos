@@ -16,6 +16,7 @@ import pytest
 import darq
 import darq.book
 import darq.kb as model
+import darq.vocabulary
 import darq.message
 import darq.url
 from darq.protocols import kb as wire
@@ -133,7 +134,7 @@ def implementation(kb, ports, index):
     server = darq.Server()
     ports.server = server
     implementation.add(server, IMPLEMENTATION_PORT)
-    implementation.start()
+    darq.vocabulary.setup(kb)
     return implementation
 
 
@@ -263,7 +264,7 @@ def test_start_states_the_defaults_once(kb, implementation, kb_service):
     assert statement.references[0].snaks[0].value.get_id() == model.DARQOS
 
     writes = kb_service.store.writes
-    implementation.start()
+    darq.vocabulary.setup(kb)
     assert kb_service.store.writes == writes
 
 
@@ -277,7 +278,7 @@ def test_a_renamed_property_gets_its_new_label(kb, implementation, property_id, 
     entity = kb.get(property_id)
     entity.set_label(before)
     kb.put(entity)
-    implementation.start()
+    darq.vocabulary.setup(kb)
     assert kb.get(property_id).get_label() == after
 
 
@@ -285,7 +286,7 @@ def test_a_label_changed_by_hand_isnt_renamed(kb, implementation):
     entity = kb.get(darq.book.OLD_CONTENT)
     entity.set_label("mine")
     kb.put(entity)
-    implementation.start()
+    darq.vocabulary.setup(kb)
     assert kb.get(darq.book.OLD_CONTENT).get_label() == "mine"
 
 
@@ -727,7 +728,7 @@ def test_start_states_inverse_labels_once(kb, implementation, kb_service):
     statements = creator.get_statements(model.INVERSE_LABEL)
     assert len(statements) == 1
     revision = creator.revision
-    implementation.start()
+    darq.vocabulary.setup(kb)
     assert kb.get(darq.message.SENDER).revision == revision
 
 
@@ -946,12 +947,12 @@ def test_a_renamed_type_is_renamed_when_it_starts(kb, implementation):
     old.set_label("A unit")
     old.claim(model.DARQOS_TYPE, model.StringValue("darq.entity"))
     kb.put(old)
-    implementation.start()
+    darq.vocabulary.setup(kb)
     renamed = kb.get("old")
     assert [s.get_value().value for s in renamed.get_statements(model.DARQOS_TYPE)] == [model.THING_TYPE]
     assert implementation.kind_of(renamed) == model.THING_TYPE
     revision = renamed.revision
-    implementation.start()
+    darq.vocabulary.setup(kb)
     assert kb.get("old").revision == revision
 
 

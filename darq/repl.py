@@ -22,11 +22,13 @@ It uses no Qt."""
 import ast
 import builtins
 import codeop
+import importlib
 import inspect
 import io
 import linecache
 import pprint
 import re
+import symtable
 import textwrap
 import tokenize
 import traceback
@@ -40,7 +42,7 @@ import jedi
 
 # Control exports
 __all__ = ["Binding", "CLASS", "Engine", "FUNCTION", "MODULE", "PRELUDE", "PROPERTY", "Result", "Results", "SOURCE",
-           "Source", "Target", "VARIABLE", "kind_of", "rewrite"]
+           "Source", "Target", "VARIABLE", "Written", "kind_of", "needs", "rewrite"]
 
 # What the REPL is, as the source of what it makes, in History.
 SOURCE = "repl"
@@ -160,6 +162,15 @@ class Target:
 
 
 @dataclass
+class Written:
+    """A session's code, as a module; what's left out of it, by name, and
+    why; and the names written, in order."""
+    text: str
+    left_out: list[tuple[str, str]]
+    names: list[str]
+
+
+@dataclass
 class Binding:
     """A name in a container, as the tree shows it."""
     target: Target
@@ -257,6 +268,13 @@ class Engine:
         self.headers: dict[int, tuple[typing.Any, str]] = {}
         self.assignments: dict[tuple[int, str], str] = {}
 
+        # The session's imports, a statement for each name they bound, as
+        # "from os.path import join as j"; what the REPL provides, which
+        # isn't the session's own, by name; and the cells run, in order.
+        self.imports: dict[str, str] = {}
+        self.provided: dict[str, typing.Any] = {}
+        self.history: list[str] = []
+
     def start(self, prelude: str = PRELUDE) -> str:
         """Run the prelude in the namespace: the darq API.  Returns what
         to say of it."""
@@ -264,6 +282,7 @@ class Engine:
             exec(prelude, self.namespace)
         except Exception:
             return "The darq API couldn't be imported:\n" + traceback.format_exc()
+        self.provided.update((name, value) for name, value in self.namespace.items() if name not in HIDDEN)
         try:
             version = self.namespace["darq"].get_version().version
         except Exception as e:
@@ -281,8 +300,15 @@ class Engine:
             return True
         return code is not None
 
+    def provide(self, name: str, value: typing.Any):
+        """Give the session a name of the REPL's, such as its event loop,
+        which isn't saved with it."""
+        self.namespace[name] = value
+        self.provided[name] = value
+
     def run(self, source: str) -> Result:
         """Run a cell.  A final expression's value becomes its result."""
+        self.history.append(source)
         self.count += 1
         n = self.count
         filename = f"<cell {n}>"
@@ -343,7 +369,10 @@ class Engine:
                 if isinstance(node, ast.ClassDef):
                     self.headers[id(value)] = (value, class_header(lines, node))
                     self.record(value, node.body, text, filename, assignments)
-            elif assignments and isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            elif assignments and isinstance(node, (ast.Import, ast.ImportFrom)) and container is self.namespace:
+                for name, line in import_lines(node):
+                    self.imports[name] = line
+            elif assignments and isinstance(node, (ast.Assign, ast.AnnAssign)):
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                 for target in targets:
                     if isinstance(target, ast.Name):
@@ -661,6 +690,183 @@ class Engine:
         self.record(target.container, tree.body, source, filename, assignments=False)
         return "Rebuilt: what was made of the old class keeps it"
 
+    # Saving and loading a session
+
+    def write_session(self) -> "Written":
+        """Return the session's code, as a module: what each of its names
+        is bound to, as it can be written, in an order it can be run in,
+        imports first; and what's left out, and why: what can't be
+        written, and what needs it to be defined.  What the REPL gives
+        the session isn't written, unless it's been bound otherwise."""
+        names = [n for n in self.namespace if n not in HIDDEN and not (n.startswith("__") and n.endswith("__"))]
+        names = [n for n in names if not (n in self.provided and self.provided[n] is self.namespace[n])]
+        return self.write(names, "# A DarqOS REPL session.\n\n")
+
+    def extract(self, root: str) -> "Written":
+        """Return a module of a name, a function or class, usually, and of
+        everything of the session's it needs, whether as it's defined, or
+        once it's called, imports included: or, as what's left out, the
+        problems, which stop it being extracted, as what can't be written,
+        or isn't defined."""
+        problems: dict[str, str] = {}
+        closure: list[str] = []
+        queue = [root]
+        while queue:
+            name = queue.pop(0)
+            if name in closure or name in problems:
+                continue
+            if name == "_out":
+                problems["$n"] = "a result's used: assign it to a name"
+                continue
+            if name not in self.namespace:
+                if not hasattr(builtins, name):
+                    problems[name] = "it's used, but isn't defined"
+                continue
+            if name in self.provided and self.provided[name] is self.namespace[name] \
+                    and not inspect.ismodule(self.namespace[name]):
+                problems[name] = "it's the REPL's: it isn't the session's to extract"
+                continue
+            text, why = self.statement_for(name, self.namespace[name])
+            if text is None:
+                problems[name] = why
+                continue
+            closure.append(name)
+            try:
+                now, later = needs(text)
+            except SyntaxError:
+                now, later = set(), set()
+            queue.extend(sorted((now | later) - {name}))
+        if problems:
+            return Written("", sorted(problems.items()), [])
+        return self.write(closure, f"# {root}, extracted from a DarqOS REPL session.\n\n")
+
+    def write(self, names: list[str], head: str) -> "Written":
+        """Return a module of some names, as statement_for writes them, in
+        an order they can be run in, and what's left out of it."""
+        texts: dict[str, str] = {}
+        left_out: dict[str, str] = {}
+        for name in names:
+            text, why = self.statement_for(name, self.namespace[name])
+            if text is None:
+                left_out[name] = why
+            else:
+                texts[name] = text
+
+        # What each needs as it's run, of what's written.
+        now: dict[str, set[str]] = {}
+        for name, text in texts.items():
+            try:
+                needed, _ = needs(text)
+            except SyntaxError:
+                needed = set()
+            now[name] = needed - {name}
+        while True:
+            dropped = {n: f"it needs {', '.join(sorted(now[n] & set(left_out)))}, which is left out"
+                       for n in texts if now[n] & set(left_out)}
+            if not dropped:
+                break
+            left_out.update(dropped)
+            for n in dropped:
+                del texts[n]
+
+        # Imports first, then each once what it needs is: in the order
+        # they were bound, otherwise.
+        order = [n for n in self.namespace if n in texts]
+        position = {n: i for i, n in enumerate(order)}
+        imports = [n for n in order if texts[n].startswith(("import ", "from "))]
+        ordered: list[str] = list(imports)
+        done = set(ordered)
+        waiting = [n for n in order if n not in done]
+        while waiting:
+            ready = next((n for n in waiting if not (now[n] & set(texts)) - done), waiting[0])
+            ordered.append(ready)
+            done.add(ready)
+            waiting.remove(ready)
+        assert len(ordered) == len(position)
+        seen: set[str] = set()
+        statements = []
+        for name in ordered:
+            if texts[name] not in seen:
+                seen.add(texts[name])
+                statements.append(texts[name].rstrip() + "\n")
+        body = "".join(s for s in statements if s.startswith(("import ", "from ")))
+        others = "\n\n".join(s for s in statements if not s.startswith(("import ", "from ")))
+        return Written(head + body + ("\n\n" if body and others else "") + others, sorted(left_out.items()),
+                       ordered)
+
+    def statement_for(self, name: str, value: typing.Any) -> tuple[str | None, str]:
+        """Return a statement that binds a name to its value, or why
+        there's none."""
+        defined = self.definition(value)
+        if defined is not None:
+            own = getattr(unwrapped(value), "__name__", name)
+            if own == name:
+                return defined, ""
+            if self.namespace.get(own) is value:
+                return f"{name} = {own}", ""
+            return None, f"it's {own}, which isn't bound by that name"
+        if name in self.imports:
+            return self.imports[name], ""
+        if inspect.ismodule(value):
+            module = value.__name__
+            return (f"import {module}" if module == name else f"import {module} as {name}"), ""
+        if is_literal(value):
+            return f"{name} = {pprint.pformat(value, width=100)}", ""
+        assigned = self.assignments.get((id(self.namespace), name))
+        if assigned is not None:
+            return assigned, ""
+        imported = library_import(value)
+        if imported is not None:
+            qualified = getattr(value, "__qualname__", "")
+            return imported + (f" as {name}" if qualified != name else ""), ""
+        return None, f"its value, a {type(value).__name__}, can't be written"
+
+    def definition(self, value: typing.Any) -> str | None:
+        """Return the source of a function or class defined in a cell, as
+        it is now, or None."""
+        kind = kind_of(value)
+        if kind == CLASS:
+            found = self.headers.get(id(value))
+            if found is not None and found[0] is value:
+                return self.class_source(value, found[1])[0]
+            return None
+        if kind in (FUNCTION, PROPERTY):
+            return self.recorded(value)
+        return None
+
+    def load_session(self, text: str) -> Result:
+        """Run a session's code into the namespace, a statement at a time,
+        so one that fails doesn't stop the rest, recording what it
+        defines, as a cell's.  Its failures are its error."""
+        self.count += 1
+        n = self.count
+        filename = f"<cell {n}>"
+        linecache.cache[filename] = (len(text), None, text.splitlines(keepends=True), filename)
+        result = Result(n, edited="session")
+        stdout, stderr = io.StringIO(), io.StringIO()
+        failures = []
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            try:
+                tree = ast.parse(text, filename, "exec")
+            except SyntaxError as e:
+                result.error = "".join(traceback.format_exception_only(type(e), e))
+                return result
+            done = []
+            for node in tree.body:
+                try:
+                    exec(compile(ast.Module([node], []), filename, "exec"), self.namespace)
+                except BaseException as e:
+                    failures.append(f"line {node.lineno}: {type(e).__name__}: {e}")
+                else:
+                    done.append(node)
+            self.record(self.namespace, done, text, filename, assignments=True)
+        result.stdout = stdout.getvalue()
+        result.stderr = stderr.getvalue()
+        result.note = f"Loaded {len(done)} of {len(tree.body)} statements"
+        if failures:
+            result.error = "\n".join(failures) + "\n"
+        return result
+
     def complete(self, before: str) -> tuple[list[str], int]:
         """Complete at the end of ``before``, the text before the cursor.
 
@@ -757,3 +963,71 @@ def update_function(old: types.FunctionType, new: types.FunctionType):
     old.__doc__ = new.__doc__
     old.__annotations__ = new.__annotations__
     old.__dict__.update(new.__dict__)
+
+
+def import_lines(node: ast.Import | ast.ImportFrom) -> list[tuple[str, str]]:
+    """Return an import statement's names, and for each, an import of it
+    alone: "import os.path" binds os, "from x import a as b" binds b."""
+    lines = []
+    for alias in node.names:
+        if isinstance(node, ast.ImportFrom):
+            if alias.name == "*":
+                continue
+            line = f"from {'.' * node.level}{node.module or ''} import {alias.name}"
+            name = alias.asname or alias.name
+        else:
+            line = f"import {alias.name}"
+            name = alias.asname or alias.name.partition(".")[0]
+        if alias.asname:
+            line += f" as {alias.asname}"
+        lines.append((name, line))
+    return lines
+
+
+# What symtable calls a comprehension's scope: run where it's written.
+COMPREHENSIONS = {"listcomp", "setcomp", "dictcomp", "genexpr", "<listcomp>", "<setcomp>", "<dictcomp>",
+                  "<genexpr>"}
+
+
+def needs(source: str) -> tuple[set[str], set[str]]:
+    """Return the global names a statement uses: those it needs as it's
+    run, as a class's body, a decorator, a default value, or an
+    assignment's value; and those it needs only once what it defines is
+    called, in a function's body.  Attributes aren't names: in
+    terminal.windows(), it needs terminal."""
+    now: set[str] = set()
+    later: set[str] = set()
+
+    def walk(table: symtable.SymbolTable, immediate: bool):
+        defined = {s.get_name() for s in table.get_symbols() if s.is_assigned() or s.is_imported()} \
+            if table.get_type() == "module" else set()
+        for symbol in table.get_symbols():
+            name = symbol.get_name()
+            if not symbol.is_referenced() or name in defined:
+                continue
+            is_global = symbol.is_global() if table.get_type() != "module" else True
+            if is_global and not (table.get_type() != "module" and symbol.is_assigned() and symbol.is_local()):
+                (now if immediate else later).add(name)
+        for child in table.get_children():
+            kind = child.get_type()
+            runs_now = immediate and (kind == "class" or child.get_name() in COMPREHENSIONS)
+            walk(child, runs_now)
+
+    walk(symtable.symtable(source, "<session>", "exec"), True)
+    return now, later - now
+
+
+def library_import(value: typing.Any) -> str | None:
+    """Return an import of something from a library, by its module and
+    name, if that imports it back, or None."""
+    module = getattr(value, "__module__", None)
+    qualified = getattr(value, "__qualname__", None)
+    if not isinstance(module, str) or not isinstance(qualified, str) or module == "__main__" \
+            or "." in qualified or "<" in qualified:
+        return None
+    try:
+        if getattr(importlib.import_module(module), qualified, None) is not value:
+            return None
+    except Exception:
+        return None
+    return f"from {module} import {qualified}"

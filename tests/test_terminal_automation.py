@@ -301,6 +301,10 @@ def test_the_client(monkeypatch):
     assert e.value.status == Status.NOT_FOUND
     with pytest.raises(client.TerminalError, match="create a public.text: FAILED: No lens"):
         client.create_item("public.text")
+    fake.responses["run_item"] = protocol.RunItemResponse(status=Status.RUNNING)
+    with pytest.raises(client.TerminalError, match="RUNNING"):
+        client.run_item(DOC)
+    assert fake.asked[-1] == ("run_item", {"item_id": DOC, "source": "tidy"})
 
 
 
@@ -361,3 +365,15 @@ def test_a_script_asks_the_terminal(live_pkernel, monkeypatch, tmp_path):  # noq
         for path in runtime.iterdir():
             path.unlink()
         runtime.rmdir()
+
+
+
+def test_running_a_package(service, terminal):  # noqa: F811
+    program = "darq.python:" + "7" * 32
+    terminal.launcher.background = lambda job, done: None
+    assert service.run_item(protocol.RunItemRequest(item_id=program, source="repl"), 0).status == Status.OK
+    assert service.run_item(protocol.RunItemRequest(item_id=program), 0).status == Status.RUNNING
+    refused = service.run_item(protocol.RunItemRequest(item_id=DOC), 0)
+    assert (refused.status, refused.message) == (Status.FAILED, "Only a Python package can be run")
+    terminal.lock()
+    assert service.run_item(protocol.RunItemRequest(item_id=program), 0).status == Status.LOCKED

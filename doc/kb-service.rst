@@ -223,11 +223,23 @@ Protocol
 The KB is a service, registered as ``darq.kb``, with a DIDL protocol
 in ``lib/didl/kb.didl``.  It's started at boot, and keeps
 ``kb.sqlite``: while it runs, it's the database's only writer, so what
-it's read stays current.  It starts with whatever's in the database,
-and loads no base vocabulary: each type implementation finds, or
-creates, the entities it needs, which have the same identifiers
-whichever creates them, as Wikidata identifiers, or ones derived from
-keys.
+it's read stays current.
+
+When it starts, before it registers ``darq.kb``, it sets up the
+*vocabulary* DarqOS's code relies on (``darq.vocabulary``), through a
+client of its own, in its process, so no process ever sees the KB
+without it: an item's entity, made as the item is, needs it.  It's
+the properties and items the services and type implementations use,
+about 150, from the library modules that define them (``darq.items``,
+``darq.message``, ``darq.url``, ``darq.book``, ``darq.wikidata``,
+``darq.sessions``, the REPL's settings), and
+DarqOS's own: what's missing is created (``darq.kb.KB.ensure``); what's
+been relabelled, or retyped, in a new release is migrated; and the
+default instance types, and properties' inverse labels, are stated
+(``darq.kb.KB.state``).  Done again, it changes nothing.  The imports'
+own vocabularies, as an address book's properties, are theirs: each
+ensures its own as it runs.  The vocabulary has the same identifiers on
+every system, as Wikidata identifiers, or fixed UUIDs.
 
 Entities
 ~~~~~~~~
@@ -653,9 +665,8 @@ types, is a client of the KB service.  It's separate from the KB
 service: the Type service spawns implementations, from a directory,
 while the KB is a system service that owns its database.  The Type
 service runs one process for all the types a directory implements
-(see :doc:`types`).  When it starts, it finds, or creates, the
-properties and items it needs (see ``darq.kb.KB.ensure``), and states
-the default instance types (see ``darq.kb.KB.state``).
+(see :doc:`types`).  The properties and items it needs are the KB's
+vocabulary, which the KB service sets up as it starts (see above).
 
 * ``Create(type_id)`` creates an entity of the type's kind, an
   instance of its class (a ``darq.person`` is an instance of human),

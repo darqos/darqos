@@ -45,6 +45,7 @@ __all__ = [
     "open_item",
     "open_url",
     "outputs",
+    "run_item",
     "run_tool",
     "set_geometry",
     "source",
@@ -178,6 +179,12 @@ def tools() -> list[Tool]:
 def run_tool(name: str):
     """Run a tool: watchers hear when it's finished."""
     _check(f"run {name}", _client().run_tool(name=name, source=source))
+
+
+def run_item(item_id: str):
+    """Run a Python package's item, as a program: watchers hear when it's
+    finished."""
+    _check(f"run {item_id}", _client().run_item(item_id=item_id, source=source))
 
 
 def watch(handler: Watcher.Handler, loop: EventLoopInterface) -> Server:

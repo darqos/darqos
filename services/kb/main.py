@@ -17,6 +17,8 @@ import typing
 
 import darq
 import darq.kb as model
+import darq.vocabulary
+from darq.protocols import kb as wire
 from darq.protocols.kb import (
     KB,
     Changed,
@@ -322,14 +324,40 @@ class KBService(KB.Handler):
         darq.close_port(handle)
 
 
+class LocalClient(wire.KB.Client):
+    """A client of the service, in its own process: its handler's called
+    directly, as a client's request would be."""
+
+    def __init__(self, service: KBService):
+        super().__init__(0)
+        self.service = service
+
+    def call(self, request, response_class):
+        request.txid = 1
+        data, handles = request.encode()
+        reply = self.service.dispatch(data, 0, tuple(handles))
+        assert reply is not None, "only requests with replies are made"
+        data, handles = reply.encode()
+        response = response_class()
+        response.decode(data, handles)
+        return response
+
+
+def set_up(service: KBService):
+    """Set up the vocabulary DarqOS's code relies on, and migrate what's
+    been renamed (see darq.vocabulary), before any client can see it."""
+    darq.vocabulary.setup(model.KB(LocalClient(service)))
+
+
 def darq_main():
     run_dir = os.environ.get("DARQ_RUN", DEFAULT_RUN_DIR)
     os.makedirs(run_dir, exist_ok=True)
     service = KBService(os.path.join(run_dir, DATABASE))
 
     port = darq.open_port()
-    darq.register_name("darq.kb", port)
     server = darq.Server()
     service.add(server, port)
+    set_up(service)
+    darq.register_name("darq.kb", port)
     logging.info(f"Serving darq.kb on port {port}")
     server.run()

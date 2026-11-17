@@ -1,0 +1,12 @@
+{
+  "types": [
+    {
+      "id": "darq.python",
+      "name": "Python Package",
+      "description": "Python code, as a package of modules, which can be imported, and run: a REPL session, or what's extracted from one.",
+      "conforms_to": ["public.item"],
+      "mime_types": ["application/vnd.darq.python+zip"],
+      "implemented": true
+    }
+  ]
+}

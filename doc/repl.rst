@@ -161,10 +161,15 @@ The First Cut
 Second Edition's REPL is a first cut, from the prototype: Python, a
 cell at a time, in a window, as a DarqOS process, so its cells can use
 the darq API, with a tree of what's bound, which can be browsed, and
-edited (see The Namespace Tree, below).  *Sys-s* opens it, or focuses its window if it's open:
-there's one session, which ends when its window's closed.  It doesn't
-record History, or index anything; it can't debug, or save its
-session.
+edited (see The Namespace Tree, below).
+
+A session is an item, a Python package (``darq.python``, see
+:doc:`python-type`), and the REPL is its lens: each session's used by a
+REPL of its own, in its own process, with its own namespace.  *Sys-s*
+opens the default session, or, if its REPL's open, focuses its window;
+others are opened from History or Search.  A session's saved when it's
+asked to be, and opened again with what was saved (see Saving a
+Session, below).  It doesn't index anything; it can't debug.
 
 * ``darq.repl`` is its engine, which uses no Qt: a namespace, and
   numbered cells run in it.  A cell's last expression is its result,
@@ -172,11 +177,18 @@ session.
   and comments), as ``_`` is the last.  What it prints is captured, and
   a traceback shows only the cell's frames.  Completion is jedi's,
   against the live namespace.
-* ``tools/repl`` is its window, a tool, *Python REPL*, so it's started as
-  the Terminal's child, as tools are, and only one runs at a time.  Its
-  manifest says it's ``quiet``: its finishing isn't said, unless it
-  failed.  Its windows' Wayland app_id is ``darq.repl``, by which
-  *Sys-s* finds it.
+* ``lenses/repl`` is its window, the lens for ``darq.python`` items (its
+  ``lens.json``), started by the launcher, as lenses are, for a ``Use``:
+  it's titled with its session's name, and says, ``Shown``, which session
+  it's using, as lenses do.  It uses one: another ``Use`` is ``BUSY``.
+  It records the session viewed, from ``repl``, as it's shown.
+* The default session is recorded in the Knowledge Base
+  (``darq.sessions``): the *REPL settings* entity's *default session* is
+  its entity, so there's only ever one, and it's found again whatever
+  it's renamed to.  If there's none, or it's gone, *Sys-s* makes one,
+  named *session*, and makes it the default.  *Sys-s* asks each lens's
+  window what it's showing, to find the session's, off the Terminal's
+  thread, and while it's starting the REPL, it does nothing.
 * A transcript, above, and an editor, below, highlighted by Pygments
   in the DarqOS palette.  Enter runs a complete cell, or else starts a
   new line, indented; Shift+Enter always starts a new line, and
@@ -248,4 +260,71 @@ What's edited and not saved is a *draft*, kept while the session lasts:
 going elsewhere, and coming back, brings it back.  A name with a draft
 is marked with a dot, and the drafts are listed under *Drafts*, at the
 top of the tree, even if what they're of has gone.  A save ends it.
+
+Saving a Session
+~~~~~~~~~~~~~~~~
+
+Ctrl+Shift+S, or *Save session* on the tree's context menu, saves the
+session to its item: its code, as a module, ``main.py``, and the cells
+that were run, as ``history.json``, a list of their sources.  The
+package's other files are kept.  It's saved with the generation it was
+read, or last saved, as: if it's been saved elsewhere since, as by
+another REPL using it, it asks before saving over it.
+
+The module is what each of the session's names is bound to, as it can
+be written (``darq.repl.Engine.write_session``):
+
+* a function's, or a class's, source, as it's been run, or saved, since:
+  a class's header and its members as they are now;
+* another name for one, as ``alias = helper``;
+* an import, as the cell wrote it, one for each name it bound, or, for a
+  module, or a library's function or class, that it's imported back by;
+* a variable whose value's a literal, as its value is now: so a list a
+  cell appended to is saved with what was appended;
+* any other variable, by the assignment that last bound it, run again:
+  an object's re-made as it was, not as it's been changed since.
+
+What can't be written, as a value with no assignment, nor literal, is
+left out, and so is what needs it to be defined; the transcript says
+which, and why.  What the REPL gives the session, ``darq``,
+``terminal`` and ``loop``, isn't saved, unless it's been bound to
+something else.  It's written in an order it can be run in: imports
+first, then each name once what it needs as it's run is (as a class's
+body, a decorator, a default value, or an assignment's value), found by
+``symtable``; what's only needed once a function's called doesn't
+order it.
+
+Opened again, the session's ``main.py`` is run into its namespace, a
+statement at a time, so one that fails, said in the transcript,
+doesn't stop the rest, and what it defines is recorded, to be edited,
+as a cell's is; its history's what Up and Down step through.  Closing
+a session with what's been run since it was saved asks first.
+
+Extracting a Package
+~~~~~~~~~~~~~~~~~~~~
+
+*Extract package…*, on a function's, or class's, context menu in the
+tree, takes it out of the session, with everything of the session's it
+needs, and nothing else, into a package item of its own
+(``darq.repl.Engine.extract``): usually a program's ``darq_main``, to be
+imported, or run, by itself.
+
+What it needs is found from its source, and what's needed by that, and
+so on, whether it's needed as it's defined, or only once it's called,
+and written as a session is (see Saving a Session, above), as the
+package's ``main.py``, in an order it can be run in.  The REPL's
+``darq`` and ``terminal`` are imports, as they'd be anywhere.  Unlike
+saving, nothing's left out: if anything it needs can't be written, or
+isn't defined, or is a result, ``$3``, or is the REPL's own, as
+``loop``, it's not extracted, and the transcript says what, and why.
+What's found by name as the code runs, as with ``getattr`` and a
+string, or ``globals()``, isn't seen.
+
+It asks for the package's name, as it's to be imported, which must be
+one Python can import, not a module's already, as ``json``, and no
+other package's.  What a function, or class, was last extracted to is
+kept with the session (``extracts.json``): extracting it again asks
+whether to update that one, which is renamed, if it's given another
+name, or to make another.  An update replaces the package, asking first
+if it's been changed since.
 

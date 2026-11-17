@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import platform
+import re
 import signal
 import socket
 import subprocess
@@ -71,6 +72,11 @@ BOOT_VECTOR_FILE = "bootvec.json"
 
 # Loader for Python executables, installed alongside the p-kernel.
 PYTHON_IMAGE_LOADER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pyloader")
+
+# A program kept as a Python package item, darq.python, rather than in a
+# directory: its main module's read from Storage, by pyloader (see
+# darq.packages, and doc/python-type.rst).
+PACKAGE_PROGRAM = re.compile(r"darq\.python:[0-9a-f]{32}")
 
 # Root of the installed files (see doc/distribution.rst): the p-kernel
 # is in its kernel directory.
@@ -1322,7 +1328,9 @@ class PseudoKernel(SocketListener, TimerListener):
                 return
             bootstrap = entry.port
 
-        if not os.path.isfile(os.path.join(exec_path, "main.py")):
+        # A program's a directory, with a main.py, or a Python package's
+        # item, which pyloader reads, as the p-kernel can't.
+        if not PACKAGE_PROGRAM.fullmatch(exec_path) and not os.path.isfile(os.path.join(exec_path, "main.py")):
             logging.warning(f"{process.name()} spawn_process({exec_path}) "
                             f"failed: no main.py")
             self.send_spawn_process_response(process, request.request_id, 0,

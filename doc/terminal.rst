@@ -472,7 +472,8 @@ functions of the user interface, each invoked by a hotkey (see
 :doc:`ux`).  *Sys-e* (Events) shows a "TBD" panel, for now: Events
 needs an events source.  The Search panel (*Sys-space*) shows the time
 and date: there's no clock elsewhere, and no status bar.  *Sys-s*
-opens the REPL, or focuses its window if it's open (see :doc:`repl`).
+opens the default REPL session, or focuses its REPL's window if it's
+open (see :doc:`repl`).
 
 Every item's shown by its name (``darq.ui.names``): its entity's label,
 or, if it has none, its kind and when it was made, such as *Text File,
@@ -508,7 +509,8 @@ Tools
 The tools panel, invoked with *Sys-t*, runs the installed tools: the
 programs under `tools/` with a `tool.json` manifest, their name and
 description, `{"name": ..., "description": ...}`, and, for one whose
-finishing is said only if it fails, as the REPL's, ``"quiet": true``,
+finishing is said only if it fails, as for one that closes its own
+window when it's done, ``"quiet": true``,
 such as the
 imports, Reindex, Give Items Entities, and Update DarqOS (see
 :doc:`distribution`) (``darq.ui.tools``).  Typing
@@ -532,7 +534,8 @@ two times (the last hour, when it's opened), filtered by type, event,
 and source, newest first: each with its item's kind and name, read from
 the Knowledge Base a page at a time, and its note, such as a file's
 path, or the page a reader had got to (see :doc:`history`).  Choosing one (Enter, or double-click)
-starts a lens for its item.
+starts a lens for its item; Ctrl+Enter runs it, if it's a Python
+package, as a program (see Running a Package, below).
 
 Search
 ~~~~~~
@@ -553,7 +556,8 @@ result shows its item's type, a snippet of its text around what
 matched, and when it was last updated: the time, if it was today, or
 else the date.  The arrow keys move through the results, from the
 search field, and Enter, or a double-click, starts a lens for the
-selected one's item, recording `opened`, and closes the panel.  It
+selected one's item, recording `opened`, and closes the panel;
+Ctrl+Enter runs it, if it's a Python package, as a program.  It
 opens empty, with nothing found until something's typed.  Above it is
 the clock: the time, and the date, updated each second while it's
 shown.  A URL is fetched, kept, and shown, rather than searched for
@@ -675,6 +679,20 @@ it might be a more traditional library-based approach.
 
 
 
+Running a Package
+~~~~~~~~~~~~~~~~~
+
+A Python package's item (``darq.python``, see :doc:`python-type`), such
+as one extracted from a REPL session, is run as a program by Ctrl+Enter
+in Search or History, rather than used in its lens, which Enter does:
+running code's something the operator means to do.  It's spawned, by
+its item, as the Terminal's child, as a tool is (``darq.launch.run_item``):
+the p-kernel passes its item to ``pyloader``, which reads its
+``main.py`` from Storage, and calls its ``darq_main()``.  How it finished
+is said in a notice, as a tool's is, and to those watching; it isn't
+started again while it's running.  Anything else is said to be no
+package.
+
 Automation
 ----------
 
@@ -724,7 +742,8 @@ Request                         Does
                                 (protocol ``Watcher``): windows added,
                                 removed, changed and focused, outputs
                                 changed and removed, locking and
-                                unlocking, and tools finishing.
+                                unlocking, and tools, and packages
+                                run, finishing.
 ``OpenItem``                    Opens an item, in its lens, or another
                                 type's, such as ``darq.thing``, for its
                                 entity.
@@ -737,6 +756,8 @@ Request                         Does
                                 is showing, as *Sys-i*.
 ``ListTools``, ``RunTool``      The tools, and running one, as the Tools
                                 panel does.
+``RunItem``                     Runs a Python package, as a program, as
+                                Ctrl+Enter does.
 ==============================  =========================================
 
 * Each request that makes or opens something names its source, such as

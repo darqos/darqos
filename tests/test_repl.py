@@ -15,7 +15,7 @@ from darq.repl import Engine, rewrite
 
 from test_pkernel import live_pkernel, pkernel, run_kernel_until, write_app  # noqa: F401
 
-TOOL_PATH = pathlib.Path(__file__).parent.parent / "tools" / "repl"
+TOOL_PATH = pathlib.Path(__file__).parent.parent / "lenses" / "repl"
 
 
 def load():
@@ -433,6 +433,7 @@ def repl(qt_app):
     engine.start("x = 1")
     shown = window.Window(engine)
     yield shown
+    shown.closing_quietly = True
     shown.close()
 
 
@@ -566,7 +567,7 @@ def test_a_classs_actions(repl):
     ran_in(repl, "class Shape:\n    sides = 3\nshape = Shape()")
     shape = tree_item(repl, "Session", "Shape").data(0, window.TARGET_ROLE)
     actions = dict(repl.actions_for(shape))
-    assert set(actions) == {"Add member", "Rebuild", "View whole class", "Delete"}
+    assert set(actions) == {"Add member", "Rebuild", "View whole class", "Extract package…", "Delete"}
 
     actions["View whole class"]()
     assert repl.editor.isReadOnly() and "sides = 3" in repl.editor.toPlainText()
@@ -581,6 +582,339 @@ def test_a_classs_actions(repl):
     dict(repl.actions_for(sides))["Delete"]()
     assert "del Shape.sides" in repl.transcript.toPlainText()
     assert not hasattr(repl.engine.namespace["Shape"], "sides")
+
+
+################################################################
+# Saving and loading a session
+################################################################
+
+SESSION_CELLS = [
+    "import json\nfrom os.path import join as pj",
+    "DEFAULT_SIDES = 4",
+    "def helper(x):\n    return later(x) * 2",
+    "class Shape:\n    sides = DEFAULT_SIDES\n    def area(self):\n        return helper(self.sides)",
+    "items = [1, 2, 3]",
+    "items.append(4)",
+    "shape = Shape()",
+    "def later(x):\n    return x + 1",
+    "alias = helper",
+]
+
+
+def test_needs():
+    from darq.repl import needs
+    assert needs("@deco\ndef f(x=default):\n    return g(x) + h\n") == ({"deco", "default"}, {"g", "h"})
+    assert needs("class A(Base):\n    k = konst\n    def m(self):\n        return other.thing()\n") == (
+        {"Base", "konst"}, {"other"})
+    assert needs("x = [y for y in items if pred(y)]") == ({"items", "pred"}, set())
+    assert needs("total = terminal.windows()") == ({"terminal"}, set())
+
+
+def test_a_session_is_written_and_loaded_again():
+    e = ran(*SESSION_CELLS)
+    e.provide("loop", object())
+    written = e.write_session()
+    assert written.left_out == []
+    text = written.text
+    assert text.startswith("# A DarqOS REPL session.\n\nimport json\nfrom os.path import join as pj\n")
+    # Literals as they are now; a class after what its body needs.
+    assert "items = [1, 2, 3, 4]" in text
+    assert text.index("DEFAULT_SIDES = 4") < text.index("class Shape")
+    assert "alias = helper" in text and "loop" not in text and "terminal" not in text
+
+    again = Engine()
+    loaded = again.load_session(text)
+    assert loaded.error is None and loaded.note == "Loaded 9 of 9 statements"
+    assert again.run("shape.area(), items, alias(1), pj('a', 'b')").value == (10, [1, 2, 3, 4], 4, "a/b")
+    # What it defined is editable, as a cell's.
+    assert again.source_of(target(again, "helper")).editable
+
+
+def test_what_cant_be_written_is_left_out_with_what_needs_it():
+    e = ran("import threading\nglobals()['made'] = object()", "def make():\n    return made",
+            "kept = make() if False else 1", "box = [made]")
+    written = e.write_session()
+    assert dict(written.left_out) == {"made": "its value, a object, can't be written",
+                                      "box": "it needs made, which is left out"}
+    assert "def make()" in written.text and "threading" in written.text
+
+
+def test_whats_provided_isnt_written_unless_its_rebound():
+    e = Engine()
+    e.start()
+    e.provide("loop", object())
+    assert e.write_session().names == []
+    e.run("loop = 3")
+    assert e.write_session().names == ["loop"]
+
+
+def test_a_statement_that_fails_doesnt_stop_the_rest():
+    e = Engine()
+    result = e.load_session("a = 1\nb = undefined\nc = 3\n")
+    assert result.note == "Loaded 2 of 3 statements"
+    assert result.error == "line 2: NameError: name 'undefined' is not defined\n"
+    assert e.run("a + c").value == 4
+
+
+def test_cells_are_its_history():
+    e = ran("x = 1", "x + 1")
+    assert e.history == ["x = 1", "x + 1"]
+
+
+class SessionItem:
+    """A session's item: its package, and generation, kept as its type
+    keeps them."""
+
+    def __init__(self, package: bytes = b"", generation: int = 1):
+        import darq.packages
+        self.package = package or darq.packages.make({})
+        self.generation = generation
+        self.puts: list = []
+        self.closed = False
+        self.viewed_by: list[str] = []
+
+    def get(self):
+        import types
+        return types.SimpleNamespace(package=self.package, generation=self.generation)
+
+    def put(self, expected=0, package=b"", source=""):
+        import types
+        from darq.protocols.python import Status
+        self.puts.append(source)
+        if expected != self.generation:
+            return types.SimpleNamespace(status=Status.CONFLICT, generation=self.generation, message="")
+        self.package, self.generation = package, self.generation + 1
+        return types.SimpleNamespace(status=Status.OK, generation=self.generation, message="")
+
+    def viewed(self, source="", note=""):
+        self.viewed_by.append(source)
+
+    def close(self):
+        self.closed = True
+
+
+def test_a_session_is_opened_and_saved(repl):
+    import json
+    import darq.packages
+    saved = darq.packages.make({"main.py": "def twice(n):\n    return 2 * n\n\nseen = [1]\n",
+                                "history.json": json.dumps(["def twice(n): ...", "seen = [1]"]),
+                                "notes.txt": b"kept"})
+    item = SessionItem(saved, 3)
+    repl.attach(item, item.package, item.generation)
+    assert repl.engine.namespace["twice"](4) == 8
+    assert repl.editor.history == ["def twice(n): ...", "seen = [1]"]
+    assert "Loaded 2 of 2 statements, from 2 cells run" in repl.transcript.toPlainText()
+    assert not repl.unsaved
+
+    ran_in(repl, "seen.append(2)")
+    assert repl.unsaved
+    repl.save_session()
+    assert item.puts == ["repl"] and repl.generation == 4 and not repl.unsaved
+    files = darq.packages.contents(item.package)
+    assert "seen = [1, 2]" in files["main.py"].decode() and files["notes.txt"] == b"kept"
+    assert json.loads(files["history.json"])[-1] == "seen.append(2)"
+    assert "Saved the session: " in repl.transcript.toPlainText()
+
+
+def test_whats_left_out_is_said(repl):
+    item = SessionItem()
+    repl.attach(item, item.package, item.generation)
+    ran_in(repl, "globals()['thing'] = object()")
+    repl.save_session()
+    assert "left out: thing, as its value, a object, can't be written" in repl.transcript.toPlainText()
+
+
+def test_a_session_saved_elsewhere_is_saved_over_only_if_asked(repl):
+    item = SessionItem()
+    repl.attach(item, item.package, item.generation)
+    item.generation = 7
+    asked: list[str] = []
+    repl.confirm = lambda question: asked.append(question) or False
+    ran_in(repl, "x = 1")
+    repl.save_session()
+    assert "Not saved: it was saved elsewhere" in repl.transcript.toPlainText() and repl.unsaved
+    repl.confirm = lambda question: True
+    repl.save_session()
+    assert item.generation == 8 and not repl.unsaved and len(asked) == 1
+
+
+def test_closing_with_whats_unsaved_asks(repl):
+    item = SessionItem()
+    repl.attach(item, item.package, item.generation)
+    ran_in(repl, "x = 1")
+    repl.confirm = lambda question: False
+    repl.show()
+    repl.close()
+    assert repl.isVisible()
+    repl.confirm = lambda question: True
+    repl.close()
+    assert not repl.isVisible()
+
+
+################################################################
+# Extracting a package
+################################################################
+
+PROGRAM = [
+    "import json\nfrom os.path import join as pj",
+    "LIMIT = 3",
+    "unrelated = 99",
+    "class Box:\n    size = LIMIT\n    def dump(self):\n        return json.dumps(self.size)",
+    "def helper(x):\n    return pj('a', str(x))",
+    "def darq_main():\n    terminal.notify(helper(Box().dump()))\n    return 0",
+]
+
+
+def started(*cells: str) -> Engine:
+    """An engine with the REPL's prelude, which gives darq and terminal."""
+    e = Engine()
+    e.start()
+    for cell in cells:
+        result = e.run(cell)
+        assert result.error is None, result.error
+    return e
+
+
+def test_a_function_and_what_it_needs_are_extracted():
+    e = started(*PROGRAM)
+    written = e.extract("darq_main")
+    assert written.left_out == []
+    assert written.text.startswith("# darq_main, extracted from a DarqOS REPL session.\n\n"
+                                   "import darq.terminal as terminal\nimport json\nfrom os.path import join as pj\n")
+    assert "unrelated" not in written.text
+    assert written.text.index("LIMIT = 3") < written.text.index("class Box")
+    assert set(written.names) == {"terminal", "json", "pj", "LIMIT", "Box", "helper", "darq_main"}
+
+    # It runs, as a module, by itself.
+    namespace: dict = {}
+    exec(written.text.replace("terminal.notify(", "print("), namespace)
+    assert namespace["helper"](1) == "a/1"
+
+
+def test_a_class_is_extracted_with_what_its_methods_need():
+    e = started(*PROGRAM)
+    assert set(e.extract("Box").names) == {"Box", "LIMIT", "json"}
+
+
+def test_what_cant_be_extracted_says_why():
+    e = started("1 + 1", "def bad():\n    return $1 + missing",
+                "globals()['made'] = object()", "def uses():\n    return made, loop", "loop = None")
+    e.provide("loop", object())
+    assert dict(e.extract("bad").left_out) == {"$n": "a result's used: assign it to a name",
+                                               "missing": "it's used, but isn't defined"}
+    assert dict(e.extract("uses").left_out) == {
+        "loop": "it's the REPL's: it isn't the session's to extract",
+        "made": "its value, a object, can't be written"}
+
+
+class Store:
+    """Package items, as darq.packages makes and changes them."""
+
+    def __init__(self):
+        self.items: dict[str, tuple[str, bytes]] = {}
+        self.calls: list = []
+        self.taken = {"json"}
+
+    def name_of(self, item_id):
+        return self.items[item_id][0] if item_id in self.items else ""
+
+    def unusable(self, name, item_id=""):
+        if name in self.taken:
+            return f"{name} is a module already, which import would find first"
+        others = [i for i, (n, _) in self.items.items() if n == name and i != item_id]
+        return f"another package is named {name}: {', '.join(others)}" if others else ""
+
+    def create(self, data, name, source):
+        item_id = "darq.python:" + f"{len(self.items) + 1}" * 32
+        self.items[item_id] = (name, data)
+        self.calls.append(("create", name, source))
+        return item_id
+
+    def update(self, item_id, data, source, overwrite=None):
+        self.items[item_id] = (self.items[item_id][0], data)
+        self.calls.append(("update", item_id, source))
+
+    def rename(self, item_id, name):
+        self.items[item_id] = (name, self.items[item_id][1])
+        self.calls.append(("rename", item_id, name))
+
+
+@pytest.fixture
+def extracting(repl):
+    """A REPL with a session, and the program in it, whose dialogs are
+    answered as a test says."""
+    item = SessionItem()
+    repl.attach(item, item.package, item.generation)
+    for cell in PROGRAM:
+        ran_in(repl, cell)
+    repl.store = Store()
+    repl.answers = {"choose": [], "ask": []}
+    repl.choose = lambda title, question, choices: repl.answers["choose"].pop(0)
+    repl.ask_text = lambda title, question, text: repl.answers["ask"].pop(0)
+    return repl
+
+
+def test_extracting_makes_a_package(extracting):
+    import darq.packages
+    darq_main = extracting.engine.session()
+    target = [b.target for b in extracting.engine.members(darq_main) if b.target.name == "darq_main"][0]
+    assert "Extract package…" in dict(extracting.actions_for(target))
+    extracting.answers["ask"] = ["tidy"]
+    extracting.extract_package(target)
+    [(item_id, (name, data))] = extracting.store.items.items()
+    assert name == "tidy" and extracting.store.calls == [("create", "tidy", "repl")]
+    assert "def darq_main():" in darq.packages.modules(data)["main.py"]
+    assert extracting.extracts == {"darq_main": item_id} and extracting.unsaved
+    assert f"Extracted darq_main, with the 6 names it needs, to tidy ({item_id})" in \
+        extracting.transcript.toPlainText()
+
+    # Again: it offers to update the one it was extracted to, and renames it.
+    extracting.answers = {"choose": [0], "ask": ["tidier"]}
+    extracting.extract_package(target)
+    assert extracting.store.calls[1:] == [("update", item_id, "repl"), ("rename", item_id, "tidier")]
+
+    # Or another, made new.
+    extracting.answers = {"choose": [1], "ask": ["tidy2"]}
+    extracting.extract_package(target)
+    assert len(extracting.store.items) == 2 and extracting.extracts["darq_main"] != item_id
+
+
+def test_a_name_that_cant_be_is_refused(extracting):
+    target = [b.target for b in extracting.engine.members(extracting.engine.session())
+              if b.target.name == "darq_main"][0]
+    extracting.answers["ask"] = ["json"]
+    extracting.extract_package(target)
+    assert extracting.store.items == {}
+    assert "Not extracted: json is a module already" in extracting.transcript.toPlainText()
+
+
+def test_whats_extracted_is_kept_with_the_session(extracting):
+    import json
+    import darq.packages
+    target = [b.target for b in extracting.engine.members(extracting.engine.session())
+              if b.target.name == "darq_main"][0]
+    extracting.answers["ask"] = ["tidy"]
+    extracting.extract_package(target)
+    extracting.save_session()
+    item = extracting.item
+    files = darq.packages.contents(item.package)
+    assert json.loads(files["extracts.json"]) == extracting.extracts
+
+    again = window.Window(Engine())
+    again.closing_quietly = True
+    again.attach(item, item.package, item.generation)
+    assert again.extracts == extracting.extracts
+    again.close()
+
+
+def test_names_for_packages(monkeypatch):
+    import darq.packages
+    monkeypatch.setattr(darq.packages, "finder", lambda name: ["darq.python:" + "1" * 32] if name == "tidy" else [])
+    assert darq.packages.unusable("2fast").endswith("isn't a name Python can import")
+    assert darq.packages.unusable("json") == "json is a module already, which import would find first"
+    assert darq.packages.unusable("tidy").startswith("another package is named tidy")
+    assert darq.packages.unusable("tidy", "darq.python:" + "1" * 32) == ""
+    assert darq.packages.unusable("certainly_nothing_called_this") == ""
 
 
 ################################################################
@@ -609,3 +943,88 @@ def test_a_cell_calls_the_darq_api(live_pkernel, tmp_path):  # noqa: F811
     report = json.loads(results.read_text())
     assert report["error"] is None and report["value"] == [True, True]
     assert report["said"].startswith("DarqOS ") and "can't be had" not in report["said"]
+
+
+################################################################
+# As the lens for darq.python items: a session each
+################################################################
+
+SESSION = "darq.python:" + "5" * 32
+
+
+def test_the_lens_uses_a_session(qt_app, monkeypatch):
+    import types
+    from darq.protocols.lens import Close, ShownRequest, Status, UseRequest
+    item = SessionItem()
+    monkeypatch.setattr(window, "Python", types.SimpleNamespace(Client=lambda port, timeout=None: item))
+    stopped: list[bool] = []
+    loop = types.SimpleNamespace(stop=lambda: stopped.append(True))
+    lens = window.ReplLens(loop)
+    lens.name_of = lambda item_id: "session"
+
+    assert lens.use(UseRequest(item_id=SESSION, item=9), 0).status == Status.OK
+    assert lens.window is not None and lens.window.windowTitle() == "session"
+    assert f"Session session ({SESSION})" in lens.window.transcript.toPlainText()
+    assert item.viewed_by == ["repl"]
+    assert lens.shown(ShownRequest(), 0).item_id == SESSION
+    assert lens.use(UseRequest(item_id=SESSION, item=10), 0).status == Status.BUSY
+
+    # Closed, the lens is done, and so is its item.
+    lens.close(Close(), 0)
+    assert stopped == [True] and item.closed
+
+
+def test_a_lens_not_used_gives_up(monkeypatch):
+    import types
+    stopped: list[bool] = []
+    lens = window.ReplLens(types.SimpleNamespace(stop=lambda: stopped.append(True)))
+    lens.expire()
+    assert stopped == [True]
+
+
+def test_a_session_in_its_lens(live_pkernel, tmp_path):  # noqa: F811
+    """At boot: the REPL's registered as darq.python's lens, uses a
+    session, running its code, says it's showing it, and exits once it's
+    closed."""
+    kernel = live_pkernel
+    ran = tmp_path / "ran"
+    client_path = write_app(tmp_path / "client", f"""
+        import pathlib
+        import time
+        import darq
+        import darq.launch
+        import darq.packages as packages
+        from darq.protocols.lens import Lens, Status as LensStatus
+        from darq.protocols.type import Type
+
+        def darq_main():
+            types = Type.Client(darq.connect("darq.type"), timeout=30)
+            deadline = time.monotonic() + 30
+            while not any(lens.endswith("/repl")
+                          for lens in types.find_lenses(type_id="darq.python", context="terminal").lenses):
+                if time.monotonic() > deadline:
+                    return "no REPL lens registered"
+                time.sleep(0.05)
+
+            code = "open({str(ran)!r}, 'w').write('ran')\\n"
+            item_id, port = darq.launch.create_item_from("darq.python", packages.make({{"main.py": code}}),
+                                                         "session")
+            lens = Lens.Client(darq.launch.use_item(item_id, port).port, timeout=30)
+            if lens.shown().item_id != item_id:
+                return "not shown"
+            if not pathlib.Path({str(ran)!r}).exists():
+                return "its code wasn't run"
+            other_id, other = darq.launch.create_item_from("darq.python", packages.make({{}}), "other")
+            if lens.use(item_id=other_id, item=other).status != LensStatus.BUSY:
+                return "second use wasn't refused"
+            lens.close()
+            return 0
+        """)
+    kernel.do_boot()
+    client = kernel._process_table[kernel.do_spawn_process(None, client_path)]
+    zombie = kernel.module.KernelProcessStatus.ZOMBIE
+    run_kernel_until(kernel, lambda: client.get_status() == zombie, "the client to exit")
+    assert (client.get_exit_status(), client.get_exit_error()) == (0, None)
+    [lens_process] = [p for p in kernel._process_table.values() if p._image_path == str(TOOL_PATH)]
+    run_kernel_until(kernel, lambda: lens_process.get_status() == zombie, "the lens to exit")
+    assert (lens_process.get_exit_status(), lens_process.get_exit_error()) == (0, None)

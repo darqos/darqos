@@ -845,59 +845,86 @@ def test_a_tool_that_finishes_once_the_panels_closed_says_so_in_a_notice(termina
     assert terminal.notice.message.text() == "Reindex was stopped"
 
 
-def repl_installed(terminal, tmp_path, finishes):
-    """The REPL's tool, quiet, as tools/repl's manifest says, with its
+def quiet_installed(terminal, tmp_path, finishes):
+    """A quiet tool, whose finish is said only if it fails, with its
     finish kept for the test to give."""
     root = tmp_path
-    (root / "tools" / "repl").mkdir(parents=True)
-    (root / "tools" / "repl" / "tool.json").write_text(json.dumps({"name": "Python REPL", "quiet": True}))
+    (root / "tools" / "quiet").mkdir(parents=True)
+    (root / "tools" / "quiet" / "tool.json").write_text(json.dumps({"name": "Quiet", "quiet": True}))
     terminal.root = root
-    spawned = tools_at(terminal, root, finishes)
+    tools_at(terminal, root, finishes)
     running: list = []
     terminal.launcher.background = lambda job, done: running.append((job, done))
-    return spawned, running
+    terminal.tools.tools.refresh()
+    return running
 
 
-def test_sys_s_starts_the_repl_once(terminal, tmp_path):
+def test_a_quiet_tool_that_finishes_isnt_said(terminal, tmp_path):
     unlock(terminal)
-    spawned, running = repl_installed(terminal, tmp_path, main.darq.ChildStatus(7, main.darq.ExitReason.EXITED, 0,
-                                                                                 None))
-    hotkey(terminal, main.XK_s)
-    hotkey(terminal, main.XK_s)
-    assert spawned == [] and len(running) == 1
+    running = quiet_installed(terminal, tmp_path, main.darq.ChildStatus(7, main.darq.ExitReason.EXITED, 0, None))
+    terminal.tools.tools.run_selected()
     [(job, done)] = running
     done(job(), None)
-    assert spawned == [str(tmp_path / "tools" / "repl")]
-
-    # Closed as it should be, it's not said.
     assert visible(terminal) == []
 
 
-def test_sys_s_focuses_the_repls_window(terminal, tmp_path):
+def test_a_quiet_tool_that_fails_says_so(terminal, tmp_path):
     unlock(terminal)
-    spawned, running = repl_installed(terminal, tmp_path, None)
-    terminal.handle(WindowAdded(window=4, title="Python REPL", app_id=main.REPL_APP_ID))
+    running = quiet_installed(terminal, tmp_path, main.darq.ChildStatus(
+        7, main.darq.ExitReason.EXITED, 1, "Traceback (most recent call last):\nImportError: no jedi\n"))
+    terminal.tools.tools.run_selected()
+    [(job, done)] = running
+    done(job(), None)
+    assert terminal.notice.message.text() == "Quiet failed: ImportError: no jedi"
+
+
+SESSION = "darq.python:" + "5" * 32
+
+
+@pytest.fixture
+def sessions(terminal, monkeypatch):
+    """The default session, as the KB has it, and what each lens shows."""
+    unlock(terminal)
+    terminal.fake_services.kb_client = object()
+    monkeypatch.setattr(main.darq.sessions, "find_or_make_default", lambda kb, create: SESSION)
+    shows: dict[str, str] = {}
+    monkeypatch.setattr(main, "lens_shows", lambda name: (shows[name], False))
+    return shows
+
+
+def test_sys_s_opens_the_default_session(terminal, sessions):
+    hotkey(terminal, main.XK_s)
+    assert terminal.fake_services.launch.used == [(SESSION, None)]
+    assert not terminal.repl_starting
+
+
+def test_sys_s_focuses_the_sessions_lens(terminal, sessions):
+    sessions["lens.70"] = "public.utf8-plain-text:" + "6" * 32
+    sessions["lens.71"] = SESSION
+    terminal.handle(WindowAdded(window=3, title="Notes", app_id="lens.70"))
+    terminal.handle(WindowAdded(window=4, title="session", app_id="lens.71"))
     terminal.compositor.received()
     hotkey(terminal, main.XK_s)
     assert terminal.compositor.received() == [RaiseWindow(window=4), FocusWindow(window=4)]
-    assert running == []
+    assert terminal.fake_services.launch.used == []
 
 
-def test_a_repl_that_fails_says_so(terminal, tmp_path):
-    unlock(terminal)
-    spawned, running = repl_installed(terminal, tmp_path, main.darq.ChildStatus(
-        7, main.darq.ExitReason.EXITED, 1, "Traceback (most recent call last):\nImportError: no jedi\n"))
+def test_sys_s_does_nothing_while_its_starting(terminal, sessions):
+    finding: list = []
+    terminal.launcher.background = lambda job, done: finding.append((job, done))
     hotkey(terminal, main.XK_s)
-    [(job, done)] = running
+    hotkey(terminal, main.XK_s)
+    assert len(finding) == 1
+    job, done = finding[0]
     done(job(), None)
-    assert terminal.notice.message.text() == "Python REPL failed: ImportError: no jedi"
+    assert terminal.fake_services.launch.used == [(SESSION, None)] and not terminal.repl_starting
 
 
-def test_without_the_repl_sys_s_says_so(terminal, tmp_path):
-    terminal.root = tmp_path
-    unlock(terminal)
+def test_sys_s_says_why_it_cant(terminal, sessions):
+    terminal.fake_services.kb_client = None
     hotkey(terminal, main.XK_s)
-    assert terminal.notice.message.text() == "The REPL isn't installed"
+    assert terminal.notice.message.text() == "Can't open the REPL: the Knowledge Base isn't running"
+    assert not terminal.repl_starting
 
 
 def test_a_tool_that_cant_be_started_says_so(terminal, tmp_path):
@@ -1120,3 +1147,52 @@ def test_how_an_update_went_is_said_after_unlocking(terminal, result, said):
     terminal.compositor.received()
     unlock(terminal)
     assert not terminal.notice.isVisible()
+
+
+
+################################################################
+# Running a package
+################################################################
+
+PROGRAM = "darq.python:" + "7" * 32
+
+
+@pytest.fixture
+def running(terminal):
+    """The Terminal, unlocked, its programs' finishes kept for the test to
+    give."""
+    unlock(terminal)
+    finishing: list = []
+    terminal.launcher.background = lambda job, done: finishing.append((job, done))
+    return finishing
+
+
+def test_a_package_is_run_and_its_finish_said(terminal, running):
+    terminal.wait_process = lambda dpid: main.darq.ChildStatus(dpid, main.darq.ExitReason.EXITED, 0, None)
+    assert terminal.run_item(PROGRAM) == ""
+    assert terminal.run_item(PROGRAM).endswith("is running already")
+    [(job, done)] = running
+    done(job(), None)
+    assert terminal.fake_services.launch.ran == [PROGRAM]
+    assert terminal.notice.message.text() == f"{PROGRAM} finished" and PROGRAM not in terminal.running_items
+
+
+def test_a_package_that_fails_says_why(terminal, running):
+    terminal.wait_process = lambda dpid: main.darq.ChildStatus(
+        dpid, main.darq.ExitReason.EXITED, 1, "Traceback (most recent call last):\nAttributeError: no darq_main\n")
+    terminal.run_item(PROGRAM)
+    [(job, done)] = running
+    done(job(), None)
+    assert terminal.notice.message.text() == f"{PROGRAM} failed: AttributeError: no darq_main"
+
+
+def test_ctrl_enter_runs_a_package_from_search_and_history(terminal, running):
+    import types as python_types
+    for view in (terminal.search.view, terminal.history.view):
+        terminal.running_items.clear()
+        running.clear()
+        view.shown = [python_types.SimpleNamespace(item_id=TEXT), python_types.SimpleNamespace(item_id=PROGRAM)]
+        view.run(0)
+        assert running == []
+        view.run(1)
+        assert len(running) == 1 and PROGRAM in terminal.running_items

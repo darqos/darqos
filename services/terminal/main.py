@@ -62,15 +62,20 @@ from darq.protocols import terminal as protocol
 from darq.protocols.terminal import Rect
 import darq.host
 import darq.items
+import darq.packages
+import darq.sessions
+from darq.protocols.python import Python
+from darq.protocols.type import Context as TypeContext
 import darq.ui.types
 from darq.ui import Services
 from darq.ui.launcher import Launcher
-from darq.ui.tools import find_tools
+from darq.ui.names import item_names
+from darq.ui.tools import Tool, find_tools, run_tool
 
 from panels import (HistoryPanel, NewPanel, NoticePanel, Panel, PowerPanel, SearchPanel, SwitcherPanel, TbdPanel,
                     ToolsPanel)
 from screens import CHOOSE, ENTER, UNAVAILABLE, WAITING, Screens
-from automation import LENS_NAME_PREFIX, NAME, TerminalService, lens_shows
+from automation import LENS_NAME_PREFIX, LENS_TIMEOUT, NAME, TerminalService, lens_shows
 
 
 # History source for the events it records.
@@ -108,10 +113,9 @@ HOTKEYS: dict[tuple[int, int], str] = {
     (XK_t, 0): "show_tools",
 }
 
-# The REPL's tool, by its directory, and its windows' app_id (see
-# tools/repl).
-REPL_TOOL = "repl"
-REPL_APP_ID = "darq.repl"
+# What a launch of the REPL's default session's for, as its context (see
+# show_repl).
+REPL_CONTEXT = "repl"
 
 # Where the tools are, under DARQ_ROOT (see darq.ui.tools).
 DEFAULT_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
@@ -148,6 +152,14 @@ class Terminal:
         # them (see automation.py).
         self.watchers: set[int] = set()
         self.service = TerminalService(self)
+
+        # Whether Sys-s is starting the REPL (see show_repl); and the
+        # packages running as programs, by item (see run_item).
+        self.repl_starting = False
+        self.running_items: set[str] = set()
+
+        # Waits for a child process to finish: tests replace it.
+        self.wait_process: typing.Callable[[int], darq.ChildStatus | None] = darq.wait
 
         # Reads how the last update went, once: tests replace it.
         self.update_result: typing.Callable[[], dict[str, str] | None] = darq.host.update_result
@@ -254,6 +266,8 @@ class Terminal:
         notice."""
         panel = {self.new.types: self.new, self.history.view: self.history,
                  self.search.view: self.search}.get(context)
+        if context == REPL_CONTEXT:
+            self.repl_starting = False
         if error is None:
             logging.info(f"Using {item_id}")
             if panel is not None:
@@ -421,23 +435,74 @@ class Terminal:
         self.show_panel(self.tools)
 
     def show_repl(self):
-        """Sys-s: focus the REPL's window, or, if it isn't running, start
-        it, as the Tools panel does: there's one session.  While it's
-        starting, it does nothing."""
-        window = next((w for w, app_id in self.app_ids.items() if app_id == REPL_APP_ID), 0)
-        if window:
-            self.hide_panels()
-            self.channel.send(RaiseWindow(window=window))
-            self.channel.send(FocusWindow(window=window))
+        """Sys-s: open the default REPL session (see darq.sessions), making
+        one, if there's none, or focus the lens showing it, if one is.
+        It's found off Qt's thread, and asks the lenses what they're
+        showing.  While it's starting, it does nothing."""
+        if self.repl_starting:
             return
-        tool = next((t for t in find_tools(self.root) if os.path.basename(t.path) == REPL_TOOL), None)
-        if tool is None:
-            self.say("The REPL isn't installed")
-            return
-        tools = self.tools.tools
-        if tool.name not in tools.running:
-            self.hide_panels()
-            tools.run(tool)
+        self.hide_panels()
+        lenses = {w: name for w, name in self.app_ids.items() if name.startswith(LENS_NAME_PREFIX)}
+        kb = self.services.kb
+
+        def find() -> tuple[str, int]:
+            client = kb()
+            if client is None:
+                raise darq.DarqError("the Knowledge Base isn't running")
+            item_id = darq.sessions.find_or_make_default(client, self.create_session)
+            for window, name in lenses.items():
+                try:
+                    if lens_shows(name)[0] == item_id:
+                        return item_id, window
+                except (darq.DarqError, TimeoutError):
+                    continue
+            return item_id, 0
+
+        def found(result: tuple[str, int] | None, error: Exception | None):
+            if error is not None or result is None:
+                self.repl_starting = False
+                self.say(f"Can't open the REPL: {error}")
+                return
+            item_id, window = result
+            if window:
+                self.repl_starting = False
+                self.channel.send(RaiseWindow(window=window))
+                self.channel.send(FocusWindow(window=window))
+                return
+            self.launcher.use(item_id, context=REPL_CONTEXT)
+
+        self.repl_starting = True
+        self.launcher.background(find, found)
+
+    def run_item(self, item_id: str) -> str:
+        """Run a Python package's item, as a program, as the Terminal's
+        child, as a tool's run, and say how it finished.  Returns why it
+        can't be, or nothing."""
+        name = item_names(self.services.kb(), [item_id]).get(item_id) or item_id
+        if item_id in self.running_items:
+            return f"{name} is running already"
+        self.running_items.add(item_id)
+        self.hide_panels()
+
+        def finished(message: str):
+            self.running_items.discard(item_id)
+            self.tell(protocol.ItemFinished(item_id=item_id, outcome=message))
+            self.say(message)
+
+        run_tool(self.launcher, Tool(name, "", item_id), finished, spawn=self.services.launch.run_item,
+                 wait=self.wait_process)
+        return ""
+
+    def create_session(self, package: bytes, name: str) -> str:
+        """Make a session, a package item, as the Terminal: on the
+        launch's thread."""
+        item_id, port = self.services.launch.create_item_from(darq.packages.TYPE_ID, package, name,
+                                                              context=TypeContext(source=SOURCE))
+        try:
+            Python.Client(port, timeout=LENS_TIMEOUT).close()
+        except (darq.DarqError, TimeoutError):
+            darq.close_port(port)
+        return item_id
 
     def tool_finished(self, name: str, message: str):
         """A tool's finished: say how, in the Tools panel, or, if it's

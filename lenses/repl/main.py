@@ -2,9 +2,12 @@
 # Copyright (C) 2026 David Arnold
 
 # The REPL: Python, with the darq API, a cell at a time, in a window, as
-# a DarqOS process.  It's a tool (see tool.json), started from the
-# Tools panel, or with Sys-s, which focuses its window if it's running:
-# there's one session.  Its engine is darq.repl.  See doc/repl.rst.
+# a DarqOS process.  It's the lens for darq.python items (see lens.json):
+# each is a session, used by a REPL of its own.  Sys-s opens the default
+# session (see darq.sessions); others are opened from History or Search.
+# A session's code and history are run, and taken up, as it's opened,
+# and saved to its item with Ctrl+Shift+S (see darq.repl, write_session).
+# Its engine is darq.repl.  See doc/repl.rst.
 #
 # - Pygments syntax highlighting, of the input and the transcript, in the
 #   DarqOS palette (darq.ui.style), as the lenses use it.
@@ -27,6 +30,8 @@
 # till it's done.
 
 import inspect
+import json
+import logging
 import pprint
 import re
 import sys
@@ -40,14 +45,24 @@ from PyQt6.QtGui import (QColor, QIcon, QKeyEvent, QKeySequence, QPainter, QPale
 from PyQt6.QtWidgets import (QApplication, QCompleter, QHBoxLayout, QLabel, QMainWindow, QMenu, QPlainTextEdit,
                              QSplitter, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
+import darq
 from darq.loop import QtEventLoop
+from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
+from darq.protocols.python import Python
+from darq.protocols.python import Status as PythonStatus
+import darq.packages
+from darq.ui import dialogs
+from darq.ui.lens import LensHandler, Viewing, announce
+from darq.ui.names import item_name
 from darq.repl import CLASS, FUNCTION, MODULE, PROPERTY, VARIABLE, Engine, Result, Results, Target, kind_of
 from darq.ui import style
 from darq.ui.style import CONTROLS, SCROLL_BARS
 
-# Its windows' Wayland app_id, by which the Terminal finds its window,
-# for Sys-s.
-APP_ID = "darq.repl"
+# History's source of what it does; and seconds to wait for its item, and
+# for a Use, once it's started.
+SOURCE = "repl"
+TIMEOUT = 10.0
+USE_TIMEOUT = 60.0
 
 INDENT = "    "
 
@@ -545,6 +560,7 @@ class NamespaceTree(QTreeWidget):
         # Asked of the window, for the context menu: tests replace them.
         self.actions_for: typing.Callable[[Target], list[tuple[str, typing.Callable[[], None]]]] = \
             lambda target: []
+        self.session_actions: typing.Callable[[], list[tuple[str, typing.Callable[[], None]]]] = lambda: []
         self.refresh()
 
     def tops(self) -> list[tuple[str, Target]]:
@@ -637,6 +653,8 @@ class NamespaceTree(QTreeWidget):
             for text, action in self.actions_for(target):
                 menu.addAction(text, action)
             menu.addSeparator()
+        for text, action in self.session_actions():
+            menu.addAction(text, action)
         private = menu.addAction("Show private names")
         assert private is not None
         private.setCheckable(True)
@@ -650,8 +668,31 @@ class NamespaceTree(QTreeWidget):
 
 
 class Window(QMainWindow):
-    def __init__(self, engine: Engine | None = None) -> None:
+    def __init__(self, engine: Engine | None = None,
+                 on_closed: typing.Callable[[], None] | None = None) -> None:
         super().__init__()
+        self.on_closed = on_closed
+        self.viewing = Viewing(self, SOURCE)
+
+        # The session's item, its package as it was last read or saved,
+        # and that one's generation; whether what's run since needs
+        # saving; whether it's closed without asking, as by its lens; and
+        # how it asks: tests replace it.
+        self.item: typing.Any = None
+        self.package = b""
+        self.generation = 0
+        self.unsaved = False
+        self.closing_quietly = False
+        self.confirm: typing.Callable[[str], bool] = lambda question: dialogs.confirm(self, "Python REPL", question)
+        self.choose: typing.Callable[[str, str, list[str]], int | None] = \
+            lambda title, question, choices: dialogs.choose(self, title, question, choices)
+        self.ask_text: typing.Callable[[str, str, str], str | None] = \
+            lambda title, question, text: dialogs.ask_text(self, title, question, text)
+
+        # What the session's names were extracted to, by name; and what
+        # makes and changes package items: tests replace it.
+        self.extracts: dict[str, str] = {}
+        self.store: typing.Any = darq.packages
         self.setWindowTitle("Python REPL")
         self.resize(1160, 700)
         self.setStyleSheet(STYLESHEET)
@@ -701,6 +742,7 @@ class Window(QMainWindow):
         self.tree = NamespaceTree(self.engine)
         self.tree.chosen.connect(self.edit)
         self.tree.actions_for = self.actions_for
+        self.tree.session_actions = lambda: [("Save session", self.save_session)] if self.item is not None else []
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self.tree)
         splitter.addWidget(right)
@@ -709,11 +751,105 @@ class Window(QMainWindow):
 
         QShortcut(QKeySequence("Ctrl+Q"), self).activated.connect(self.close)
         QShortcut(QKeySequence("Ctrl+L"), self).activated.connect(self.transcript.clear)
+        QShortcut(QKeySequence("Ctrl+Shift+S"), self).activated.connect(self.save_session)
         self.editor.setFocus()
+
+    def set_session(self, name: str, item_id: str) -> None:
+        """Say which session it is: its item's name, as its title."""
+        self.session = item_id
+        self.setWindowTitle(name)
+        self.transcript.add_text(f"Session {name} ({item_id})", Token.Comment)
+
+    def closeEvent(self, a0) -> None:
+        if self.item is not None and self.unsaved and not self.closing_quietly \
+                and not self.confirm("The session has changed since it was saved: close it without saving?"):
+            if a0 is not None:
+                a0.ignore()
+            return
+        self.viewing.stop()
+        super().closeEvent(a0)
+        if self.on_closed is not None:
+            on_closed, self.on_closed = self.on_closed, None
+            on_closed()
 
     def on_submitted(self, source: str) -> None:
         self.transcript.add_result(source, self.engine.run(source))
+        self.unsaved = True
         self.tree.refresh()
+
+    # The session, kept in its item
+
+    def attach(self, item: typing.Any, package: bytes, generation: int) -> None:
+        """Use a session's item: run its code into the namespace, and take
+        up its history, as it was saved."""
+        self.item = item
+        self.package = package
+        self.generation = generation
+        try:
+            files = darq.packages.contents(package)
+        except darq.packages.PackageError as e:
+            self.transcript.add_text(f"The session can't be read: {e}", Token.Generic.Error)
+            return
+        history = files.get(darq.packages.HISTORY)
+        if history:
+            try:
+                cells = [c for c in json.loads(history.decode("utf-8")) if isinstance(c, str)]
+            except (ValueError, UnicodeDecodeError):
+                cells = []
+            self.engine.history = list(cells)
+            self.editor.history = list(cells)
+            self.editor._hpos = len(cells)
+        extracts = files.get(darq.packages.EXTRACTS)
+        if extracts:
+            try:
+                found = json.loads(extracts.decode("utf-8"))
+                self.extracts = {k: v for k, v in found.items() if isinstance(k, str) and isinstance(v, str)}
+            except (ValueError, UnicodeDecodeError, AttributeError):
+                self.extracts = {}
+        code = files.get(darq.packages.MAIN)
+        if code is not None and code.strip():
+            result = self.engine.load_session(code.decode("utf-8"))
+            self.transcript.add_text(result.note + (f", from {len(self.engine.history)} cells run"
+                                                    if self.engine.history else ""), Token.Comment)
+            if result.error:
+                self.transcript.add_text("What couldn't be run:\n" + result.error, Token.Generic.Traceback)
+        self.unsaved = False
+        self.tree.refresh()
+
+    def save_session(self) -> None:
+        """Save the session to its item: its code, as a module, and its
+        history.  What can't be written is left out, and said."""
+        if self.item is None:
+            return
+        written = self.engine.write_session()
+        try:
+            files = darq.packages.contents(self.package) if self.package else {}
+        except darq.packages.PackageError:
+            files = {}
+        files[darq.packages.MAIN] = written.text.encode("utf-8")
+        files[darq.packages.HISTORY] = json.dumps(self.engine.history, indent=1).encode("utf-8")
+        if self.extracts:
+            files[darq.packages.EXTRACTS] = json.dumps(self.extracts, indent=1, sort_keys=True).encode("utf-8")
+        package = darq.packages.make(dict(files))
+        try:
+            response = self.item.put(expected=self.generation, package=package, source=SOURCE)
+            if response.status == PythonStatus.CONFLICT and self.confirm(
+                    "The session's been saved elsewhere since it was opened here: save over it?"):
+                response = self.item.put(expected=self.item.get().generation, package=package, source=SOURCE)
+        except (darq.DarqError, TimeoutError) as e:
+            self.transcript.add_text(f"Can't save the session: {e}", Token.Generic.Error)
+            return
+        if response.status != PythonStatus.OK:
+            why = {PythonStatus.CONFLICT: "it was saved elsewhere"}.get(response.status, response.message)
+            self.transcript.add_text(f"Not saved: {why or response.status.name}", Token.Generic.Error)
+            return
+        self.package = package
+        self.generation = response.generation
+        self.unsaved = False
+        said = f"Saved the session: {len(written.names)} names"
+        if written.left_out:
+            said += "; left out: " + "; ".join(f"{name}, as {why}" for name, why in written.left_out)
+        self.transcript.add_text(said, Token.Comment)
 
     # Editing a target
 
@@ -771,6 +907,7 @@ class Window(QMainWindow):
             return
         text = self.editor.toPlainText()
         self.done(text, self.engine.save(target, text))
+        self.unsaved = True
         if self.transcript_error is None:
             self.tree.drafts.pop(target.key(), None)
             if target.name:
@@ -805,6 +942,8 @@ class Window(QMainWindow):
                                                                    f"# rebuild {target.label}\n")))
             actions.append(("View whole class", lambda: self.edit(target, self.engine.whole_class(target),
                                                                   reading=True)))
+        if self.engine.is_session(target.container) and kind_of(value) in (FUNCTION, CLASS) and target.name:
+            actions.append(("Extract package…", lambda: self.extract_package(target)))
         container = target.container
         deletable = (self.engine.is_session(container) or id(container) in self.engine.headers
                      or not (inspect.isclass(container) or inspect.ismodule(container)
@@ -813,19 +952,142 @@ class Window(QMainWindow):
             actions.append(("Delete", lambda: self.run_action(self.engine.delete(target), f"del {target.label}\n")))
         return actions
 
+    def extract_package(self, target: Target) -> None:
+        """Extract a function, or class, and what it needs of the session,
+        to a package item: the one it was last extracted to, or a new one,
+        named as it's to be imported."""
+        root = target.name
+        written = self.engine.extract(root)
+        if written.left_out:
+            self.transcript.add_text(f"Can't extract {root}: " + "; ".join(
+                f"{name}, as {why}" for name, why in written.left_out), Token.Generic.Error)
+            return
+        title = f"Extract {root}"
+        item_id = ""
+        previous = self.extracts.get(root, "")
+        if previous:
+            old = self.store.name_of(previous) or previous
+            choice = self.choose(title, f"{root} was extracted to {old}: update it, or make another package?",
+                                 [f"Update {old}", "Make a new package"])
+            if choice is None:
+                return
+            item_id = previous if choice == 0 else ""
+        current = self.store.name_of(item_id) if item_id else ""
+        name = self.ask_text(title, "Its name, as it's to be imported:", current)
+        if not name:
+            return
+        why = self.store.unusable(name, item_id)
+        if why:
+            self.transcript.add_text(f"Not extracted: {why}", Token.Generic.Error)
+            return
+        package = darq.packages.make({darq.packages.MAIN: written.text})
+        try:
+            if item_id:
+                self.store.update(item_id, package, SOURCE, overwrite=lambda: self.confirm(
+                    f"{name} has been changed since it was extracted: replace it?"))
+                if name != current:
+                    self.store.rename(item_id, name)
+            else:
+                item_id = self.store.create(package, name, SOURCE)
+        except darq.packages.PackageError as e:
+            self.transcript.add_text(f"Not extracted: {e}", Token.Generic.Error)
+            return
+        except (darq.DarqError, TimeoutError) as e:
+            self.transcript.add_text(f"Can't extract {root}: {e}", Token.Generic.Error)
+            return
+        self.extracts[root] = item_id
+        self.unsaved = True
+        others = len(written.names) - 1
+        self.transcript.add_text(f"Extracted {root}, with the {others} name{'' if others == 1 else 's'} it needs, "
+                                 f"to {name} ({item_id})", Token.Comment)
+
     def run_action(self, result: Result, text: str) -> None:
         self.done(text, result)
+        self.unsaved = True
         self.tree.refresh()
 
 
+class ReplLens(LensHandler):
+    """Answers the Lens protocol: uses a session, a darq.python item, in a
+    REPL of its own."""
+
+    def __init__(self, loop: QtEventLoop):
+        # Looks up an item's name, for its window's title: tests replace it.
+        self.name_of: typing.Callable[[str], str] = item_name
+        self.loop = loop
+        self.window: Window | None = None
+
+        # The session's item: its port's client.
+        self.item: typing.Any = None
+
+    def use(self, request: UseRequest, source: int) -> UseResponse:
+        if self.window is not None:
+            return UseResponse(status=Status.BUSY)
+        if request.item is None:
+            return UseResponse(status=Status.FAILED)
+        self.item = Python.Client(request.item, timeout=TIMEOUT)
+        engine = Engine()
+        engine.namespace["loop"] = self.loop
+        self.window = Window(engine, on_closed=self.finished)
+        self.window.set_session(self.name_of(request.item_id), request.item_id)
+        try:
+            got = self.item.get()
+        except (darq.DarqError, TimeoutError) as e:
+            logging.error(f"Can't read {request.item_id}: {e!r}")
+            self.window.closing_quietly = True
+            self.window.close()
+            self.window = None
+            return UseResponse(status=Status.FAILED)
+        self.window.attach(self.item, got.package, got.generation)
+        self.window.show()
+        self.window.viewing.show(self.item)
+        logging.info(f"Using {request.item_id}")
+        self.shown_item = request.item_id
+        return UseResponse(status=Status.OK)
+
+    def close(self, request: Close, source: int) -> None:
+        if self.window is not None:
+            self.window.closing_quietly = True
+            self.window.close()
+        else:
+            self.finished()
+
+    def expire(self):
+        """Give up, if no Use has come."""
+        if self.window is None:
+            logging.error(f"Not asked to Use an item within {USE_TIMEOUT}s: exiting")
+            self.finished()
+
+    def finished(self):
+        if self.item is not None:
+            try:
+                self.item.close()
+            except (darq.DarqError, TimeoutError) as e:
+                logging.info(f"Can't close {self.shown_item}: {e!r}")
+            self.item = None
+        self.loop.stop()
+
+
 def darq_main():
-    QApplication.setDesktopFileName(APP_ID)
+    bootstrap = darq.get_bootstrap_port()
+    if bootstrap is None:
+        logging.error("No bootstrap port: a lens is started for an item, by the Terminal")
+        return 1
+
     app = QApplication([])
+    app.setQuitOnLastWindowClosed(False)
     loop = QtEventLoop()
-    engine = Engine()
-    engine.namespace["loop"] = loop
-    window = Window(engine)
-    window.show()
-    result = app.exec()
+
+    lens = ReplLens(loop)
+    port = darq.open_port()
+    announce(port)
+    server = darq.Server()
+    server.add(port, lens)
+    server.attach(loop)
+    server.call_later(USE_TIMEOUT, lens.expire)
+    darq.send(bootstrap, Ready(lens=port))
+
+    loop.run()
     loop.close()
-    return result
+    del app
+    return 0

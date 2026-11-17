@@ -103,7 +103,8 @@ def _ebook(name: str) -> Kind:
 
 
 # The kinds of item whose content's in Storage, by type identifier: those
-# of types/text, types/image, types/pdf and types/ebook.
+# of types/text, types/image, types/pdf, types/ebook, types/python and
+# types/data.
 KINDS: dict[str, Kind] = {
     "public.utf8-plain-text": Kind(TEXT_FILE, "Text File", "Text Files"),
     "public.png": _image("PNG"),
@@ -118,6 +119,7 @@ KINDS: dict[str, Kind] = {
     "darq.book.epub": _ebook("EPUB"),
     "darq.book.mobi": _ebook("MOBI"),
     "darq.book.azw": _ebook("AZW"),
+    "darq.python": Kind(COMPUTER_FILE, "Python Package", "Python Packages"),
     DATA_TYPE: Kind(COMPUTER_FILE, "File", "Files"),
 }
 

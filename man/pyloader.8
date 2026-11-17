@@ -28,7 +28,9 @@ Once the p-kernel accepts it with a RUN_RESPONSE,
 imports
 .I main.py
 from
-.I executable-path
+.IR executable-path ,
+a directory, or a Python package's item, read from Storage (see
+.IR doc/python-type.rst ),
 and calls its
 .B darq_main()
 function, with no arguments, on the main thread.
@@ -140,8 +142,13 @@ DarqOS process identifier of the process that requested the spawn, or
 .I executable-path
 Directory containing the application's
 .I main.py
-file.
-It is added to the front of the module search path.
+file, or a Python package's item,
+.BI darq.python: key ,
+whose package has one.
+It is added to the front of the module search path: an item as
+.BI darq-item:darq.python: key\fR,
+with the package import hooks installed, which read it from Storage,
+as a directory.
 .SH ENVIRONMENT
 .TP
 .B PYTHONPATH

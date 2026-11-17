@@ -113,6 +113,12 @@ protocol Terminal {
     // does: its finish is sent to watchers, as ToolFinished.
     15: ListTools() -> (sequence<Tool> tools, Status status);
     16: RunTool(string name, string source) -> (Status status);
+
+    // Run a Python package's item, as a program, its main.darq_main, as
+    // the Terminal's child, as Ctrl+Enter does in Search and History:
+    // its finish is sent to watchers, as ItemFinished.  It's RUNNING if
+    // it is already, and FAILED if it isn't a package.
+    17: RunItem(string item_id, string source) -> (Status status, string message);
 }
 
 // Served by a watcher, to hear what happens.  All one-way.
@@ -133,4 +139,7 @@ protocol Watcher {
 
     // A tool finished: how, as the Tools panel says it.
     9: ToolFinished(string name, string outcome);
+
+    // A package run as a program finished: how.
+    10: ItemFinished(string item_id, string outcome);
 }

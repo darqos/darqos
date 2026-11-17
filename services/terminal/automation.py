@@ -16,11 +16,13 @@ import typing
 
 import darq
 import darq.items
+import darq.packages
 from darq.protocols.compositor import CloseWindow, FocusWindow, RaiseWindow
 from darq.protocols.compositor import SetGeometry as SetCompositorGeometry
 from darq.protocols.lens import Lens
 from darq.protocols.terminal import (
     CloseRequest, CloseResponse, CreateItemRequest, CreateItemResponse, FocusRequest, FocusResponse,
+    RunItemRequest, RunItemResponse,
     ImportFileRequest, ImportFileResponse, ListOutputsRequest, ListOutputsResponse, ListToolsRequest,
     ListToolsResponse, ListWindowsRequest, ListWindowsResponse, LockRequest, LockResponse, NotifyRequest,
     NotifyResponse, OpenEntityRequest, OpenEntityResponse, OpenItemRequest, OpenItemResponse, OpenUrlRequest,
@@ -82,8 +84,12 @@ class Host(typing.Protocol):
     tools: typing.Any
     root: typing.Any
 
-    # The ports of those watching, which events are sent to.
+    # The ports of those watching, which events are sent to; and the
+    # packages running as programs.
     watchers: set[int]
+    running_items: set[str]
+
+    def run_item(self, item_id: str) -> str: ...
 
     def lock(self) -> None: ...
     def say(self, message: str) -> None: ...
@@ -351,6 +357,21 @@ class TerminalService(Terminal.Handler):
         tools = [Tool(name=t.name, description=t.description, running=t.name in running)
                  for t in find_tools(self.terminal.root)]
         return ListToolsResponse(tools=tools, status=Status.OK)
+
+    def run_item(self, request: RunItemRequest, source: int) -> RunItemResponse:
+        if self.terminal.locked:
+            return RunItemResponse(status=Status.LOCKED)
+        try:
+            type_id, _ = darq.split_item_id(request.item_id)
+        except darq.InvalidIdentifierError:
+            return RunItemResponse(status=Status.NOT_FOUND, message=f"{request.item_id} isn't an item")
+        if type_id != darq.packages.TYPE_ID:
+            return RunItemResponse(status=Status.FAILED, message="Only a Python package can be run")
+        if request.item_id in self.terminal.running_items:
+            return RunItemResponse(status=Status.RUNNING)
+        logging.info(f"{request.source or DEFAULT_SOURCE} runs {request.item_id}")
+        why = self.terminal.run_item(request.item_id)
+        return RunItemResponse(status=Status.FAILED if why else Status.OK, message=why)
 
     def run_tool(self, request: RunToolRequest, source: int) -> RunToolResponse:
         if self.terminal.locked:

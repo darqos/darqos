@@ -26,6 +26,7 @@ import importlib
 import logging
 import os
 import queue
+import re
 import setproctitle
 import socket
 import sys
@@ -35,6 +36,11 @@ import traceback
 import darq
 from darq import pcall as pk
 from darq import process
+
+
+# A program kept as a Python package's item, rather than a directory (see
+# PACKAGE_PROGRAM in the p-kernel).
+PACKAGE_PROGRAM = re.compile(r"darq\.python:[0-9a-f]{32}")
 
 
 class AppState(enum.Enum):
@@ -287,12 +293,19 @@ class PythonPProcess(darq.SocketListener):
     def load_app(self):
         """Import the application's main module, and return its darq_main."""
 
-        # Add executable module's location to system path.
-        sys.path.insert(0, self._exec_path)
-
         # Inject the process state structure into the darq.system module, so
         # the application can make p-calls (even while being imported).
         darq.system.__dict__["_darq_process_state"] = self
+
+        # Add executable module's location to system path: a directory,
+        # or a Python package's item, read from Storage as a directory is
+        # (see darq.packages), which needs p-calls.
+        if PACKAGE_PROGRAM.fullmatch(self._exec_path):
+            import darq.packages as packages
+            packages.install()
+            sys.path.insert(0, packages.PREFIX + self._exec_path)
+        else:
+            sys.path.insert(0, self._exec_path)
 
         main = importlib.import_module("main")
         return main.darq_main

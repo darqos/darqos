@@ -1,0 +1,41 @@
+// darqos
+// Copyright (C) 2026 David Arnold
+//
+// A darq.python item's protocol: a Python package, kept in a Storage
+// blob, as a zip of its modules.  See doc/python-type.rst.
+//
+// Its type implementation, types/python, serves it on a port for each
+// client of an item, from the Implementation protocol's Create,
+// CreateFrom and Open (lib/didl/type.didl).
+
+library darq.python;
+
+enum Status : uint32 {
+    OK = 0;
+
+    // The package has changed since the generation given: it's to be
+    // read again, and the change made to that.
+    CONFLICT = 1;
+
+    // What was given isn't a package: the message says why.
+    INVALID = 2;
+
+    // It couldn't be kept.
+    FAILED = 3;
+}
+
+protocol Python {
+    // Done with it: the port's closed.
+    1: Close() -> ();
+
+    // It's been looked at, for History, by a lens, from source.
+    2: Viewed(string source, string note);
+
+    // The package, as a zip of its modules, and its generation, which a
+    // Put names, to replace it.
+    16: Get() -> (opaque package, uint64 generation);
+
+    // Replace the package, if it's still the generation expected: it's
+    // recorded in History as edited, from source.
+    17: Put(uint64 expected, opaque package, string source) -> (uint64 generation, Status status, string message);
+}

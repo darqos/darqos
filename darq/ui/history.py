@@ -10,6 +10,7 @@ import re
 import typing
 
 from PyQt6 import QtCore
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -27,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 import darq
+import darq.packages
 from darq.protocols.history import Event
 from darq.protocols.history import Status as HistoryStatus
 
@@ -118,6 +120,10 @@ class HistoryView(QWidget):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)  # pyright: ignore[reportOptionalMemberAccess]
         self.table.activated.connect(lambda index: self.use(index.row()))
+        for keys in ("Ctrl+Return", "Ctrl+Enter"):
+            shortcut = QShortcut(QKeySequence(keys), self)
+            shortcut.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(lambda: self.run(self.table.currentRow()))
 
         search = QPushButton("Search")
         search.clicked.connect(self.search)
@@ -216,6 +222,20 @@ class HistoryView(QWidget):
             self.table.selectRow(0)
         self.more.setEnabled(len(response.events) == PAGE)
         self.host.show_status(f"{len(self.shown)} events" + (", and more" if len(response.events) == PAGE else ""))
+
+    def run(self, row: int):
+        """Run a result's item, if it's a Python package, as a program
+        (see darq.packages): Ctrl+Enter."""
+        if not 0 <= row < len(self.shown):
+            return
+        item_id = self.shown[row].item_id
+        if not item_id.startswith(f"{darq.packages.TYPE_ID}:"):
+            self.host.show_status("Only a Python package can be run")
+            return
+        run = getattr(self.host, "run_item", None)
+        why = run(item_id) if run is not None else "Nothing can be run here"
+        if why:
+            self.host.show_status(why)
 
     def use(self, row: int):
         """Use an event's item: the host's launched() is called with this

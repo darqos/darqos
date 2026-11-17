@@ -13,7 +13,7 @@ import datetime
 import re
 
 from PyQt6 import QtCore
-from PyQt6.QtGui import QKeyEvent
+from PyQt6.QtGui import QKeyEvent, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 )
 
 import darq
+import darq.packages
 from darq.protocols.index import Result
 from darq.protocols.type import Status as TypeStatus
 
@@ -79,7 +80,10 @@ class SearchField(QLineEdit):
         if a0 is not None and a0.key() in (Key.Key_Up, Key.Key_Down):
             self.view.move(-1 if a0.key() == Key.Key_Up else 1)
         elif a0 is not None and a0.key() in (Key.Key_Return, Key.Key_Enter):
-            self.view.enter()
+            if a0.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier:
+                self.view.run(self.view.table.currentRow())
+            else:
+                self.view.enter()
         else:
             super().keyPressEvent(a0)
 
@@ -111,6 +115,10 @@ class SearchView(QWidget):
         assert header is not None
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.activated.connect(lambda index: self.use(index.row()))
+        for keys in ("Ctrl+Return", "Ctrl+Enter"):
+            shortcut = QShortcut(QKeySequence(keys), self)
+            shortcut.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(lambda: self.run(self.table.currentRow()))
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -211,6 +219,20 @@ class SearchView(QWidget):
 
     def fetched(self):
         self.fetching = False
+
+    def run(self, row: int):
+        """Run a result's item, if it's a Python package, as a program
+        (see darq.packages): Ctrl+Enter."""
+        if not 0 <= row < len(self.shown):
+            return
+        item_id = self.shown[row].item_id
+        if not item_id.startswith(f"{darq.packages.TYPE_ID}:"):
+            self.host.show_status("Only a Python package can be run")
+            return
+        run = getattr(self.host, "run_item", None)
+        why = run(item_id) if run is not None else "Nothing can be run here"
+        if why:
+            self.host.show_status(why)
 
     def use(self, row: int):
         """Use a result's item: the host's launched() is called with this

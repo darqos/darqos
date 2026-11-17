@@ -12,6 +12,7 @@ import sys
 
 import pytest
 
+import darq.items
 import darq.kb as model
 from darq.protocols import kb as wire
 from darq.protocols.kb import (
@@ -467,14 +468,13 @@ def test_kb_service(live_pkernel, tmp_path):  # noqa: F811
             listener = darq.open_port()
             kb.watch([], listener)
 
-            instance_of = model.Property(model.Datatype.Item, "P31")
-            instance_of.set_label("instance of")
-            human = model.Item("Q5")
-            human.set_label("human")
+            # The vocabulary's there before anyone can ask for it.
+            if kb.get("P31") is None or kb.get("Q5") is None:
+                return "no vocabulary"
             ada = model.Item()
             ada.set_label("Ada Lovelace")
             ada.claim("P31", model.EntityValue("Q5"))
-            kb.put(instance_of, human, ada)
+            kb.put(ada)
 
             ada.add_alias("Ada")
             kb.put(ada)
@@ -503,9 +503,9 @@ def test_kb_service(live_pkernel, tmp_path):  # noqa: F811
             if list(kb.query(q, ["en"], labels)) != [(ada.id,)] or labels != {ada.id: "Ada Lovelace"}:
                 return "not found by a query"
 
-            # Four changes: three entities, then Ada again.
+            # Two changes: Ada, then Ada again.
             changed = []
-            for _ in range(4):
+            for _ in range(2):
                 source, payload, handles = darq.receive_message(listener, timeout=10)
                 message = Changed()
                 message.decode(payload, handles)
@@ -521,6 +521,28 @@ def test_kb_service(live_pkernel, tmp_path):  # noqa: F811
     run_kernel_until(kernel, lambda: client.get_status() == zombie, "the client to exit")
     assert (client.get_exit_status(), client.get_exit_error()) == (0, None)
     assert (pathlib.Path(kernel.run_dir) / "kb.sqlite").exists()
+
+
+def test_starting_sets_up_the_vocabulary(tmp_path):
+    """Before any client can see it: what DarqOS's code relies on, and
+    what's said of it; and again, changing nothing."""
+    service = module.KBService(str(tmp_path / "kb.sqlite"))
+    service.port = 1
+    try:
+        module.set_up(service)
+        kb = model.KB(module.LocalClient(service))
+        for entity_id in (model.INSTANCE_OF, model.DARQOS_TYPE, darq.items.CREATED, darq.items.MEDIA_TYPE,
+                          darq.items.COMPUTER_FILE, model.DARQOS):
+            assert kb.get(entity_id) is not None, entity_id
+        human = kb.get("Q5")
+        assert human is not None
+        values = [s.get_value() for s in human.get_statements(model.DARQOS_INSTANCE_TYPE)]
+        assert [v.value for v in values if isinstance(v, model.StringValue)] == ["darq.person"]
+        writes = service.store.writes
+        module.set_up(service)
+        assert service.store.writes == writes
+    finally:
+        service.close()
 
 
 def test_starting_relinks_what_was_merged_before(tmp_path):

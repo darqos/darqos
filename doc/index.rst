@@ -96,6 +96,7 @@ Type Implementations
 .. include:: pdf-type.rst
 .. include:: markdown-type.rst
 .. include:: data-type.rst
+.. include:: python-type.rst
 .. include:: email.rst
 .. include:: message-type.rst
 .. include:: audio.rst

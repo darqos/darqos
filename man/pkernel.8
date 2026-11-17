@@ -76,7 +76,11 @@ and with that dpid, the parent's dpid, the listening port, and the
 executable path.
 The executable path must be a directory containing a
 .I main.py
-file.
+file, or a Python package's item,
+.BI darq.python: key ,
+which
+.BR pyloader (8)
+reads from Storage, as the p-kernel can't.
 The child runs with
 .I /
 as its working directory, and with the directory containing the

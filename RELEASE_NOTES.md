@@ -4,6 +4,19 @@ Summary notes on newly added features for each release.
 
 ## Unreleased
 
+- **Items are named from the start.**  The Knowledge Base now sets up its
+  vocabulary when it starts.  Until something used a person, a book, or
+  the like, a new install's items, such as a text file made with New, got
+  no entity, and so no name, and a new release's vocabulary, and its
+  migrations, waited till then too.
+
+- **Python packages as items.**  A new item type, *Python Package*
+  (`darq.python`), keeps Python code as a package of modules, a zip, in
+  Storage, named as it's imported.  `darq.packages` imports from them: a
+  package's item on `sys.path` is read as a directory, and
+  `import tidy` finds the package named *tidy*.  It's the first step to
+  keeping REPL sessions, extracting programs from them, and running them.
+
 - **The REPL's namespace tree.**  On the left of the REPL is what's bound:
   the session's names, its results, and the built-ins, with a badge for
   each kind of thing, and modules, classes and objects to expand.
@@ -13,11 +26,18 @@ Summary notes on newly added features for each release.
   shown, but not changed.  What isn't saved is kept as a draft, marked in
   the tree.
 
-- **A Python REPL**, with *Sys-s*, or from the Tools panel: Python, a cell
-  at a time, with the darq API ready (`darq`, and `terminal`, to drive the
-  Terminal), syntax highlighting, completion
-  with Tab, and `$3` for cell 3's result.  There's one session, which
-  ends when its window's closed: *Sys-s* focuses it while it's open.
+- **A Python REPL**, with *Sys-s*: Python, a cell at a time, with the darq
+  API ready (`darq`, and `terminal`, to drive the Terminal), syntax
+  highlighting, completion with Tab, and `$3` for cell 3's result.  A
+  session is an item, a Python package, and the REPL is its lens: *Sys-s*
+  opens the default session, or focuses its REPL, and others open from
+  History or Search, each in a REPL of its own.  Ctrl+Shift+S saves a
+  session, its code and the cells run, and it's opened again with them;
+  what can't be saved is said.  *Extract package…* takes a function, such
+  as a program's `darq_main`, and everything of the session's it needs,
+  into a package of its own, to be imported by its name, and run:
+  Ctrl+Enter in Search or History runs a package as a program, or
+  `terminal.run_item` does.
 
 - **Windows have shadows.**  A soft shadow sets each window, and each of
   the Terminal's panels, off from what's under it, and a darker one shows

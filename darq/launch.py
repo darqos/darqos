@@ -234,6 +234,27 @@ def use_item(item_id: str, item: int | None = None, context: str = "terminal", l
     return lens
 
 
+# What a program kept as an item is: a Python package (see
+# darq.packages).
+PACKAGE_TYPE = "darq.python"
+
+
+def run_item(item_id: str) -> int:
+    """Run a Python package's item, as a program: spawn a process, which
+    imports its main module, and calls its darq_main(), as a directory's
+    would be.
+
+    :returns: Its DPID.
+    :raises LaunchError: if it isn't a package, or can't be spawned."""
+    type_id, _ = split_item_id(item_id)
+    if type_id != PACKAGE_TYPE:
+        raise LaunchError(f"{item_id} isn't a Python package: only a package can be run")
+    try:
+        return spawn_process(item_id)
+    except DarqError as e:
+        raise LaunchError(f"Can't run {item_id}: {e}") from e
+
+
 def destroy_item(item_id: str, context: type_protocol.Context | None = None):
     """Destroy an item.
 

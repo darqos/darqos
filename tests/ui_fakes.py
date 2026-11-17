@@ -78,6 +78,13 @@ class FakeLaunch:
         self.contexts.append(context)
         return DOC, 42
 
+    def run_item(self, item_id):
+        """Run a package: as darq.launch's, it's refused if it isn't one."""
+        if not item_id.startswith("darq.python:"):
+            raise LaunchError(f"{item_id} isn't a Python package: only a package can be run")
+        self.ran = [*getattr(self, "ran", []), item_id]
+        return 9
+
     def use_item(self, item_id, item=None, lens_for=""):
         if self.fail:
             raise LaunchError(f"No lens for {item_id}")

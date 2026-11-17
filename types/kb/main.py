@@ -82,57 +82,12 @@ from darq.protocols.type import (
 )
 
 
-def vocabulary() -> list[model.Entity]:
-    """Return the properties and items the implementation needs."""
-    def prop(entity_id: str, label: str, datatype: model.Datatype, desc: str | None = None) -> model.Property:
-        p = model.Property(datatype, entity_id)
-        p.set_label(label)
-        if desc is not None:
-            p.set_description(desc)
-        return p
-
-    def item(entity_id: str, label: str) -> model.Item:
-        i = model.Item(entity_id)
-        i.set_label(label)
-        return i
-
-    return [
-        prop(model.INSTANCE_OF, "instance of", model.Datatype.Item),
-        prop(model.SUBCLASS_OF, "subclass of", model.Datatype.Item),
-        prop(model.STATED_IN, "stated in", model.Datatype.Item),
-        prop(model.DARQOS_TYPE, "DarqOS type", model.Datatype.String,
-             "Type of an entity's item, recorded when it was created"),
-        prop(model.DARQOS_INSTANCE_TYPE, "DarqOS instance type", model.Datatype.String,
-             "Type of the items of a class's instances"),
-        prop(model.START_TIME, "start time", model.Datatype.Time),
-        prop(model.END_TIME, "end time", model.Datatype.Time),
-        prop(model.POINT_IN_TIME, "point in time", model.Datatype.Time),
-        prop(model.INVERSE_LABEL, "inverse label item", model.Datatype.Item,
-             "Item with a label that reads a property backwards"),
-        prop(model.REASON_FOR_DEPRECATED_RANK, "reason for deprecated rank", model.Datatype.Item),
-        prop(model.REASON_FOR_PREFERRED_RANK, "reason for preferred rank", model.Datatype.Item),
-        *darq.message.vocabulary(),
-        *darq.url.vocabulary(), *darq.book.vocabulary(),
-        *darq.wikidata.vocabulary(),
-        *darq.items.vocabulary(),
-        item(model.DARQOS, "DarqOS"),
-        item(model.REPLACED, "replaced by hand"),
-        item(model.REMOVED, "removed by hand"),
-        item(model.ENTITY_EDITOR, "Darq Entity Editor"),
-        *(item(class_id, label) for class_id, label, _ in model.DEFAULT_INSTANCE_TYPES),
-    ]
-
-
 # A book's numbers, which are in its Index body, so that Search finds a
 # book by them: an edition's ISBNs, LCCN, ASIN and Open Library ID, a
 # work's LibraryThing number and classification numbers, and a copy's
 # LibraryThing ID.
 BOOK_NUMBERS = (darq.book.ISBN_13, darq.book.ISBN_10, darq.book.LCCN, darq.book.ASIN, darq.book.OPEN_LIBRARY,
                 darq.book.LIBRARYTHING_WORK, darq.book.DDC, darq.book.LCC, darq.book.LIBRARYTHING_BOOK)
-
-# Entities read and written at a time, renaming types.
-RENAME_BATCH = 200
-
 
 class EntityImplementation(ItemType, EntityWriter.Handler):
     """Creates, opens, writes and destroys KB items, and records them in
@@ -148,50 +103,6 @@ class EntityImplementation(ItemType, EntityWriter.Handler):
     def __init__(self, kb: model.KB, index: darq.index.Publisher):
         super().__init__(kb, model.KIND_TYPES)
         self.index = index
-
-    def start(self):
-        """Find or create the vocabulary, and state the default instance
-        types."""
-        self.kb.ensure(*vocabulary())
-        self.relabel()
-        self.rename_types()
-        for class_id, _, kind in model.DEFAULT_INSTANCE_TYPES:
-            self.kb.state(class_id, model.DARQOS, [
-                model.Statement(model.Snak(model.DARQOS_INSTANCE_TYPE, model.StringValue(kind)))])
-        for property_id, item_id, _ in (*darq.message.INVERSE_LABELS, *darq.url.INVERSE_LABELS,
-                                        *darq.book.INVERSE_LABELS, *darq.items.INVERSE_LABELS):
-            self.kb.state(property_id, model.DARQOS, [
-                model.Statement(model.Snak(model.INVERSE_LABEL, model.EntityValue(item_id)))])
-
-    def rename_types(self):
-        """Give items of a type that's been renamed the new one, in their
-        DarqOS type statements, and classes in their instance types (see
-        darq.history.RENAMED_TYPES): it's done when it starts, and once
-        it's done, there's nothing to do."""
-        for old, new in darq.history.RENAMED_TYPES.items():
-            for property_id in (model.DARQOS_TYPE, model.DARQOS_INSTANCE_TYPE):
-                ids = sorted(self.kb.find_by_value(property_id, old))
-                for start in range(0, len(ids), RENAME_BATCH):
-                    entities, _ = self.kb.get_entities(ids[start:start + RENAME_BATCH], follow=False)
-                    changed = [e for e in entities if not e.destroyed and e.redirect is None]
-                    for entity in changed:
-                        for s in entity.get_statements(property_id):
-                            value = s.get_value()
-                            if isinstance(value, model.StringValue) and value.value == old:
-                                value.value = new
-                    if changed:
-                        self.kb.put(*changed)
-                if ids:
-                    logging.info(f"Renamed {old} to {new} in {len(ids)} entities' {property_id}")
-
-    def relabel(self):
-        """Give vocabulary that's been renamed its new label, unless it's
-        been changed by hand."""
-        for entity_id, old, new in (*darq.book.RELABELLED, *darq.url.RELABELLED, *darq.message.RELABELLED):
-            entity = self.kb.get(entity_id, follow=False)
-            if entity is not None and entity.get_label() == old:
-                entity.set_label(new)
-                self.kb.put(entity)
 
     def record_entity(self, entity: model.Entity, event: str, context: darq.history.Context | None):
         """Record an event about an entity, if it's of a kind."""
@@ -432,7 +343,6 @@ def darq_main():
     port = darq.open_port()
     server = darq.Server()
     implementation.add(server, port)
-    implementation.start()
     darq.send(bootstrap, Ready(implementation=port))
     logging.info(f"Serving {', '.join(model.KIND_TYPES)} on port {port}")
     server.run()
