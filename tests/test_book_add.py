@@ -639,7 +639,7 @@ def test_lookup_through_the_http_service(live_pkernel, web, tmp_path):  # noqa: 
             darq.launch.destroy_item(item_id)
             try:
                 darq.launch.open_item(item_id)
-            except darq.DarqError:
+            except darq.errors.DarqError:
                 return 0
             return "it wasn't destroyed"
         """)

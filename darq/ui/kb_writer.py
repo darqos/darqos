@@ -23,9 +23,9 @@ def writer(kb: model.KB) -> model.KB:
     """Return a KB reading with a KB's client, and writing through the KB
     type implementation, on the calling thread.
 
-    :raises darq.DarqError: if the implementation can't be had."""
+    :raises darq.errors.DarqError: if the implementation can't be had."""
     types = Type.Client(darq.connect("darq.type"), timeout=TIMEOUT)
     activated = types.activate(type_id=model.THING_TYPE)
     if activated.status != Status.OK or activated.implementation is None:
-        raise darq.DarqError(f"Can't reach the KB: {activated.status.name}")
+        raise darq.errors.DarqError(f"Can't reach the KB: {activated.status.name}")
     return model.KB(kb.client, EntityWriter.Client(activated.implementation, timeout=TIMEOUT))

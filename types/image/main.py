@@ -308,7 +308,7 @@ class ImageImplementation(ItemType):
         """Return an item, by its identifier, or why it can't be."""
         try:
             parsed = parse_item_id(iid)
-        except darq.InvalidIdentifierError:
+        except darq.errors.InvalidIdentifierError:
             return None, Status.INVALID_ID
         if parsed is None:
             return None, Status.NOT_FOUND
@@ -345,7 +345,7 @@ class ImageImplementation(ItemType):
         try:
             response = self.storage.put(key=picture.key, expected=picture.generation,
                                         value=encode_blob(picture.original, picture.edits, picture.flags))
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.error(f"Can't save {picture.iid}: {e!r}")
             return False
         if response.status != storage.Status.OK:
@@ -408,7 +408,7 @@ class ImageImplementation(ItemType):
     def check_type(type_id: str) -> tuple[str, Status]:
         try:
             canonical = darq.canonical_type_id(type_id)
-        except darq.InvalidIdentifierError:
+        except darq.errors.InvalidIdentifierError:
             return "", Status.INVALID_ID
         return canonical, Status.OK if canonical in imaging.FORMATS else Status.NOT_FOUND
 

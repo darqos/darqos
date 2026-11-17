@@ -19,7 +19,7 @@ import time
 
 import pytest
 
-from darq.compositor import COMPOSITOR, Compositor, PolicyChannel, compositor_environment
+from darq._runtime.compositor import COMPOSITOR, Compositor, PolicyChannel, compositor_environment
 from darq.errors import ChannelClosedError, MessageDecodingError
 from darq.protocols.compositor import (
     BindHotkey,
@@ -663,7 +663,7 @@ def test_dies_with_the_terminal(tmp_path):
     # as if it were stuck: the compositor still exits when it dies.
     script = textwrap.dedent("""
         import select, subprocess, sys
-        from darq.compositor import Compositor
+        from darq._runtime.compositor import Compositor
         quiet = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
         c = Compositor.start(**quiet)
         select.select([c.channel], [], [], 10)

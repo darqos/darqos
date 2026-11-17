@@ -226,7 +226,7 @@ class Importer:
             return
         try:
             self.history.add_event(item_id=item_id, event=event, source=SOURCE, note=note)
-        except darq.DarqError as e:
+        except darq.errors.DarqError as e:
             log.warning(f"Can't record {event} for {item_id}: {e!r}")
 
     def ensure_vocabulary(self):
@@ -321,7 +321,7 @@ class Importer:
     def create_person(self) -> str:
         response = self.implementation.create(type_id="darq.person", context=TypeContext(source=SOURCE, note=self.name))
         if response.status != TypeStatus.OK or response.item is None:
-            raise darq.DarqError(f"Can't create a person: {response.status.name}")
+            raise darq.errors.DarqError(f"Can't create a person: {response.status.name}")
         try:
             EntityItem.Client(response.item, timeout=self.implementation.timeout).close()
         finally:
@@ -425,7 +425,7 @@ class Importer:
         try:
             item_id = self.files.create(media_type, extension, found.read(), record.get("name") or found.name,
                                         TypeContext(event=darq.history.IMPORTED, source=SOURCE, note=self.name))
-        except (OSError, darq.DarqError, TimeoutError) as e:
+        except (OSError, darq.errors.DarqError, TimeoutError) as e:
             log.warning(f"Can't make an item of {record['id']}: {e!r}")
             return ""
         if item_id is None:
@@ -512,7 +512,7 @@ class Importer:
                 self.items.create(MESSAGE_TYPE, *new)
             if changed:
                 self.items.put(*changed)
-        except (darq.DarqError, TimeoutError, ValueError, LookupError, model.ConflictError) as e:
+        except (darq.errors.DarqError, TimeoutError, ValueError, LookupError, model.ConflictError) as e:
             log.error(f"Can't import {len(messages)} messages of {channel}: {e!r}")
             self.result.failed += len(messages)
             return

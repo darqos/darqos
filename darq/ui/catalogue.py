@@ -64,7 +64,7 @@ def find_copy(content: str, reader: typing.Any = None) -> str:
         # identifier as text.
         found = sorted(reader.find_links(darq.split_item_id(content)[1], darq.book.CONTENT)) or \
             sorted(reader.find_by_value(darq.book.OLD_CONTENT, content))
-    except (darq.DarqError, TimeoutError, ValueError) as e:
+    except (darq.errors.DarqError, TimeoutError, ValueError) as e:
         logging.info(f"Can't look for {content} in the catalogue: {e!r}")
         return ""
     return model.item_id(found[0], darq.book.ITEM_TYPE) if found else ""

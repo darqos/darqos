@@ -72,7 +72,7 @@ class Counts(typing.NamedTuple):
 def is_content(item_id: str) -> bool:
     try:
         return darq.items.is_content(darq.split_item_id(item_id)[0])
-    except darq.InvalidIdentifierError:
+    except darq.errors.InvalidIdentifierError:
         return False
 
 
@@ -84,7 +84,7 @@ def history_items(history: History.Client) -> list[str]:
     while True:
         response = history.get_events(start=0, end=end, type_ids=list(darq.items.KINDS), max=PAGE)
         if response.status != HistoryStatus.OK:
-            raise darq.DarqError(f"get_events: {response.status.name}")
+            raise darq.errors.DarqError(f"get_events: {response.status.name}")
         for event in response.events:
             found.setdefault(event.item_id)
         if not response.events:
@@ -143,7 +143,7 @@ def give(items: dict[str, str], kb: model.KB, types: Type.Client,
         if type_id not in implementations:
             try:
                 activated = types.activate(type_id=type_id)
-            except (darq.DarqError, TimeoutError) as e:
+            except (darq.errors.DarqError, TimeoutError) as e:
                 logging.warning(f"Can't activate {type_id}: {e!r}")
                 activated = None
             port = activated.implementation if activated is not None and activated.status == Status.OK else None
@@ -161,7 +161,7 @@ def give(items: dict[str, str], kb: model.KB, types: Type.Client,
         try:
             had = darq.items.read(kb, entity_id) is not None
             response = client.open_entity(item_id=item_id)
-        except (darq.DarqError, TimeoutError, LookupError, ValueError) as e:
+        except (darq.errors.DarqError, TimeoutError, LookupError, ValueError) as e:
             logging.warning(f"Can't open {item_id}'s entity: {e!r}")
             counts["failed"] += 1
             continue
@@ -178,7 +178,7 @@ def give(items: dict[str, str], kb: model.KB, types: Type.Client,
                 counts["named"] += 1
             elif not had:
                 counts["unnamed"] += 1
-        except (darq.DarqError, TimeoutError, LookupError, ValueError) as e:
+        except (darq.errors.DarqError, TimeoutError, LookupError, ValueError) as e:
             logging.warning(f"Can't name {item_id}: {e!r}")
         finally:
             darq.close_port(response.item)

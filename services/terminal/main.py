@@ -3,7 +3,7 @@
 
 # The Terminal (see doc/terminal.rst): the session.  The p-kernel starts
 # it at boot, and reboots if it exits.  It starts the compositor, with
-# its own Wayland connection and the policy channel (darq.compositor),
+# its own Wayland connection and the policy channel (darq._runtime.compositor),
 # and decides what the compositor does: the hotkeys (see doc/ux.rst),
 # its panels, and locking.
 #
@@ -34,10 +34,10 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.sip import voidptr
 
 import darq
-from darq.compositor import COMPOSITOR, Compositor, PolicyChannel
+from darq._runtime.compositor import COMPOSITOR, Compositor, PolicyChannel
 from darq.dipc import Message
 from darq.errors import ChannelClosedError, MessageDecodingError
-from darq.loop import QtEventLoop
+from darq.qtloop import QtEventLoop
 from darq.protocols.security import Status as SecurityStatus
 from darq.protocols.compositor import (
     BindHotkey,
@@ -200,7 +200,7 @@ class Terminal:
         """Ask for the password, or, if there isn't one, for a new one."""
         try:
             is_set = self.services.security.is_password_set().set
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.error(f"Can't reach the Security service: {e!r}")
             self.screens.show(UNAVAILABLE, f"Can't reach the Security service: {e}. Enter tries again.")
             return
@@ -286,7 +286,7 @@ class Terminal:
         loaded when that's opened."""
         try:
             return darq.ui.types.implemented(self.services.types)
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.warning(f"Can't list types: {e}")
             return []
 
@@ -448,13 +448,13 @@ class Terminal:
         def find() -> tuple[str, int]:
             client = kb()
             if client is None:
-                raise darq.DarqError("the Knowledge Base isn't running")
+                raise darq.errors.DarqError("the Knowledge Base isn't running")
             item_id = darq.sessions.find_or_make_default(client, self.create_session)
             for window, name in lenses.items():
                 try:
                     if lens_shows(name)[0] == item_id:
                         return item_id, window
-                except (darq.DarqError, TimeoutError):
+                except (darq.errors.DarqError, TimeoutError):
                     continue
             return item_id, 0
 
@@ -500,7 +500,7 @@ class Terminal:
                                                               context=TypeContext(source=SOURCE))
         try:
             Python.Client(port, timeout=LENS_TIMEOUT).close()
-        except (darq.DarqError, TimeoutError):
+        except (darq.errors.DarqError, TimeoutError):
             darq.close_port(port)
         return item_id
 
@@ -595,12 +595,12 @@ class Terminal:
         for port in list(self.watchers):
             try:
                 darq.send(port, message)
-            except darq.DarqError as e:
+            except darq.errors.DarqError as e:
                 logging.info(f"A watcher's gone: {e}")
                 self.watchers.discard(port)
                 try:
                     darq.close_port(port)
-                except darq.DarqError:
+                except darq.errors.DarqError:
                     pass
 
     def serve(self) -> darq.Server:
@@ -658,7 +658,7 @@ def darq_main(compositor_path: typing.Any = COMPOSITOR):
         terminal.start()
         try:
             server = terminal.serve()
-        except darq.DarqError as e:
+        except darq.errors.DarqError as e:
             # Scripts can't reach it: it's no reason not to be the Terminal.
             logging.error(f"Can't serve {NAME}: {e!r}")
             server = None

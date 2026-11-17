@@ -77,12 +77,12 @@ class Recorder:
         if self.client is None:
             try:
                 self.client = self.connector()
-            except darq.DarqError as e:
+            except darq.errors.DarqError as e:
                 logging.debug(f"Can't find History: {e!r}")
             if self.client is None:
                 return
         try:
             self.client.add_event(item_id=item_id, event=event, source=source or self.source, note=note)
-        except darq.DarqError as e:
+        except darq.errors.DarqError as e:
             logging.warning(f"Can't record {event} for {item_id}: {e!r}")
             self.client = None

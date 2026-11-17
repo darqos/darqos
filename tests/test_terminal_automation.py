@@ -22,7 +22,7 @@ from darq.protocols.compositor import (
 from darq.protocols.terminal import Rect, Status
 from darq.version import Version
 
-from darq.compositor import COMPOSITOR
+from darq._runtime.compositor import COMPOSITOR
 
 from ui_fakes import DOC, inline
 from test_terminal import automation, host, security, terminal, unlock  # noqa: F401
@@ -128,7 +128,7 @@ def test_a_lenss_window_says_what_its_showing(service, terminal, monkeypatch):  
 
     def lens_shows(name, timeout=None):
         if name == "lens.71":
-            raise darq.DarqError("lens.71 isn't there")
+            raise darq.errors.DarqError("lens.71 isn't there")
         return DOC, False
 
     monkeypatch.setattr(automation, "lens_shows", lens_shows)
@@ -166,7 +166,7 @@ def test_watchers_are_told(service, terminal, monkeypatch):  # noqa: F811
 
     def send(port, message):
         if port == 51:
-            raise darq.DarqError("gone")
+            raise darq.errors.DarqError("gone")
         service.told.append((port, message))
 
     monkeypatch.setattr(darq, "send", send)

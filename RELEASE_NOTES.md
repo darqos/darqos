@@ -4,6 +4,31 @@ Summary notes on newly added features for each release.
 
 ## Unreleased
 
+- **The darq API's exceptions are `darq.errors`'s.**  They're no longer
+  imported into `darq` itself: `darq.DarqError` is now
+  `darq.errors.DarqError`, `darq.LaunchError` `darq.errors.LaunchError`,
+  and so on, as in scripts and the REPL.
+- **The event loops are `darq.loop`'s, and Qt's `darq.qtloop`'s.**
+  `QtEventLoop` is now imported from `darq.qtloop`, and the select loop,
+  and the loops' interface, are `darq.loop`'s, not `darq`'s.  So `import
+  darq` no longer loads Qt: the p-kernel and the services don't.
+- **`darq.process` and `darq.version` are only modules in `darq`:** their
+  names, such as `PortState` and `Version`, are theirs, not `darq`'s.  The
+  operator's languages stay in `darq`: `languages()`, and
+  `language_chain()` and `language_tag()`, which were `darq.language`'s
+  `chain()` and `tag()`.
+- **`darq.system`'s internals aren't `darq`'s:** `Client`, `Handler`,
+  `call`, `transact`, `init`, `init_cb` and `SpawnResult` are reached as
+  `darq.system.…`; `init_a` and `get_loop`, unused, are gone.
+  `darq.MAX_NAME_LENGTH` is a canonical name's limit, 31 bytes, as
+  `darq.identifier`'s: a registered name's, 255, is
+  `darq.MAX_REGISTERED_NAME_LENGTH` (it was the 255 before, by mistake).
+- **What programs don't use is `darq._runtime`'s:** `pcall`, `process`,
+  `compositor` and `vocabulary` moved there, from `darq`.  `darq` has an
+  `__all__`: the system API, identifiers, languages, and the modules
+  `errors`, `loop` and `version`.  `send_message`, the raw p-call, is
+  `darq.system.send_message`: programs use `send`.
+
 - **Items are named from the start.**  The Knowledge Base now sets up its
   vocabulary when it starts.  Until something used a person, a book, or
   the like, a new install's items, such as a text file made with New, got

@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QLineEdit, QPlai
 import darq
 import darq.kb as model
 import darq.launch
-from darq.loop import QtEventLoop
+from darq.qtloop import QtEventLoop
 from darq.protocols.history import History
 from darq.protocols.kb import EntityWriter
 from darq.protocols.type import Context as TypeContext
@@ -71,7 +71,7 @@ def run_import(source: sources.Source, name: str,
     workspace was imported from.
 
     :raises sources.SourceError, OSError, ValueError: if it can't be read.
-    :raises darq.DarqError: if a service can't be reached."""
+    :raises darq.errors.DarqError: if a service can't be reached."""
     progress("Reading the export", 0, 1)
     if source.path:
         export = slack_export.Export(source.path)
@@ -84,7 +84,7 @@ def run_import(source: sources.Source, name: str,
     types = Type.Client(darq.connect("darq.type"), timeout=TIMEOUT)
     activated = types.activate(type_id=KB_TYPE)
     if activated.status != Status.OK or activated.implementation is None:
-        raise darq.DarqError(f"Can't activate {KB_TYPE}: {activated.status.name}")
+        raise darq.errors.DarqError(f"Can't activate {KB_TYPE}: {activated.status.name}")
     implementation = Implementation.Client(activated.implementation, timeout=TIMEOUT)
     kb = model.KB.connect(timeout=TIMEOUT)
     items = model.KB(kb.client, EntityWriter.Client(activated.implementation, timeout=TIMEOUT))

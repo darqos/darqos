@@ -670,7 +670,7 @@ def test_launch_doesnt_block(live_pkernel, tmp_path):  # noqa: F811
         import time
         import darq
         from PyQt6.QtCore import QCoreApplication, QTimer
-        from darq.loop import QtEventLoop
+        from darq.qtloop import QtEventLoop
         from darq.protocols.history import History
         from darq.protocols.type import Type
         from darq.ui import Services

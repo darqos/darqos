@@ -44,7 +44,7 @@ MAX_NAMES = 12
 CLASSES = dict(model.KINDS) | {darq.book.LANGUAGE_KIND: darq.wikidata.LANGUAGE_CLASS}
 
 # Failures of a port.
-ERRORS = (darq.DarqError, TimeoutError, ValueError)
+ERRORS = (darq.errors.DarqError, TimeoutError, ValueError)
 
 # Opens an item, returning a port for it.
 Open = typing.Callable[[str], int]

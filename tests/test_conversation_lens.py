@@ -79,7 +79,7 @@ class World:
 
     def open(self, item_id):
         if item_id in self.unopenable:
-            raise darq.LaunchError(f"Can't open {item_id}: NOT_FOUND")
+            raise darq.errors.LaunchError(f"Can't open {item_id}: NOT_FOUND")
         self.next_port += 1
         self.ports[self.next_port] = item_id
         return self.next_port

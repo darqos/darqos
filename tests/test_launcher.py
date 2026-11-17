@@ -11,7 +11,7 @@ import typing
 import pytest
 
 from darq.errors import LaunchError
-from darq.loop import QtEventLoop
+from darq.qtloop import QtEventLoop
 from darq.ui.launcher import Launcher
 
 from ui_fakes import DOC, TEXT, FakeServices, inline

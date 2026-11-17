@@ -49,7 +49,7 @@ Version           What it is
 ================  ====================================================
 
 The p-kernel reads the version when it starts, and logs it.
-``darq.get_version()`` returns it, as a ``darq.Version``: the text, for
+``darq.get_version()`` returns it, as a ``darq.version.Version``: the text, for
 showing, and the edition and build, to compare, by ``order()``.  Any
 process can ask.
 

@@ -437,7 +437,7 @@ def test_a_lens_thats_not_registered_still_shows_its_item(qt_app, monkeypatch):
     from darq.ui import lens as ui_lens
 
     def taken(name, port):
-        raise darq.NameTakenError(name)
+        raise darq.errors.NameTakenError(name)
 
     monkeypatch.setattr(darq, "getpid", lambda: 12)
     monkeypatch.setattr(darq, "register_name", taken)
@@ -459,7 +459,7 @@ class ViewedItem:
 
     def viewed(self, source="", note=""):
         if self.dead:
-            raise darq.DeadPortError("gone")
+            raise darq.errors.DeadPortError("gone")
         self.views.append((source, note))
 
 

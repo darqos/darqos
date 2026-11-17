@@ -290,7 +290,7 @@ class World:
 
     def open(self, item_id):
         if item_id not in self.entities:
-            raise darq.LaunchError(f"Can't open {item_id}: NOT_FOUND")
+            raise darq.errors.LaunchError(f"Can't open {item_id}: NOT_FOUND")
         self.next_port += 1
         self.ports[self.next_port] = item_id
         return self.next_port
@@ -305,7 +305,7 @@ class FakeItem:
 
     def get_entity(self, languages):
         if self.item_id in self.world.failing:
-            raise darq.DeadPortError("gone")
+            raise darq.errors.DeadPortError("gone")
         entity = self.world.entities[self.item_id]
         linked = [self.world.linked(i) for i in sorted(model.referenced(entity))]
         return GetEntityResponse(entity=model.entity_to_wire(entity), linked=linked, status=wire.Status.OK)
@@ -1087,7 +1087,7 @@ def test_a_new_tag_is_made(editing, entity_lens, world, qt_app):
 
 def test_a_tag_that_cant_be_made(editing, entity_lens, world, qt_app):
     def fail(name, language):
-        raise darq.DarqError("no KB")
+        raise darq.errors.DarqError("no KB")
 
     entity_lens.tag_maker = fail
     tag = add_tag_statement(editing, qt_app)

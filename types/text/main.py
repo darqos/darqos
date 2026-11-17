@@ -253,7 +253,7 @@ class TextImplementation(ItemType):
         try:
             response = self.storage.put(key=buffer.key, expected=buffer.generation,
                                         value=encode_blob(buffer.text, buffer.flags))
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.error(f"Can't save {iid}: {e!r}")
             return False
         if response.status != storage.Status.OK:
@@ -281,7 +281,7 @@ class TextImplementation(ItemType):
         try:
             key = parse_item_id(item_id)
             buffer = self.load(key) if key is not None else None
-        except (darq.InvalidIdentifierError, FormatError):
+        except (darq.errors.InvalidIdentifierError, FormatError):
             return False
         return buffer is not None and self.adopt_entity(TYPE_ID, specifier(buffer.key))
 
@@ -330,7 +330,7 @@ class TextImplementation(ItemType):
     def export(self, request: ExportRequest, source: int) -> ExportResponse:
         try:
             key = parse_item_id(request.item_id)
-        except darq.InvalidIdentifierError:
+        except darq.errors.InvalidIdentifierError:
             return ExportResponse(status=Status.INVALID_ID)
         if key is None:
             return ExportResponse(status=Status.NOT_FOUND)
@@ -346,7 +346,7 @@ class TextImplementation(ItemType):
     def index_entry(self, request: IndexEntryRequest, source: int) -> IndexEntryResponse:
         try:
             key = parse_item_id(request.item_id)
-        except darq.InvalidIdentifierError:
+        except darq.errors.InvalidIdentifierError:
             return IndexEntryResponse(status=Status.INVALID_ID)
         if key is None:
             return IndexEntryResponse(status=Status.NOT_FOUND)
@@ -363,7 +363,7 @@ class TextImplementation(ItemType):
     def check_type(type_id: str) -> Status:
         try:
             return Status.OK if darq.canonical_type_id(type_id) == TYPE_ID else Status.NOT_FOUND
-        except darq.InvalidIdentifierError:
+        except darq.errors.InvalidIdentifierError:
             return Status.INVALID_ID
 
     def new(self, text: str, name: str = "") -> Buffer | None:
@@ -382,7 +382,7 @@ class TextImplementation(ItemType):
     def open(self, request: OpenRequest, source: int) -> OpenResponse:
         try:
             key = parse_item_id(request.item_id)
-        except darq.InvalidIdentifierError:
+        except darq.errors.InvalidIdentifierError:
             return OpenResponse(status=Status.INVALID_ID)
         if key is None:
             return OpenResponse(status=Status.NOT_FOUND)
@@ -402,7 +402,7 @@ class TextImplementation(ItemType):
         but it can't be opened again."""
         try:
             key = parse_item_id(request.item_id)
-        except darq.InvalidIdentifierError:
+        except darq.errors.InvalidIdentifierError:
             return DestroyResponse(status=Status.INVALID_ID)
         if key is None:
             return DestroyResponse(status=Status.NOT_FOUND)

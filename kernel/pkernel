@@ -33,7 +33,7 @@ from enum import IntEnum
 
 import darq
 from darq import dipc
-from darq import pcall as pk
+from darq._runtime import pcall as pk
 from darq import version as darq_version
 from darq.loop import SocketListener, TimerListener
 
@@ -678,7 +678,7 @@ class PseudoKernel(SocketListener, TimerListener):
         """Constructor."""
 
         # Event loop, using the callbacks model for I/O.
-        self._loop = darq.SelectEventLoop()
+        self._loop = darq.loop.SelectEventLoop()
 
         # What's running: it's read once, as it can't change until reboot.
         self.version = darq_version.find(DARQ_ROOT)
@@ -865,7 +865,7 @@ class PseudoKernel(SocketListener, TimerListener):
 
     def after(self, seconds: float, function):
         """Call function once, after a delay."""
-        self._loop.add_timer(seconds, darq.DeferredListener(self._loop, function))
+        self._loop.add_timer(seconds, darq.loop.DeferredListener(self._loop, function))
         return
 
     def run(self):
@@ -1138,7 +1138,7 @@ class PseudoKernel(SocketListener, TimerListener):
                 self.kill_host_process(process)
 
         self._shutdown_timer = self._loop.add_timer(
-            SHUTDOWN_TIMEOUT, darq.DeferredListener(self._loop, self.force_shutdown))
+            SHUTDOWN_TIMEOUT, darq.loop.DeferredListener(self._loop, self.force_shutdown))
         self.check_shutdown()
         return
 
@@ -1997,7 +1997,7 @@ class PseudoKernel(SocketListener, TimerListener):
         message_length = pk.Message.decode_length(buffer.peek(8))
 
         if message_length < 8:
-            raise darq.MessageDecodingError(f"invalid message length {message_length}")
+            raise darq.errors.MessageDecodingError(f"invalid message length {message_length}")
 
         if message_length > buffer.length():
             # Wait for the rest of the message.
@@ -2027,7 +2027,7 @@ class PseudoKernel(SocketListener, TimerListener):
 
             message = pk.RunRequest()
             message.decode(message_bytes)
-        except darq.MessageDecodingError as e:
+        except darq.errors.MessageDecodingError as e:
             logging.error(f"{reader.name()} invalid message: {e}")
             self.handle_incoming_disconnect(reader)
             return
@@ -2049,7 +2049,7 @@ class PseudoKernel(SocketListener, TimerListener):
                     return
                 message_type, message_bytes = next_message
                 self.dispatch_message(process, message_type, message_bytes)
-            except darq.MessageDecodingError as e:
+            except darq.errors.MessageDecodingError as e:
                 logging.error(f"{process.name()} invalid message: {e}")
                 self.handle_disconnect(process)
                 return

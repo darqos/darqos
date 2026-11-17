@@ -18,8 +18,8 @@ from enum import IntEnum
 from warnings import deprecated
 
 from .pcall import Buffer, Message
-from .errors import NonExistentPortError
-from .loop import EventLoopInterface
+from ..errors import NonExistentPortError
+from ..loop import EventLoopInterface
 
 # Default exported symbols.
 __all__ = [

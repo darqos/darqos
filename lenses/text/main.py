@@ -29,7 +29,7 @@ from PyQt6.QtGui import QAction, QKeyEvent, QMouseEvent, QTextCursor
 from PyQt6.QtWidgets import QApplication, QLabel, QMenu, QPlainTextEdit, QVBoxLayout, QWidget
 
 import darq
-from darq.loop import QtEventLoop
+from darq.qtloop import QtEventLoop
 from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
 from darq.protocols.text import Status as TextStatus
 from darq.protocols.text import Text
@@ -168,7 +168,7 @@ class TextSync:
         try:
             response = self.client.replace(start=start, end=old_end, text=new[start:new_end],
                                            expected=self.version)
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.error(f"Can't change {self.item_id}: {e!r}")
             self.available = False
             return self.FAILED
@@ -186,7 +186,7 @@ class TextSync:
         :returns: False if it doesn't answer."""
         try:
             response = self.client.get()
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.error(f"Can't get {self.item_id}: {e!r}")
             self.available = False
             return False
@@ -200,7 +200,7 @@ class TextSync:
         self.available = False
         try:
             self.client.close()
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.warning(f"Can't close {self.item_id}: {e!r}")
 
 
@@ -632,7 +632,7 @@ class TextLens(LensHandler):
         client = Text.Client(request.item, timeout=TIMEOUT)
         try:
             response = client.get()
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.error(f"Can't get {request.item_id}: {e!r}")
             return UseResponse(status=Status.FAILED)
 

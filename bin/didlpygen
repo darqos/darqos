@@ -9,7 +9,7 @@
 # method with a response produces xRequest and xResponse, and a
 # one-way method produces x.  Each message class holds its fields,
 # and has encode() and decode() methods, in the style of the p-call
-# messages in darq/pcall.py.  A class for each protocol maps method
+# messages in darq/_runtime/pcall.py.  A class for each protocol maps method
 # numbers to its message classes, and holds its Client and Handler
 # classes (see darq/system.py), with a method for each protocol method,
 # named in snake case.

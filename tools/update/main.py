@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import QApplication, QGridLayout, QHBoxLayout, QLabel, QPus
 
 import darq
 import darq.host
-from darq.loop import QtEventLoop
+from darq.qtloop import QtEventLoop
 from darq.protocols.http import Header
 from darq.ui import dialogs, sources
 from darq.version import Version
@@ -60,7 +60,7 @@ def fetch_releases(http: typing.Any) -> list[releases.Release]:
         response = http.request(method="GET", url=releases.RELEASES,
                                 headers=[Header(name="Accept", value="application/vnd.github+json")],
                                 body=b"", max_size=MAX_LIST, id=0, listener=None)
-    except (darq.DarqError, TimeoutError) as e:
+    except (darq.errors.DarqError, TimeoutError) as e:
         raise sources.SourceError(f"Can't reach GitHub: {e}") from None
     if response.http_status != 200:
         raise sources.SourceError(f"GitHub said {response.http_status}")

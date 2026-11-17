@@ -73,20 +73,21 @@ target-version = "py313"
 select = ["E", "F"]
 
 [tool.ruff.lint.per-file-ignores]
-# The package re-exports its modules' contents.
-"darq/__init__.py" = ["F401", "F403"]
+# The package re-exports its modules' contents, and lists them in __all__.
+"darq/__init__.py" = ["F401", "F403", "F405"]
 
 [tool.pyright]
 # The core runtime, p-kernel and tools.  The ZMQ-era services, runtime
 # and type modules are added as they're ported to the new IPC.
 include = [
-    "darq/compositor.py",
+    "darq/_runtime/compositor.py",
     "darq/dipc.py",
     "darq/errors.py",
     "darq/identifier.py",
     "darq/index.py",
     "darq/kb.py",
     "darq/loop.py",
+    "darq/qtloop.py",
     "darq/message.py",
     "darq/book.py",
     "darq/openlibrary.py",
@@ -101,12 +102,12 @@ include = [
     "darq/terminal.py",
     "darq/repl.py",
     "darq/packages.py",
-    "darq/vocabulary.py",
+    "darq/_runtime/vocabulary.py",
     "darq/sessions.py",
     "darq/ui/dialogs.py",
     "darq/ui/sources.py",
-    "darq/pcall.py",
-    "darq/process.py",
+    "darq/_runtime/pcall.py",
+    "darq/_runtime/process.py",
     "darq/protocols",
     "darq/system.py",
     "darq/version.py",

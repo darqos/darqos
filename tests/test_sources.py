@@ -101,7 +101,7 @@ def test_reading_an_item(monkeypatch):
     assert sources.read(sources.Source(item_id=f"public.data:{VCF}")) == b"data"
 
     def fail(item_id):
-        raise darq.LaunchError("gone")
+        raise darq.errors.LaunchError("gone")
 
     monkeypatch.setattr(darq.launch, "export_item", fail)
     with pytest.raises(sources.SourceError, match="Can't read Contacts.vcf: gone"):

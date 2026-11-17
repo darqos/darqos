@@ -11,7 +11,7 @@
 import struct
 from enum import IntEnum
 
-from .errors import MessageDecodingError
+from ..errors import MessageDecodingError
 
 
 # Control exports

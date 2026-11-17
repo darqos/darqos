@@ -20,7 +20,7 @@ ROOT = pathlib.Path(__file__).parent.parent
 
 def test_installed(tmp_path):
     (tmp_path / "VERSION").write_text("version=2.17\nedition=2\nbuild=17\ncommit=abc\ndate=2026-11-06\n")
-    assert version.find(tmp_path) == darq.Version("2.17", 2, 17)
+    assert version.find(tmp_path) == darq.version.Version("2.17", 2, 17)
 
 
 def test_installed_dirty(tmp_path):
@@ -30,7 +30,7 @@ def test_installed_dirty(tmp_path):
 
 def test_source_tree(tmp_path):
     (tmp_path / "RELEASE").write_text("edition=2\nbuild=17\n")
-    assert version.find(tmp_path) == darq.Version("2.17-dev", 2, 17)
+    assert version.find(tmp_path) == darq.version.Version("2.17-dev", 2, 17)
 
 
 def test_installed_is_preferred(tmp_path):
@@ -63,7 +63,7 @@ def test_get_version(live_pkernel, tmp_path):  # noqa: F811
 
         def darq_main():
             got = darq.get_version()
-            if got != darq.Version({expected.version!r}, {expected.edition}, {expected.build}):
+            if got != darq.version.Version({expected.version!r}, {expected.edition}, {expected.build}):
                 return f"got {{got!r}}"
 
             # It's only asked for once.

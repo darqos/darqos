@@ -316,7 +316,7 @@ class FakeProcesses:
 
     def spawn_process(self, path, bootstrap=None):
         if self.fail_spawn:
-            raise darq.SpawnError(1, "no such program")
+            raise darq.errors.SpawnError(1, "no such program")
         self.spawned.append((path, bootstrap))
         return 1000 + len(self.spawned)
 

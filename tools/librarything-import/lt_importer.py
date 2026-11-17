@@ -357,7 +357,7 @@ class Importer:
                 for number in range(record.copies):
                     key = f"{record.book_id}:{number}" if number else record.book_id
                     copies.add(identifier("copy", key), darq.book.COPY_LABEL, self.copy_statements(record))
-            except (darq.DarqError, TimeoutError, ValueError, LookupError, model.ConflictError) as e:
+            except (darq.errors.DarqError, TimeoutError, ValueError, LookupError, model.ConflictError) as e:
                 log.error(f"Can't read book {record.book_id}: {e!r}")
                 self.result.failed += 1
         return [works, expressions, editions, copies]
@@ -393,7 +393,7 @@ class Importer:
                 self.items.create(level.type_id, *new, context=IMPORTED)
             if changed:
                 self.items.put(*changed, context=QUIET)
-        except (darq.DarqError, TimeoutError, ValueError, LookupError, model.ConflictError) as e:
+        except (darq.errors.DarqError, TimeoutError, ValueError, LookupError, model.ConflictError) as e:
             log.error(f"Can't import {len(ids)} of {level.type_id}: {e!r}")
             self.result.failed += len(ids)
             return

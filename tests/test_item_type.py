@@ -174,7 +174,7 @@ def test_launch_opens_an_entity_through_its_type(monkeypatch):
 
 def test_launch_says_why_it_cant(monkeypatch):
     monkeypatch.setattr(darq.launch, "_activate", lambda type_id: FakeImplementation(Status.UNSUPPORTED))
-    with pytest.raises(darq.LaunchError, match="UNSUPPORTED"):
+    with pytest.raises(darq.errors.LaunchError, match="UNSUPPORTED"):
         darq.launch.open_entity(f"public.jpeg:{KEY}")
 
 

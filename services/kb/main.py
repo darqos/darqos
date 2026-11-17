@@ -17,7 +17,7 @@ import typing
 
 import darq
 import darq.kb as model
-import darq.vocabulary
+import darq._runtime.vocabulary
 from darq.protocols import kb as wire
 from darq.protocols.kb import (
     KB,
@@ -306,7 +306,7 @@ class KBService(KB.Handler):
                     continue
                 try:
                     darq.send(listener, Changed(entity_id=entity.id, revision=entity.revision))
-                except darq.DarqError as e:
+                except darq.errors.DarqError as e:
                     logging.warning(f"Dropped watch {watch_id}: {e}")
                     del self.watches[watch_id]
                     self.forget(listener)
@@ -345,8 +345,8 @@ class LocalClient(wire.KB.Client):
 
 def set_up(service: KBService):
     """Set up the vocabulary DarqOS's code relies on, and migrate what's
-    been renamed (see darq.vocabulary), before any client can see it."""
-    darq.vocabulary.setup(model.KB(LocalClient(service)))
+    been renamed (see darq._runtime.vocabulary), before any client can see it."""
+    darq._runtime.vocabulary.setup(model.KB(LocalClient(service)))
 
 
 def darq_main():

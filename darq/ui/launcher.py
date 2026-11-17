@@ -90,7 +90,7 @@ class Launcher:
         def job() -> tuple[str | None, str | None]:
             try:
                 item_id, item = services.launch.create_item(type_id, Context(source=self.source))
-            except (darq.DarqError, TimeoutError) as e:
+            except (darq.errors.DarqError, TimeoutError) as e:
                 return None, f"Can't create a {name}: {e}"
             return item_id, self.use_item(item_id, item)
 
@@ -120,14 +120,14 @@ class Launcher:
             extension = os.path.splitext(name)[1].removeprefix(".")
             try:
                 type_ids = services.launch.find_types(extension=extension)
-            except (darq.DarqError, TimeoutError) as e:
+            except (darq.errors.DarqError, TimeoutError) as e:
                 return None, f"Can't find a type for {name}: {e}"
             # What no type takes is kept as data (see doc/data-type.rst).
             for type_id in [*dict.fromkeys(type_ids), darq.items.DATA_TYPE]:
                 context = Context(event=darq.history.IMPORTED, source=self.source, note=path)
                 try:
                     item_id, item = services.launch.create_item_from(type_id, data, name, context=context)
-                except (darq.DarqError, TimeoutError) as e:
+                except (darq.errors.DarqError, TimeoutError) as e:
                     logging.info(f"{type_id} didn't take {name}: {e}")
                     continue
                 return item_id, self.use_item(item_id, item)
@@ -151,7 +151,7 @@ class Launcher:
                 if http is None:
                     return None, "The HTTP service isn't running"
                 response = http.snapshot(url=url)
-            except (darq.DarqError, TimeoutError) as e:
+            except (darq.errors.DarqError, TimeoutError) as e:
                 return None, f"Can't fetch {url}: {e}"
             if response.status != HttpStatus.OK:
                 return None, FETCH_FAILURES[response.status].format(url=url)
@@ -179,7 +179,7 @@ class Launcher:
                 lens = self.host.services.launch.use_item(item_id, item, lens_for=lens_for)
             else:
                 lens = self.host.services.launch.use_item(item_id, item)
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             return str(e)
         if self.started is not None:
             self.started(lens.dpid)

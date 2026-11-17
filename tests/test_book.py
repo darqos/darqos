@@ -1470,7 +1470,7 @@ def test_a_cover_that_cant_be_had_is_no_failure(qt_app):
     used.run = lambda job: job()
 
     def fail(url):
-        raise darq.DarqError("offline")
+        raise darq.errors.DarqError("offline")
 
     used.snapshot = fail
     used.use(UseRequest(item_id=store.item(work), item=5), 0)

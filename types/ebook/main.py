@@ -252,7 +252,7 @@ class EbookImplementation(ItemType):
         """Return an item, by its identifier, or why it can't be."""
         try:
             parsed = parse_item_id(iid)
-        except darq.InvalidIdentifierError:
+        except darq.errors.InvalidIdentifierError:
             return None, Status.INVALID_ID
         if parsed is None:
             return None, Status.NOT_FOUND
@@ -268,7 +268,7 @@ class EbookImplementation(ItemType):
         """Return a type's canonical form, or why it isn't one of these."""
         try:
             canonical = darq.canonical_type_id(type_id)
-        except darq.InvalidIdentifierError:
+        except darq.errors.InvalidIdentifierError:
             return "", Status.INVALID_ID
         return canonical, Status.OK if canonical in TYPES else Status.NOT_FOUND
 
@@ -367,7 +367,7 @@ class EbookImplementation(ItemType):
             return DestroyResponse(status=status)
         try:
             written = self.write(document, document.position, document.flags | DESTROYED)
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.error(f"Can't destroy {request.item_id}: {e!r}")
             return DestroyResponse(status=Status.FAILED)
         if written != storage.Status.OK:
@@ -432,7 +432,7 @@ class EbookItem(Ebook.Handler):
         for _ in range(SAVE_ATTEMPTS):
             try:
                 status = self.implementation.write(document, request.position, document.flags)
-            except (darq.DarqError, TimeoutError) as e:
+            except (darq.errors.DarqError, TimeoutError) as e:
                 logging.warning(f"Can't save the position of {document.iid}: {e!r}")
                 break
             if status == storage.Status.OK:

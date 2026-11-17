@@ -56,7 +56,7 @@ def item_names(kb: model.KB | None, item_ids: typing.Iterable[str]) -> dict[str,
     for item_id in item_ids:
         try:
             wanted.setdefault(darq.split_item_id(item_id)[1], item_id)
-        except darq.InvalidIdentifierError:
+        except darq.errors.InvalidIdentifierError:
             continue
     if kb is None or not wanted:
         return {}
@@ -77,7 +77,7 @@ def item_names(kb: model.KB | None, item_ids: typing.Iterable[str]) -> dict[str,
                         continue
                     entity = merged
                 names[item_id] = display_name(entity, darq.split_item_id(item_id)[0])
-    except (darq.DarqError, TimeoutError, LookupError, ValueError):
+    except (darq.errors.DarqError, TimeoutError, LookupError, ValueError):
         return names
     return names
 
@@ -88,7 +88,7 @@ def item_name(item_id: str, kb: model.KB | None = None) -> str:
     if kb is None:
         try:
             handle = darq.lookup_name("darq.kb", blocking=False)
-        except darq.DarqError:
+        except darq.errors.DarqError:
             return item_id
         if handle is None:
             return item_id

@@ -55,7 +55,7 @@ import darq.ui.kb_writer
 import darq.kb as model
 import darq.launch
 import darq.wikidata
-from darq.loop import QtEventLoop
+from darq.qtloop import QtEventLoop
 from darq.protocols.kb import Changed, EntityItem, Kind, Linked, LinkGroup, Listener
 from darq.protocols.kb import Context as KBContext
 from darq.protocols.type import Context as TypeContext
@@ -291,7 +291,7 @@ class EntityWindow(QWidget):
             if links:
                 self.read_links(shown)
             entity = model.entity_from_wire(response.entity)
-        except (darq.DarqError, TimeoutError, ValueError) as e:
+        except (darq.errors.DarqError, TimeoutError, ValueError) as e:
             logging.error(f"Can't read {shown.item_id}: {e!r}")
             self.show_status(f"Can't read {shown.item_id}: {e}")
             return False
@@ -303,10 +303,10 @@ class EntityWindow(QWidget):
         """Read what links to an item: its groups, the entities of those
         shown in place, and the page of the group being shown.
 
-        :raises darq.DarqError: if they can't be read."""
+        :raises darq.errors.DarqError: if they can't be read."""
         summary = shown.client.get_link_summary(languages=self.chain)
         if summary.status != KBStatus.OK:
-            raise darq.DarqError(summary.status.name)
+            raise darq.errors.DarqError(summary.status.name)
         groups = list(summary.groups)
         inline = {grouped.key_of(g): self.group_rows(shown, grouped.key_of(g), grouped.INLINE_MAX, "")
                   for g in groups if grouped.is_inline(g)}
@@ -326,7 +326,7 @@ class EntityWindow(QWidget):
         response = shown.client.get_links(property_id=property_id, role=role, languages=self.chain, max=limit,
                                           after=after, reverse=True, type_id=type_id)
         if response.status != KBStatus.OK:
-            raise darq.DarqError(response.status.name)
+            raise darq.errors.DarqError(response.status.name)
         return list(response.linked)
 
     def page(self, shown: Shown) -> tuple[str, str, list[render.Target]] | None:
@@ -470,7 +470,7 @@ class EntityWindow(QWidget):
         try:
             response = self.shown.client.find_entities(text=text, languages=self.chain, kind=kind, class_id=class_id,
                                                        max=MAX_FOUND, after="")
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             self.show_status(f"Can't search: {e}")
             return []
         if response.status != KBStatus.OK:
@@ -484,7 +484,7 @@ class EntityWindow(QWidget):
         made."""
         try:
             return self.lens.tag_maker(name, self.language)
-        except (darq.DarqError, TimeoutError, ValueError) as e:
+        except (darq.errors.DarqError, TimeoutError, ValueError) as e:
             self.show_status(f"Can't make a tag {name!r}: {e}")
             return None
 
@@ -492,7 +492,7 @@ class EntityWindow(QWidget):
         assert self.shown is not None
         try:
             response = self.shown.client.suggest_properties(languages=self.chain, max=MAX_FOUND)
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             self.show_status(f"Can't suggest properties: {e}")
             return []
         return self.found(response.found) if response.status == KBStatus.OK else []
@@ -517,7 +517,7 @@ class EntityWindow(QWidget):
                 # Its type records it edited, by this lens.
                 response = shown.client.put_entity(entity=model.entity_to_wire(entity),
                                                    context=KBContext(source=SOURCE))
-            except (darq.DarqError, TimeoutError) as e:
+            except (darq.errors.DarqError, TimeoutError) as e:
                 logging.error(f"Can't save {shown.item_id}: {e!r}")
                 self.show_status(f"Can't save: {e}")
                 return False
@@ -614,8 +614,8 @@ class EntityWindow(QWidget):
         try:
             response = shown.client.watch_entity(listener=listener)
             if response.status != KBStatus.OK:
-                raise darq.DarqError(response.status.name)
-        except (darq.DarqError, TimeoutError) as e:
+                raise darq.errors.DarqError(response.status.name)
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.warning(f"Can't watch {shown.item_id}: {e!r}")
             self.lens.unlisten(listener)
             return
@@ -636,7 +636,7 @@ class EntityWindow(QWidget):
             shown.listener = None
         try:
             shown.client.close()
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.warning(f"Can't close {shown.item_id}: {e!r}")
         darq.close_port(shown.port)
 
@@ -652,7 +652,7 @@ class EntityWindow(QWidget):
 
         try:
             port = self.lens.opener.open(item_id)
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             self.show_status(f"Can't open {item_id}: {e}")
             return
         previous = Place(self.shown.item_id, self.scroll_position(), self.view) if self.shown is not None else None
@@ -675,7 +675,7 @@ class EntityWindow(QWidget):
             return
         try:
             port = self.lens.opener.open(place.item_id)
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             self.show_status(f"Can't go back to {place.item_id}: {e}")
             return
         view, self.view = self.view, place.view
@@ -999,7 +999,7 @@ class LaunchOpener:
         if type_id not in self.lenses:
             try:
                 lens = pathlib.Path(darq.launch.find_lens(type_id)).resolve()
-            except (darq.DarqError, TimeoutError) as e:
+            except (darq.errors.DarqError, TimeoutError) as e:
                 logging.warning(f"Can't find a lens for {type_id}: {e!r}")
                 return False
             self.lenses[type_id] = lens != pathlib.Path(__file__).parent.resolve()
@@ -1017,7 +1017,7 @@ def make_tag(name: str, language: str) -> Linked:
     """Make a tag with a name, through darq.launch, which has the KB type
     implementation create its item: it's named through its port.
 
-    :raises darq.DarqError: if it can't be made."""
+    :raises darq.errors.DarqError: if it can't be made."""
     name = " ".join(name.split())
     if not name:
         raise ValueError("a tag needs a name")
@@ -1029,7 +1029,7 @@ def make_tag(name: str, language: str) -> Linked:
         entity.set_label(name, language)
         # Naming what's just been made isn't an edit.
         if item.put_entity(model.entity_to_wire(entity), KBContext(quiet=True)).status != KBStatus.OK:
-            raise darq.DarqError("the KB didn't take its name")
+            raise darq.errors.DarqError("the KB didn't take its name")
         item.close()
     finally:
         darq.close_port(port)
@@ -1075,7 +1075,7 @@ class EntityLens(LensHandler):
         def run():
             try:
                 outcome = job(make_linker())
-            except (darq.wikidata.WikidataError, darq.DarqError, TimeoutError, LookupError, ValueError,
+            except (darq.wikidata.WikidataError, darq.errors.DarqError, TimeoutError, LookupError, ValueError,
                     model.ConflictError) as e:
                 logging.warning(f"Wikidata: {e!r}")
                 outcome = e
@@ -1093,7 +1093,7 @@ class EntityLens(LensHandler):
         def run():
             try:
                 outcome = job(connect())
-            except (darq.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError,
+            except (darq.errors.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError,
                     darq.merging.MergeError) as e:
                 logging.warning(f"Merging: {e!r}")
                 outcome = e
@@ -1139,7 +1139,7 @@ class EntityLens(LensHandler):
         implementation, closing the port given, or None if it can't be."""
         try:
             return self.opener.open(item_id)
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.error(f"Can't open {item_id}'s entity: {e!r}")
             return None
         finally:

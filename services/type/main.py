@@ -205,7 +205,7 @@ class TypeService(Type.Handler):
         """Return a type identifier's canonical form, or None if it's invalid."""
         try:
             return darq.canonical_type_id(type_id)
-        except darq.InvalidIdentifierError:
+        except darq.errors.InvalidIdentifierError:
             return None
 
     def conforming(self, type_id: str) -> typing.Iterator[list[str]]:
@@ -371,12 +371,12 @@ class TypeService(Type.Handler):
         :returns: False if its port is dead: the Activate isn't answered."""
         try:
             pending.try_reply(ActivateResponse(implementation=port, status=Status.OK))
-        except darq.DeadTransferredPortError:
+        except darq.errors.DeadTransferredPortError:
             logging.warning(f"Implementation {path} has gone (port {port}), before its notification")
             if self.running.get(path) == port:
                 del self.running[path]
             return False
-        except darq.DarqError as e:
+        except darq.errors.DarqError as e:
             # Most likely, the client has gone.
             logging.warning(f"Reply to Activate failed: {e!r}")
         return True
@@ -389,7 +389,7 @@ class TypeService(Type.Handler):
         bootstrap = darq.open_port()
         try:
             dpid = darq.spawn_process(path, bootstrap=bootstrap)
-        except darq.SpawnError as e:
+        except darq.errors.SpawnError as e:
             logging.error(f"Can't start implementation {path}: {e}")
             darq.close_port(bootstrap)
             return None

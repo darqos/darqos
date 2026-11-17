@@ -66,7 +66,7 @@ class Darq:
 
     def send(self, port, message):
         if port in self.dead:
-            raise module.darq.DarqError(f"{port} is dead")
+            raise module.darq.errors.DarqError(f"{port} is dead")
         self.sent.append((port, message.entity_id, message.revision))
 
     def notify_on_death(self, handle, port):

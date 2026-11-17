@@ -279,7 +279,7 @@ def test_a_package_is_run(live_pkernel, tmp_path):  # noqa: F811
             try:
                 darq.launch.run_item("public.utf8-plain-text:" + "1" * 32)
                 return "text was run"
-            except darq.LaunchError:
+            except darq.errors.LaunchError:
                 pass
             return 0
         """)

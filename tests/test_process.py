@@ -9,7 +9,8 @@ import time
 import pytest
 
 import darq
-from darq import process
+import darq._runtime.process
+from darq._runtime import process
 
 
 TIMEOUT = 5.0
@@ -17,7 +18,7 @@ TIMEOUT = 5.0
 
 @pytest.fixture
 def port():
-    state = darq.PortState(16385)
+    state = darq._runtime.process.PortState(16385)
     state.is_open = True
     return state
 
@@ -100,14 +101,14 @@ def test_close_releases_blocked_receiver(port):
     time.sleep(0.05)
     port.close()
     thread.join(TIMEOUT)
-    assert isinstance(result.get("error"), darq.NonExistentPortError)
+    assert isinstance(result.get("error"), darq.errors.NonExistentPortError)
 
 
 def test_closed_port_still_returns_delivered_messages(port):
     port.deliver(16386, b"before close")
     port.close()
     assert port.receive() == (16386, b"before close", ())
-    with pytest.raises(darq.NonExistentPortError):
+    with pytest.raises(darq.errors.NonExistentPortError):
         port.receive(blocking=False)
 
 
@@ -129,7 +130,7 @@ def test_many_deliveries_from_another_thread(port):
 
 @pytest.fixture
 def ports():
-    states = [darq.PortState(16385 + n) for n in range(3)]
+    states = [darq._runtime.process.PortState(16385 + n) for n in range(3)]
     for state in states:
         state.is_open = True
     return states
@@ -178,7 +179,7 @@ def test_receive_any_closed_port(ports):
     ports[1].deliver(1, b"before close")
     ports[1].close()
     assert process.receive_any(ports) == (ports[1], (1, b"before close", ()))
-    with pytest.raises(darq.NonExistentPortError):
+    with pytest.raises(darq.errors.NonExistentPortError):
         process.receive_any(ports, blocking=False)
 
 
@@ -196,7 +197,7 @@ def test_receive_any_released_by_close(ports):
     time.sleep(0.05)
     ports[0].close()
     thread.join(TIMEOUT)
-    assert isinstance(result.get("error"), darq.NonExistentPortError)
+    assert isinstance(result.get("error"), darq.errors.NonExistentPortError)
 
 
 def test_receive_any_needs_ports():

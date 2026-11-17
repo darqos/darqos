@@ -68,8 +68,8 @@ import uuid
 
 from . import dipc
 from .dipc import ErrorCode, ErrorReply
-from .process import EventListener, PortListener, SystemCallMode, SystemCallState
-from .pcall import (
+from ._runtime.process import EventListener, PortListener, SystemCallMode, SystemCallState
+from ._runtime.pcall import (
     BootResult,
     ClosePortRequest,
     ExitReason,
@@ -131,18 +131,18 @@ from .version import Version
 
 
 # Default exported symbols.
+# The longest name a port can be registered under (see register_name):
+# the p-call's limit.
+MAX_REGISTERED_NAME_LENGTH = MAX_NAME_LENGTH
+
+
 __all__ = [
-    "get_loop",
     "getpid",
     "getppid",
-    "init",
-    "init_a",
-    "init_cb",
     "open_port",
     "open_port_cb",
     "close_port",
     "close_port_cb",
-    "send_message",
     "receive_message",
     "receive_any",
     "set_port_listener",
@@ -151,7 +151,6 @@ __all__ = [
     "spawn_process",
     "spawn_process_cb",
     "get_bootstrap_port",
-    "SpawnResult",
     "kill_process",
     "kill_process_cb",
     "exit",
@@ -168,20 +167,16 @@ __all__ = [
     "reboot",
     "ExitReason",
     "MAX_HANDLES",
-    "MAX_NAME_LENGTH",
+    "MAX_REGISTERED_NAME_LENGTH",
     "MAX_BOOT_VALUES",
     "MAX_BOOT_VALUE_LENGTH",
-    "Client",
     "Deferred",
-    "Handler",
     "Server",
     "Timer",
-    "call",
     "connect",
     "release_reply_port",
     "send",
     "serve",
-    "transact",
 ]
 
 
@@ -238,8 +233,6 @@ def init(event_loop: EventLoopInterface):
     _darq_process_state.loop = event_loop
 
 
-def init_a(event_loop: EventLoopInterface):
-    _darq_process_state.loop = event_loop
 
 
 def init_cb(event_loop: EventLoopInterface, listener: EventListener):
@@ -249,9 +242,6 @@ def init_cb(event_loop: EventLoopInterface, listener: EventListener):
     return
 
 
-def get_loop():
-    """Return a reference to the runtime event loop."""
-    return _darq_process_state.loop
 
 
 def open_port() -> int:

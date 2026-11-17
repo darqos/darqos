@@ -105,7 +105,7 @@ def permanent_chain(url: str, response: fetcher.Response) -> list[tuple[str, int
             break
         try:
             chain.append((darq.serialize_url(hop.target), hop.http_status))
-        except darq.InvalidURLError:
+        except darq.errors.InvalidURLError:
             break
     return chain
 
@@ -154,7 +154,7 @@ class Snapshots:
         fetcher.check_url(url)
         try:
             location = darq.serialize_url(url)
-        except darq.InvalidURLError as e:
+        except darq.errors.InvalidURLError as e:
             raise fetcher.FetchError(fetcher.INVALID_URL, str(e)) from None
 
         known = self.known_latest(location)

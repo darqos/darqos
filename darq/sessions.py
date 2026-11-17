@@ -24,7 +24,7 @@ __all__ = ["DEFAULT_NAME", "DEFAULT_SESSION", "SETTINGS", "default_session", "fi
 
 # The entity whose statements are the REPL's settings, and its property
 # for the default session, an item: fixed, as the rest of the vocabulary
-# is (see darq.vocabulary).
+# is (see darq._runtime.vocabulary).
 SETTINGS = "8ef33b7f-293f-4108-9ca7-e74241a40cd1"
 DEFAULT_SESSION = "57c4d555-99fb-4980-ac77-f01a768ff14b"
 

@@ -193,7 +193,7 @@ class HistoryView(QWidget):
         """Fetch a page of events, before end (0 for now), and show them."""
         try:
             response = self.host.services.history.get_events(**{**self.query, "end": end}, max=PAGE)
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             self.host.show_status(f"Can't get events: {e}")
             return
         if response.status != HistoryStatus.OK:

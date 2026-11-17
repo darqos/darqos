@@ -41,7 +41,7 @@ from PyQt6.QtWidgets import (
 
 import darq
 import darq.book
-from darq.loop import QtEventLoop
+from darq.qtloop import QtEventLoop
 from darq.protocols import pdf as wire
 from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
 from darq.ui import catalogue, reader, style
@@ -149,7 +149,7 @@ class PdfSync:
         :returns: False if the item doesn't answer."""
         try:
             self.data = self.client.get().data
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.error(f"Can't get {self.item_id}: {e!r}")
             self.available = False
             return False
@@ -159,7 +159,7 @@ class PdfSync:
         """Return the page the reader had got to, from 0."""
         try:
             return int(self.client.get_position().position or 0)
-        except (darq.DarqError, TimeoutError, ValueError) as e:
+        except (darq.errors.DarqError, TimeoutError, ValueError) as e:
             logging.warning(f"Can't get the position of {self.item_id}: {e!r}")
             return 0
 
@@ -170,7 +170,7 @@ class PdfSync:
             return
         try:
             self.client.set_position(position=str(page))
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.warning(f"Can't save the position of {self.item_id}: {e!r}")
 
     def close(self):
@@ -180,7 +180,7 @@ class PdfSync:
         self.available = False
         try:
             self.client.close()
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.warning(f"Can't close {self.item_id}: {e!r}")
 
 

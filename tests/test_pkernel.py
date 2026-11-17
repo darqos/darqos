@@ -23,7 +23,7 @@ import pytest
 
 import darq
 from darq import dipc
-from darq import pcall as pk
+from darq._runtime import pcall as pk
 
 
 PKERNEL_PATH = pathlib.Path(__file__).parent.parent / "kernel" / "pkernel"
@@ -613,7 +613,7 @@ def test_shutdown_ends_idle_qt_app_promptly(live_pkernel, tmp_path, run):
         import pathlib
         from PyQt6.QtCore import QTimer
         from PyQt6.QtWidgets import QApplication
-        from darq.loop import QtEventLoop
+        from darq.qtloop import QtEventLoop
 
         MARKER = pathlib.Path({str(marker)!r})
 
@@ -740,7 +740,7 @@ def test_spawned_process_receives_its_own_message(live_pkernel, tmp_path):
         import darq
         def darq_main():
             port = darq.open_port()
-            darq.send_message(port, port, b"ping")
+            darq.system.send_message(port, port, b"ping")
             source, payload, _ = darq.receive_message(port)
             if (source, payload) != (port, b"ping"):
                 return f"received {(source, payload)!r}"
@@ -1630,17 +1630,17 @@ def test_two_processes_ping_pong(live_pkernel, tmp_path):
             try:
                 darq.register_name("darq.impostor", darq.open_port())
                 return "registered a reserved name"
-            except darq.ReservedNameError:
+            except darq.errors.ReservedNameError:
                 pass
 
             service = darq.lookup_name("darq.test.ping")
             port = darq.open_port()
             for n in (b"1", b"2", b"3"):
-                darq.send_message(port, service, b"ping " + n)
+                darq.system.send_message(port, service, b"ping " + n)
                 source, payload, _ = darq.receive_message(port)
                 if (source, payload) != (service, b"pong " + n):
                     return f"received {(source, payload)!r}"
-            darq.send_message(port, service, b"done")
+            darq.system.send_message(port, service, b"done")
             return 3
         """)
     service_path = write_app(tmp_path / "service", f"""
@@ -1655,7 +1655,7 @@ def test_two_processes_ping_pong(live_pkernel, tmp_path):
                     break
                 if not payload.startswith(b"ping "):
                     return f"received {{payload!r}}"
-                darq.send_message(port, source, b"pong " + payload[5:])
+                darq.system.send_message(port, source, b"pong " + payload[5:])
 
             # The client exits with status 3, and its parent collects it.
             finished = darq.wait(client)
@@ -1754,7 +1754,7 @@ def test_rpc_service_and_client(live_pkernel, tmp_path):
                 try:
                     getattr(kv, method)()
                     return f"{method} succeeded"
-                except darq.RemoteError as e:
+                except darq.errors.RemoteError as e:
                     if e.code != code:
                         return f"{method} raised {e!r}"
 
@@ -1764,7 +1764,7 @@ def test_rpc_service_and_client(live_pkernel, tmp_path):
             if kv.share(p=port).echoed != port:
                 return "port didn't come back"
 
-            response = darq.call(kv.service, GetRequest(key=b"k"))
+            response = darq.system.call(kv.service, GetRequest(key=b"k"))
             if not isinstance(response, GetResponse):
                 return f"call returned {response!r}"
             return 0
@@ -1819,7 +1819,7 @@ def test_rpc_service_on_qt_event_loop(live_pkernel, tmp_path):
         import threading
         from PyQt6.QtCore import QCoreApplication
         import darq
-        from darq.loop import QtEventLoop
+        from darq.qtloop import QtEventLoop
         from test_kv import KV, GetResponse, PutResponse
 
         class Proxy(KV.Handler):
@@ -1915,7 +1915,7 @@ def test_rpc_service_dies_before_replying(live_pkernel, tmp_path):
             try:
                 crash.crash()
                 return "crash returned"
-            except darq.DeadPortError:
+            except darq.errors.DeadPortError:
                 return 0
         """)
     for path in (service_path, client_path):
@@ -1960,7 +1960,7 @@ def test_default_run_directory(pkernel):
 
 def test_get_version(pkernel):
     process, peer = add_running_process(pkernel, 1)
-    pkernel.version = darq.Version("2.17", 2, 17)
+    pkernel.version = darq.version.Version("2.17", 2, 17)
     send_to_kernel(pkernel, process, pk.GetVersionRequest(3))
     [(message_type, buf)] = received_messages(peer)
     assert message_type == pk.MessageType.GET_VERSION_RESP
@@ -2086,7 +2086,7 @@ def test_boot_values_end_to_end(live_pkernel, tmp_path):
             try:
                 darq.get_boot_value("test.key")
                 return "child could read the boot vector"
-            except darq.NotPermittedError:
+            except darq.errors.NotPermittedError:
                 return 0
         """)
     path = write_app(tmp_path / "service", f"""
@@ -2100,7 +2100,7 @@ def test_boot_values_end_to_end(live_pkernel, tmp_path):
             try:
                 darq.set_boot_value("test.big", bytes(darq.MAX_BOOT_VALUE_LENGTH + 1))
                 return "set a value that's too large"
-            except darq.ValueTooLargeError:
+            except darq.errors.ValueTooLargeError:
                 pass
             child = darq.spawn_process({child_path!r})
             finished = darq.wait(child)

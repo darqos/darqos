@@ -87,7 +87,7 @@ class Implementation:
 
     def create(self, type_id, context=None):
         if type_id in self.fail_types:
-            raise darq.DarqError(f"can't create a {type_id}")
+            raise darq.errors.DarqError(f"can't create a {type_id}")
         return self.handler.create(CreateRequest(type_id=type_id, context=context), 0)
 
     def destroy(self, item_id, context=None):
@@ -903,7 +903,7 @@ def test_a_photo_that_cant_be_made_is_left_out(target, monkeypatch):
     import base64
 
     def fail(photo, context):
-        raise darq.DarqError("no image type")
+        raise darq.errors.DarqError("no image type")
 
     monkeypatch.setattr(importer, "make_image", fail)
     result = run(target, with_extras("PHOTO;ENCODING=b;TYPE=PNG:" + base64.b64encode(PNG).decode()))

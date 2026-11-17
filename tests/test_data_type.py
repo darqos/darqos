@@ -192,7 +192,7 @@ def test_renaming_it_publishes_its_new_name(call, kb, index, implementation):
 
 
 def test_an_old_one_is_given_its_entity(call, kb):
-    kb.failing = darq.DarqError("no KB")
+    kb.failing = darq.errors.DarqError("no KB")
     iid, _ = create_from(call)
     kb.failing = None
     assert call(IMPLEMENTATION_PORT, OpenEntityRequest(item_id=iid)).status == Status.OK

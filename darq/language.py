@@ -14,7 +14,7 @@ from . import host
 
 
 # Control exports
-__all__ = ["ENGLISH", "MULTILINGUAL", "chain", "languages", "tag"]
+__all__ = ["ENGLISH", "MULTILINGUAL", "language_chain", "language_tag", "languages"]
 
 # The language of what's imported, and Wikidata's code for a label in
 # every language.
@@ -22,18 +22,18 @@ ENGLISH = "en"
 MULTILINGUAL = "mul"
 
 
-def tag(locale_name: str) -> str:
+def language_tag(locale_name: str) -> str:
     """Return a locale's language tag: en_AU.UTF-8 is en-AU.  Empty for C
     and POSIX, which name no language."""
     name = locale_name.split(".")[0].split("@")[0].replace("_", "-")
     return "" if name in ("", "C", "POSIX") else name
 
 
-def chain(locales: list[str]) -> list[str]:
+def language_chain(locales: list[str]) -> list[str]:
     """Return the chain of languages for some locales, best first: each,
     then its general form, then English and mul."""
     found: list[str] = []
-    for language in [*(tag(name) for name in locales), ENGLISH, MULTILINGUAL]:
+    for language in [*(language_tag(name) for name in locales), ENGLISH, MULTILINGUAL]:
         for each in (language, language.split("-")[0]):
             if each and each not in found:
                 found.append(each)
@@ -42,4 +42,4 @@ def chain(locales: list[str]) -> list[str]:
 
 def languages() -> list[str]:
     """Return the operator's languages, best first."""
-    return chain(host.locales())
+    return language_chain(host.locales())

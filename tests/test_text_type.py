@@ -270,7 +270,7 @@ def test_item_id_not_ours(iid):
 
 
 def test_item_id_invalid():
-    with pytest.raises(darq.InvalidIdentifierError):
+    with pytest.raises(darq.errors.InvalidIdentifierError):
         text_module.parse_item_id("no colon")
 
 
@@ -640,7 +640,7 @@ def test_destroying_it_destroys_its_entity(call, kb):
 
 def test_its_made_without_the_kb(call, kb, blobs):
     """Its blob's the item: its entity's made later (see darq.item_type)."""
-    kb.failing = darq.DarqError("no KB")
+    kb.failing = darq.errors.DarqError("no KB")
     response = call(IMPLEMENTATION_PORT, CreateFromRequest(type_id=text_module.TYPE_ID, data=b"Hi", name="a.txt"))
     assert response.status == Status.OK and kb.entities == {}
     assert blobs.text(response.item_id) == ("Hi", 0)
@@ -648,7 +648,7 @@ def test_its_made_without_the_kb(call, kb, blobs):
 
 def made_before_entities(call, kb, data=b"Hi"):
     """An item with no entity, as one made before there were entities."""
-    kb.failing = darq.DarqError("no KB")
+    kb.failing = darq.errors.DarqError("no KB")
     response = call(IMPLEMENTATION_PORT, CreateFromRequest(type_id=text_module.TYPE_ID, data=data))
     kb.failing = None
     assert kb.entities == {}

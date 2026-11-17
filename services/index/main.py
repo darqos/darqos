@@ -127,7 +127,7 @@ class IndexService(Index.Handler):
         try:
             item_id = darq.canonical_item_id(request.item_id)
             type_id, _ = darq.split_item_id(item_id)
-        except darq.InvalidIdentifierError as e:
+        except darq.errors.InvalidIdentifierError as e:
             logging.warning(f"Dropped entry for {request.item_id!r}: {e}")
             return
         self.put(item_id, type_id, request.fields)
@@ -149,7 +149,7 @@ class IndexService(Index.Handler):
     def withdraw(self, request: Withdraw, source: int) -> None:
         try:
             item_id = darq.canonical_item_id(request.item_id)
-        except darq.InvalidIdentifierError as e:
+        except darq.errors.InvalidIdentifierError as e:
             logging.warning(f"Dropped withdrawal of {request.item_id!r}: {e}")
             return
         with self.db:
@@ -165,7 +165,7 @@ class IndexService(Index.Handler):
     def search(self, request: SearchRequest, source: int) -> SearchResponse:
         try:
             type_ids = [darq.canonical_type_id(t) for t in request.type_ids]
-        except darq.InvalidIdentifierError as e:
+        except darq.errors.InvalidIdentifierError as e:
             logging.debug(f"search: {e}")
             return SearchResponse(status=Status.INVALID_ARGUMENT)
 
@@ -197,7 +197,7 @@ def reindex():
         dpid = darq.spawn_process(path)
         logging.info(f"Started the reindex, dpid {dpid}")
         darq.wait(dpid)
-    except darq.DarqError as e:
+    except darq.errors.DarqError as e:
         logging.error(f"Can't reindex: {e!r}")
     finally:
         darq.release_reply_port()

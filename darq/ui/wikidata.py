@@ -30,7 +30,7 @@ def agent() -> str:
                                          they are."""
     try:
         version = darq.get_version().version
-    except (darq.DarqError, AttributeError, TimeoutError):
+    except (darq.errors.DarqError, AttributeError, TimeoutError):
         version = "2"
     return darq.wikidata.user_agent(version, darq.wikidata.contact())
 
@@ -47,7 +47,7 @@ def fetch(url: str, headers: list[tuple[str, str]]) -> bytes:
         response = client.request(method="GET", url=url, headers=[Header(name=k, value=v) for k, v in headers],
                                   body=b"",
                                   max_size=MAX_ANSWER, id=0, listener=None)
-    except (darq.DarqError, TimeoutError) as e:
+    except (darq.errors.DarqError, TimeoutError) as e:
         raise darq.wikidata.WikidataError(f"Can't reach Wikidata: {e}") from None
     if response.status != HttpStatus.OK:
         raise darq.wikidata.WikidataError(f"Can't reach Wikidata: {response.status.name}")
@@ -67,6 +67,6 @@ def linker(source: str = "") -> darq.wikidata.Linker:
         kb = model.KB.connect(timeout=TIMEOUT)
         items = kb_writer.writer(kb)
         items.context = KBContext(source=source, note="from Wikidata")
-    except (darq.DarqError, TimeoutError) as e:
+    except (darq.errors.DarqError, TimeoutError) as e:
         raise darq.wikidata.WikidataError(f"Can't reach the KB: {e}") from None
     return darq.wikidata.Linker(kb, items, fetch, agent())

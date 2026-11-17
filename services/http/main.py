@@ -90,7 +90,7 @@ class Reporter:
         self.next_report = time.monotonic() + PROGRESS_INTERVAL
         try:
             darq.send(self.listener, Fetched(id=self.fetch_id, done=done, total=total))
-        except darq.DarqError as e:
+        except darq.errors.DarqError as e:
             logging.debug(f"Can't report progress: {e!r}")
             self.listener = None
 
@@ -137,7 +137,7 @@ class HttpService(Http.Handler):
                     if listener is not None:
                         try:
                             darq.close_port(listener)
-                        except darq.DarqError as e:
+                        except darq.errors.DarqError as e:
                             logging.debug(f"Can't close a listener: {e!r}")
                     darq.release_reply_port()
 

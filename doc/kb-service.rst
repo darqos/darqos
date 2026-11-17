@@ -226,7 +226,7 @@ in ``lib/didl/kb.didl``.  It's started at boot, and keeps
 it's read stays current.
 
 When it starts, before it registers ``darq.kb``, it sets up the
-*vocabulary* DarqOS's code relies on (``darq.vocabulary``), through a
+*vocabulary* DarqOS's code relies on (``darq._runtime.vocabulary``), through a
 client of its own, in its process, so no process ever sees the KB
 without it: an item's entity, made as the item is, needs it.  It's
 the properties and items the services and type implementations use,

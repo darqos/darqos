@@ -34,8 +34,8 @@ import threading
 import traceback
 
 import darq
-from darq import pcall as pk
-from darq import process
+from darq._runtime import pcall as pk
+from darq._runtime import process
 
 
 # A program kept as a Python package's item, rather than a directory (see
@@ -56,7 +56,7 @@ class AppState(enum.Enum):
     FINISHED = 3
 
 
-class PythonPProcess(darq.SocketListener):
+class PythonPProcess(darq.loop.SocketListener):
     def __init__(self, pkernel_port: int, dpid: int, parent_dpid: int, exec_path: str):
         logging.info(f"Darq PID [{dpid}], parent [{parent_dpid}], host PID [{os.getpid()}] from [{exec_path}]")
 
@@ -76,15 +76,15 @@ class PythonPProcess(darq.SocketListener):
 
         # p-Calls sent to the p-kernel and awaiting a response, by request_id.
         # Only accessed from the I/O thread.
-        self._pending: dict[int, darq.SystemCallState] = {}
+        self._pending: dict[int, process.SystemCallState] = {}
 
         # Open ports, by port number.
-        self.ports: dict[int, darq.PortState] = {}
+        self.ports: dict[int, process.PortState] = {}
 
         # The application's event loop, set by darq.init(), and its
         # listener, set by darq.init_cb().  Callbacks are posted to it.
-        self.loop: darq.EventLoopInterface | None = None
-        self.listener: darq.EventListener | None = None
+        self.loop: darq.loop.EventLoopInterface | None = None
+        self.listener: process.EventListener | None = None
 
         # The application's progress, guarded by the lock: it's changed
         # by both threads.  The main thread waits for the start event
@@ -134,7 +134,7 @@ class PythonPProcess(darq.SocketListener):
         self.exit_status: int = 0
 
         # I/O event loop.
-        self.io_loop = darq.SelectEventLoop()
+        self.io_loop = darq.loop.SelectEventLoop()
         return
 
     def getpid(self) -> int:
@@ -152,7 +152,7 @@ class PythonPProcess(darq.SocketListener):
         self.request_id += 1
         return self.request_id
 
-    def queue_new_syscall(self, syscall_state: darq.SystemCallState):
+    def queue_new_syscall(self, syscall_state: process.SystemCallState):
         """Queue a system call to be sent to the p-kernel."""
         self._requests.put(syscall_state)
         self.io_loop.post(self.handle_syscall_queue)
@@ -177,7 +177,7 @@ class PythonPProcess(darq.SocketListener):
 
             self.send_to_p_kernel(request)
 
-    def complete_syscall(self, response) -> darq.SystemCallState | None:
+    def complete_syscall(self, response) -> process.SystemCallState | None:
         """Match a p-kernel response to its pending p-call, and complete it.
 
         :param response: Decoded response message, with a request_id.
@@ -191,16 +191,16 @@ class PythonPProcess(darq.SocketListener):
         syscall.set_response(response)
 
         mode = syscall.get_mode()
-        if mode == darq.SystemCallMode.SYNC:
+        if mode == process.SystemCallMode.SYNC:
             syscall.notify()
-        elif mode == darq.SystemCallMode.CALLBACK:
+        elif mode == process.SystemCallMode.CALLBACK:
             self.post_callback(syscall)
         else:
             logging.warning(f"Mode {mode} completion not implemented")
         return syscall
 
     @staticmethod
-    def callback_args(syscall: darq.SystemCallState) -> tuple[int, int]:
+    def callback_args(syscall: process.SystemCallState) -> tuple[int, int]:
         """Return a completed p-call's callback arguments: (value, error_code).
 
         The value is the port, or process, the p-call was about."""
@@ -221,7 +221,7 @@ class PythonPProcess(darq.SocketListener):
             return response.port, response.result
         raise TypeError(f"No callback arguments for {type(response).__name__}")
 
-    def post_callback(self, syscall: darq.SystemCallState):
+    def post_callback(self, syscall: process.SystemCallState):
         """Call a completed p-call's callback on its event loop."""
         loop, callback = syscall.get_callback()
         if loop is None or callback is None:
@@ -705,15 +705,15 @@ class PythonPProcess(darq.SocketListener):
         port.deliver(source, payload, handles)
         return
 
-    def set_port_listener(self, port: int, listener: darq.PortListener | None,
-                          loop: darq.EventLoopInterface | None):
+    def set_port_listener(self, port: int, listener: process.PortListener | None,
+                          loop: darq.loop.EventLoopInterface | None):
         """Post a port's messages to a listener on an event loop: see
         darq.set_port_listener().
 
         Called on the application's thread."""
         port_state = self.ports.get(port)
         if port_state is None:
-            raise darq.NonExistentPortError(port)
+            raise darq.errors.NonExistentPortError(port)
         port_state.set_listener(listener, loop)
         return
 
@@ -724,7 +724,7 @@ class PythonPProcess(darq.SocketListener):
         Called on the application's thread."""
         port_state = self.ports.get(port)
         if port_state is None:
-            raise darq.NonExistentPortError(port)
+            raise darq.errors.NonExistentPortError(port)
         return port_state.receive(blocking, timeout)
 
     def receive_any(self, ports: tuple[int, ...], blocking: bool,
@@ -737,7 +737,7 @@ class PythonPProcess(darq.SocketListener):
         for port in ports:
             port_state = self.ports.get(port)
             if port_state is None:
-                raise darq.NonExistentPortError(port)
+                raise darq.errors.NonExistentPortError(port)
             port_states.append(port_state)
         received = process.receive_any(port_states, blocking, timeout)
         if received is None:
@@ -750,7 +750,7 @@ class PythonPProcess(darq.SocketListener):
         # Record the newly-opened port before completing the p-call, so
         # the application can use it as soon as open_port() returns.
         if message.request_id in self._pending and message.result == 0:
-            port_state = darq.PortState(message.port)
+            port_state = process.PortState(message.port)
             port_state.is_open = True
             self.ports[message.port] = port_state
 

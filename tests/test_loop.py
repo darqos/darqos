@@ -9,7 +9,8 @@ import time
 
 import pytest
 
-from darq.loop import SelectEventLoop, SocketListener, SocketNotFoundError, TimerListener
+from darq.errors import SocketNotFoundError
+from darq.loop import SelectEventLoop, SocketListener, TimerListener
 
 
 class Recorder(TimerListener):
@@ -313,7 +314,7 @@ def test_post_stops_running_loop(loop):
 
 @pytest.fixture
 def qt_loop(qt_app):
-    from darq.loop import QtEventLoop
+    from darq.qtloop import QtEventLoop
 
     loop = QtEventLoop()
     yield loop

@@ -246,12 +246,12 @@ class FakeIndex:
 
     def publish(self, item_id, fields):
         if FakeIndex.fail:
-            raise darq.DarqError("gone")
+            raise darq.errors.DarqError("gone")
         FakeIndex.sent.append(("publish", self.handle, item_id, [(f.kind, f.text) for f in fields]))
 
     def withdraw(self, item_id):
         if FakeIndex.fail:
-            raise darq.DarqError("gone")
+            raise darq.errors.DarqError("gone")
         FakeIndex.sent.append(("withdraw", self.handle, item_id))
 
 
@@ -311,7 +311,7 @@ def test_publisher_failure_is_logged_and_looked_up_again(fake_index, caplog):
 
 def test_search_without_the_index(monkeypatch):
     monkeypatch.setattr(darq.index, "lookup_name", lambda name, blocking=True: None)
-    with pytest.raises(darq.DarqError):
+    with pytest.raises(darq.errors.DarqError):
         darq.index.search("coffee")
 
 

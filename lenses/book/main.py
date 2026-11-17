@@ -46,7 +46,7 @@ import darq.kb as model
 import darq.launch
 import darq.openlibrary
 from darq.book import Book, BookError, Copy, Edition, Text
-from darq.loop import QtEventLoop
+from darq.qtloop import QtEventLoop
 from darq.openlibrary import LookupError as OpenLibraryError
 from darq.protocols.image import Image as ImageItem
 from darq.protocols.http import Http
@@ -110,7 +110,7 @@ def fetch_url(url: str) -> bytes:
     try:
         response = client.request(method="GET", url=url, headers=[], body=b"", max_size=MAX_ANSWER, id=0,
                                   listener=None)
-    except (darq.DarqError, TimeoutError) as e:
+    except (darq.errors.DarqError, TimeoutError) as e:
         raise OpenLibraryError(f"Can't reach Open Library: {e}") from None
     if response.status != HttpStatus.OK:
         raise OpenLibraryError(f"Can't reach Open Library: {response.status.name}")
@@ -124,19 +124,19 @@ def cover_data(item_id: str) -> bytes:
     showing."""
     try:
         port = darq.launch.open_item(item_id)
-    except (darq.DarqError, TimeoutError) as e:
+    except (darq.errors.DarqError, TimeoutError) as e:
         logging.info(f"Can't open a cover: {e!r}")
         return b""
     item = ImageItem.Client(port, timeout=LOOKUP_TIMEOUT)
     try:
         return item.get().data
-    except (darq.DarqError, TimeoutError) as e:
+    except (darq.errors.DarqError, TimeoutError) as e:
         logging.info(f"Can't read a cover: {e!r}")
         return b""
     finally:
         try:
             item.close()
-        except (darq.DarqError, TimeoutError):
+        except (darq.errors.DarqError, TimeoutError):
             pass
         darq.close_port(port)
 
@@ -727,7 +727,7 @@ class BookLens(LensHandler):
         def job():
             try:
                 item_id = snapshot(url)
-            except (darq.DarqError, TimeoutError, OpenLibraryError) as e:
+            except (darq.errors.DarqError, TimeoutError, OpenLibraryError) as e:
                 logging.info(f"Can't keep a cover: {e!r}")
                 item_id = ""
             if self.run is start_thread:
@@ -761,7 +761,7 @@ class BookLens(LensHandler):
             data = pathlib.Path(path).read_bytes()
             item_id = darq.launch.import_data(mimetypes.guess_type(path)[0] or "", pathlib.Path(path).suffix[1:],
                                               data)
-        except (OSError, darq.DarqError, TimeoutError) as e:
+        except (OSError, darq.errors.DarqError, TimeoutError) as e:
             self.show_status(f"Can't use it: {e}")
             return
         if not item_id:

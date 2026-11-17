@@ -134,7 +134,7 @@ class TypeList(QWidget):
         :returns: True if there are any."""
         try:
             self.entries = load_types(self.host.services.types)
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             self.host.show_status(f"Can't list types: {e}")
             return False
 

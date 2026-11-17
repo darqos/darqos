@@ -97,7 +97,7 @@ def fetch(url: str, http: typing.Any) -> Source:
         raise SourceError("The HTTP service isn't running")
     try:
         response = http.snapshot(url=url)
-    except (darq.DarqError, TimeoutError) as e:
+    except (darq.errors.DarqError, TimeoutError) as e:
         raise SourceError(f"Can't fetch {url}: {e}") from None
     if response.status != HttpStatus.OK:
         raise SourceError(FETCH_FAILURES[response.status].format(url=url))
@@ -122,7 +122,7 @@ def import_file(path: str, source: str) -> Source:
     try:
         item_id = darq.launch.import_data(media_type, extension, data, name,
                                           TypeContext(event=darq.history.IMPORTED, source=source, note=path))
-    except (darq.DarqError, TimeoutError) as e:
+    except (darq.errors.DarqError, TimeoutError) as e:
         raise SourceError(f"Can't import {name}: {e}") from None
     if item_id is None:
         raise SourceError(f"No type can hold {name}")
@@ -135,7 +135,7 @@ def read(source: Source) -> bytes:
     :raises SourceError: if it can't be read."""
     try:
         data, _ = darq.launch.export_item(source.item_id)
-    except (darq.DarqError, TimeoutError) as e:
+    except (darq.errors.DarqError, TimeoutError) as e:
         raise SourceError(f"Can't read {source.name or source.item_id}: {e}") from None
     return data
 
@@ -147,13 +147,13 @@ def candidates(kb: model.KB, history: typing.Any, accepts: Accepts) -> list[Sour
         return []
     try:
         events = history.get_events(events=[darq.history.IMPORTED], max=EVENTS).events
-    except (darq.DarqError, TimeoutError) as e:
+    except (darq.errors.DarqError, TimeoutError) as e:
         logging.warning(f"Can't read History: {e!r}")
         return []
     item_ids = list(dict.fromkeys(e.item_id for e in events))
     try:
         found, _ = kb.get_entities([darq.split_item_id(i)[1] for i in item_ids])
-    except (darq.DarqError, TimeoutError, LookupError) as e:
+    except (darq.errors.DarqError, TimeoutError, LookupError) as e:
         logging.warning(f"Can't read the items: {e!r}")
         return []
     entities = {e.id: e for e in found if not e.destroyed}
@@ -185,7 +185,7 @@ def remember(kb: model.KB, entity_id: str, source: Source):
             entity.remove_statement(statement)
         entity.claim(darq.items.IMPORTED_FROM, model.EntityValue(darq.split_item_id(source.item_id)[1]))
         kb.put(entity)
-    except (darq.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError) as e:
+    except (darq.errors.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError) as e:
         logging.warning(f"Can't remember what {entity_id} was imported from: {e!r}")
 
 
@@ -207,7 +207,7 @@ def previous(kb: model.KB, entity_id: str) -> Source | None:
             url = model.first_string(found, darq.url.URL) if found is not None else ""
             if url:
                 break
-    except (darq.DarqError, TimeoutError, LookupError) as e:
+    except (darq.errors.DarqError, TimeoutError, LookupError) as e:
         logging.warning(f"Can't find what {entity_id} was imported from: {e!r}")
         return None
     return Source(item_id=item_id, name=item_names(kb, [item_id]).get(item_id) or item_id, url=url)
@@ -219,7 +219,7 @@ def describe(item_id: str, description: str):
     of itself already: it isn't an edit."""
     try:
         port = darq.launch.open_entity(item_id)
-    except (darq.DarqError, TimeoutError) as e:
+    except (darq.errors.DarqError, TimeoutError) as e:
         logging.warning(f"Can't describe {item_id}: {e!r}")
         return
     try:
@@ -230,7 +230,7 @@ def describe(item_id: str, description: str):
             entity.set_description(description)
             client.put_entity(model.entity_to_wire(entity), KBContext(quiet=True))
         client.close()
-    except (darq.DarqError, TimeoutError, ValueError) as e:
+    except (darq.errors.DarqError, TimeoutError, ValueError) as e:
         logging.warning(f"Can't describe {item_id}: {e!r}")
     finally:
         darq.close_port(port)

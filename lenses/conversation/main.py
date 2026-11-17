@@ -35,7 +35,7 @@ import darq
 import darq.kb as model
 import darq.launch
 import darq.message
-from darq.loop import QtEventLoop
+from darq.qtloop import QtEventLoop
 from darq.protocols.kb import EntityItem, Linked
 from darq.protocols.kb import Status as KBStatus
 from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
@@ -63,7 +63,7 @@ USE_TIMEOUT = 60.0
 NEAR_END = 200
 
 # Reads failing, from items and the timeline.
-READ_ERRORS = (darq.DarqError, TimeoutError, ValueError, timeline.TimelineError)
+READ_ERRORS = (darq.errors.DarqError, TimeoutError, ValueError, timeline.TimelineError)
 
 Key = QtCore.Qt.Key
 Modifier = QtCore.Qt.KeyboardModifier
@@ -466,7 +466,7 @@ class ConversationLens(LensHandler):
         it's viewed, once, and then the conversation, as it's read."""
         try:
             self.ports[port].viewed(source=SOURCE, note="")
-        except (darq.DarqError, KeyError) as e:
+        except (darq.errors.DarqError, KeyError) as e:
             logging.warning(f"Can't say a message is viewed: {e!r}")
         conversation = next((link for link in linked if link.entity_id == conversation_of(message)), None)
         client = None
@@ -506,7 +506,7 @@ class ConversationLens(LensHandler):
             return
         try:
             client.close()
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.warning(f"Can't close an item: {e!r}")
         darq.close_port(port)
 

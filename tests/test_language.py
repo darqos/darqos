@@ -32,7 +32,7 @@ def test_the_hosts_locales(environment, locales):
     ([], ["en", "mul"]),
 ])
 def test_the_chain(locales, chain):
-    assert language.chain(locales) == chain
+    assert language.language_chain(locales) == chain
 
 
 def test_the_operators_languages(monkeypatch):

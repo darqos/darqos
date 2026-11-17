@@ -137,7 +137,7 @@ class EntityImplementation(ItemType, EntityWriter.Handler):
     def create(self, request: CreateRequest, source: int) -> CreateResponse:
         try:
             type_id = darq.canonical_type_id(request.type_id)
-        except darq.InvalidIdentifierError:
+        except darq.errors.InvalidIdentifierError:
             return CreateResponse(status=Status.INVALID_ID)
         if type_id not in model.KIND_TYPES:
             return CreateResponse(status=Status.NOT_FOUND)
@@ -250,7 +250,7 @@ class EntityImplementation(ItemType, EntityWriter.Handler):
     def create_entities(self, request: CreateEntitiesRequest, source: int) -> CreateEntitiesResponse:
         try:
             type_id = darq.canonical_type_id(request.type_id)
-        except darq.InvalidIdentifierError:
+        except darq.errors.InvalidIdentifierError:
             return CreateEntitiesResponse(status=wire.Status.INVALID_ARGUMENT)
         if type_id not in model.KIND_TYPES:
             return CreateEntitiesResponse(status=wire.Status.NOT_FOUND)

@@ -1,9 +1,9 @@
 # darqos
 # Copyright (C) 2026 David Arnold
 
-# Encode/decode tests for the p-kernel messages in darq.pcall.
+# Encode/decode tests for the p-kernel messages in darq._runtime.pcall.
 #
-# Tests marked xfail document known defects in darq.pcall.  They are
+# Tests marked xfail document known defects in darq._runtime.pcall.  They are
 # strict, so once a defect is fixed the test will report XPASS and the
 # marker should be removed.
 
@@ -11,7 +11,7 @@ import struct
 
 import pytest
 
-from darq.pcall import (
+from darq._runtime.pcall import (
     ClosePortRequest,
     ClosePortResponse,
     DeliverChunk,

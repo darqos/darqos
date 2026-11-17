@@ -78,10 +78,10 @@ def make_image(photo: cards.Photo, context: TypeContext) -> str:
     """Make an image item from a photo, and return its identifier: its
     type records it, as context says.
 
-    :raises darq.DarqError: if it can't be made."""
+    :raises darq.errors.DarqError: if it can't be made."""
     type_id = IMAGE_TYPES.get(photo.media_type)
     if type_id is None:
-        raise darq.DarqError(f"{photo.media_type} isn't an image type")
+        raise darq.errors.DarqError(f"{photo.media_type} isn't an image type")
     item_id, port = darq.launch.create_item_from(type_id, photo.data, media_type=photo.media_type, context=context)
     darq.close_port(port)
     return item_id
@@ -296,7 +296,7 @@ class Import:
             self.progress("Matching", n, len(pending))
             try:
                 found = self.natural(draft)
-            except (darq.DarqError, TimeoutError, LookupError, ValueError) as e:
+            except (darq.errors.DarqError, TimeoutError, LookupError, ValueError) as e:
                 self.fail(draft, f"matching: {e}")
                 continue
             if found:
@@ -421,12 +421,12 @@ class Import:
         try:
             response = self.implementation.create(type_id=kind, context=self.context())
             if response.status != TypeStatus.OK or response.item is None:
-                raise darq.DarqError(response.status.name)
+                raise darq.errors.DarqError(response.status.name)
             try:
                 EntityItem.Client(response.item, timeout=self.implementation.timeout).close()
             finally:
                 darq.close_port(response.item)
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             self.fail(draft, f"creating a {kind}: {e}")
             return
 
@@ -476,7 +476,7 @@ class Import:
                     if key not in tags:
                         tags[key] = darq.items.tag(self.kb, self.items, name,
                                                    KBContext(source=SOURCE, note=self.name))
-                except (darq.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError) as e:
+                except (darq.errors.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError) as e:
                     log.warning(f"Can't make a tag for card {min(draft.cards, default='')}: {e}")
                     continue
                 draft.entity.claim(darq.items.HAS_TAG, model.EntityValue(tags[key]))
@@ -501,7 +501,7 @@ class Import:
                 return value.entity_id
         try:
             item_id = make_image(photo, self.context(darq.history.IMPORTED))
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             log.warning(f"Can't make an image of card {min(draft.cards, default='')}'s photo: {e}")
             return ""
         return darq.split_item_id(item_id)[1]
@@ -599,13 +599,13 @@ class Import:
             self.items.put(*(e for _, e in changed))
             self.result.updated += len(changed)
             return
-        except (darq.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError):
+        except (darq.errors.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError):
             pass
         for group, entity in changed:
             try:
                 self.items.put(entity)
                 self.result.updated += 1
-            except (darq.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError) as e:
+            except (darq.errors.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError) as e:
                 for draft in group:
                     self.fail(draft, f"writing: {e}")
 

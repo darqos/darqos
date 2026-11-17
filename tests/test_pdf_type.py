@@ -349,7 +349,7 @@ def test_pdf_type(live_pkernel, tmp_path):  # noqa: F811
             try:
                 darq.launch.create_item_from("com.adobe.pdf", b"not a pdf")
                 return "rubbish was taken as a PDF"
-            except darq.LaunchError:
+            except darq.errors.LaunchError:
                 pass
             item_id, port = darq.launch.create_item_from("com.adobe.pdf", data)
             item = wire.Pdf.Client(port, timeout=30)
@@ -400,7 +400,7 @@ def test_destroying_a_pdf_destroys_its_entity(call, kb, qt_app):
 
 
 def test_an_old_pdf_is_given_its_entity_named_by_its_title(call, kb, qt_app):
-    kb.failing = darq.DarqError("no KB")
+    kb.failing = darq.errors.DarqError("no KB")
     iid, _ = create_from(call, make_pdf(title="A Title"))
     kb.failing = None
     assert call(IMPLEMENTATION_PORT, OpenEntityRequest(item_id=iid)).status == Status.OK

@@ -461,7 +461,7 @@ def test_a_lost_position_isnt_a_failure(call, blobs, monkeypatch):
     _, port = create_from(call, make_epub())
 
     def fail(**fields):
-        raise darq.DarqError("gone")
+        raise darq.errors.DarqError("gone")
 
     monkeypatch.setattr(blobs, "put", fail)
     call(port, SetPositionRequest(position="a"))
@@ -563,7 +563,7 @@ def test_destroying_a_book_destroys_its_entity(call, kb):
 
 
 def test_an_old_book_is_given_its_entity_named_by_its_title(call, kb):
-    kb.failing = darq.DarqError("no KB")
+    kb.failing = darq.errors.DarqError("no KB")
     iid, _ = create_from(call, make_epub())
     kb.failing = None
     assert call(IMPLEMENTATION_PORT, OpenRequest(item_id=iid)).status == Status.OK

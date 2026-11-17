@@ -155,7 +155,7 @@ class SearchView(QWidget):
             return
         try:
             results = self.host.services.index.search(text, max=PAGE)
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             self.host.show_status(f"Can't search: {e}")
             return
         self.show_results(results)
@@ -189,7 +189,7 @@ class SearchView(QWidget):
                 described = self.host.services.types.describe(type_id=type_id)
                 ok = described.status == TypeStatus.OK
                 self.names[type_id] = (described.description.name if ok else "") or type_id
-            except (darq.DarqError, TimeoutError):
+            except (darq.errors.DarqError, TimeoutError):
                 return type_id
         return self.names[type_id]
 

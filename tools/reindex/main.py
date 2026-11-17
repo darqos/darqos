@@ -57,7 +57,7 @@ def item_ids(history: History.Client) -> list[str]:
     while True:
         response = history.get_events(start=0, end=end, events=EVENTS, max=PAGE)
         if response.status != HistoryStatus.OK:
-            raise darq.DarqError(f"get_events: {response.status.name}")
+            raise darq.errors.DarqError(f"get_events: {response.status.name}")
         for event in response.events:
             found.setdefault(event.item_id)
         if not response.events:
@@ -107,7 +107,7 @@ def reindex(history: History.Client, types: Type.Client, index: darq.index.Publi
         if type_id not in implementations:
             try:
                 activated = types.activate(type_id=type_id)
-            except (darq.DarqError, TimeoutError) as e:
+            except (darq.errors.DarqError, TimeoutError) as e:
                 logging.warning(f"Can't activate {type_id}: {e!r}")
                 activated = None
             if activated is not None and activated.status == Status.OK and activated.implementation is not None:
@@ -129,7 +129,7 @@ def reindex(history: History.Client, types: Type.Client, index: darq.index.Publi
             continue
         try:
             response = client.index_entry(item_id=item_id)
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.warning(f"Can't get the entry for {item_id}: {e!r}")
             skipped += 1
             continue

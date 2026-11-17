@@ -23,7 +23,8 @@ import typing
 import pytest
 
 import darq
-from darq import pcall as pk
+import darq._runtime.process
+from darq._runtime import pcall as pk
 
 
 PYLOADER_PATH = pathlib.Path(__file__).parent.parent / "kernel" / "pyloader"
@@ -328,7 +329,7 @@ def test_request_ids_assigned_by_io_thread(pproc):
 def test_send_message_waits_for_response(pproc):
     def app():
         port = darq.open_port()
-        darq.send_message(port, 16386, b"hello")
+        darq.system.send_message(port, 16386, b"hello")
 
     run_app(pproc, app)
     [sent] = [m for m in pproc.kernel.received if isinstance(m, pk.SendMessageRequest)]
@@ -343,25 +344,25 @@ def test_send_message_blocks_until_answered(pproc):
     def app():
         port = darq.open_port()
         start = time.monotonic()
-        darq.send_message(port, 16386, b"hello")
+        darq.system.send_message(port, 16386, b"hello")
         return time.monotonic() - start
 
     assert run_app(pproc, app) >= 0.09
 
 
 @pytest.mark.parametrize("result, error", [
-    (pk.SendResult.BAD_HANDLE, darq.NonExistentPortError),
-    (pk.SendResult.NOT_RECEIVE_RIGHT, darq.PortRightError),
-    (pk.SendResult.DEAD_PORT, darq.DeadPortError),
-    (pk.SendResult.DEAD_TRANSFERRED_PORT, darq.DeadTransferredPortError),
-    (99, darq.DarqError),
+    (pk.SendResult.BAD_HANDLE, darq.errors.NonExistentPortError),
+    (pk.SendResult.NOT_RECEIVE_RIGHT, darq.errors.PortRightError),
+    (pk.SendResult.DEAD_PORT, darq.errors.DeadPortError),
+    (pk.SendResult.DEAD_TRANSFERRED_PORT, darq.errors.DeadTransferredPortError),
+    (99, darq.errors.DarqError),
 ])
 def test_send_message_errors(pproc, result, error):
     pproc.kernel.send_result = result
 
     def app():
         with pytest.raises(error):
-            darq.send_message(darq.open_port(), 16386, b"refused")
+            darq.system.send_message(darq.open_port(), 16386, b"refused")
         return True
 
     assert run_app(pproc, app)
@@ -395,8 +396,8 @@ def test_getpid_and_getppid_are_local(pproc):
 ])
 def test_callback_runs_on_app_loop(pproc, pcall, args):
     def app():
-        loop = darq.SelectEventLoop()
-        darq.init(loop)
+        loop = darq.loop.SelectEventLoop()
+        darq.system.init(loop)
         calls = []
 
         def callback(value, error):
@@ -417,18 +418,18 @@ def test_delivered_message_runs_on_app_loop(pproc):
     deliver_sent_messages(pproc)
 
     def app():
-        loop = darq.SelectEventLoop()
+        loop = darq.loop.SelectEventLoop()
         delivered = []
 
-        class Listener(darq.EventListener):
+        class Listener(darq._runtime.process.EventListener):
             def on_message(self, source, destination, message, handles=()):
                 delivered.append((source, destination, message, handles,
                                   threading.current_thread() is threading.main_thread()))
                 loop.stop()
 
-        darq.init_cb(loop, Listener())
+        darq.system.init_cb(loop, Listener())
         port = darq.open_port()
-        darq.send_message(port, port, b"hello", ports=[port, 77])
+        darq.system.send_message(port, port, b"hello", ports=[port, 77])
         loop.run()
         loop.close()
         return delivered
@@ -443,10 +444,10 @@ def test_port_listener_runs_on_app_loop(pproc):
     deliver_sent_messages(pproc)
 
     def app():
-        loop = darq.SelectEventLoop()
+        loop = darq.loop.SelectEventLoop()
         delivered = []
 
-        class Listener(darq.EventListener):
+        class Listener(darq._runtime.process.EventListener):
             def on_message(self, source, destination, message, handles=()):
                 delivered.append(("process", destination, message))
                 loop.stop()
@@ -454,11 +455,11 @@ def test_port_listener_runs_on_app_loop(pproc):
         def port_listener(port, source, payload, handles):
             delivered.append(("port", port, payload, threading.current_thread() is threading.main_thread()))
 
-        darq.init_cb(loop, Listener())
+        darq.system.init_cb(loop, Listener())
         listened, other = darq.open_port(), darq.open_port()
         darq.set_port_listener(listened, port_listener, loop)
-        darq.send_message(listened, listened, b"mine")
-        darq.send_message(listened, other, b"theirs")
+        darq.system.send_message(listened, listened, b"mine")
+        darq.system.send_message(listened, other, b"theirs")
         loop.run()
         loop.close()
         return listened, other, delivered
@@ -469,10 +470,10 @@ def test_port_listener_runs_on_app_loop(pproc):
 
 def test_port_listener_needs_an_open_port(pproc):
     def app():
-        loop = darq.SelectEventLoop()
+        loop = darq.loop.SelectEventLoop()
         try:
             darq.set_port_listener(4242, lambda *message: None, loop)
-        except darq.NonExistentPortError:
+        except darq.errors.NonExistentPortError:
             return "raised"
         finally:
             loop.close()
@@ -502,7 +503,7 @@ def test_receive_message(pproc):
 
     def app():
         port = darq.open_port()
-        darq.send_message(port, port, b"hello")
+        darq.system.send_message(port, port, b"hello")
         return darq.receive_message(port)
 
     assert run_app(pproc, app) == (16385, b"hello", ())
@@ -522,8 +523,8 @@ def test_receive_any(pproc):
 
     def app():
         a, b = darq.open_port(), darq.open_port()
-        darq.send_message(a, b, b"to b")
-        darq.send_message(b, a, b"to a")
+        darq.system.send_message(a, b, b"to b")
+        darq.system.send_message(b, a, b"to a")
         ports = darq.PortSet([a, b])
         return [ports.receive(), ports.receive(), ports.receive(blocking=False)]
 
@@ -535,7 +536,7 @@ def test_receive_any_unknown_port(pproc):
         port = darq.open_port()
         try:
             darq.receive_any([port, 12345], blocking=False)
-        except darq.NonExistentPortError as e:
+        except darq.errors.NonExistentPortError as e:
             return str(e)
 
     assert run_app(pproc, app) == "12345"
@@ -550,7 +551,7 @@ def test_spawn_failure_raises(pproc):
     def app():
         try:
             darq.spawn_process("/x", bootstrap=3)
-        except darq.SpawnError as e:
+        except darq.errors.SpawnError as e:
             return e.result, e.description
 
     assert run_app(pproc, app) == (pk.SpawnResult.BAD_BOOTSTRAP, "bootstrap handle 3 isn't open")
@@ -573,7 +574,7 @@ def test_transferred_handles_sent_and_received(pproc):
 
     def app():
         port = darq.open_port()
-        darq.send_message(port, port, b"hello", ports=[port, 77])
+        darq.system.send_message(port, port, b"hello", ports=[port, 77])
         return darq.receive_message(port)
 
     assert run_app(pproc, app) == (16385, b"hello", (16385, 77))
@@ -585,8 +586,8 @@ def test_too_many_handles_refused_locally(pproc):
     def app():
         port = darq.open_port()
         try:
-            darq.send_message(port, port, b"hello", ports=[port] * (pk.MAX_HANDLES + 1))
-        except darq.TooManyHandlesError:
+            darq.system.send_message(port, port, b"hello", ports=[port] * (pk.MAX_HANDLES + 1))
+        except darq.errors.TooManyHandlesError:
             return "refused"
 
     assert run_app(pproc, app) == "refused"
@@ -611,7 +612,7 @@ def test_receive_messages_in_order(pproc):
     def app():
         port = darq.open_port()
         for payload in (b"one", b"two", b"three"):
-            darq.send_message(port, port, payload)
+            darq.system.send_message(port, port, payload)
         payloads = []
         for _ in range(3):
             message = darq.receive_message(port)
@@ -639,7 +640,7 @@ def test_non_blocking_receive_of_delivered_message(pproc):
 
     def app():
         port = darq.open_port()
-        darq.send_message(port, port, b"hello")
+        darq.system.send_message(port, port, b"hello")
         # Synchronise: the delivery precedes the spawn reply.
         darq.spawn_process("/darq/bin/x")
         return darq.receive_message(port, blocking=False)
@@ -669,7 +670,7 @@ def test_blocking_receive_waits_for_delivery(pproc):
 
 def test_receive_on_port_not_open(pproc):
     def app():
-        with pytest.raises(darq.NonExistentPortError):
+        with pytest.raises(darq.errors.NonExistentPortError):
             darq.receive_message(16385, blocking=False)
         return True
 
@@ -680,7 +681,7 @@ def test_receive_after_close(pproc):
     def app():
         port = darq.open_port()
         darq.close_port(port)
-        with pytest.raises(darq.NonExistentPortError):
+        with pytest.raises(darq.errors.NonExistentPortError):
             darq.receive_message(port)
         return True
 
@@ -697,7 +698,7 @@ def test_message_for_unknown_port_dropped(pproc):
 
     def app():
         port = darq.open_port()
-        darq.send_message(port, port, b"lost")
+        darq.system.send_message(port, port, b"lost")
         darq.spawn_process("/darq/bin/x")
         return darq.receive_message(port, blocking=False)
 
@@ -709,7 +710,7 @@ def test_kill_app_blocked_in_receive(pproc, install_app):
         import darq
         def darq_main():
             port = darq.open_port()
-            darq.send_message(port, 16386, b"started")
+            darq.system.send_message(port, 16386, b"started")
             darq.receive_message(port)
         """)
     kill_on(pproc, pk.MessageType.SEND_MESSAGE_RQST)
@@ -747,12 +748,12 @@ def test_lookup_name_not_found(pproc):
 
 
 @pytest.mark.parametrize("result, error", [
-    (pk.NameResult.BAD_HANDLE, darq.NonExistentPortError),
-    (pk.NameResult.INVALID_NAME, darq.InvalidNameError),
-    (pk.NameResult.NAME_TAKEN, darq.NameTakenError),
-    (pk.NameResult.RESERVED_NAME, darq.ReservedNameError),
-    (pk.NameResult.PORT_ALREADY_NAMED, darq.PortAlreadyNamedError),
-    (99, darq.DarqError),
+    (pk.NameResult.BAD_HANDLE, darq.errors.NonExistentPortError),
+    (pk.NameResult.INVALID_NAME, darq.errors.InvalidNameError),
+    (pk.NameResult.NAME_TAKEN, darq.errors.NameTakenError),
+    (pk.NameResult.RESERVED_NAME, darq.errors.ReservedNameError),
+    (pk.NameResult.PORT_ALREADY_NAMED, darq.errors.PortAlreadyNamedError),
+    (99, darq.errors.DarqError),
 ])
 def test_register_name_errors(pproc, result, error):
     pproc.kernel.register_result = result
@@ -767,8 +768,8 @@ def test_register_name_errors(pproc, result, error):
 
 def test_name_callbacks_run_on_app_loop(pproc):
     def app():
-        loop = darq.SelectEventLoop()
-        darq.init(loop)
+        loop = darq.loop.SelectEventLoop()
+        darq.system.init(loop)
         calls = []
 
         def registered(port, error):
@@ -868,7 +869,7 @@ def test_wait_not_finished(pproc):
 
 def test_wait_no_such_child(pproc):
     def app():
-        with pytest.raises(darq.NoSuchChildError):
+        with pytest.raises(darq.errors.NoSuchChildError):
             darq.wait()
         return True
 
@@ -907,7 +908,7 @@ def test_kill_running_app(pproc, install_app, body):
         import time
         import darq
         def darq_main():
-            darq.send_message(16385, 16386, b"started")
+            darq.system.send_message(16385, 16386, b"started")
             {body}
         """)
     kill_on(pproc, pk.MessageType.SEND_MESSAGE_RQST)
@@ -955,7 +956,7 @@ def test_kill_process_request_other_dpid(pproc):
     kill_on(pproc, pk.MessageType.SEND_MESSAGE_RQST, DPID + 1)
 
     def app():
-        darq.send_message(16385, 16386, b"started")
+        darq.system.send_message(16385, 16386, b"started")
         # The kill request is handled before this p-call's response.
         return darq.spawn_process("/darq/bin/x")
 
@@ -973,7 +974,7 @@ def test_p_kernel_disconnect(pproc, install_app, blocked_in_pcall):
         import time
         import darq
         def darq_main():
-            darq.send_message(16385, 16386, b"started")
+            darq.system.send_message(16385, 16386, b"started")
             if {blocked_in_pcall}:
                 darq.spawn_process("/hang")
             while True:
@@ -1013,7 +1014,7 @@ def test_invalid_message_length_disconnects(pproc, install_app, length):
         import time
         import darq
         def darq_main():
-            darq.send_message(16385, 16386, b"started")
+            darq.system.send_message(16385, 16386, b"started")
             while True:
                 time.sleep(0.01)
         """)
@@ -1095,7 +1096,7 @@ def test_app_exit_follows_its_last_pcalls(pproc, install_app):
     install_app("""
         import darq
         def darq_main():
-            darq.send_message(16385, 16386, b"last words")
+            darq.system.send_message(16385, 16386, b"last words")
         """)
     run_process(pproc)
 

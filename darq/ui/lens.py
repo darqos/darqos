@@ -53,7 +53,7 @@ def announce(port: int) -> str:
     QGuiApplication.setDesktopFileName(name)
     try:
         darq.register_name(name, port)
-    except darq.DarqError as e:
+    except darq.errors.DarqError as e:
         # Sys-i won't find it: it's no reason not to show the item.
         logging.warning(f"Can't register {name}: {e!r}")
     return name
@@ -157,7 +157,7 @@ class Viewing:
         self.sent = self.note
         try:
             self.client.viewed(source=self.source, note=self.note)
-        except darq.DarqError as e:
+        except darq.errors.DarqError as e:
             logging.warning(f"Can't say it's viewed: {e!r}")
 
 

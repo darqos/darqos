@@ -54,7 +54,7 @@ from PyQt6.QtWidgets import (
 
 import darq
 import darq.launch
-from darq.loop import QtEventLoop
+from darq.qtloop import QtEventLoop
 from darq.protocols.ebook import ContentsResponse, Ebook
 from darq.protocols.ebook import Status as EbookStatus
 from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
@@ -95,7 +95,7 @@ Key = QtCore.Qt.Key
 Modifier = QtCore.Qt.KeyboardModifier
 
 # Read errors from the item.
-ERRORS = (darq.DarqError, TimeoutError, ValueError)
+ERRORS = (darq.errors.DarqError, TimeoutError, ValueError)
 
 
 # The scheme has to be registered before there's an application.

@@ -217,7 +217,7 @@ def create(kb: model.KB, kind: str, entity_id: str, label: str = "", file_name: 
     as it is.
 
     :raises ValueError: if the kind's items aren't kept in Storage.
-    :raises darq.DarqError, TimeoutError, model.ConflictError: if the KB
+    :raises darq.errors.DarqError, TimeoutError, model.ConflictError: if the KB
                                                                won't."""
     existing = kb.get(entity_id, follow=False)
     if existing is not None:

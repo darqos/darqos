@@ -46,7 +46,7 @@ from PyQt6.QtWidgets import (QApplication, QCompleter, QHBoxLayout, QLabel, QMai
                              QSplitter, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 import darq
-from darq.loop import QtEventLoop
+from darq.qtloop import QtEventLoop
 from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
 from darq.protocols.python import Python
 from darq.protocols.python import Status as PythonStatus
@@ -836,7 +836,7 @@ class Window(QMainWindow):
             if response.status == PythonStatus.CONFLICT and self.confirm(
                     "The session's been saved elsewhere since it was opened here: save over it?"):
                 response = self.item.put(expected=self.item.get().generation, package=package, source=SOURCE)
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             self.transcript.add_text(f"Can't save the session: {e}", Token.Generic.Error)
             return
         if response.status != PythonStatus.OK:
@@ -992,7 +992,7 @@ class Window(QMainWindow):
         except darq.packages.PackageError as e:
             self.transcript.add_text(f"Not extracted: {e}", Token.Generic.Error)
             return
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             self.transcript.add_text(f"Can't extract {root}: {e}", Token.Generic.Error)
             return
         self.extracts[root] = item_id
@@ -1032,7 +1032,7 @@ class ReplLens(LensHandler):
         self.window.set_session(self.name_of(request.item_id), request.item_id)
         try:
             got = self.item.get()
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.error(f"Can't read {request.item_id}: {e!r}")
             self.window.closing_quietly = True
             self.window.close()
@@ -1062,7 +1062,7 @@ class ReplLens(LensHandler):
         if self.item is not None:
             try:
                 self.item.close()
-            except (darq.DarqError, TimeoutError) as e:
+            except (darq.errors.DarqError, TimeoutError) as e:
                 logging.info(f"Can't close {self.shown_item}: {e!r}")
             self.item = None
         self.loop.stop()

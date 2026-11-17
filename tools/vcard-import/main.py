@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QLineEdit, QPlai
 
 import darq
 import darq.kb as model
-from darq.loop import QtEventLoop
+from darq.qtloop import QtEventLoop
 from darq.protocols.kb import EntityWriter
 from darq.protocols.type import Implementation, Status, Type
 from darq.ui import sources
@@ -63,7 +63,7 @@ def run_import(source: sources.Source, name: str, progress: typing.Callable[[str
 
     :returns: Counts of what was read, and what was imported.
     :raises sources.SourceError, ValueError: if it can't be read.
-    :raises darq.DarqError: if a service can't be reached."""
+    :raises darq.errors.DarqError: if a service can't be reached."""
     progress("Reading cards", 0, 1)
     try:
         text = sources.read(source).decode("utf-8")
@@ -76,7 +76,7 @@ def run_import(source: sources.Source, name: str, progress: typing.Callable[[str
     types = Type.Client(darq.connect("darq.type"), timeout=TIMEOUT)
     activated = types.activate(type_id=KB_TYPE)
     if activated.status != Status.OK or activated.implementation is None:
-        raise darq.DarqError(f"Can't activate {KB_TYPE}: {activated.status.name}")
+        raise darq.errors.DarqError(f"Can't activate {KB_TYPE}: {activated.status.name}")
     implementation = Implementation.Client(activated.implementation, timeout=TIMEOUT)
     kb = model.KB.connect(timeout=TIMEOUT)
     items = model.KB(kb.client, EntityWriter.Client(activated.implementation, timeout=TIMEOUT))

@@ -211,7 +211,7 @@ class DataImplementation(ItemType):
         """Return an item, by its identifier, or why it can't be."""
         try:
             key = parse_item_id(iid)
-        except darq.InvalidIdentifierError:
+        except darq.errors.InvalidIdentifierError:
             return None, Status.INVALID_ID
         if key is None:
             return None, Status.NOT_FOUND
@@ -230,7 +230,7 @@ class DataImplementation(ItemType):
     def check_type(type_id: str) -> Status:
         try:
             return Status.OK if darq.canonical_type_id(type_id) == TYPE_ID else Status.NOT_FOUND
-        except darq.InvalidIdentifierError:
+        except darq.errors.InvalidIdentifierError:
             return Status.INVALID_ID
 
     # The entity
@@ -306,7 +306,7 @@ class DataImplementation(ItemType):
         try:
             response = self.storage.put(key=document.key, expected=document.generation,
                                         value=encode_blob(document.data, document.media_type, flags))
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.error(f"Can't destroy {request.item_id}: {e!r}")
             return DestroyResponse(status=Status.FAILED)
         if response.status != storage.Status.OK:

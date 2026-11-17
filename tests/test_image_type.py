@@ -631,7 +631,7 @@ def test_image_type(live_pkernel, tmp_path):  # noqa: F811
             try:
                 darq.launch.create_item_from("public.png", out.getvalue())
                 return "a JPEG was taken as a PNG"
-            except darq.LaunchError:
+            except darq.errors.LaunchError:
                 pass
             item_id, port = darq.launch.create_item_from("public.jpeg", out.getvalue())
             item = wire.Image.Client(port, timeout=30)
@@ -682,7 +682,7 @@ def test_destroying_an_image_destroys_its_entity(call, kb):
 
 
 def test_an_old_image_is_given_its_entity(call, kb):
-    kb.failing = darq.DarqError("no KB")
+    kb.failing = darq.errors.DarqError("no KB")
     iid, _ = create_from(call, encode(pixels(), "PNG"))
     kb.failing = None
     assert call(IMPLEMENTATION_PORT, OpenEntityRequest(item_id=iid)).status == Status.OK

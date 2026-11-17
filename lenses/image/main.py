@@ -49,7 +49,7 @@ from PyQt6.QtWidgets import (
 )
 
 import darq
-from darq.loop import QtEventLoop
+from darq.qtloop import QtEventLoop
 from darq.protocols import image as wire
 from darq.protocols.lens import Close, Ready, Status, UseRequest, UseResponse
 from darq.ui import style
@@ -189,7 +189,7 @@ class ImageSync:
         :returns: False if the item doesn't answer."""
         try:
             response = self.client.get()
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.error(f"Can't get {self.item_id}: {e!r}")
             self.available = False
             return False
@@ -217,7 +217,7 @@ class ImageSync:
         """Make the item's edits these, and get the image they make."""
         try:
             response = self.client.set_edits(edits=edits, expected=self.version)
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.error(f"Can't edit {self.item_id}: {e!r}")
             self.available = False
             self.reason = f"Can't edit the image: {e}"
@@ -288,7 +288,7 @@ class ImageSync:
         """Return the image's metadata, or none if it can't be read."""
         try:
             response = self.client.get_metadata()
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.error(f"Can't get {self.item_id}'s metadata: {e!r}")
             return []
         return response.entries if response.status == wire.Status.OK else []
@@ -300,7 +300,7 @@ class ImageSync:
         self.available = False
         try:
             self.client.close()
-        except (darq.DarqError, TimeoutError) as e:
+        except (darq.errors.DarqError, TimeoutError) as e:
             logging.warning(f"Can't close {self.item_id}: {e!r}")
 
 

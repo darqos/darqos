@@ -32,7 +32,7 @@ __all__ = [
 
 
 # The compositor, built in the source tree for now.
-COMPOSITOR = pathlib.Path(__file__).parent.parent / "compositor" / "build" / "darq-compositor"
+COMPOSITOR = pathlib.Path(__file__).parent.parent.parent / "compositor" / "build" / "darq-compositor"
 
 # Larger than any message the compositor sends (see compositor/policy.h).
 MAX_MESSAGE = 4096

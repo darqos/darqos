@@ -65,7 +65,7 @@ class FakeImplementation:
 
     def index_entry(self, item_id):
         if item_id not in self.entries:
-            raise darq.DarqError("not answering")
+            raise darq.errors.DarqError("not answering")
         return self.entries[item_id]
 
 

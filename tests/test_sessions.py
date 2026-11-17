@@ -8,7 +8,7 @@ import darq.items
 import darq.kb as model
 import darq.packages as packages
 import darq.sessions as sessions
-import darq.vocabulary
+import darq._runtime.vocabulary
 
 from test_kb_type import kb, kb_service, ports  # noqa: F401
 
@@ -21,7 +21,7 @@ def made(kb, n: int, name: str = "session") -> str:  # noqa: F811
 
 
 def test_the_default_session(kb):  # noqa: F811
-    darq.vocabulary.setup(kb)
+    darq._runtime.vocabulary.setup(kb)
     assert sessions.default_session(kb) is None
     first, second = made(kb, 1), made(kb, 2, "other")
     sessions.make_default(kb, first)
@@ -39,7 +39,7 @@ def test_the_default_session(kb):  # noqa: F811
 
 
 def test_one_is_made_if_theres_none(kb):  # noqa: F811
-    darq.vocabulary.setup(kb)
+    darq._runtime.vocabulary.setup(kb)
     created: list[tuple[bytes, str]] = []
 
     def create(package: bytes, name: str) -> str:

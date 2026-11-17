@@ -100,7 +100,7 @@ class HistoryService(History.Handler):
             type_id, specifier = darq.split_item_id(request.item_id)
             event = darq.canonical_name(request.event)
             event_source = darq.canonical_name(request.source)
-        except darq.InvalidIdentifierError as e:
+        except darq.errors.InvalidIdentifierError as e:
             logging.warning(f"Dropped event {request.event!r} from {request.source!r} "
                             f"about {request.item_id!r}: {e}")
             return
@@ -136,7 +136,7 @@ class HistoryService(History.Handler):
                 ("event", [darq.canonical_name(e) for e in request.events]),
                 ("source", [darq.canonical_name(s) for s in request.sources]),
             ]
-        except darq.InvalidIdentifierError as e:
+        except darq.errors.InvalidIdentifierError as e:
             logging.debug(f"get_events: {e}")
             return GetEventsResponse(status=Status.INVALID_ARGUMENT)
 

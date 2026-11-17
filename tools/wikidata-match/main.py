@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
 import darq
 import darq.kb as model
 import darq.wikidata
-from darq.loop import QtEventLoop
+from darq.qtloop import QtEventLoop
 from darq.ui import wikidata as wikidata_ui
 from darq.ui.launcher import start_thread
 
@@ -41,7 +41,8 @@ CLASSES = {"darq.person": darq.wikidata.PERSON_CLASS, "darq.organisation": darq.
 # Seconds to wait for the KB.
 TIMEOUT = 60.0
 
-ERRORS = (darq.wikidata.WikidataError, darq.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError)
+ERRORS = (darq.wikidata.WikidataError, darq.errors.DarqError, TimeoutError, LookupError, ValueError,
+          model.ConflictError)
 
 
 class Unmatched(typing.NamedTuple):

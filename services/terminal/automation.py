@@ -55,10 +55,10 @@ def lens_shows(name: str, timeout: float = LENS_TIMEOUT) -> tuple[str, bool]:
     """Ask a lens, by its Lens port's name, what it's showing: its item,
     and whether that's an entity.  It blocks: it's called off Qt's thread.
 
-    :raises darq.DarqError, TimeoutError: if it can't be asked."""
+    :raises darq.errors.DarqError, TimeoutError: if it can't be asked."""
     handle = darq.lookup_name(name, blocking=False)
     if handle is None:
-        raise darq.DarqError(f"{name} isn't there")
+        raise darq.errors.DarqError(f"{name} isn't there")
     try:
         shown = Lens.Client(handle, timeout=timeout).shown()
     finally:
@@ -189,7 +189,7 @@ class TerminalService(Terminal.Handler):
             for window, name in lenses.items():
                 try:
                     shows[window] = lens_shows(name)
-                except (darq.DarqError, TimeoutError) as e:
+                except (darq.errors.DarqError, TimeoutError) as e:
                     logging.info(f"Can't ask {name} what it's showing: {e}")
             return shows
 
@@ -363,7 +363,7 @@ class TerminalService(Terminal.Handler):
             return RunItemResponse(status=Status.LOCKED)
         try:
             type_id, _ = darq.split_item_id(request.item_id)
-        except darq.InvalidIdentifierError:
+        except darq.errors.InvalidIdentifierError:
             return RunItemResponse(status=Status.NOT_FOUND, message=f"{request.item_id} isn't an item")
         if type_id != darq.packages.TYPE_ID:
             return RunItemResponse(status=Status.FAILED, message="Only a Python package can be run")

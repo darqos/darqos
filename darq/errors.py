@@ -78,7 +78,7 @@ class RemoteError(DarqError):
 class SpawnError(DarqError):
     """A process couldn't be spawned.
 
-    :ivar result: The p-kernel's result code (see darq.pcall.SpawnResult).
+    :ivar result: The p-kernel's result code (see darq._runtime.pcall.SpawnResult).
     :ivar description: Why, from the p-kernel."""
 
     def __init__(self, result: int, description: str):
@@ -147,4 +147,14 @@ class LocalPortNumberDoesNotExistError(Exception):
 
 class ChannelClosedError(DarqError):
     """The other end of a socket channel has closed it."""
+    pass
+
+
+class DuplicateSocketError(DarqError):
+    """An event loop's watching a socket already."""
+    pass
+
+
+class SocketNotFoundError(DarqError):
+    """An event loop isn't watching a socket."""
     pass

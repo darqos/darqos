@@ -18,7 +18,7 @@ import typing
 
 import pytest
 
-from darq.compositor import COMPOSITOR, PolicyChannel
+from darq._runtime.compositor import COMPOSITOR, PolicyChannel
 from darq.errors import DeadPortError
 from darq.protocols import compositor as protocol
 from darq.protocols.security import (
@@ -795,7 +795,7 @@ def tools_at(terminal, root, finishes=None):
     def spawn(path):
         spawned.append(path)
         if finishes is None:
-            raise main.darq.SpawnError(1, "no such program")
+            raise main.darq.errors.SpawnError(1, "no such program")
         return 7
 
     tools.spawn = spawn

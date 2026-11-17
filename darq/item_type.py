@@ -73,7 +73,7 @@ __all__ = ["ClassListener", "EntityItemHandler", "ItemType", "KB_ERRORS"]
 MESSAGE_TYPE = "darq.message"
 
 # Errors talking to the KB service.
-KB_ERRORS = (darq.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError)
+KB_ERRORS = (darq.errors.DarqError, TimeoutError, LookupError, ValueError, model.ConflictError)
 
 # Most entities found by FindEntities, and suggested by
 # SuggestProperties: and how many are read at a time, to see if they're
@@ -222,7 +222,7 @@ class ItemType(Implementation.Handler):
         implemented here."""
         try:
             type_id, entity_id = darq.split_item_id(item_id)
-        except darq.InvalidIdentifierError:
+        except darq.errors.InvalidIdentifierError:
             return None, Status.INVALID_ID
         if type_id not in self.types:
             return None, Status.NOT_FOUND
