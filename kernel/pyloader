@@ -153,7 +153,14 @@ class PythonPProcess(darq.loop.SocketListener):
         return self.request_id
 
     def queue_new_syscall(self, syscall_state: process.SystemCallState):
-        """Queue a system call to be sent to the p-kernel."""
+        """Queue a system call to be sent to the p-kernel.
+
+        It's encoded here first, on the caller's thread, so a bad argument
+        raises in the caller, not on the I/O thread: the I/O thread
+        encodes it again, with its request id.
+
+        :raises TypeError, struct.error: if the request can't be encoded."""
+        syscall_state.get_request().encode()
         self._requests.put(syscall_state)
         self.io_loop.post(self.handle_syscall_queue)
         return
@@ -175,7 +182,18 @@ class PythonPProcess(darq.loop.SocketListener):
                 request.request_id = self.get_next_request_id()
                 self._pending[request.request_id] = syscall
 
-            self.send_to_p_kernel(request)
+            # A request that can't be encoded is abandoned, and its caller
+            # told: only the p-kernel's connection failing ends the I/O
+            # loop, and the process.
+            try:
+                buffer = request.encode()
+            except Exception as e:
+                logging.exception(f"p-call {type(request).__name__} couldn't be encoded: abandoned")
+                if hasattr(request, "request_id"):
+                    self._pending.pop(request.request_id, None)
+                syscall.fail(darq.errors.DarqError(f"p-call couldn't be encoded: {e}"))
+                continue
+            self.send_buffer_to_p_kernel(buffer, request.type)
 
     def complete_syscall(self, response) -> process.SystemCallState | None:
         """Match a p-kernel response to its pending p-call, and complete it.
@@ -520,7 +538,16 @@ class PythonPProcess(darq.loop.SocketListener):
             logging.warning(f"Not connected to p-kernel: message type {message.type} dropped")
             return
 
-        buffer = message.encode()
+        self.send_buffer_to_p_kernel(message.encode(), message.type)
+
+    def send_buffer_to_p_kernel(self, buffer: bytes, message_type: int):
+        """Send an encoded "syscall" message to the p-kernel.
+
+        :param buffer: The encoded message.
+        :param message_type: Its type, for the log."""
+        if self._pkernel_sock is None:
+            logging.warning(f"Not connected to p-kernel: message type {message_type} dropped")
+            return
 
         # FIXME: in an async world, this should queue and return if it can't
         # write immediately

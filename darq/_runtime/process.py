@@ -18,7 +18,7 @@ from enum import IntEnum
 from warnings import deprecated
 
 from .pcall import Buffer, Message
-from ..errors import NonExistentPortError
+from ..errors import DarqError, NonExistentPortError
 from ..loop import EventLoopInterface
 
 # Default exported symbols.
@@ -75,6 +75,10 @@ class SystemCallState:
 
         self._loop: EventLoopInterface|None =  None
 
+        # Why the p-call couldn't be made, if it couldn't: raised in the
+        # caller, by sync_wait().
+        self._error: DarqError | None = None
+
 
     def set_mode(self, mode: SystemCallMode):
         self._mode = mode
@@ -126,9 +130,20 @@ class SystemCallState:
         """Wake a synchronous caller blocked in sync_wait()."""
         self._sync_event.set()
 
+    def fail(self, error: DarqError):
+        """Abandon the p-call, unmade: its caller's sync_wait() raises
+        error."""
+        self._error = error
+        self.notify()
+
     def sync_wait(self):
+        """Wait for the response.
+
+        :raises DarqError: if the p-call was abandoned, unmade."""
         # FIXME: should I put a timeout here, and actually have the syscall fail if it takes too long?
         self._sync_event.wait()
+        if self._error is not None:
+            raise self._error
 
 
 

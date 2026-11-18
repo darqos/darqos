@@ -338,6 +338,59 @@ def test_send_message_waits_for_response(pproc):
     assert pproc._pending == {}
 
 
+def test_a_bad_argument_raises_in_the_caller(pproc):
+    """It's refused before it's queued: the process carries on."""
+    def app():
+        port = darq.open_port()
+        refused = []
+        for args in [(port, 16386, (b"a",)), (port, 16386, "text"), (port, "16386", b"x"), (port, 16386, b"x", [None])]:
+            try:
+                darq.system.send_message(*args)
+            except TypeError as e:
+                refused.append(str(e))
+        darq.system.send_message(port, 16386, bytearray(b"after"))
+        return refused
+
+    assert run_app(pproc, app) == ["message must be bytes, not tuple", "message must be bytes, not str",
+                                   "destination must be a handle, an int, not str",
+                                   "port must be a handle, an int, not NoneType"]
+    [sent] = [m for m in pproc.kernel.received if isinstance(m, pk.SendMessageRequest)]
+    assert sent.payload == b"after"
+
+
+def test_a_request_that_cant_be_encoded_is_abandoned(pproc):
+    """Failing on the I/O thread fails only its p-call, in its caller."""
+    def app():
+        port = darq.open_port()
+        request = pk.SendMessageRequest(port, 16386)
+        request.set_payload(b"x")
+        encodes = []
+        real = request.encode
+
+        def encode():
+            encodes.append(1)
+            if len(encodes) > 1:
+                raise ValueError("unencodable")
+            return real()
+
+        request.encode = encode
+        syscall = darq._runtime.process.SystemCallState()
+        syscall.set_request(request)
+        pproc.queue_new_syscall(syscall)
+        error = ""
+        try:
+            syscall.sync_wait()
+        except darq.errors.DarqError as e:
+            error = str(e)
+        darq.system.send_message(port, 16386, b"after")
+        return error
+
+    assert run_app(pproc, app) == "p-call couldn't be encoded: unencodable"
+    assert pproc._pending == {}
+    [sent] = [m for m in pproc.kernel.received if isinstance(m, pk.SendMessageRequest)]
+    assert sent.payload == b"after"
+
+
 def test_send_message_blocks_until_answered(pproc):
     pproc.kernel.send_delay = 0.1
 

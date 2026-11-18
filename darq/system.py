@@ -352,7 +352,7 @@ _SEND_ERRORS: dict[int, type[DarqError]] = {
 }
 
 
-def send_message(source: int, destination: int, message: bytes,
+def send_message(source: int, destination: int, message: bytes | bytearray | memoryview,
                  ports: typing.Sequence[int] = ()):
     """Send a message to a port.
 
@@ -372,7 +372,15 @@ def send_message(source: int, destination: int, message: bytes,
     :raises DeadTransferredPortError: if a transferred port has been
                                       destroyed (it's a DeadPortError).
     :raises TooManyHandlesError: if there are more than MAX_HANDLES
-                                 ports."""
+                                 ports.
+    :raises TypeError: if message isn't bytes-like (bytes, bytearray or
+                       memoryview), or a handle isn't an int."""
+    if not isinstance(message, (bytes, bytearray, memoryview)):
+        raise TypeError(f"message must be bytes, not {type(message).__name__}")
+    message = bytes(message)
+    for what, handle in [("source", source), ("destination", destination), *(("port", p) for p in ports)]:
+        if not isinstance(handle, int) or isinstance(handle, bool):
+            raise TypeError(f"{what} must be a handle, an int, not {type(handle).__name__}")
     if len(ports) > MAX_HANDLES:
         raise TooManyHandlesError(f"{len(ports)} ports, at most {MAX_HANDLES}")
 

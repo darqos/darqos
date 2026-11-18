@@ -28,6 +28,12 @@ Summary notes on newly added features for each release.
   `__all__`: the system API, identifiers, languages, and the modules
   `errors`, `loop` and `version`.  `send_message`, the raw p-call, is
   `darq.system.send_message`: programs use `send`.
+- **A bad p-call argument no longer kills the process.**  Sending a
+  tuple as a message's payload, from the REPL, ended the process, from
+  pyloader's I/O thread.  `send_message()` now raises `TypeError` in the
+  caller for a payload that isn't bytes, or a handle that isn't an int;
+  any p-call that can't be encoded raises in its caller, and one that
+  fails on the I/O thread is abandoned, with a `DarqError`, alone.
 
 - **Items are named from the start.**  The Knowledge Base now sets up its
   vocabulary when it starts.  Until something used a person, a book, or

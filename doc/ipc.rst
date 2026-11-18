@@ -186,6 +186,13 @@ The p-kernel answers after delivering, so a message sent to one of the
 sender's own ports is already queued for `receive_message()` when
 `send_message()` returns.
 
+`send_message()` raises `TypeError`, before anything's sent, if the
+payload isn't bytes-like, or a handle isn't an `int`.  Every p-call's
+request is encoded on the caller's thread before it's queued, so a bad
+argument raises there.  If one can't be encoded on the I/O thread, that
+p-call alone is abandoned, and its caller gets a `DarqError`: only the
+p-kernel's connection failing ends the process.
+
 Ports in Messages
 ~~~~~~~~~~~~~~~~~
 
