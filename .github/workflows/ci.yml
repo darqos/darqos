@@ -7,12 +7,12 @@ on:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -25,12 +25,12 @@ jobs:
         run: ruff check --output-format=github
 
   typecheck:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
           cache: pip
@@ -47,12 +47,12 @@ jobs:
         run: pyright
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
           cache: pip
@@ -60,7 +60,8 @@ jobs:
             requirements.txt
             requirements-dev.txt
 
-      # Importing darq pulls in PyQt6, which needs the system GL libraries.
+      # The tests use PyQt6, for the lenses' and the Terminal's windows,
+      # which needs the system GL libraries.
       - name: Install system packages
         run: sudo apt-get update && sudo apt-get install -y libgl1 libegl1 libxkbcommon0
 
@@ -71,12 +72,12 @@ jobs:
         run: pytest -v
 
   docs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -100,7 +101,7 @@ jobs:
       - name: Build PDF
         run: make -C doc latexpdf
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: docs
           path: |
