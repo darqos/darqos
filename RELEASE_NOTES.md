@@ -59,6 +59,22 @@ Summary notes on newly added features for each release.
   evaluator, as happens if it dies, loading the session as last saved.
   `loop` is no longer given: a cell makes its own.  `darq.repl.Engine`
   is now `darq.repl.Evaluator`.
+- **`darq.open_client(item_id)`** opens an item, and returns a client of
+  its type's item protocol, such as `Text.Client` for a text, ready to
+  use: in the REPL, `darq.open_client(iid).get()`.
+- **A REPL session keeps its imports of `darq`'s modules.**  `import
+  darq.protocols.index` wasn't saved, as it binds `darq`, which the REPL
+  gives, so reopening the session failed where it was used; and of two
+  imports binding one name, as `import os.path` and `import os`, only
+  the last was saved.  A session saved before this needs the import run
+  again, and saving.
+- **A REPL session saves the results it uses.**  `y = $8` was saved as it
+  was written, but no results were saved, so reopening it failed.  `$8`
+  is now `_results[8]`, a binding saved as a name is: by its value, if
+  it's a literal, or else as the expression that made it; only those
+  what's saved uses.  Cells are numbered on from a reopened session's,
+  so `$8` means the same result after it's reopened.
+  Saving says how many names, and results, it wrote.
 
 - **Items are named from the start.**  The Knowledge Base now sets up its
   vocabulary when it starts.  Until something used a person, a book, or

@@ -174,7 +174,7 @@ Session, below).  It doesn't index anything; it can't debug.
 * ``darq.repl.Evaluator`` is what runs the session, which uses no Qt: a
   namespace, and numbered cells run in it, in a process of its own, the
   REPL's evaluator (see The Evaluator, below).  A cell's last expression is its result,
-  which ``$3`` refers to later (rewritten to ``_out[3]``, but in strings
+  which ``$3`` refers to later (rewritten to ``_results[3]``, but in strings
   and comments), as ``_`` is the last.  What it prints is captured, and
   a traceback shows only the cell's frames.  Completion is jedi's,
   against the live namespace, as is help (``Evaluator.help``): a name's
@@ -335,8 +335,21 @@ be written (``darq.repl.Evaluator.write_session``):
 
 What can't be written, as a value with no assignment, nor literal, is
 left out, and so is what needs it to be defined; the transcript says
-which, and why.  What the REPL gives the session, ``darq`` and
-``terminal``, isn't saved, unless it's been bound to something else.  It's written in an order it can be run in: imports
+which, and why.  A result's a binding, as a name is: ``$8`` is
+``_results[8]``, written, if what's saved uses it, by its value, if it's
+a literal, or else as the expression its cell ended with, as
+``_results[8] = some_func(a1, a2)``, after what that needs, and left out,
+and said, as a name is, if it can't be.  Results nothing saved uses
+aren't written.  So ``x = $8``, and a function that returns ``$8``, keep
+the one value, as they did: and as an assignment's is, its expression's
+run again as the session's opened.  The session says its next cell's
+number, in its header, so cells are numbered on from it, and ``$8``
+means the same result in the history after it's reopened.  Saving says
+how many names, and results, it wrote.  What the REPL gives the session, ``darq`` and
+``terminal``, isn't saved, unless it's been bound to something else:
+but what's imported of it is, as ``import darq.protocols.index``, which
+binds ``darq``.  Each import of a package is kept, as ``import os.path``
+and ``import os``, not only the last.  It's written in an order it can be run in: imports
 first, then each name once what it needs as it's run is (as a class's
 body, a decorator, a default value, or an assignment's value), found by
 ``symtable``; what's only needed once a function's called doesn't
@@ -364,7 +377,8 @@ package's ``main.py``, in an order it can be run in.  The REPL's
 ``darq`` and ``terminal`` are imports, as they'd be anywhere.  Unlike
 saving, nothing's left out: if anything it needs can't be written, or
 isn't defined, or is a result, ``$3``, it's not extracted, and the
-transcript says what, and why.
+transcript says what, and why: a package reads as code, so a result's
+assigned to a name to be extracted.
 What's found by name as the code runs, as with ``getattr`` and a
 string, or ``globals()``, isn't seen.
 

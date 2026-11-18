@@ -5,8 +5,9 @@
 
 What a program uses directly is darq's own: the system calls, and the
 clients and servers built on them (darq.system's); item and type
-identifiers (darq.identifier's); and the operator's languages
-(darq.language's).  The rest is reached by its module: exceptions are
+identifiers (darq.identifier's); the operator's languages
+(darq.language's); and an item's client, by its identifier
+(open_client, darq.launch's).  The rest is reached by its module: exceptions are
 darq.errors's, all derived from darq.errors.DarqError; event loops
 darq.loop's, and Qt's darq.qtloop's, imported only by what has windows;
 and versions darq.version's.  The library's other modules, such as
@@ -23,6 +24,9 @@ from .identifier import *
 
 # The operator's languages.
 from .language import language_chain, language_tag, languages
+
+# An item's client, by its identifier.
+from .launch import open_client
 
 # Modules, reached by name.
 from . import errors, loop, version
@@ -46,6 +50,8 @@ __all__ = [
     "serialize_url", "MAX_NAME_LENGTH", "canonical_name",
     # darq.language
     "language_chain", "language_tag", "languages",
+    # darq.launch
+    "open_client",
     # Modules
     "errors", "loop", "version",
 ]

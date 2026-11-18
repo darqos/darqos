@@ -1085,7 +1085,9 @@ class Window(QMainWindow):
         self.package = package
         self.generation = response.generation
         self.unsaved = False
-        said = f"Saved the session: {len(written.names)} names"
+        names, results = len(written.names), len(written.results)
+        said = (f"Saved the session: {names} name{'' if names == 1 else 's'}, and "
+                f"{results or 'no'} result{'' if results == 1 else 's'}")
         if written.left_out:
             said += "; left out: " + "; ".join(f"{name}, as {why}" for name, why in written.left_out)
         self.transcript.add_text(said, Token.Comment)

@@ -193,6 +193,11 @@ its window is closed, or it's asked to `Close`.
 `darq.launch` has what the Terminal needs to use items:
 `create_item(type_id)`, `open_item(item_id)`, `find_lens(type_id)`,
 `start_lens(path)`, and `use_item(item_id, item)`, which does the rest.
+`open_client(item_id)`, which is `darq.open_client`, opens an item and
+returns a client of its type's item protocol, as `Text.Client` for a
+text: the protocol's named for its type implementation's directory
+(`types/text`, `darq.protocols.text.Text`), but the Knowledge Base's,
+whose items are entities (`EntityItem`).
 
 Not yet:
 

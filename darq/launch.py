@@ -7,6 +7,8 @@
 # These are synchronous: starting a lens waits for its Ready, which can
 # take a second or so for a Qt lens.
 
+import importlib
+import pathlib
 import time
 import typing
 
@@ -195,6 +197,50 @@ def start_lens(path: str, timeout: float = READY_TIMEOUT) -> StartedLens:
     finally:
         close_port(bootstrap)
 
+
+# Each type implementation's item protocol, by its directory's name: the
+# protocol named for it, in darq.protocols' module of that name, as
+# darq.protocols.text.Text, but for the Knowledge Base's, whose items
+# are entities.
+ITEM_PROTOCOLS = {"kb": "EntityItem"}
+
+
+def item_protocol(implementation: str) -> typing.Any:
+    """Return the item protocol of a type implementation, by its path.
+
+    :raises LaunchError: if it has none."""
+    name = pathlib.PurePath(implementation).name
+    try:
+        module = importlib.import_module(f"darq.protocols.{name}")
+    except ImportError:
+        raise LaunchError(f"{name} has no item protocol") from None
+    protocol = getattr(module, ITEM_PROTOCOLS.get(name, name.capitalize()), None)
+    if protocol is None or not hasattr(protocol, "Client"):
+        raise LaunchError(f"{name} has no item protocol")
+    return protocol
+
+
+def open_client(item_id: str, timeout: float | None = TIMEOUT) -> typing.Any:
+    """Open an item, and return a client of its type's item protocol: as
+    darq.protocols.text.Text.Client, for a text.  It's darq.open_client.
+
+        item = darq.open_client("public.utf8-plain-text:6f11...")
+        item.get().text
+        item.close()
+
+    Its close(), the protocol's Close, closes the item when the caller's
+    finished with it, as for open_item's port.
+
+    :param timeout: Seconds the client waits for each reply.
+    :raises LaunchError: if its type isn't implemented, or has no item
+                         protocol, or the item can't be opened."""
+    type_id, _ = split_item_id(item_id)
+    types = type_protocol.Type.Client(connect("darq.type"), timeout=TIMEOUT)
+    described = types.describe(type_id=type_id)
+    if described.status != type_protocol.Status.OK or not described.implementation:
+        raise LaunchError(f"{type_id} isn't implemented")
+    protocol = item_protocol(described.implementation)
+    return protocol.Client(open_item(item_id), timeout=timeout)
 
 def use_item(item_id: str, item: int | None = None, context: str = "terminal", lens_for: str = "") -> StartedLens:
     """Start a lens to use an item.

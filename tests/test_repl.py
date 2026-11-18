@@ -34,7 +34,7 @@ window = load()
 ################################################################
 
 def test_rewrite_replaces_dollars():
-    assert rewrite("$1 + $23") == "_out[1] + _out[23]"
+    assert rewrite("$1 + $23") == "_results[1] + _results[23]"
 
 
 def test_rewrite_leaves_strings_and_comments():
@@ -43,20 +43,20 @@ def test_rewrite_leaves_strings_and_comments():
 
 
 def test_rewrite_inside_fstring_expression():
-    assert rewrite('f"{$2}"') == 'f"{_out[2]}"'
+    assert rewrite('f"{$2}"') == 'f"{_results[2]}"'
 
 
 def test_rewrite_multiline():
-    assert rewrite("a = (\n  $1,\n  $2)\n") == "a = (\n  _out[1],\n  _out[2])\n"
+    assert rewrite("a = (\n  $1,\n  $2)\n") == "a = (\n  _results[1],\n  _results[2])\n"
 
 
 def test_rewrite_attribute():
     # ``1.`` tokenizes as a float.
-    assert rewrite("$1.real") == "_out[1].real"
+    assert rewrite("$1.real") == "_results[1].real"
 
 
 def test_rewrite_incomplete_falls_back():
-    assert rewrite("x = ($1,") == "x = (_out[1],"
+    assert rewrite("x = ($1,") == "x = (_results[1],"
 
 
 def test_results_numbered_and_referenced():
@@ -469,7 +469,7 @@ def test_libraries_and_built_ins_arent_changed():
     assert "library's" in (e.save(target(e, "json", "dumps"), "def dumps(x):\n    return ''").error or "")
     assert "built-ins" in (e.save(Target(repl_module.builtins, "len", ("builtins", "len")), "len = 1").error or "")
     e.run("1 + 1")
-    results = Target(e.namespace, "_out", ("Results",))
+    results = Target(e.namespace, "_results", ("Results",))
     [result] = e.members(results)
     assert result.target.name == "$4" and not e.source_of(result.target).editable
 
@@ -707,7 +707,8 @@ def test_a_session_is_written_and_loaded_again():
     written = e.write_session()
     assert written.left_out == []
     text = written.text
-    assert text.startswith("# A DarqOS REPL session.\n\nimport json\nfrom os.path import join as pj\n")
+    assert text.startswith("# A DarqOS REPL session.\n# Its next cell is 10.\n\n"
+                           "import json\nfrom os.path import join as pj\n")
     # Literals as they are now; a class after what its body needs.
     assert "items = [1, 2, 3, 4]" in text
     assert text.index("DEFAULT_SIDES = 4") < text.index("class Shape")
@@ -719,6 +720,69 @@ def test_a_session_is_written_and_loaded_again():
     assert again.run("shape.area(), items, alias(1), pj('a', 'b')").value == (10, [1, 2, 3, 4], 4, "a/b")
     # What it defined is editable, as a cell's.
     assert again.source_of(target(again, "helper")).editable
+
+
+def test_imports_of_what_the_repl_gives_are_written():
+    """import darq.protocols.index binds darq, which the REPL gives, so
+    isn't written: but the import is, as is each of a package's."""
+    e = Evaluator()
+    e.start()
+    for cell in ("import darq.protocols.index", "import os.path", "import os",
+                 "idx = darq.protocols.index.Index"):
+        assert e.run(cell).error is None, cell
+    text = e.write_session().text
+    assert "import darq.protocols.index\n" in text and "import os.path\nimport os\n" in text
+    assert "\nimport darq\n" not in text
+
+    again = Evaluator()
+    again.start()
+    loaded = again.load_session(text)
+    assert loaded.error is None and again.run("idx is darq.protocols.index.Index").shown == "True"
+    assert "import darq.protocols.index\n" in e.extract("idx").text
+
+
+def test_results_are_saved_as_names_are():
+    """A result's saved as a name is, by its value, if it's a literal, or
+    else as the expression that made it: only those what's saved uses."""
+    e = Evaluator()
+    e.start()
+    for cell in ("[1, 2]", "object()", "x = $1", "y = $2", "def f():\n    return $2", "z = '$2'",
+                 "object()", "w = (y, $7, 4)"):
+        assert e.run(cell).error is None, cell
+    e.run("object()")
+    written = e.write_session()
+    text = written.text
+    assert text.startswith("# A DarqOS REPL session.\n# Its next cell is 10.\n")
+    assert "_results[2] = object()" in text and "x = [1, 2]" in text and "z = '$2'" in text
+    assert "_results[7] = object()" in text and "_results[1]" not in text and "_results[9]" not in text
+    assert text.index("_results[2] = ") < text.index("y = _results[2]")
+    assert written.left_out == [] and "$2" not in written.names and written.results == ["$2", "$7"]
+
+    # Loaded, they're the same object, and cells are numbered on.
+    again = Evaluator()
+    again.start()
+    assert again.load_session(text).error is None
+    assert again.run("y is $2 and f() is $2 and w[0] is y").shown == "True"
+    assert again.count == 10 and again.write_session().text.replace("is 11.", "is 10.") == text
+
+
+def test_a_result_that_cant_be_written_is_left_out():
+    e = Evaluator()
+    e.start()
+    e.run("globals()['made'] = object()")
+    e.run("made")
+    e.run("held = $2")
+    assert dict(e.write_session().left_out) == {
+        "$2": "it needs made, which is left out", "held": "it needs $2, which is left out",
+        "made": "its value, a object, can't be written"}
+
+
+def test_code_that_uses_a_result_isnt_extracted():
+    e = Evaluator()
+    e.start()
+    e.run("object()")
+    e.run("def f():\n    return $1")
+    assert dict(e.extract("f").left_out) == {"$n": "a result's used: assign it to a name"}
 
 
 def test_what_cant_be_written_is_left_out_with_what_needs_it():
@@ -804,7 +868,7 @@ def test_a_session_is_opened_and_saved(repl):
     files = darq.packages.contents(item.package)
     assert "seen = [1, 2]" in files["main.py"].decode() and files["notes.txt"] == b"kept"
     assert json.loads(files["history.json"])[-1] == "seen.append(2)"
-    assert "Saved the session: " in repl.transcript.toPlainText()
+    assert "Saved the session: 2 names, and no results" in repl.transcript.toPlainText()
 
 
 def test_whats_left_out_is_said(repl):

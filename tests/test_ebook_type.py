@@ -525,7 +525,9 @@ def test_ebook_type(live_pkernel, tmp_path):  # noqa: F811
             item.set_position(position="1:0.5")
             item.close()
             darq.close_port(port)
-            again = Ebook.Client(darq.launch.open_item(item_id), timeout=30)
+            again = darq.open_client(item_id, timeout=30)
+            if not isinstance(again, Ebook.Client):
+                return f"its client is {{type(again).__name__}}"
             if again.get_position().position != "1:0.5":
                 return "no position"
             if types.describe(type_id="darq.ebook").implementation:

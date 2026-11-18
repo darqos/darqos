@@ -48,6 +48,7 @@ import traceback
 import types
 import typing
 from contextlib import redirect_stderr, redirect_stdout
+import dataclasses
 from dataclasses import dataclass
 
 import jedi
@@ -77,16 +78,19 @@ terminal.source = {SOURCE!r}
 # A cell's result, by number.
 _DOLLAR_RE = re.compile(r"\$(\d+)")
 
+# A saved session's next cell's number, in its header.
+NEXT_CELL = re.compile(r"^# Its next cell is (\d+)\.$", re.MULTILINE)
+
 
 class Results(dict[int, typing.Any]):
-    """Cell results, by cell number: ``$n`` is ``_out[n]``."""
+    """Cell results, by cell number: ``$n`` is ``_results[n]``."""
 
     def __missing__(self, key: int) -> typing.Any:
         raise NameError(f"${key} is not defined")
 
 
 def rewrite(source: str) -> str:
-    """Replace each ``$n`` with ``_out[n]``.
+    """Replace each ``$n`` with ``_results[n]``.
 
     Tokenizing leaves ``$n`` in strings and comments alone.  Source
     that won't tokenize (it's incomplete, or broken) falls back to a
@@ -94,7 +98,7 @@ def rewrite(source: str) -> str:
     try:
         tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
     except (tokenize.TokenError, SyntaxError):
-        return _DOLLAR_RE.sub(r"_out[\1]", source)
+        return _DOLLAR_RE.sub(r"_results[\1]", source)
 
     # (row, start column, end column, replacement), rows 1-based.
     edits: list[tuple[int, int, int, str]] = []
@@ -107,7 +111,7 @@ def rewrite(source: str) -> str:
                 and nxt.start == tok.end):
             edits.append((tok.start[0], tok.start[1],
                           nxt.start[1] + digits.end(),
-                          f"_out[{int(digits.group())}]"))
+                          f"_results[{int(digits.group())}]"))
     if not edits:
         return source
 
@@ -197,10 +201,11 @@ class Help:
 @dataclass
 class Written:
     """A session's code, as a module; what's left out of it, by name, and
-    why; and the names written, in order."""
+    why; the names written, in order; and the results, as $8."""
     text: str
     left_out: list[tuple[str, str]]
     names: list[str]
+    results: list[str] = dataclasses.field(default_factory=list)
 
 
 @dataclass
@@ -222,7 +227,7 @@ class Source:
 
 
 # The REPL's own names, which aren't shown.
-HIDDEN = {"__name__", "__builtins__", "_out", "_", "__doc__", "__loader__", "__spec__", "__package__"}
+HIDDEN = {"__name__", "__builtins__", "_results", "_", "__doc__", "__loader__", "__spec__", "__package__"}
 
 # What every class has, made by Python, not its source.
 STANDARD_MEMBERS = {"__module__", "__dict__", "__weakref__", "__doc__", "__qualname__", "__firstlineno__",
@@ -290,9 +295,14 @@ class Evaluator:
         self.namespace: dict[str, typing.Any] = {
             "__name__": "__main__",
             "__builtins__": __builtins__,
-            "_out": self.out,
+            "_results": self.out,
         }
         self.count = 0
+
+        # Each result's expression, by its number, as its cell's last
+        # expression was, or as a session's code assigned it: a result's
+        # saved as it, as an assignment is, if its value isn't a literal.
+        self.result_sources: dict[int, str] = {}
 
         # The source of what cells defined: functions, properties and
         # classes, by object, kept alive with it, so ids aren't reused;
@@ -301,10 +311,10 @@ class Evaluator:
         self.headers: dict[int, tuple[typing.Any, str]] = {}
         self.assignments: dict[tuple[int, str], str] = {}
 
-        # The session's imports, a statement for each name they bound, as
+        # The session's imports, the statements for each name they bound, as
         # "from os.path import join as j"; what the REPL provides, which
         # isn't the session's own, by name; and the cells run, in order.
-        self.imports: dict[str, str] = {}
+        self.imports: dict[str, list[str]] = {}
         self.provided: dict[str, typing.Any] = {}
         self.history: list[str] = []
 
@@ -365,7 +375,9 @@ class Evaluator:
                 tree = ast.parse(rewritten, filename, "exec")
                 statements = list(tree.body)
                 last = None
+                expression = None
                 if tree.body and isinstance(tree.body[-1], ast.Expr):
+                    expression = ast.get_source_segment(rewritten, tree.body[-1].value)
                     last = ast.Expression(tree.body[-1].value)
                     del tree.body[-1]
                 exec(compile(tree, filename, "exec"), self.namespace)
@@ -377,6 +389,8 @@ class Evaluator:
                         result.shown = shown(value)
                         self.out[n] = value
                         self.namespace["_"] = value
+                        if expression is not None:
+                            self.result_sources[n] = expression
             except BaseException as e:
                 result.error = "".join(traceback.format_exception(type(e), e, _cell_frames(e.__traceback__)))
             else:
@@ -415,12 +429,21 @@ class Evaluator:
                     self.record(value, node.body, text, filename, assignments)
             elif assignments and isinstance(node, (ast.Import, ast.ImportFrom)) and container is self.namespace:
                 for name, line in import_lines(node):
-                    self.imports[name] = line
+                    kept = self.imports.setdefault(name, [])
+                    if line not in kept:
+                        kept.append(line)
             elif assignments and isinstance(node, (ast.Assign, ast.AnnAssign)):
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                 for target in targets:
                     if isinstance(target, ast.Name):
                         self.assignments[(id(container), target.id)] = statement_source(lines, node)
+                    elif (container is self.namespace and isinstance(target, ast.Subscript)
+                          and isinstance(target.value, ast.Name) and target.value.id == "_results"
+                          and isinstance(target.slice, ast.Constant) and isinstance(target.slice.value, int)
+                          and node.value is not None):
+                        found = ast.get_source_segment(text, node.value)
+                        if found is not None:
+                            self.result_sources[target.slice.value] = found
 
     def remember(self, value: typing.Any, text: str):
         value = unwrapped(value)
@@ -743,8 +766,13 @@ class Evaluator:
         written, and what needs it to be defined.  What the REPL gives
         the session isn't written, unless it's been bound otherwise."""
         names = [n for n in self.namespace if n not in HIDDEN and not (n.startswith("__") and n.endswith("__"))]
-        names = [n for n in names if not (n in self.provided and self.provided[n] is self.namespace[n])]
-        return self.write(names, "# A DarqOS REPL session.\n\n")
+        given = [n for n in names if n in self.provided and self.provided[n] is self.namespace[n]]
+        names = [n for n in names if n not in given]
+
+        # What's imported of what the REPL gives, as "import darq.kb", is
+        # written, though what it binds, darq, isn't.
+        imported = [line for n in given for line in self.imports.get(n, [])]
+        return self.write(names, f"# A DarqOS REPL session.\n# Its next cell is {self.count + 1}.\n\n", imported)
 
     def extract(self, root: str) -> "Written":
         """Return a module of a name, a function or class, usually, and of
@@ -759,7 +787,7 @@ class Evaluator:
             name = queue.pop(0)
             if name in closure or name in problems:
                 continue
-            if name == "_out":
+            if name == "_results":
                 problems["$n"] = "a result's used: assign it to a name"
                 continue
             if name not in self.namespace:
@@ -784,9 +812,10 @@ class Evaluator:
             return Written("", sorted(problems.items()), [])
         return self.write(closure, f"# {root}, extracted from a DarqOS REPL session.\n\n")
 
-    def write(self, names: list[str], head: str) -> "Written":
+    def write(self, names: list[str], head: str, imported: list[str] | None = None) -> "Written":
         """Return a module of some names, as statement_for writes them, in
-        an order they can be run in, and what's left out of it."""
+        an order they can be run in, and what's left out of it; and, first,
+        some imports of names that aren't written."""
         texts: dict[str, str] = {}
         left_out: dict[str, str] = {}
         for name in names:
@@ -796,6 +825,20 @@ class Evaluator:
             else:
                 texts[name] = text
 
+        # The results it uses, as $8, written as names are, and the
+        # results they use: only those needed.
+        wanted = [r for text in texts.values() for r in results_used(text)]
+        while wanted:
+            key = wanted.pop(0)
+            if key in texts or key in left_out:
+                continue
+            text, why = self.result_statement(int(key[1:]))
+            if text is None:
+                left_out[key] = why
+            else:
+                texts[key] = text
+                wanted.extend(results_used(text))
+
         # What each needs as it's run, of what's written.
         now: dict[str, set[str]] = {}
         for name, text in texts.items():
@@ -803,7 +846,7 @@ class Evaluator:
                 needed, _ = needs(text)
             except SyntaxError:
                 needed = set()
-            now[name] = needed - {name}
+            now[name] = (needed - {name, "_results"}) | set(results_used(text)) - {name}
         while True:
             dropped = {n: f"it needs {', '.join(sorted(now[n] & set(left_out)))}, which is left out"
                        for n in texts if now[n] & set(left_out)}
@@ -815,7 +858,8 @@ class Evaluator:
 
         # Imports first, then each once what it needs is: in the order
         # they were bound, otherwise.
-        order = [n for n in self.namespace if n in texts]
+        order = sorted((n for n in texts if n.startswith("$")), key=lambda r: int(r[1:]))
+        order += [n for n in self.namespace if n in texts]
         position = {n: i for i, n in enumerate(order)}
         imports = [n for n in order if texts[n].startswith(("import ", "from "))]
         ordered: list[str] = list(imports)
@@ -828,7 +872,8 @@ class Evaluator:
             waiting.remove(ready)
         assert len(ordered) == len(position)
         seen: set[str] = set()
-        statements = []
+        statements = [line + "\n" for line in dict.fromkeys(imported or [])]
+        seen.update(imported or [])
         for name in ordered:
             if texts[name] not in seen:
                 seen.add(texts[name])
@@ -836,7 +881,8 @@ class Evaluator:
         body = "".join(s for s in statements if s.startswith(("import ", "from ")))
         others = "\n\n".join(s for s in statements if not s.startswith(("import ", "from ")))
         return Written(head + body + ("\n\n" if body and others else "") + others, sorted(left_out.items()),
-                       ordered)
+                       [n for n in ordered if not n.startswith("$")],
+                       sorted((n for n in ordered if n.startswith("$")), key=lambda r: int(r[1:])))
 
     def statement_for(self, name: str, value: typing.Any) -> tuple[str | None, str]:
         """Return a statement that binds a name to its value, or why
@@ -850,7 +896,7 @@ class Evaluator:
                 return f"{name} = {own}", ""
             return None, f"it's {own}, which isn't bound by that name"
         if name in self.imports:
-            return self.imports[name], ""
+            return "\n".join(self.imports[name]), ""
         if inspect.ismodule(value):
             module = value.__name__
             return (f"import {module}" if module == name else f"import {module} as {name}"), ""
@@ -863,6 +909,20 @@ class Evaluator:
         if imported is not None:
             qualified = getattr(value, "__qualname__", "")
             return imported + (f" as {name}" if qualified != name else ""), ""
+        return None, f"its value, a {type(value).__name__}, can't be written"
+
+    def result_statement(self, n: int) -> tuple[str | None, str]:
+        """Return a statement that binds a result to its value, as $8 is
+        _results[8], or why there's none: by its value, if it's a
+        literal, or else its expression, as a name's assignment is."""
+        if n not in self.out:
+            return None, "there's no such result"
+        value = self.out[n]
+        if is_literal(value):
+            return f"_results[{n}] = {pprint.pformat(value, width=100)}", ""
+        found = self.result_sources.get(n)
+        if found is not None:
+            return f"_results[{n}] = {found}", ""
         return None, f"its value, a {type(value).__name__}, can't be written"
 
     def definition(self, value: typing.Any) -> str | None:
@@ -907,6 +967,12 @@ class Evaluator:
         result.stdout = stdout.getvalue()
         result.stderr = stderr.getvalue()
         result.note = f"Loaded {len(done)} of {len(tree.body)} statements"
+
+        # Cells are numbered on from the session's, so a result's number,
+        # as $8, isn't used again.
+        found = NEXT_CELL.search(text)
+        if found is not None:
+            self.count = max(self.count, int(found.group(1)) - 1)
         if failures:
             result.error = "\n".join(failures) + "\n"
         return result
@@ -966,6 +1032,21 @@ class Evaluator:
             return None
         return Help(signatures[0].name, tuple(dict.fromkeys(s.to_string() for s in signatures)),
                     signatures[0].docstring(raw=True))
+
+
+def results_used(source: str) -> list[str]:
+    """The results source uses, as $8: written so, or, as recorded,
+    rewritten to _results[8]; but in strings and comments."""
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(rewrite(source)).readline))
+    except (tokenize.TokenError, SyntaxError, IndentationError):
+        return []
+    used = set()
+    for i, token in enumerate(tokens[:-2]):
+        if (token.type == tokenize.NAME and token.string == "_results" and tokens[i + 1].string == "["
+                and tokens[i + 2].type == tokenize.NUMBER):
+            used.add(int(tokens[i + 2].string))
+    return [f"${n}" for n in sorted(used)]
 
 
 class _Stream(io.TextIOBase):
@@ -1099,7 +1180,7 @@ class Served:
         self.targets = {n: t for n, t in self.targets.items() if n in kept}
         e = self.evaluator
         return [("Session", self.ref(e.session())),
-                ("Results", self.ref(Target(e.namespace, "_out", ("Results",)))),
+                ("Results", self.ref(Target(e.namespace, "_results", ("Results",)))),
                 ("Built-ins", self.ref(e.builtins()))]
 
     def members(self, ref: "Ref | int", private: bool = False) -> list[Member]:
@@ -1197,12 +1278,13 @@ def from_wire_result(result: wire.Result | None) -> Result:
 
 def to_wire_written(written: "Written") -> wire.Written:
     return wire.Written(text=written.text, left_out=[wire.LeftOut(name=n, why=w) for n, w in written.left_out],
-                        names=list(written.names))
+                        names=list(written.names), results=list(written.results))
 
 
 def from_wire_written(written: wire.Written | None) -> "Written":
     assert written is not None
-    return Written(written.text, [(o.name, o.why) for o in written.left_out], list(written.names))
+    return Written(written.text, [(o.name, o.why) for o in written.left_out], list(written.names),
+                   list(written.results))
 
 
 class _Output:

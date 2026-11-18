@@ -84,7 +84,7 @@ def test_darqs_exports_are_all_it_means_to_export():
     import darq.identifier
     import darq.system
     expected = set(darq.system.__all__) | set(darq.identifier.__all__) | {
-        "language_chain", "language_tag", "languages", "errors", "loop", "version"}
+        "language_chain", "language_tag", "languages", "open_client", "errors", "loop", "version"}
     assert set(darq.__all__) == expected and len(darq.__all__) == len(expected)
     assert all(hasattr(darq, name) for name in darq.__all__)
     assert "send_message" not in vars(darq) and hasattr(darq.system, "send_message")
@@ -108,12 +108,12 @@ def test_the_runtimes_modules_are_its():
 
 def test_darq_ui_is_only_whats_shared():
     """Importing a shared part of the UI doesn't bring the Terminal's, nor
-    the Knowledge Base, the Index and launching, as its services did."""
+    the Knowledge Base and the Index, as its services did."""
     import pathlib
     import subprocess
     import sys
     root = pathlib.Path(__file__).parent.parent
-    code = ("import sys, darq.ui; print(sorted(m for m in ('darq.kb', 'darq.index', 'darq.launch') "
+    code = ("import sys, darq.ui; print(sorted(m for m in ('darq.kb', 'darq.index') "
             "if m in sys.modules), [n for n in vars(darq.ui) if not n.startswith('__')])")
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=root,
                           env={"PYTHONPATH": str(root)})

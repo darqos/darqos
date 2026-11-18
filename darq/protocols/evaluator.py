@@ -181,15 +181,17 @@ class LeftOut(Record):
 
 
 class Written(Record):
-    """struct Written: 24 bytes, 4-byte aligned."""
+    """struct Written: 32 bytes, 4-byte aligned."""
 
     def __init__(self,
                  text: str = '',
                  left_out: list[LeftOut] | None = None,
-                 names: list[str] | None = None):
+                 names: list[str] | None = None,
+                 results: list[str] | None = None):
         self.text = text
         self.left_out = [] if left_out is None else left_out
         self.names = [] if names is None else names
+        self.results = [] if results is None else results
 
 
 class Help(Record):
@@ -1308,12 +1310,13 @@ class WriteSessionResponse(Message):
     """Evaluator.WriteSession response."""
 
     METHOD = 16
-    BODY_FORMAT = "<IIIIIII"
+    BODY_FORMAT = "<IIIIIIIII"
     BODY_START = 8
-    LENGTH = 36
-    DATA_START = 40
+    LENGTH = 44
+    DATA_START = 48
     CODEC_0 = LeftOut.CODEC
     CODEC_1 = STRING_CODEC
+    CODEC_2 = STRING_CODEC
 
     def __init__(self, txid: int = 0, written: Written | None = None, status: Status = Status.OK):
         super().__init__(txid)
@@ -1327,6 +1330,7 @@ class WriteSessionResponse(Message):
                            *out.string(self.written.text),
                            *out.sequence(self.written.left_out, self.CODEC_0),
                            *out.sequence(self.written.names, self.CODEC_1),
+                           *out.sequence(self.written.results, self.CODEC_2),
                            self.status)
         buf += b'\0' * 4
         buf += out.data
@@ -1343,7 +1347,8 @@ class WriteSessionResponse(Message):
         self.written.text = inp.string(bits[0], bits[1])
         self.written.left_out = inp.sequence(self.CODEC_0, bits[2], bits[3])
         self.written.names = inp.sequence(self.CODEC_1, bits[4], bits[5])
-        self.status = self.decode_enum(Status, bits[6])
+        self.written.results = inp.sequence(self.CODEC_2, bits[6], bits[7])
+        self.status = self.decode_enum(Status, bits[8])
         return
 
 
@@ -1455,12 +1460,13 @@ class ExtractResponse(Message):
     """Evaluator.Extract response."""
 
     METHOD = 18
-    BODY_FORMAT = "<IIIIIII"
+    BODY_FORMAT = "<IIIIIIIII"
     BODY_START = 8
-    LENGTH = 36
-    DATA_START = 40
+    LENGTH = 44
+    DATA_START = 48
     CODEC_0 = LeftOut.CODEC
     CODEC_1 = STRING_CODEC
+    CODEC_2 = STRING_CODEC
 
     def __init__(self, txid: int = 0, written: Written | None = None, status: Status = Status.OK):
         super().__init__(txid)
@@ -1474,6 +1480,7 @@ class ExtractResponse(Message):
                            *out.string(self.written.text),
                            *out.sequence(self.written.left_out, self.CODEC_0),
                            *out.sequence(self.written.names, self.CODEC_1),
+                           *out.sequence(self.written.results, self.CODEC_2),
                            self.status)
         buf += b'\0' * 4
         buf += out.data
@@ -1490,7 +1497,8 @@ class ExtractResponse(Message):
         self.written.text = inp.string(bits[0], bits[1])
         self.written.left_out = inp.sequence(self.CODEC_0, bits[2], bits[3])
         self.written.names = inp.sequence(self.CODEC_1, bits[4], bits[5])
-        self.status = self.decode_enum(Status, bits[6])
+        self.written.results = inp.sequence(self.CODEC_2, bits[6], bits[7])
+        self.status = self.decode_enum(Status, bits[8])
         return
 
 

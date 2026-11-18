@@ -87,11 +87,12 @@ struct LeftOut {
 }
 
 // A session's code, or a package's, as a module; what's left out of it;
-// and the names written, in order.
+// the names written, in order; and the results, as $8.
 struct Written {
     string text;
     sequence<LeftOut> left_out;
     sequence<string> names;
+    sequence<string> results;
 }
 
 // A name's signatures, and docstring.
