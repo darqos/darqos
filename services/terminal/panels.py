@@ -14,11 +14,11 @@ from PyQt6 import QtCore
 from PyQt6.QtGui import QHideEvent, QKeyEvent
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QVBoxLayout, QWidget
 
-from darq.ui import Host
-from darq.ui.history import HistoryView
-from darq.ui.search import SearchView
-from darq.ui.tools import ToolList
-from darq.ui.types import TypeList
+from history_view import HistoryView
+from host import Host
+from search_view import SearchView
+from tool_list import ToolList
+from type_list import TypeList
 
 from screens import POWER_TEXT, is_modifier, power_choice
 

@@ -1,8 +1,8 @@
 # darqos
 # Copyright (C) 2026 David Arnold
 
-# Tests for darq.ui.tools: finding the installed tools, running one, and
-# saying how it finished (see doc/terminal.rst).
+# Tests for the Terminal's tools (services/terminal/tool_list.py):
+# finding the installed tools, running one, and saying how it finished (see doc/terminal.rst).
 
 import json
 import pathlib
@@ -12,9 +12,11 @@ import typing
 import pytest
 
 import darq
-from darq.ui import tools
 
+from conftest import TERMINAL_PATH, terminal_module
 from test_pkernel import live_pkernel, pkernel, run_kernel_until, write_app  # noqa: F401
+
+tools = terminal_module("tool_list")
 
 
 def test_tools_are_found_by_their_manifests(tmp_path):
@@ -72,7 +74,7 @@ def test_running_a_tool_waits_for_it():
     assert asked == ["/darq/tools/reindex"] and said == ["Reindex finished"]
 
 
-def state(shown: tools.ToolList) -> str:
+def state(shown: typing.Any) -> str:
     """Return what's shown of the first tool's state."""
     cell = shown.table.item(0, 2)
     return cell.text() if cell is not None else ""
@@ -110,8 +112,10 @@ def test_running_a_real_tool(live_pkernel, tmp_path):  # noqa: F811
         """)
     client_path = write_app(tmp_path / "client", f"""
         import threading
+        import sys
         import darq
-        from darq.ui import tools
+        sys.path.insert(0, {str(TERMINAL_PATH)!r})
+        import tool_list as tools
 
         def darq_main():
             said = []

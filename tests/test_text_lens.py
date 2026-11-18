@@ -673,7 +673,8 @@ def test_launch_doesnt_block(live_pkernel, tmp_path):  # noqa: F811
         from darq.qtloop import QtEventLoop
         from darq.protocols.history import History
         from darq.protocols.type import Type
-        from darq.ui import Services
+        import types as python_types
+        import darq.launch
         from darq.ui.launcher import Launcher
 
         TEXT = "public.utf8-plain-text"
@@ -681,7 +682,8 @@ def test_launch_doesnt_block(live_pkernel, tmp_path):  # noqa: F811
         class Host:
             def __init__(self, app):
                 self.app = app
-                self.services = Services()
+                # What the launcher uses of a host's services.
+                self.services = python_types.SimpleNamespace(launch=darq.launch, http=lambda: None)
                 self.results = []
 
             def show_status(self, message):

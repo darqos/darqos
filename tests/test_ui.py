@@ -15,16 +15,17 @@ import pytest
 import darq
 import darq.items
 import darq.kb as model
-from darq.ui import history as ui_history
 from darq.ui import names
-from darq.ui import search as ui_search
-from darq.ui import wait_for_display
 from darq.ui.launcher import Launcher
-from darq.ui.types import TypeList
 from darq.protocols.history import Event
 
+from conftest import terminal_module
 from fake_kb import FakeKB
 from ui_fakes import DOC, TEXT, FakeServices, inline
+
+ui_history = terminal_module("history_view")
+ui_search = terminal_module("search_view")
+TypeList = terminal_module("type_list").TypeList
 
 
 class Host:
@@ -79,17 +80,6 @@ def test_times(qt_app):
     assert ui_history.to_micros(when) == 1_800_000_000_123_000
     assert ui_history.format_time(1_800_000_000_123_000) == when.toString("yyyy-MM-dd HH:mm:ss")
 
-
-def test_wait_for_display(tmp_path, monkeypatch):
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
-
-    # Only the compositor's display is waited for.
-    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
-    assert wait_for_display(0)
-    monkeypatch.setenv("WAYLAND_DISPLAY", "darq-0")
-    assert not wait_for_display(0.2)
-    (tmp_path / "darq-0").touch()
-    assert wait_for_display(0)
 
 
 ################################################################

@@ -29,8 +29,8 @@ import darq.packages
 from darq.protocols.index import Result
 from darq.protocols.type import Status as TypeStatus
 
-from . import Host
-from .names import item_names
+from host import Host
+from darq.ui.names import item_names
 
 
 # Control exports
@@ -78,7 +78,7 @@ class SearchField(QLineEdit):
 
     def keyPressEvent(self, a0: QKeyEvent | None):
         if a0 is not None and a0.key() in (Key.Key_Up, Key.Key_Down):
-            self.view.move(-1 if a0.key() == Key.Key_Up else 1)
+            self.view.move_selection(-1 if a0.key() == Key.Key_Up else 1)
         elif a0 is not None and a0.key() in (Key.Key_Return, Key.Key_Enter):
             if a0.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier:
                 self.view.run(self.view.table.currentRow())
@@ -193,7 +193,7 @@ class SearchView(QWidget):
                 return type_id
         return self.names[type_id]
 
-    def move(self, step: int):
+    def move_selection(self, step: int):
         """Select the result before or after the selected one."""
         if self.shown:
             row = min(max(self.table.currentRow() + step, 0), len(self.shown) - 1)

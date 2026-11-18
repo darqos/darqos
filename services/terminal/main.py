@@ -14,7 +14,7 @@
 # - Sys-n New, Sys-h History, Sys-Tab the switcher, Sys-b shut down or
 #   reboot, Sys-x close the focused window, Sys-l lock, Sys-space
 #   Search, with the clock; Sys-t the Tools panel, which runs the
-#   installed tools (darq.ui.tools); Sys-i opens the entity of the
+#   installed tools (tool_list.py); Sys-i opens the entity of the
 #   focused window's item; Sys-e shows a TBD panel (panels.py).  While it's locked, only Sys-b works, on the lock
 #   screen.
 #
@@ -66,15 +66,15 @@ import darq.packages
 import darq.sessions
 from darq.protocols.python import Python
 from darq.protocols.type import Context as TypeContext
-import darq.ui.types
-from darq.ui import Services
 from darq.ui.launcher import Launcher
 from darq.ui.names import item_names
-from darq.ui.tools import Tool, find_tools, run_tool
 
 from panels import (HistoryPanel, NewPanel, NoticePanel, Panel, PowerPanel, SearchPanel, SwitcherPanel, TbdPanel,
                     ToolsPanel)
 from screens import CHOOSE, ENTER, UNAVAILABLE, WAITING, Screens
+import type_list
+from host import Services
+from tool_list import Tool, find_tools, run_tool
 from automation import LENS_NAME_PREFIX, LENS_TIMEOUT, NAME, TerminalService, lens_shows
 
 
@@ -117,7 +117,7 @@ HOTKEYS: dict[tuple[int, int], str] = {
 # show_repl).
 REPL_CONTEXT = "repl"
 
-# Where the tools are, under DARQ_ROOT (see darq.ui.tools).
+# Where the tools are, under DARQ_ROOT (see tool_list.py).
 DEFAULT_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 
 
@@ -285,7 +285,7 @@ class Terminal:
         asked for each time it's opened, as the New panel's list is only
         loaded when that's opened."""
         try:
-            return darq.ui.types.implemented(self.services.types)
+            return type_list.implemented(self.services.types)
         except (darq.errors.DarqError, TimeoutError) as e:
             logging.warning(f"Can't list types: {e}")
             return []

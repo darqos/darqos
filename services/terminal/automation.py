@@ -30,7 +30,7 @@ from darq.protocols.terminal import (
     StateRequest, StateResponse, Status, Terminal, Tool, WatchRequest, WatchResponse, Window,
 )
 from darq.ui.launcher import Launcher, start_thread
-from darq.ui.tools import find_tools
+from tool_list import find_tools
 
 
 # Control exports

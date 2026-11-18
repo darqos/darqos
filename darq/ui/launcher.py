@@ -20,14 +20,32 @@ import darq.history
 from darq.protocols.http import Status as HttpStatus
 from darq.protocols.type import Context
 
-from . import Host
 
 
 # Control exports
 __all__ = [
+    "Host",
     "Launcher",
     "start_thread",
 ]
+
+
+class Host(typing.Protocol):
+    """The window a launcher works for: a lens's, or the Terminal's.  Its
+    services are what the launcher uses of them: launch (darq.launch), and
+    http(), a client of the HTTP service, or None."""
+
+    services: typing.Any
+    launcher: "Launcher"
+
+    def show_status(self, message: str) -> None:
+        """Show a message, such as progress or an error, in its status
+        line."""
+        ...
+
+    def launched(self, context: object, item_id: str | None, error: str | None) -> None:
+        """A launch has finished: see Launcher."""
+        ...
 
 
 # What's said when a fetch fails, with its URL.

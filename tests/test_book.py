@@ -22,9 +22,11 @@ import darq.message
 import darq.url
 from darq.book import Book, BookError, Copy, Edition
 from darq.protocols.lens import Status, UseRequest
-from darq.ui import types as ui_types
 
 from test_pkernel import live_pkernel, pkernel, run_kernel_until, write_app  # noqa: F401
+from conftest import terminal_module
+
+ui_types = terminal_module("type_list")
 
 
 LENS_PATH = pathlib.Path(__file__).parent.parent / "lenses" / "book"

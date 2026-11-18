@@ -32,9 +32,9 @@ import darq.packages
 from darq.protocols.history import Event
 from darq.protocols.history import Status as HistoryStatus
 
-from . import Host
-from .links import type_name
-from .names import item_names
+from host import Host
+from darq.ui.links import type_name
+from darq.ui.names import item_names
 
 
 # Control exports

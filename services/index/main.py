@@ -42,7 +42,7 @@ DATABASE = "index.sqlite"
 # Run directory, if the p-kernel didn't say (see doc/distribution.rst).
 DEFAULT_RUN_DIR = "/darq/run"
 
-# Where the tools are, under DARQ_ROOT (see darq.ui.tools).
+# Where the tools are, under DARQ_ROOT (see the Terminal's tool_list.py).
 DEFAULT_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 
 # The reindex, under the root.

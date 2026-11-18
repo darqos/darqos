@@ -27,6 +27,12 @@ from darq.protocols.kb import Context, EntityItem, Linked, Role
 from darq.protocols.kb import Status as KBStatus
 
 
+# Control exports
+__all__ = [
+    "ItemStore",
+]
+
+
 # Seconds to wait for items' replies.
 TIMEOUT = 10.0
 

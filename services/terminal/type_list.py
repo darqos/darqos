@@ -31,7 +31,7 @@ import darq
 from darq.book import PARTS as BOOK_PARTS
 from darq.protocols.type import Status, Type
 
-from . import Host
+from host import Host
 
 
 # Control exports

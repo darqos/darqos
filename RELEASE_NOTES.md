@@ -34,6 +34,13 @@ Summary notes on newly added features for each release.
   caller for a payload that isn't bytes, or a handle that isn't an int;
   any p-call that can't be encoded raises in its caller, and one that
   fails on the I/O thread is abandoned, with a `DarqError`, alone.
+- **`darq.ui` is only what lenses and tools share.**  The Terminal's
+  History, Search, Types and Tools panels moved into `services/terminal`
+  (`history_view.py`, `search_view.py`, `type_list.py`, `tool_list.py`),
+  with its `Services` (`host.py`).  `darq/ui/__init__.py` is empty, so a
+  lens importing `darq.ui.style` no longer imports the Knowledge Base,
+  the Index and launching.  The launcher's `Host` is
+  `darq.ui.launcher.Host`; `wait_for_display`, unused, is gone.
 
 - **Items are named from the start.**  The Knowledge Base now sets up its
   vocabulary when it starts.  Until something used a person, a book, or

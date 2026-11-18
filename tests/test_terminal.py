@@ -46,11 +46,12 @@ from darq.protocols.compositor import (
 
 from darq.protocols.http import SnapshotResponse
 from darq.protocols.http import Status as HttpStatus
-from darq.ui.search import is_url
 
 from ui_fakes import DOC, PDF, TEXT, FakeServices, inline
 from test_pkernel import live_pkernel, pkernel, run_kernel_until  # noqa: F401
 
+
+from conftest import terminal_module  # noqa: E402
 
 TERMINAL_PATH = pathlib.Path(__file__).parent.parent / "services" / "terminal"
 
@@ -70,6 +71,7 @@ def load():
 
 
 main = load()
+is_url = terminal_module("search_view").is_url
 # What answers the Terminal protocol, which main imported.
 automation = sys.modules["automation"]
 panels = sys.modules["panels"]

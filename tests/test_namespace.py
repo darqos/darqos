@@ -103,3 +103,23 @@ def test_the_runtimes_modules_are_its():
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=root,
                           env={"PYTHONPATH": str(root)})
     assert done.stdout.strip() == "[]", done.stdout + done.stderr
+
+
+
+def test_darq_ui_is_only_whats_shared():
+    """Importing a shared part of the UI doesn't bring the Terminal's, nor
+    the Knowledge Base, the Index and launching, as its services did."""
+    import pathlib
+    import subprocess
+    import sys
+    root = pathlib.Path(__file__).parent.parent
+    code = ("import sys, darq.ui; print(sorted(m for m in ('darq.kb', 'darq.index', 'darq.launch') "
+            "if m in sys.modules), [n for n in vars(darq.ui) if not n.startswith('__')])")
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=root,
+                          env={"PYTHONPATH": str(root)})
+    assert done.stdout.strip() == "[] []", done.stdout + done.stderr
+    for name in ("history", "search", "types", "tools"):
+        assert not (root / "darq" / "ui" / f"{name}.py").exists(), name
+    for module in (root / "darq" / "ui").glob("*.py"):
+        if module.name != "__init__.py":
+            assert "\n__all__ = [" in module.read_text(), module.name

@@ -513,7 +513,7 @@ finishing is said only if it fails, as for one that closes its own
 window when it's done, ``"quiet": true``,
 such as the
 imports, Reindex, Give Items Entities, and Update DarqOS (see
-:doc:`distribution`) (``darq.ui.tools``).  Typing
+:doc:`distribution`) (``services/terminal/tool_list.py``).  Typing
 filters them, by name or description, the arrow keys move through
 them, and Enter, or a double-click, runs the selected one.
 

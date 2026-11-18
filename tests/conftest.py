@@ -4,6 +4,7 @@
 # Shared test setup.
 
 import os
+import pathlib
 
 import pytest
 
@@ -42,3 +43,19 @@ def recorded(monkeypatch):
     history = RecordedHistory()
     monkeypatch.setattr(darq.history, "connect", lambda: history)
     return history
+
+
+TERMINAL_PATH = pathlib.Path(__file__).parent.parent / "services" / "terminal"
+
+
+def terminal_module(name: str):
+    """Import one of the Terminal's modules (services/terminal), as
+    pyloader does, with its directory on the path, as its modules import
+    each other by name."""
+    import importlib
+    import sys
+    sys.path.insert(0, str(TERMINAL_PATH))
+    try:
+        return importlib.import_module(name)
+    finally:
+        sys.path.remove(str(TERMINAL_PATH))

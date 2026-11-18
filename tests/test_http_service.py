@@ -26,6 +26,7 @@ import darq.url
 from test_kb_type import Writer, implementation, index, kb, kb_service, ports  # noqa: F401
 from test_pdf_type import make_pdf
 from test_pkernel import live_pkernel, pkernel, run_kernel_until, write_app  # noqa: F401
+from conftest import TERMINAL_PATH
 
 
 SERVICE_PATH = pathlib.Path(__file__).parent.parent / "services" / "http"
@@ -866,16 +867,18 @@ def test_fetching_from_search(live_pkernel, web, tmp_path):  # noqa: F811
     client_path = write_app(tmp_path / "client", f"""
         import threading
         import time
+        import sys
         import darq
-        import darq.ui
         import darq.url
+        sys.path.insert(0, {str(TERMINAL_PATH)!r})
+        from host import Services
         from darq.protocols.lens import Lens
         from darq.protocols.type import Type
         from darq.ui.launcher import Launcher
 
         class Host:
             def __init__(self):
-                self.services = darq.ui.Services()
+                self.services = Services()
                 self.launcher = Launcher(self, "test", lambda f: f(), run=lambda f: f())
                 self.results = []
 
