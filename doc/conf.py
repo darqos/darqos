@@ -51,7 +51,7 @@ latex_documents = [
 ]
 
 latex_elements = {
-    'releasename': 'First Edition',
+    'releasename': 'Second Edition',
 
     # Avoid "Too deeply nested" errors from LaTeX
     'preamble': r'''
@@ -66,5 +66,8 @@ latex_elements = {
 \setlist[itemize,4]{label=\textbullet}
 \setlist[itemize,5]{label=\textbullet}
 \setlist[itemize,6]{label=\textbullet}
+
+% Characters pdflatex has no glyph for, as the minus sign, U+2212
+\DeclareUnicodeCharacter{2212}{\ensuremath{-}}
 ''',
 }
