@@ -124,6 +124,33 @@ def test_complete_namespace_and_dollar():
     assert names == ["upper"] and prefix == 3
 
 
+def test_help():
+    e = Engine()
+    e.start()
+    e.run("import json")
+    e.run('class Shape:\n    """A shape."""\n    def __init__(self, sides: int = 4):\n        self.sides = sides\n'
+          '    def area(self, scale=1):\n        """Its area."""\n        return 1')
+    e.run("shape = Shape()")
+    e.run("41 + 1")
+
+    dumps = e.help("json.dumps")
+    assert dumps is not None and dumps.name == "dumps"
+    assert dumps.signatures[0].startswith("dumps(obj, *, skipkeys=False")
+    assert dumps.docstring.startswith("Serialize ``obj``")
+    assert e.help("print(json.dumps(obj, ") == dumps
+    shape = e.help("Shape")
+    assert shape is not None and (shape.signatures, shape.docstring) == (("Shape(sides: int=4)",), "A shape.")
+    assert e.help("Shape(") == shape
+    area = e.help("shape.area")
+    assert area is not None and (area.signatures, area.docstring) == (("area(scale=1)",), "Its area.")
+    builtin = e.help("len")
+    assert builtin is not None and builtin.signatures == ("len(obj: Sized, /) -> int",)
+    result = e.help("$4")
+    assert result is not None and result.name == "$4" and result.signatures == ("int(x=None, /) -> int",)
+    for nothing in ("", "   ", "json.dum", "nothing_here", "x = (1, ", "print(1)"):
+        assert e.help(nothing) is None, nothing
+
+
 def test_the_darq_api_is_ready():
     e = Engine()
     said = e.start()
@@ -1028,3 +1055,51 @@ def test_a_session_in_its_lens(live_pkernel, tmp_path):  # noqa: F811
     [lens_process] = [p for p in kernel._process_table.values() if p._image_path == str(TOOL_PATH)]
     run_kernel_until(kernel, lambda: lens_process.get_status() == zombie, "the lens to exit")
     assert (lens_process.get_exit_status(), lens_process.get_exit_error()) == (0, None)
+
+
+def at_end(repl, text: str):
+    repl.editor.setPlainText(text)
+    cursor = repl.editor.textCursor()
+    cursor.movePosition(cursor.MoveOperation.End)
+    repl.editor.setTextCursor(cursor)
+
+
+def test_tab_completes_then_explains(repl):
+    from PyQt6.QtCore import Qt
+    ran_in(repl, "import json")
+    editor = repl.editor
+    tab = Qt.Key.Key_Tab
+
+    # A whole name: Tab completes, and with nothing to add, explains.
+    at_end(repl, "json.dumps")
+    key(repl, tab)
+    assert editor.help_popup.isVisible()
+    assert editor.help_popup.toPlainText().startswith("dumps(obj, *, skipkeys=False")
+    assert "Serialize ``obj``" in editor.help_popup.toPlainText()
+    assert editor.toPlainText() == "json.dumps"
+
+    # Tab again closes it; so does editing.
+    key(repl, tab)
+    assert not editor.help_popup.isVisible() and editor.toPlainText() == "json.dumps"
+    key(repl, tab)
+    assert editor.help_popup.isVisible()
+    editor.insertPlainText("(")
+    assert not editor.help_popup.isVisible()
+
+    # In a call's arguments, it explains the call.
+    at_end(repl, "json.dumps(obj, ")
+    key(repl, tab)
+    assert editor.help_popup.toPlainText().startswith("dumps(")
+    key(repl, Qt.Key.Key_Escape)
+    assert not editor.help_popup.isVisible()
+
+    # A partial name still completes; an empty line still indents.
+    at_end(repl, "json.dump")
+    key(repl, tab)
+    listed = editor.completer.popup()
+    assert listed is not None and listed.isVisible() and not editor.help_popup.isVisible()
+    listed.hide()
+    at_end(repl, "")
+    key(repl, tab)
+    assert editor.toPlainText() == window.INDENT and not editor.help_popup.isVisible()
+

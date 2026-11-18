@@ -176,7 +176,8 @@ Session, below).  It doesn't index anything; it can't debug.
   which ``$3`` refers to later (rewritten to ``_out[3]``, but in strings
   and comments), as ``_`` is the last.  What it prints is captured, and
   a traceback shows only the cell's frames.  Completion is jedi's,
-  against the live namespace.
+  against the live namespace, as is help (``Engine.help``): a name's
+  signatures, and its docstring, or a value's type's.
 * ``lenses/repl`` is its window, the lens for ``darq.python`` items (its
   ``lens.json``), started by the launcher, as lenses are, for a ``Use``:
   it's titled with its session's name, and says, ``Shown``, which session
@@ -192,7 +193,11 @@ Session, below).  It doesn't index anything; it can't debug.
 * A transcript, above, and an editor, below, highlighted by Pygments
   in the DarqOS palette.  Enter runs a complete cell, or else starts a
   new line, indented; Shift+Enter always starts a new line, and
-  Ctrl+Enter always runs.  Tab completes, as does a ``.``; Up and Down,
+  Ctrl+Enter always runs.  Tab completes, as does a ``.``.  Tab with
+  nothing to complete, after a whole name, or in a call's arguments,
+  explains it: its signatures, highlighted, and its docstring, in a popup
+  below the cursor, which PgUp and PgDn scroll, and Tab, Escape, or
+  editing, close.  Up and Down,
   on the first or last line, step through what's been run.  Ctrl+A goes
   to the start of the line, as in Emacs, rather than selecting all.  Ctrl+L
   clears the transcript, and Ctrl+Q closes it.

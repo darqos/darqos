@@ -41,6 +41,11 @@ Summary notes on newly added features for each release.
   lens importing `darq.ui.style` no longer imports the Knowledge Base,
   the Index and launching.  The launcher's `Host` is
   `darq.ui.launcher.Host`; `wait_for_display`, unused, is gone.
+- **The REPL explains a name, on Tab.**  Tab with nothing to complete,
+  after a whole name, such as `json.dumps`, or in a call's arguments,
+  shows its signatures and docstring, from jedi, in a popup at the
+  cursor: Tab or Escape, or editing, closes it, and PgUp and PgDn scroll
+  it.
 
 - **Items are named from the start.**  The Knowledge Base now sets up its
   vocabulary when it starts.  Until something used a person, a book, or

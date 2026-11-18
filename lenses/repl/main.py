@@ -12,6 +12,9 @@
 # - Pygments syntax highlighting, of the input and the transcript, in the
 #   DarqOS palette (darq.ui.style), as the lenses use it.
 # - jedi completion against the live namespace: Tab, or after a '.'.
+#   Tab with nothing to complete, after a whole name, or in a call's
+#   arguments, shows its help: signatures and docstring, in a popup at
+#   the cursor (HelpPopup), closed by Tab, Escape, or editing.
 # - Results are numbered: $3 refers to cell 3's result.
 # - On the left, a tree of what's bound, to browse, and edit: clicking a
 #   name edits its source in the editor, and Ctrl+S saves it, changing
@@ -39,7 +42,7 @@ import typing
 
 from pygments.lexers import PythonLexer
 from pygments.token import Token, _TokenType
-from PyQt6.QtCore import QStringListModel, Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, QStringListModel, Qt, pyqtSignal
 from PyQt6.QtGui import (QColor, QIcon, QKeyEvent, QKeySequence, QPainter, QPalette, QPixmap, QShortcut,
                          QSyntaxHighlighter, QTextCharFormat, QTextCursor)
 from PyQt6.QtWidgets import (QApplication, QCompleter, QHBoxLayout, QLabel, QMainWindow, QMenu, QPlainTextEdit,
@@ -54,7 +57,7 @@ import darq.packages
 from darq.ui import dialogs
 from darq.ui.lens import LensHandler, Viewing, announce
 from darq.ui.names import item_name
-from darq.repl import CLASS, FUNCTION, MODULE, PROPERTY, VARIABLE, Engine, Result, Results, Target, kind_of
+from darq.repl import CLASS, FUNCTION, MODULE, PROPERTY, VARIABLE, Engine, Help, Result, Results, Target, kind_of
 from darq.ui import style
 from darq.ui.style import CONTROLS, SCROLL_BARS
 
@@ -283,6 +286,75 @@ class Transcript(QPlainTextEdit):
         self.ensureCursorVisible()
 
 
+# Help's popup: as wide as 80 columns, and as high as 20 lines, at most.
+HELP_COLUMNS = 80
+HELP_LINES = 20
+
+# Its look, as the completion popup's: it's a top-level window too.
+HELP_POPUP = f"""
+QPlainTextEdit {{ color: {style.TEXT}; background-color: {style.RAISED};
+                  border: 1px solid {style.BORDER}; padding: 4px; {FONT} }}
+""" + SCROLL_BARS
+
+
+class HelpPopup(QPlainTextEdit):
+    """A name's help, at the editor's cursor: its signatures, highlighted,
+    then its docstring.  It doesn't take focus: typing goes on in the
+    editor, which closes it."""
+
+    def __init__(self, theme: Theme, editor: QPlainTextEdit) -> None:
+        super().__init__(editor)
+        self.theme = theme
+        self.editor = editor
+        self.setWindowFlags(Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setReadOnly(True)
+        self.setStyleSheet(HELP_POPUP)
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+
+    def show_help(self, help: Help) -> None:
+        self.clear()
+        c = self.textCursor()
+        signatures = help.signatures or (help.name,)
+        for n, signature in enumerate(signatures):
+            if n:
+                c.insertText("\n", self.theme.format(Token.Text))
+            for start, end, ttype in lex_spans(signature):
+                c.insertText(signature[start:end].rstrip("\n"), self.theme.format(ttype))
+        docstring = help.docstring.strip()
+        if docstring:
+            c.insertText("\n" + "─" * min(HELP_COLUMNS, max(len(s) for s in signatures)) + "\n",
+                         self.theme.format(Token.Comment))
+            c.insertText(docstring, self.theme.format(Token.Generic.Output))
+        self.moveCursor(QTextCursor.MoveOperation.Start)
+        self.place(signatures, docstring)
+        self.show()
+
+    def place(self, signatures: tuple[str, ...], docstring: str) -> None:
+        """Size it to what it shows, and put it below the cursor's line,
+        or above, if there's no room below."""
+        metrics = self.fontMetrics()
+        lines = [*signatures, *docstring.splitlines()]
+        margin = 2 * (self.frameWidth() + 6)
+        columns = min(HELP_COLUMNS, max((len(line) for line in lines), default=1) + 1)
+        width = metrics.horizontalAdvance("M" * columns) + margin
+        wrapped = sum(max(1, -(-len(line) // columns)) for line in lines) + (1 if docstring else 0)
+        height = metrics.lineSpacing() * min(HELP_LINES, wrapped) + margin
+        self.resize(width, height)
+        rect = self.editor.cursorRect()
+        below = self.editor.mapToGlobal(rect.bottomLeft())
+        screen = self.editor.screen()
+        if screen is not None and below.y() + height > screen.availableGeometry().bottom():
+            below = self.editor.mapToGlobal(rect.topLeft()) - QPoint(0, height)
+        self.move(below)
+
+    def scroll_page(self, step: int) -> None:
+        bar = self.verticalScrollBar()
+        if bar is not None:
+            bar.setValue(bar.value() + step * bar.pageStep())
+
+
 class Editor(QPlainTextEdit):
     """The input editor: highlighting, completion and history."""
 
@@ -300,7 +372,7 @@ class Editor(QPlainTextEdit):
         self.highlighter = Highlighter(self, theme)
         self.setPlaceholderText(
             "Enter runs · Shift+Enter newline · Ctrl+Enter forces run · "
-            "Tab completes · $n is cell n's result")
+            "Tab completes, or explains · $n is cell n's result")
         self.setTabChangesFocus(False)
 
         self.model = QStringListModel(self)
@@ -314,6 +386,12 @@ class Editor(QPlainTextEdit):
             popup.setStyleSheet(POPUP)
         self._prefix = 0
 
+        # Help, shown by Tab, and closed by anything that changes the
+        # text, or moves the cursor.
+        self.help_popup = HelpPopup(theme, self)
+        self.textChanged.connect(self.help_popup.hide)
+        self.cursorPositionChanged.connect(self.help_popup.hide)
+
         self.history: list[str] = []
         self._hpos = 0
         self._draft = ""
@@ -326,17 +404,19 @@ class Editor(QPlainTextEdit):
     def _before_cursor(self) -> str:
         return self.toPlainText()[:self.textCursor().position()]
 
-    def complete(self, auto: bool) -> None:
+    def complete(self, auto: bool) -> bool:
+        """Complete the name before the cursor: return False if there's
+        nothing to add to it."""
         popup = self.completer.popup()
         assert popup is not None
         names, prefix = self.engine.complete(self._before_cursor())
-        if not names:
+        if not names or len(names) == 1 and prefix == len(names[0]):
             popup.hide()
-            return
+            return False
         self._prefix = prefix
         if not auto and len(names) == 1:
             self.insert_completion(names[0])
-            return
+            return True
         self.model.setStringList(names)
         popup.setCurrentIndex(self.model.index(0, 0))
         rect = self.cursorRect()
@@ -344,6 +424,20 @@ class Editor(QPlainTextEdit):
         rect.setWidth(popup.sizeHintForColumn(0)
                       + (sb.sizeHint().width() if sb else 0))
         self.completer.complete(rect)
+        return True
+
+    def explain(self) -> bool:
+        """Show the help for what's before the cursor: return False if
+        there's none."""
+        help = self.engine.help(self._before_cursor())
+        if help is None:
+            return False
+        self.help_popup.show_help(help)
+        return True
+
+    def focusOutEvent(self, e) -> None:
+        self.help_popup.hide()
+        super().focusOutEvent(e)
 
     def insert_completion(self, name: str) -> None:
         c = self.textCursor()
@@ -430,6 +524,15 @@ class Editor(QPlainTextEdit):
             e.ignore()      # The completer handles these.
             return
 
+        # Help's open: Tab or Escape closes it, and PgUp and PgDn scroll it.
+        if self.help_popup.isVisible():
+            if key in (K.Key_Tab, K.Key_Escape) and not mods:
+                self.help_popup.hide()
+                return
+            if key in (K.Key_PageUp, K.Key_PageDown) and not mods:
+                self.help_popup.scroll_page(-1 if key == K.Key_PageUp else 1)
+                return
+
         if self.editing:
             if key == K.Key_S and mods == Qt.KeyboardModifier.ControlModifier:
                 self.saved.emit()
@@ -464,7 +567,14 @@ class Editor(QPlainTextEdit):
             line = self.textCursor().block().text()
             line = line[:self.textCursor().positionInBlock()]
             if line.strip():
-                self.complete(auto=False)
+                # After a name, or a '.', it completes, if it can, else
+                # explains; elsewhere, as in a call's arguments, it
+                # explains, if it can, else completes.
+                if line[-1].isidentifier() or line[-1].isdigit() or line[-1] == ".":
+                    if not self.complete(auto=False):
+                        self.explain()
+                elif not self.explain():
+                    self.complete(auto=False)
             else:
                 self.insertPlainText(INDENT)
             return

@@ -6,7 +6,8 @@ the REPL's window (tools/repl), as a DarqOS process, so its cells can use
 the darq API.  See doc/repl.rst.
 
 A cell's last expression is its result, numbered: ``$3`` is cell 3's.
-Completion is jedi's, against the live namespace.
+Completion is jedi's, against the live namespace, as is help: a name's
+signatures and docstring.
 
 What's in the namespace can be browsed, as targets: a name, where it's
 bound, in the session's namespace, a module, a class, or an object.
@@ -41,8 +42,8 @@ import jedi
 
 
 # Control exports
-__all__ = ["Binding", "CLASS", "Engine", "FUNCTION", "MODULE", "PRELUDE", "PROPERTY", "Result", "Results", "SOURCE",
-           "Source", "Target", "VARIABLE", "Written", "kind_of", "needs", "rewrite"]
+__all__ = ["Binding", "CLASS", "Engine", "FUNCTION", "Help", "MODULE", "PRELUDE", "PROPERTY", "Result", "Results",
+           "SOURCE", "Source", "Target", "VARIABLE", "Written", "kind_of", "needs", "rewrite"]
 
 # What the REPL is, as the source of what it makes, in History.
 SOURCE = "repl"
@@ -159,6 +160,16 @@ class Target:
     def key(self) -> tuple[int, str]:
         """Identifies it, as long as its container lives."""
         return id(self.container), self.name
+
+
+@dataclass(frozen=True)
+class Help:
+    """What a name is: as its signatures say, and its docstring, without
+    them.  For a value that's neither a function nor a class, it's its
+    type's."""
+    name: str
+    signatures: tuple[str, ...]
+    docstring: str
 
 
 @dataclass
@@ -867,11 +878,9 @@ class Engine:
             result.error = "\n".join(failures) + "\n"
         return result
 
-    def complete(self, before: str) -> tuple[list[str], int]:
-        """Complete at the end of ``before``, the text before the cursor.
-
-        Returns the candidate names, and the length of the partial name
-        they replace."""
+    def _jedi(self, before: str) -> tuple[jedi.Interpreter, int, int]:
+        """jedi, on ``before``, against the namespace, with ``$n`` as a
+        name bound to its result; and the line and column of its end."""
         extra: dict[str, typing.Any] = {}
 
         def sub(m: re.Match[str]) -> str:
@@ -883,8 +892,16 @@ class Engine:
 
         code = _DOLLAR_RE.sub(sub, before)
         lines = code.split("\n")
+        return jedi.Interpreter(code, [self.namespace, extra]), len(lines), len(lines[-1])
+
+    def complete(self, before: str) -> tuple[list[str], int]:
+        """Complete at the end of ``before``, the text before the cursor.
+
+        Returns the candidate names, and the length of the partial name
+        they replace."""
         try:
-            completions = jedi.Interpreter(code, [self.namespace, extra]).complete(len(lines), len(lines[-1]))
+            interpreter, line, column = self._jedi(before)
+            completions = interpreter.complete(line, column)
         except Exception:
             return [], 0
         if not completions:
@@ -892,6 +909,30 @@ class Engine:
         c = completions[0]
         prefix = len(c.name) - len(c.complete or "")
         return [c.name for c in completions], prefix
+
+    def help(self, before: str) -> Help | None:
+        """Return the help for the end of ``before``, the text before the
+        cursor: the name it ends with, if it ends with one, or else the
+        call it's in the arguments of; or None, if there's none."""
+        if not before.strip():
+            return None
+        try:
+            interpreter, line, column = self._jedi(before)
+            if before[-1].isidentifier() or before[-1].isdigit():
+                for name in interpreter.help(line, column):
+                    if name.type == "keyword":
+                        continue
+                    signatures = tuple(s.to_string() for s in name.get_signatures())
+                    shown = re.sub(r"^_dollar_(\d+)$", r"$\1", name.name)
+                    return Help(shown, signatures, name.docstring(raw=True))
+                return None
+            signatures = interpreter.get_signatures(line, column)
+        except Exception:
+            return None
+        if not signatures:
+            return None
+        return Help(signatures[0].name, tuple(dict.fromkeys(s.to_string() for s in signatures)),
+                    signatures[0].docstring(raw=True))
 
 
 def from_file(value: typing.Any, filename: str) -> bool:
