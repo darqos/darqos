@@ -78,7 +78,7 @@ class Launcher:
 
     def __init__(self, host: Host, source: str, post: typing.Callable[[typing.Callable[[], None]], None],
                  run: typing.Callable[[typing.Callable[[], None]], None] = start_thread,
-                 started: typing.Callable[[int], None] | None = None):
+                 started: typing.Callable[[int, str, bool], None] | None = None):
         """Constructor.
 
         :param source: The History source of the items it creates, which
@@ -88,7 +88,9 @@ class Launcher:
         :param run: Runs a job: on a thread, unless tests say otherwise.
         :param started: Told each lens's DPID, as it's started, on the
                         launch's thread, before the host's told it was:
-                        its windows are named by it."""
+                        its windows are named by it.  And the item it's
+                        for, and whether for its entity: what it's
+                        showing, till it says otherwise."""
         self.host = host
         self.source = source
         self.post = post
@@ -200,7 +202,7 @@ class Launcher:
         except (darq.errors.DarqError, TimeoutError) as e:
             return str(e)
         if self.started is not None:
-            self.started(lens.dpid)
+            self.started(lens.dpid, item_id, bool(lens_for))
         return None
 
     def start(self, job: typing.Callable[[], tuple[str | None, str | None]], context: object,

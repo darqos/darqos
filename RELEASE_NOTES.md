@@ -46,6 +46,19 @@ Summary notes on newly added features for each release.
   shows its signatures and docstring, from jedi, in a popup at the
   cursor: Tab or Escape, or editing, closes it, and PgUp and PgDn scroll
   it.
+- **`terminal.windows()` from the REPL says the REPL's session.**  The
+  REPL couldn't say what it's showing while running the cell that asked,
+  so its `item_id` was empty, after 5 seconds.  A lens that doesn't
+  answer is now said to show what it said last, or was started for; and
+  the lenses are asked at once, so it's one wait, however many are busy.
+- **The REPL runs its code in a process of its own, the evaluator.**  A
+  cell runs as a program's code does, on the evaluator's main thread: it
+  can make its own `QApplication`, run its own event loop, and open
+  windows.  Output's shown as it's printed, the window works while a
+  cell runs, Ctrl+G interrupts it, and Ctrl+Shift+G restarts the
+  evaluator, as happens if it dies, loading the session as last saved.
+  `loop` is no longer given: a cell makes its own.  `darq.repl.Engine`
+  is now `darq.repl.Evaluator`.
 
 - **Items are named from the start.**  The Knowledge Base now sets up its
   vocabulary when it starts.  Until something used a person, a book, or

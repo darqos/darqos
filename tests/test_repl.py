@@ -1,8 +1,8 @@
 # darqos
 # Copyright (C) 2026 David Arnold
 
-# Tests for the REPL: its engine, darq.repl, which needs no window; its
-# window, tools/repl, offscreen; and the engine as a DarqOS process,
+# Tests for the REPL: its evaluator, darq.repl, which needs no window; its
+# window, tools/repl, offscreen; and the evaluator as a DarqOS process,
 # whose cells can call the darq API.
 
 import importlib.util
@@ -11,7 +11,7 @@ import pathlib
 
 import pytest
 
-from darq.repl import Engine, rewrite
+from darq.repl import Evaluator, rewrite
 
 from test_pkernel import live_pkernel, pkernel, run_kernel_until, write_app  # noqa: F401
 
@@ -30,7 +30,7 @@ window = load()
 
 
 ################################################################
-# The engine
+# The evaluator
 ################################################################
 
 def test_rewrite_replaces_dollars():
@@ -60,7 +60,7 @@ def test_rewrite_incomplete_falls_back():
 
 
 def test_results_numbered_and_referenced():
-    e = Engine()
+    e = Evaluator()
     r1 = e.run("6 * 7")
     assert r1.number == 1 and r1.has_value and r1.value == 42
     r2 = e.run("x = $1")
@@ -71,7 +71,7 @@ def test_results_numbered_and_referenced():
 
 
 def test_none_is_not_a_result():
-    e = Engine()
+    e = Evaluator()
     r = e.run("print('hi')")
     assert r.stdout == "hi\n"
     assert not r.has_value
@@ -79,20 +79,20 @@ def test_none_is_not_a_result():
 
 
 def test_multi_statement_cell_returns_last_expression():
-    e = Engine()
+    e = Evaluator()
     r = e.run("a = 2\nb = 3\na * b")
     assert r.value == 6
 
 
 def test_undefined_dollar():
-    e = Engine()
+    e = Evaluator()
     r = e.run("$9")
     assert r.error is not None
     assert "NameError: $9 is not defined" in r.error
 
 
 def test_traceback_shows_cell_frames_only():
-    e = Engine()
+    e = Evaluator()
     r = e.run("def f():\n    1/0\nf()")
     assert r.error is not None
     assert "darq/repl.py" not in r.error
@@ -101,13 +101,13 @@ def test_traceback_shows_cell_frames_only():
 
 
 def test_syntax_error_is_reported():
-    e = Engine()
+    e = Evaluator()
     r = e.run("x = = 1")
     assert r.error is not None and "SyntaxError" in r.error
 
 
 def test_is_complete():
-    e = Engine()
+    e = Evaluator()
     assert e.is_complete("x = 1")
     assert not e.is_complete("def f():")
     assert not e.is_complete("x = ($1,")
@@ -115,7 +115,7 @@ def test_is_complete():
 
 
 def test_complete_namespace_and_dollar():
-    e = Engine()
+    e = Evaluator()
     e.run("value_one = 1")
     names, prefix = e.complete("value_o")
     assert "value_one" in names and prefix == 7
@@ -125,7 +125,7 @@ def test_complete_namespace_and_dollar():
 
 
 def test_help():
-    e = Engine()
+    e = Evaluator()
     e.start()
     e.run("import json")
     e.run('class Shape:\n    """A shape."""\n    def __init__(self, sides: int = 4):\n        self.sides = sides\n'
@@ -151,8 +151,65 @@ def test_help():
         assert e.help(nothing) is None, nothing
 
 
+def test_output_is_told_as_its_written():
+    e = Evaluator()
+    told: list[tuple[str, str]] = []
+    result = e.run("import sys\nprint('one')\nprint('two', file=sys.stderr)\n42", lambda stream, text: told.append(
+        (stream, text)))
+    assert told == [("stdout", "one"), ("stdout", "\n"), ("stderr", "two"), ("stderr", "\n")]
+    assert (result.stdout, result.stderr, result.shown) == ("", "", "42")
+
+
+def test_an_interrupt_is_the_cells_error():
+    e = Evaluator()
+    result = e.run("raise KeyboardInterrupt")
+    assert result.error is not None and "KeyboardInterrupt" in result.error
+    assert e.run("1 + 1").shown == "2"
+
+
+def test_served_names_targets_by_ref():
+    from darq.repl import Served
+    served = Served()
+    served.start()
+    served.run("class Shape:\n    def area(self):\n        return 1")
+    served.run("def double(x):\n    return 2 * x")
+    result = served.run("[1, 2]")
+    assert result.value is None and result.shown == "[1, 2]"
+
+    tops = dict(served.tops())
+    assert list(tops) == ["Session", "Results", "Built-ins"]
+    members = {m.ref.name: m for m in served.members(tops["Session"])}
+    assert {"Shape", "double", "darq", "terminal"} <= set(members)
+    shape = members["Shape"]
+    assert shape.kind == "class" and shape.expandable and shape.ref.path == ("Shape",)
+    assert served.members(tops["Session"])[0].ref.id in served.targets
+
+    # The same target is the same ref, while it's kept.
+    again = {m.ref.name: m.ref for m in served.members(tops["Session"])}
+    assert again["Shape"] == shape.ref and again["Shape"].key() == shape.ref.key()
+
+    assert served.actions(shape.ref) == repl_module.Actions(add_member=True, rebuild=True, whole_class=True,
+                                                            extract=True, delete=True)
+    assert served.actions(members["darq"].ref).extract is False
+    assert served.source_of(members["double"].ref).text.startswith("def double(x):")
+    assert "def area" in served.whole_class(shape.ref)
+
+    # A new member, saved.
+    new = served.new_member(shape.ref)
+    assert (new.name, new.path) == ("", ("Shape", ""))
+    assert served.save(new, "def sides(self):\n    return 4").error is None
+    assert served.run("Shape().sides()").shown == "4"
+
+    # Refs are forgotten when the tree's read again, but those kept.
+    double = members["double"].ref
+    served.tops(keep=[double.id])
+    assert served.target(double).name == "double"
+    with pytest.raises(KeyError):
+        served.target(shape.ref)
+
+
 def test_the_darq_api_is_ready():
-    e = Engine()
+    e = Evaluator()
     said = e.start()
     assert "darq" in e.namespace and "DarqError" not in e.namespace, said
     assert e.namespace["terminal"].source == "repl"
@@ -160,7 +217,7 @@ def test_the_darq_api_is_ready():
 
 
 def test_a_prelude_that_fails_says_why():
-    e = Engine()
+    e = Evaluator()
     assert "couldn't be imported" in e.start("import no_such_module")
 
 
@@ -168,19 +225,19 @@ def test_a_prelude_that_fails_says_why():
 # Browsing, and editing, the namespace
 ################################################################
 
-from darq import repl as engine_module  # noqa: E402
+from darq import repl as repl_module  # noqa: E402
 from darq.repl import CLASS, FUNCTION, MODULE, PROPERTY, VARIABLE, Target  # noqa: E402
 
 
-def ran(*cells: str) -> Engine:
-    e = Engine()
+def ran(*cells: str) -> Evaluator:
+    e = Evaluator()
     for cell in cells:
         result = e.run(cell)
         assert result.error is None, result.error
     return e
 
 
-def target(e: Engine, *path: str) -> Target:
+def target(e: Evaluator, *path: str) -> Target:
     """A target, by its path from the session."""
     found = e.session()
     for name in path:
@@ -188,7 +245,7 @@ def target(e: Engine, *path: str) -> Target:
     return found
 
 
-def saved(e: Engine, where: Target, text: str):
+def saved(e: Evaluator, where: Target, text: str):
     result = e.save(where, text)
     assert result.error is None, result.error
     return result
@@ -256,7 +313,7 @@ def test_sources_shown():
     # A library's is shown, but not edited; a built-in's has no source.
     dumps = e.source_of(target(e, "json", "dumps"))
     assert not dumps.editable and dumps.text.startswith("def dumps(")
-    length = e.source_of(Target(engine_module.builtins, "len", ("builtins", "len")))
+    length = e.source_of(Target(repl_module.builtins, "len", ("builtins", "len")))
     assert not length.editable and length.text.startswith("# len(")
 
 
@@ -410,7 +467,7 @@ def test_an_objects_attribute_is_edited():
 def test_libraries_and_built_ins_arent_changed():
     e = ran("import json")
     assert "library's" in (e.save(target(e, "json", "dumps"), "def dumps(x):\n    return ''").error or "")
-    assert "built-ins" in (e.save(Target(engine_module.builtins, "len", ("builtins", "len")), "len = 1").error or "")
+    assert "built-ins" in (e.save(Target(repl_module.builtins, "len", ("builtins", "len")), "len = 1").error or "")
     e.run("1 + 1")
     results = Target(e.namespace, "_out", ("Results",))
     [result] = e.members(results)
@@ -418,7 +475,7 @@ def test_libraries_and_built_ins_arent_changed():
 
 
 def test_what_a_failed_cell_defined_is_recorded():
-    e = Engine()
+    e = Evaluator()
     assert e.run("def kept():\n    return 1\nraise ValueError").error is not None
     assert e.source_of(target(e, "kept")).editable
 
@@ -456,9 +513,10 @@ def test_token_colours_from_darq_palette():
 
 @pytest.fixture
 def repl(qt_app):
-    engine = Engine()
-    engine.start("x = 1")
-    shown = window.Window(engine)
+    from darq.repl import Local
+    evaluator = Local()
+    evaluator.start("x = 1")
+    shown = window.Window(evaluator)
     yield shown
     shown.closing_quietly = True
     shown.close()
@@ -506,6 +564,12 @@ def test_history_and_completion(repl):
     repl.editor.setTextCursor(cursor)
     repl.editor.complete(auto=False)
     assert repl.editor.toPlainText() == "value_one"
+
+
+def session_ref(repl, name: str):
+    """A name's ref, in the session, as the tree has it."""
+    session = dict(repl.evaluator.tops())["Session"]
+    return [m.ref for m in repl.evaluator.members(session) if m.ref.name == name][0]
 
 
 def ran_in(repl, source: str):
@@ -559,7 +623,7 @@ def test_editing_a_function_and_saving_it(repl):
     repl.editor.setPlainText("def double(x):\n    return 3 * x\n")
     key(repl, Qt.Key.Key_S, Qt.KeyboardModifier.ControlModifier)
     assert "# edit double" in repl.transcript.toPlainText()
-    assert repl.engine.namespace["double"](4) == 12
+    assert repl.evaluator.evaluator.namespace["double"](4) == 12
 
     # Escape goes back to the cell, as it was.
     key(repl, Qt.Key.Key_Escape)
@@ -579,7 +643,7 @@ def test_drafts_are_kept_and_shown(repl):
     # Saved, it's gone.
     repl.save()
     repl.back_to_cell()
-    assert repl.engine.namespace["count"] == 99 and repl.tree.drafts == {}
+    assert repl.evaluator.evaluator.namespace["count"] == 99 and repl.tree.drafts == {}
 
 
 def test_a_librarys_is_only_viewed(repl):
@@ -603,12 +667,12 @@ def test_a_classs_actions(repl):
     assert repl.heading.text() == "Editing: a new member of Shape"
     repl.editor.setPlainText("def added(self):\n    return 3\n")
     repl.save()
-    assert repl.target is None and repl.engine.namespace["shape"].added() == 3
+    assert repl.target is None and repl.evaluator.evaluator.namespace["shape"].added() == 3
 
     sides = tree_item(repl, "Session", "Shape", "sides").data(0, window.TARGET_ROLE)
     dict(repl.actions_for(sides))["Delete"]()
     assert "del Shape.sides" in repl.transcript.toPlainText()
-    assert not hasattr(repl.engine.namespace["Shape"], "sides")
+    assert not hasattr(repl.evaluator.evaluator.namespace["Shape"], "sides")
 
 
 ################################################################
@@ -649,7 +713,7 @@ def test_a_session_is_written_and_loaded_again():
     assert text.index("DEFAULT_SIDES = 4") < text.index("class Shape")
     assert "alias = helper" in text and "loop" not in text and "terminal" not in text
 
-    again = Engine()
+    again = Evaluator()
     loaded = again.load_session(text)
     assert loaded.error is None and loaded.note == "Loaded 9 of 9 statements"
     assert again.run("shape.area(), items, alias(1), pj('a', 'b')").value == (10, [1, 2, 3, 4], 4, "a/b")
@@ -667,7 +731,7 @@ def test_what_cant_be_written_is_left_out_with_what_needs_it():
 
 
 def test_whats_provided_isnt_written_unless_its_rebound():
-    e = Engine()
+    e = Evaluator()
     e.start()
     e.provide("loop", object())
     assert e.write_session().names == []
@@ -676,7 +740,7 @@ def test_whats_provided_isnt_written_unless_its_rebound():
 
 
 def test_a_statement_that_fails_doesnt_stop_the_rest():
-    e = Engine()
+    e = Evaluator()
     result = e.load_session("a = 1\nb = undefined\nc = 3\n")
     assert result.note == "Loaded 2 of 3 statements"
     assert result.error == "line 2: NameError: name 'undefined' is not defined\n"
@@ -728,7 +792,7 @@ def test_a_session_is_opened_and_saved(repl):
                                 "notes.txt": b"kept"})
     item = SessionItem(saved, 3)
     repl.attach(item, item.package, item.generation)
-    assert repl.engine.namespace["twice"](4) == 8
+    assert repl.evaluator.evaluator.namespace["twice"](4) == 8
     assert repl.editor.history == ["def twice(n): ...", "seen = [1]"]
     assert "Loaded 2 of 2 statements, from 2 cells run" in repl.transcript.toPlainText()
     assert not repl.unsaved
@@ -792,9 +856,9 @@ PROGRAM = [
 ]
 
 
-def started(*cells: str) -> Engine:
-    """An engine with the REPL's prelude, which gives darq and terminal."""
-    e = Engine()
+def started(*cells: str) -> Evaluator:
+    """An evaluator with the REPL's prelude, which gives darq and terminal."""
+    e = Evaluator()
     e.start()
     for cell in cells:
         result = e.run(cell)
@@ -883,8 +947,7 @@ def extracting(repl):
 
 def test_extracting_makes_a_package(extracting):
     import darq.packages
-    darq_main = extracting.engine.session()
-    target = [b.target for b in extracting.engine.members(darq_main) if b.target.name == "darq_main"][0]
+    target = session_ref(extracting, "darq_main")
     assert "Extract package…" in dict(extracting.actions_for(target))
     extracting.answers["ask"] = ["tidy"]
     extracting.extract_package(target)
@@ -907,8 +970,7 @@ def test_extracting_makes_a_package(extracting):
 
 
 def test_a_name_that_cant_be_is_refused(extracting):
-    target = [b.target for b in extracting.engine.members(extracting.engine.session())
-              if b.target.name == "darq_main"][0]
+    target = session_ref(extracting, "darq_main")
     extracting.answers["ask"] = ["json"]
     extracting.extract_package(target)
     assert extracting.store.items == {}
@@ -918,8 +980,7 @@ def test_a_name_that_cant_be_is_refused(extracting):
 def test_whats_extracted_is_kept_with_the_session(extracting):
     import json
     import darq.packages
-    target = [b.target for b in extracting.engine.members(extracting.engine.session())
-              if b.target.name == "darq_main"][0]
+    target = session_ref(extracting, "darq_main")
     extracting.answers["ask"] = ["tidy"]
     extracting.extract_package(target)
     extracting.save_session()
@@ -927,7 +988,7 @@ def test_whats_extracted_is_kept_with_the_session(extracting):
     files = darq.packages.contents(item.package)
     assert json.loads(files["extracts.json"]) == extracting.extracts
 
-    again = window.Window(Engine())
+    again = window.Window(repl_module.Local())
     again.closing_quietly = True
     again.attach(item, item.package, item.generation)
     assert again.extracts == extracting.extracts
@@ -955,12 +1016,12 @@ def test_a_cell_calls_the_darq_api(live_pkernel, tmp_path):  # noqa: F811
     program = write_app(tmp_path / "repl", f"""
         import json
         import os
-        from darq.repl import Engine
+        from darq.repl import Evaluator
 
         def darq_main():
-            engine = Engine()
-            said = engine.start()
-            result = engine.run("darq.get_version().version != '', darq.getpid() > 0")
+            evaluator = Evaluator()
+            said = evaluator.start()
+            result = evaluator.run("darq.get_version().version != '', darq.getpid() > 0")
             with open({str(results)!r} + ".tmp", "w") as f:
                 json.dump({{"said": said, "value": result.value, "error": result.error}}, f)
             os.rename({str(results)!r} + ".tmp", {str(results)!r})
@@ -988,6 +1049,7 @@ def test_the_lens_uses_a_session(qt_app, monkeypatch):
     loop = types.SimpleNamespace(stop=lambda: stopped.append(True))
     lens = window.ReplLens(loop)
     lens.name_of = lambda item_id: "session"
+    lens.start_evaluator = repl_module.Local
 
     assert lens.use(UseRequest(item_id=SESSION, item=9), 0).status == Status.OK
     assert lens.window is not None and lens.window.windowTitle() == "session"
@@ -999,6 +1061,65 @@ def test_the_lens_uses_a_session(qt_app, monkeypatch):
     # Closed, the lens is done, and so is its item.
     lens.close(Close(), 0)
     assert stopped == [True] and item.closed
+
+
+def test_another_cell_waits_for_the_running_one(repl):
+    repl.running = True
+    repl.editor.setPlainText("1 + 1")
+    repl.editor.run()
+    assert repl.editor.toPlainText() == "1 + 1" and "[1]" not in repl.transcript.toPlainText()
+    assert repl.statusBar().currentMessage() == "A cell's running: Ctrl+G interrupts it"
+    repl.running = False
+    repl.editor.run()
+    assert "$1 = 2" in repl.transcript.toPlainText()
+
+
+def test_output_is_shown_as_its_printed(repl):
+    repl.editor.setPlainText("print('a')\nprint('b')\n7")
+    repl.editor.run()
+    assert "[1] print('a')\n    print('b')\n    7\na\nb\n$1 = 7" in repl.transcript.toPlainText()
+
+
+def test_a_restart_loads_the_session_as_saved(qt_app):
+    import darq.packages
+    saved = darq.packages.make({"main.py": "kept = 1\n"})
+    item = SessionItem(saved, 3)
+    shown = window.Window(repl_module.Local(), restart=repl_module.Local)
+    shown.closing_quietly = True
+    shown.attach(item, item.package, item.generation)
+    ran_in(shown, "lost = 2")
+    shown.restart("Restarted")
+    namespace = shown.evaluator.evaluator.namespace
+    assert namespace["kept"] == 1 and "lost" not in namespace
+    assert shown.editor.history[-1] == "lost = 2"
+    assert "Restarted: DarqOS" in shown.transcript.toPlainText()
+    shown.close()
+
+
+def test_the_lens_restarts_an_evaluator_that_dies(qt_app, monkeypatch):
+    import types
+    from darq.protocols.lens import UseRequest
+    item = SessionItem()
+    monkeypatch.setattr(window, "Python", types.SimpleNamespace(Client=lambda port, timeout=None: item))
+    lens = window.ReplLens(types.SimpleNamespace(stop=lambda: None))
+    lens.name_of = lambda item_id: "session"
+    made: list = []
+
+    def start():
+        made.append(repl_module.Local())
+        made[-1].handle = 40 + len(made)
+        return made[-1]
+
+    lens.start_evaluator = start
+    lens.use(UseRequest(item_id=SESSION, item=9), 0)
+    assert lens.window is not None
+    lens.port_destroyed(99)
+    assert len(made) == 1
+    lens.port_destroyed(41)
+    assert len(made) == 2 and lens.window.evaluator is made[1]
+    assert "The evaluator died, and was restarted" in lens.window.transcript.toPlainText()
+    lens.window.closing_quietly = True
+    lens.window.close()
 
 
 def test_a_lens_not_used_gives_up(monkeypatch):
@@ -1103,3 +1224,73 @@ def test_tab_completes_then_explains(repl):
     key(repl, tab)
     assert editor.toPlainText() == window.INDENT and not editor.help_popup.isVisible()
 
+
+
+################################################################
+# The evaluator process
+
+def test_the_evaluator_runs_cells_in_its_own_process(live_pkernel, tmp_path):  # noqa: F811
+    """A client starts an evaluator, as the REPL does, and asks it: it
+    runs cells on its main thread, sends their output as it's printed,
+    answers while a cell runs, and is interrupted."""
+    import pathlib
+    kernel = live_pkernel
+    evaluator = pathlib.Path(__file__).parent.parent / "lenses" / "repl" / "evaluator"
+    client_path = write_app(tmp_path / "client", f"""
+        import threading
+        import time
+        import darq
+        import darq.loop
+        import darq.repl
+
+        def darq_main():
+            loop = darq.loop.SelectEventLoop()
+            threading.Thread(target=loop.run, daemon=True).start()
+            remote = darq.repl.start_evaluator(loop, path={str(evaluator)!r})
+            seen = {{}}
+            seen["said"] = remote.start().startswith("DarqOS")
+            started, output, results = [], [], []
+            done = threading.Event()
+
+            def finished(result):
+                results.append(result)
+                done.set()
+
+            remote.run_cell("import threading\\nprint('hi')\\nthreading.current_thread() is threading.main_thread()",
+                       started.append, lambda stream, text: output.append((stream, text)), finished)
+            done.wait(20)
+            seen["first"] = (list(started), list(output), results[-1].shown, results[-1].stdout)
+
+            done.clear()
+            remote.run_cell("import time\\ntime.sleep(30)", started.append, lambda stream, text: None, finished)
+            time.sleep(1.0)
+            seen["while"] = remote.complete("threadi")[0]
+            try:
+                remote.save(dict(remote.tops())["Session"], "x = 1")
+                seen["busy"] = False
+            except darq.repl.BusyError:
+                seen["busy"] = True
+            seen["interrupted"] = remote.interrupt()
+            start = time.monotonic()
+            done.wait(10)
+            seen["quick"] = time.monotonic() - start < 5
+            seen["error"] = "KeyboardInterrupt" in (results[-1].error or "")
+
+            tops = dict(remote.tops())
+            seen["members"] = sorted(m.ref.name for m in remote.members(tops["Session"]) if m.ref.name in
+                                     ("threading", "time", "darq"))
+            remote.close()
+            expected = {{"said": True, "first": ([1], [("stdout", "hi\\n")], "True", ""), "while": ["threading"],
+                         "busy": True, "interrupted": True, "quick": True, "error": True,
+                         "members": ["darq", "threading", "time"]}}
+            return 0 if seen == expected else repr(seen)
+        """)
+    kernel.do_boot()
+    client = kernel._process_table[kernel.do_spawn_process(None, client_path)]
+    zombie = kernel.module.KernelProcessStatus.ZOMBIE
+    run_kernel_until(kernel, lambda: client.get_status() == zombie, "the client to exit")
+    assert (client.get_exit_status(), client.get_exit_error()) == (0, None)
+
+    # The evaluator ends with it.
+    evaluators = [p for p in kernel._process_table.values() if p._image_path == str(evaluator)]
+    run_kernel_until(kernel, lambda: all(p.get_status() == zombie for p in evaluators), "the evaluator to end")

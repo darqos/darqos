@@ -64,6 +64,7 @@ include = [
     "tools/vcard-import/*.py",
     "tools/update/*.py",
     "lenses/repl/*.py",
+    "lenses/repl/evaluator/*.py",
     "bench/*.py",
 ]
 line-length = 120
@@ -149,6 +150,7 @@ include = [
     "tools/vcard-import/*.py",
     "tools/update/*.py",
     "lenses/repl/*.py",
+    "lenses/repl/evaluator/*.py",
     "bench/*.py",
     "tests",
 ]

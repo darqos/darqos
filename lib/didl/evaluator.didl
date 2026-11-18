@@ -1,0 +1,177 @@
+// darqos
+// Copyright (C) 2026 David Arnold
+//
+// The REPL's evaluator: what its window asks of the process that holds
+// a session's namespace, and runs its cells (lenses/repl/evaluator).
+// See doc/repl.rst, "The evaluator".
+//
+// It's private to the REPL: the lens starts the evaluator, as its
+// child, which sends its port to the lens's bootstrap port, as a
+// lens's Ready does; it isn't registered.
+//
+// What runs code, a cell, a save, a rebuild, a delete, or loading a
+// session, runs on the evaluator's main thread, one at a time, as a
+// program's code does: anything else is answered at once, on another
+// thread, even while a cell runs, from the namespace as it is then.  A
+// target, a name where it's bound, is named by a ref's id, which the
+// evaluator keeps it by, till Tops is asked again, but for those it's
+// told to keep.
+
+library darq.repl.evaluator;
+
+enum Status : uint32 {
+    OK = 0;
+
+    // A cell's running: what runs code waits for it.
+    BUSY = 1;
+
+    // No such ref: it's been forgotten.
+    UNKNOWN = 2;
+
+    // It couldn't be done: the message says why.
+    FAILED = 3;
+}
+
+// A target: its id, its container's (with its name, it identifies it,
+// as long as its container lives), its name, and its path, for showing.
+struct Ref {
+    uint64 id;
+    uint64 container;
+    string name;
+    sequence<string> path;
+}
+
+// The tree's top level: Session, Results, and Built-ins.
+struct Top {
+    string label;
+    Ref ref;
+}
+
+// A name in a container, as the tree shows it.
+struct Member {
+    Ref ref;
+    string kind;
+    string type_name;
+    bool expandable;
+}
+
+// What a run, a save, a rebuild, a delete, or a load did: its number,
+// as a cell; what it printed, unless that was sent as it was; its value,
+// as the transcript shows it, if it has one; its error, if it failed
+// (failed says so, as an error can be empty); what it edited; and a
+// note.
+struct Result {
+    uint32 number;
+    string stdout;
+    string stderr;
+    bool has_value;
+    string shown;
+    bool failed;
+    string error;
+    string edited;
+    string note;
+}
+
+// What a target's editor shows: its source, whether it can be saved,
+// and why not, if it can't.
+struct Source {
+    string text;
+    bool editable;
+    string why;
+}
+
+// A name left out of what's written, and why.
+struct LeftOut {
+    string name;
+    string why;
+}
+
+// A session's code, or a package's, as a module; what's left out of it;
+// and the names written, in order.
+struct Written {
+    string text;
+    sequence<LeftOut> left_out;
+    sequence<string> names;
+}
+
+// A name's signatures, and docstring.
+struct Help {
+    string name;
+    sequence<string> signatures;
+    string docstring;
+}
+
+// What can be done to a target, from the tree.
+struct Actions {
+    bool add_member;
+    bool rebuild;
+    bool whole_class;
+    bool extract;
+    bool delete;
+}
+
+protocol Evaluator {
+    // Run the prelude, once: what to say of it.
+    1: Start() -> (string said);
+
+    // Run a cell, after any before it: it returns at once, and the
+    // listener, which serves Listener, is told when it starts, and its
+    // number, what it prints, as it does, and its result.
+    2: Run(string source, port listener) -> (Status status);
+
+    // Interrupt what's running, with a KeyboardInterrupt: whether
+    // anything was.
+    3: Interrupt() -> (bool running);
+
+    // Whether source is a whole cell, or broken; its completions at its
+    // end, and the length of the partial name they replace; and help for
+    // its end, if it has any.
+    4: IsComplete(string source) -> (bool complete);
+    5: Complete(string before) -> (sequence<string> names, uint32 prefix);
+    6: Help(string before) -> (bool found, Help help);
+
+    // The tree: its top level, forgetting the refs given out before,
+    // but those to keep; a target's members; its source, or its class's,
+    // whole; what can be done to it; and a new member of its class.
+    7: Tops(sequence<uint64> keep) -> (sequence<Top> tops);
+    8: Members(uint64 ref, bool private) -> (sequence<Member> members, Status status);
+    9: SourceOf(uint64 ref) -> (Source source, Status status);
+    10: WholeClass(uint64 ref) -> (string text, Status status);
+    11: Actions(uint64 ref) -> (Actions actions, Status status);
+    12: NewMember(uint64 ref) -> (Ref ref, Status status);
+
+    // Change a target, as a numbered cell: save its edited source,
+    // rebuild a class from its members' sources, or delete it.
+    13: Save(uint64 ref, string text) -> (Result result, Status status, string message);
+    14: Rebuild(uint64 ref) -> (Result result, Status status, string message);
+    15: Delete(uint64 ref) -> (Result result, Status status, string message);
+
+    // The session's code, as a module; load a session's code; and a
+    // function's, or a class's, with what it needs, as a package's.
+    16: WriteSession() -> (Written written, Status status);
+    17: LoadSession(string text) -> (Result result, Status status);
+    18: Extract(string root) -> (Written written, Status status);
+
+    // The cells run, as the session keeps them.
+    19: History() -> (sequence<string> cells);
+    20: SetHistory(sequence<string> cells) -> (Status status);
+}
+
+// Served by what runs a cell, to hear it.  One-way.
+protocol Listener {
+    // It's started, as the cell numbered.
+    1: Started(uint32 number);
+
+    // What it printed, to stdout or stderr.
+    2: Output(string stream, string text);
+
+    // It's finished.
+    3: Finished(Result result);
+}
+
+// Served by what starts an evaluator, on the bootstrap port it gives
+// it.  One-way.
+protocol Starter {
+    // The evaluator's port: it's ready.
+    1: Ready(port evaluator);
+}

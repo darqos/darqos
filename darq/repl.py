@@ -1,9 +1,14 @@
 # darqos
 # Copyright (C) 2026 David Arnold
 
-"""The REPL's engine: Python, run a cell at a time, in one namespace, by
-the REPL's window (tools/repl), as a DarqOS process, so its cells can use
-the darq API.  See doc/repl.rst.
+"""The REPL's evaluator: Python, run a cell at a time, in one namespace,
+so its cells can use the darq API.  See doc/repl.rst.
+
+It runs in a process of its own, the evaluator (lenses/repl/evaluator),
+which serves it to the REPL's window (lenses/repl) over its protocol
+(lib/didl/evaluator.didl): Served is the Evaluator asked by ids and plain
+records, Service serves it, Remote asks it, and Local is Served asked as
+Remote is, in-process, for tests.
 
 A cell's last expression is its result, numbered: ``$3`` is cell 3's.
 Completion is jedi's, against the live namespace, as is help: a name's
@@ -27,10 +32,17 @@ import importlib
 import inspect
 import io
 import linecache
+import logging
+import os
+import pathlib
 import pprint
+import queue
 import re
+import signal
 import symtable
 import textwrap
+import threading
+import time
 import tokenize
 import traceback
 import types
@@ -40,10 +52,16 @@ from dataclasses import dataclass
 
 import jedi
 
+import darq
+import darq.dipc
+import darq.loop
+from darq.protocols import evaluator as wire
+
 
 # Control exports
-__all__ = ["Binding", "CLASS", "Engine", "FUNCTION", "Help", "MODULE", "PRELUDE", "PROPERTY", "Result", "Results",
-           "SOURCE", "Source", "Target", "VARIABLE", "Written", "kind_of", "needs", "rewrite"]
+__all__ = ["Actions", "Binding", "CLASS", "Evaluator", "FUNCTION", "Help", "MODULE", "Member", "PRELUDE",
+           "Local", "PROPERTY", "Ref", "Remote", "Result", "Results", "SOURCE", "Served", "Service", "Source", "Target",
+           "VARIABLE", "Written", "kind_of", "needs", "rewrite", "shown", "start_evaluator"]
 
 # What the REPL is, as the source of what it makes, in History.
 SOURCE = "repl"
@@ -112,6 +130,10 @@ class Result:
     error: str | None = None
     edited: str = ""
     note: str = ""
+
+    # Its value, as the transcript shows it: pretty-printed, here, where
+    # the value is.
+    shown: str = ""
 
 
 # What a name's bound to.
@@ -260,7 +282,7 @@ def _cell_frames(tb):
     return tb
 
 
-class Engine:
+class Evaluator:
     """The interpreter: a namespace, and numbered cells run in it."""
 
     def __init__(self) -> None:
@@ -317,15 +339,24 @@ class Engine:
         self.namespace[name] = value
         self.provided[name] = value
 
-    def run(self, source: str) -> Result:
-        """Run a cell.  A final expression's value becomes its result."""
+    def run(self, source: str, write: typing.Callable[[str, str], None] | None = None) -> Result:
+        """Run a cell.  A final expression's value becomes its result.
+
+        :param write: Told what it prints, as it prints it, with the
+                      stream's name, "stdout" or "stderr": the result's
+                      own stdout and stderr are then empty."""
         self.history.append(source)
         self.count += 1
         n = self.count
         filename = f"<cell {n}>"
         linecache.cache[filename] = (len(source), None, source.splitlines(keepends=True), filename)
         result = Result(n)
-        stdout, stderr = io.StringIO(), io.StringIO()
+        stdout: io.TextIOBase
+        stderr: io.TextIOBase
+        if write is None:
+            stdout, stderr = io.StringIO(), io.StringIO()
+        else:
+            stdout, stderr = _Stream("stdout", write), _Stream("stderr", write)
         statements: list[ast.stmt] = []
         rewritten = source
         with redirect_stdout(stdout), redirect_stderr(stderr):
@@ -343,6 +374,7 @@ class Engine:
                     if value is not None:
                         result.value = value
                         result.has_value = True
+                        result.shown = shown(value)
                         self.out[n] = value
                         self.namespace["_"] = value
             except BaseException as e:
@@ -352,8 +384,9 @@ class Engine:
             if result.error is not None:
                 # What it defined before it failed.
                 self.record(self.namespace, statements, rewritten, filename, assignments=False)
-        result.stdout = stdout.getvalue()
-        result.stderr = stderr.getvalue()
+        if write is None:
+            result.stdout = typing.cast(io.StringIO, stdout).getvalue()
+            result.stderr = typing.cast(io.StringIO, stderr).getvalue()
         return result
 
     # The sources of what's defined
@@ -933,6 +966,758 @@ class Engine:
             return None
         return Help(signatures[0].name, tuple(dict.fromkeys(s.to_string() for s in signatures)),
                     signatures[0].docstring(raw=True))
+
+
+class _Stream(io.TextIOBase):
+    """A cell's stdout, or stderr, told to a function as it's written."""
+
+    def __init__(self, name: str, write: typing.Callable[[str, str], None]):
+        self._name = name
+        self._write = write
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, text: str) -> int:
+        if text:
+            self._write(self._name, text)
+        return len(text)
+
+
+def shown(value: typing.Any) -> str:
+    """A value as the transcript shows it."""
+    try:
+        return pprint.pformat(value, width=100)
+    except Exception as e:
+        return f"<repr failed: {e!r}>"
+
+
+################################################################
+# Served: an Evaluator, as it's asked over its protocol
+
+@dataclass(frozen=True)
+class Ref:
+    """A target, as it's named outside the evaluator: by an id, which
+    Served keeps it by.  Its container's only identified, by its id
+    there, so that drafts can be kept by key(), as targets are."""
+    id: int
+    container: int
+    name: str
+    path: tuple[str, ...]
+
+    @property
+    def label(self) -> str:
+        return ".".join(self.path)
+
+    def key(self) -> tuple[int, str]:
+        return self.container, self.name
+
+
+@dataclass(frozen=True)
+class Member:
+    """A binding, as the tree shows it, by Ref."""
+    ref: Ref
+    kind: str
+    type_name: str
+    expandable: bool
+
+
+@dataclass(frozen=True)
+class Actions:
+    """What can be done to a target, from the tree: a class defined in a
+    cell can have a member added, and be rebuilt; any class can be read
+    whole; a session's function, or class, can be extracted; and what's
+    the session's, or a cell's class's, or an object's, deleted."""
+    add_member: bool = False
+    rebuild: bool = False
+    whole_class: bool = False
+    extract: bool = False
+    delete: bool = False
+
+
+class Served:
+    """An Evaluator, as its protocol asks of it (lib/didl/evaluator.didl):
+    by Refs, and plain records, not live objects.  The REPL's evaluator
+    process serves it; tests use it directly.
+
+    It keeps each Target it's given out a Ref for till tops() is asked
+    again, but for those it's told to keep, such as drafts'."""
+
+    def __init__(self, evaluator: "Evaluator | None" = None):
+        self.evaluator = evaluator if evaluator is not None else Evaluator()
+        self.targets: dict[int, Target] = {}
+        self.count = 0
+
+    def ref(self, target: Target) -> Ref:
+        for n, known in self.targets.items():
+            if known.key() == target.key() and known.path == target.path:
+                return Ref(n, id(target.container), target.name, target.path)
+        self.count += 1
+        self.targets[self.count] = target
+        return Ref(self.count, id(target.container), target.name, target.path)
+
+    def target(self, ref: "Ref | int") -> Target:
+        """The target a Ref names.
+
+        :raises KeyError: if it's not known, or no longer."""
+        return self.targets[ref if isinstance(ref, int) else ref.id]
+
+    # Running
+
+    def start(self, prelude: str = PRELUDE) -> str:
+        return self.evaluator.start(prelude)
+
+    def run(self, source: str, write: typing.Callable[[str, str], None] | None = None) -> Result:
+        result = self.evaluator.run(source, write)
+        result.value = None
+        return result
+
+    def is_complete(self, source: str) -> bool:
+        return self.evaluator.is_complete(source)
+
+    def complete(self, before: str) -> tuple[list[str], int]:
+        return self.evaluator.complete(before)
+
+    def help(self, before: str) -> "Help | None":
+        return self.evaluator.help(before)
+
+    @property
+    def history(self) -> list[str]:
+        return self.evaluator.history
+
+    @history.setter
+    def history(self, cells: list[str]):
+        self.evaluator.history = list(cells)
+
+    # Browsing
+
+    def tops(self, keep: typing.Iterable[int] = ()) -> list[tuple[str, Ref]]:
+        """The tree's top level: the session, the results, and the
+        built-ins.  Refs given out before are forgotten, but those to
+        keep."""
+        kept = set(keep)
+        self.targets = {n: t for n, t in self.targets.items() if n in kept}
+        e = self.evaluator
+        return [("Session", self.ref(e.session())),
+                ("Results", self.ref(Target(e.namespace, "_out", ("Results",)))),
+                ("Built-ins", self.ref(e.builtins()))]
+
+    def members(self, ref: "Ref | int", private: bool = False) -> list[Member]:
+        return [Member(self.ref(b.target), b.kind, b.type_name, b.expandable)
+                for b in self.evaluator.members(self.target(ref), private)]
+
+    def source_of(self, ref: "Ref | int") -> "Source":
+        return self.evaluator.source_of(self.target(ref))
+
+    def whole_class(self, ref: "Ref | int") -> str:
+        return self.evaluator.whole_class(self.target(ref))
+
+    def actions(self, ref: "Ref | int") -> Actions:
+        target = self.target(ref)
+        e = self.evaluator
+        value = e.lookup(target.container, target.name)
+        is_class = kind_of(value) == CLASS and bool(target.name)
+        cells = is_class and id(value) in e.headers
+        container = target.container
+        deletable = (e.is_session(container) or id(container) in e.headers
+                     or not (inspect.isclass(container) or inspect.ismodule(container)
+                             or isinstance(container, (dict, Results))))
+        return Actions(add_member=cells, rebuild=cells, whole_class=is_class,
+                       extract=e.is_session(container) and kind_of(value) in (FUNCTION, CLASS) and bool(target.name),
+                       delete=bool(target.name) and deletable and not target.name.startswith("$"))
+
+    def new_member(self, ref: "Ref | int") -> Ref:
+        """A new member of a cell's class: a target with no name, till
+        it's saved."""
+        target = self.target(ref)
+        value = self.evaluator.lookup(target.container, target.name)
+        return self.ref(Target(value, "", (*target.path, "")))
+
+    # Editing
+
+    def save(self, ref: "Ref | int", text: str) -> Result:
+        return self.evaluator.save(self.target(ref), text)
+
+    def rebuild(self, ref: "Ref | int") -> Result:
+        return self.evaluator.rebuild(self.target(ref))
+
+    def delete(self, ref: "Ref | int") -> Result:
+        return self.evaluator.delete(self.target(ref))
+
+    # Sessions
+
+    def write_session(self) -> "Written":
+        return self.evaluator.write_session()
+
+    def load_session(self, text: str) -> Result:
+        return self.evaluator.load_session(text)
+
+    def extract(self, root: str) -> "Written":
+        return self.evaluator.extract(root)
+
+
+################################################################
+# The evaluator process: Served, over its protocol
+
+# Where the REPL's evaluator is, as a program; and how long to wait for it
+# to start, and to answer what doesn't run code.
+EVALUATOR = str(pathlib.Path(__file__).resolve().parent.parent / "lenses" / "repl" / "evaluator")
+START_TIMEOUT = 30.0
+TIMEOUT = 10.0
+
+# How long what a cell prints is held, to be sent with what follows it.
+OUTPUT_DELAY = 0.05
+
+
+class BusyError(darq.errors.DarqError):
+    """A cell's running: what runs code waits for it."""
+
+
+def to_wire_ref(ref: Ref) -> wire.Ref:
+    return wire.Ref(id=ref.id, container=ref.container, name=ref.name, path=list(ref.path))
+
+
+def from_wire_ref(ref: wire.Ref | None) -> Ref:
+    assert ref is not None
+    return Ref(ref.id, ref.container, ref.name, tuple(ref.path))
+
+
+def to_wire_result(result: Result) -> wire.Result:
+    return wire.Result(number=result.number, stdout=result.stdout, stderr=result.stderr, has_value=result.has_value,
+                       shown=result.shown, failed=result.error is not None, error=result.error or "",
+                       edited=result.edited, note=result.note)
+
+
+def from_wire_result(result: wire.Result | None) -> Result:
+    assert result is not None
+    return Result(result.number, stdout=result.stdout, stderr=result.stderr, has_value=result.has_value,
+                  error=result.error if result.failed else None, edited=result.edited, note=result.note,
+                  shown=result.shown)
+
+
+def to_wire_written(written: "Written") -> wire.Written:
+    return wire.Written(text=written.text, left_out=[wire.LeftOut(name=n, why=w) for n, w in written.left_out],
+                        names=list(written.names))
+
+
+def from_wire_written(written: wire.Written | None) -> "Written":
+    assert written is not None
+    return Written(written.text, [(o.name, o.why) for o in written.left_out], list(written.names))
+
+
+class _Output:
+    """What a cell prints, sent to its listener: held for OUTPUT_DELAY,
+    so that what's printed together is sent together."""
+
+    def __init__(self, listener: wire.Listener.Client):
+        self.listener = listener
+        self.lock = threading.Lock()
+        self.held: list[tuple[str, str]] = []
+        self.timer: threading.Timer | None = None
+
+    def write(self, stream: str, text: str):
+        with self.lock:
+            if self.held and self.held[-1][0] == stream:
+                self.held[-1] = (stream, self.held[-1][1] + text)
+            else:
+                self.held.append((stream, text))
+            if self.timer is None:
+                self.timer = threading.Timer(OUTPUT_DELAY, self.flush)
+                self.timer.daemon = True
+                self.timer.start()
+
+    def flush(self):
+        with self.lock:
+            if self.timer is not None:
+                self.timer.cancel()
+                self.timer = None
+            held, self.held = self.held, []
+            for stream, text in held:
+                try:
+                    self.listener.output(stream=stream, text=text)
+                except darq.errors.DarqError as e:
+                    logging.info(f"Can't send a cell's output: {e}")
+                    return
+
+
+class Service(wire.Evaluator.Handler):
+    """Serves Served, as the REPL's evaluator: what runs code, on the
+    thread that calls serve(), the program's main thread, one at a time;
+    and anything else at once, on the protocol's thread.
+
+    A port it's told is dead, the lens's, ends it."""
+
+    def __init__(self, served: Served):
+        super().__init__()
+        self.served = served
+        self.jobs: queue.Queue[typing.Callable[[], None] | None] = queue.Queue()
+        self.lock = threading.Lock()
+        self.pending = 0
+        self.main: int | None = None
+
+    # The main thread
+
+    def serve(self):
+        """Run what's asked, till it's ended.  Called on the main thread:
+        an interrupt is a SIGINT to it."""
+        self.main = threading.get_ident()
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        while True:
+            try:
+                job = self.jobs.get()
+            except KeyboardInterrupt:
+                logging.info("Interrupted between cells")
+                continue
+            if job is None:
+                return
+            try:
+                job()
+            except KeyboardInterrupt:
+                logging.info("Interrupted between cells")
+            except Exception:
+                logging.exception("A job failed")
+            finally:
+                with self.lock:
+                    self.pending -= 1
+
+    def queue(self, job: typing.Callable[[], None]):
+        with self.lock:
+            self.pending += 1
+        self.jobs.put(job)
+
+    def busy(self) -> bool:
+        with self.lock:
+            return self.pending > 0
+
+    def end(self):
+        """Stop, even if a cell's running."""
+        self.jobs.put(None)
+        self.interrupt_main()
+
+        def last():
+            time.sleep(2.0)
+            logging.info("The evaluator didn't stop: exiting")
+            os._exit(0)
+
+        threading.Thread(target=last, daemon=True).start()
+
+    def interrupt_main(self) -> bool:
+        if self.main is None or not self.busy():
+            return False
+        signal.pthread_kill(self.main, signal.SIGINT)
+        return True
+
+    def port_destroyed(self, handle: int):
+        logging.info("The REPL's gone: the evaluator's ending")
+        self.end()
+
+    # What runs code
+
+    def start(self, request: wire.StartRequest, source: int) -> wire.StartResponse | darq.Deferred:
+        deferred = self.defer()
+        self.queue(lambda: deferred.reply(wire.StartResponse(said=self.served.start())))
+        return deferred
+
+    def run(self, request: wire.RunRequest, source: int) -> wire.RunResponse:
+        if request.listener is None:
+            return wire.RunResponse(status=wire.Status.FAILED)
+        listener = request.listener
+        text = request.source
+
+        def job():
+            client = wire.Listener.Client(listener)
+            output = _Output(client)
+            try:
+                client.started(number=self.served.evaluator.count + 1)
+            except darq.errors.DarqError as e:
+                logging.info(f"Can't say a cell's started: {e}")
+            try:
+                result = self.served.run(text, output.write)
+            finally:
+                output.flush()
+            for attempt in range(2):
+                try:
+                    client.finished(result=to_wire_result(result))
+                    break
+                except KeyboardInterrupt:
+                    continue
+                except darq.errors.DarqError as e:
+                    logging.info(f"Can't say a cell's finished: {e}")
+                    break
+            # The listener's handle isn't closed: each run's is the same
+            # handle, as the REPL listens on one port, so closing it after
+            # one run could close it under the next.
+
+        self.queue(job)
+        return wire.RunResponse(status=wire.Status.OK)
+
+    def interrupt(self, request: wire.InterruptRequest, source: int) -> wire.InterruptResponse:
+        return wire.InterruptResponse(running=self.interrupt_main())
+
+    def changing(self, deferred: darq.Deferred, response: type, change: typing.Callable[[], Result]):
+        """Run a change to a target on the main thread, and reply with
+        its result."""
+
+        def job():
+            try:
+                result = change()
+            except KeyError:
+                deferred.reply(response(status=wire.Status.UNKNOWN))
+                return
+            except Exception as e:
+                deferred.reply(response(status=wire.Status.FAILED, message=str(e)))
+                return
+            deferred.reply(response(result=to_wire_result(result), status=wire.Status.OK))
+
+        self.queue(job)
+        return deferred
+
+    def save(self, request: wire.SaveRequest, source: int) -> wire.SaveResponse | darq.Deferred:
+        if self.busy():
+            return wire.SaveResponse(status=wire.Status.BUSY)
+        return self.changing(self.defer(), wire.SaveResponse, lambda: self.served.save(request.ref, request.text))
+
+    def rebuild(self, request: wire.RebuildRequest, source: int) -> wire.RebuildResponse | darq.Deferred:
+        if self.busy():
+            return wire.RebuildResponse(status=wire.Status.BUSY)
+        return self.changing(self.defer(), wire.RebuildResponse, lambda: self.served.rebuild(request.ref))
+
+    def delete(self, request: wire.DeleteRequest, source: int) -> wire.DeleteResponse | darq.Deferred:
+        if self.busy():
+            return wire.DeleteResponse(status=wire.Status.BUSY)
+        return self.changing(self.defer(), wire.DeleteResponse, lambda: self.served.delete(request.ref))
+
+    def load_session(self, request: wire.LoadSessionRequest, source: int) -> wire.LoadSessionResponse | darq.Deferred:
+        if self.busy():
+            return wire.LoadSessionResponse(status=wire.Status.BUSY)
+        deferred = self.defer()
+        text = request.text
+        self.queue(lambda: deferred.reply(wire.LoadSessionResponse(
+            result=to_wire_result(self.served.load_session(text)), status=wire.Status.OK)))
+        return deferred
+
+    # What's answered at once
+
+    def is_complete(self, request: wire.IsCompleteRequest, source: int) -> wire.IsCompleteResponse:
+        return wire.IsCompleteResponse(complete=self.served.is_complete(request.source))
+
+    def complete(self, request: wire.CompleteRequest, source: int) -> wire.CompleteResponse:
+        names, prefix = self.served.complete(request.before)
+        return wire.CompleteResponse(names=names, prefix=prefix)
+
+    def help(self, request: wire.HelpRequest, source: int) -> wire.HelpResponse:
+        found = self.served.help(request.before)
+        if found is None:
+            return wire.HelpResponse(found=False, help=wire.Help())
+        return wire.HelpResponse(found=True, help=wire.Help(name=found.name, signatures=list(found.signatures),
+                                                            docstring=found.docstring))
+
+    def tops(self, request: wire.TopsRequest, source: int) -> wire.TopsResponse:
+        return wire.TopsResponse(tops=[wire.Top(label=label, ref=to_wire_ref(ref))
+                                       for label, ref in self.served.tops(request.keep)])
+
+    def members(self, request: wire.MembersRequest, source: int) -> wire.MembersResponse:
+        try:
+            members = self.served.members(request.ref, request.private)
+        except KeyError:
+            return wire.MembersResponse(status=wire.Status.UNKNOWN)
+        return wire.MembersResponse(members=[wire.Member(ref=to_wire_ref(m.ref), kind=m.kind, type_name=m.type_name,
+                                                         expandable=m.expandable) for m in members],
+                                    status=wire.Status.OK)
+
+    def source_of(self, request: wire.SourceOfRequest, source: int) -> wire.SourceOfResponse:
+        try:
+            found = self.served.source_of(request.ref)
+        except KeyError:
+            return wire.SourceOfResponse(status=wire.Status.UNKNOWN)
+        return wire.SourceOfResponse(source=wire.Source(text=found.text, editable=found.editable, why=found.why),
+                                     status=wire.Status.OK)
+
+    def whole_class(self, request: wire.WholeClassRequest, source: int) -> wire.WholeClassResponse:
+        try:
+            return wire.WholeClassResponse(text=self.served.whole_class(request.ref),
+                                           status=wire.Status.OK)
+        except KeyError:
+            return wire.WholeClassResponse(status=wire.Status.UNKNOWN)
+
+    def actions(self, request: wire.ActionsRequest, source: int) -> wire.ActionsResponse:
+        try:
+            found = self.served.actions(request.ref)
+        except KeyError:
+            return wire.ActionsResponse(status=wire.Status.UNKNOWN)
+        return wire.ActionsResponse(actions=wire.Actions(add_member=found.add_member, rebuild=found.rebuild,
+                                                         whole_class=found.whole_class, extract=found.extract,
+                                                         delete=found.delete), status=wire.Status.OK)
+
+    def new_member(self, request: wire.NewMemberRequest, source: int) -> wire.NewMemberResponse:
+        try:
+            return wire.NewMemberResponse(ref=to_wire_ref(self.served.new_member(request.ref)),
+                                          status=wire.Status.OK)
+        except KeyError:
+            return wire.NewMemberResponse(status=wire.Status.UNKNOWN)
+
+    def write_session(self, request: wire.WriteSessionRequest, source: int) -> wire.WriteSessionResponse:
+        return wire.WriteSessionResponse(written=to_wire_written(self.served.write_session()), status=wire.Status.OK)
+
+    def extract(self, request: wire.ExtractRequest, source: int) -> wire.ExtractResponse:
+        return wire.ExtractResponse(written=to_wire_written(self.served.extract(request.root)), status=wire.Status.OK)
+
+    def history(self, request: wire.HistoryRequest, source: int) -> wire.HistoryResponse:
+        return wire.HistoryResponse(cells=list(self.served.history))
+
+    def set_history(self, request: wire.SetHistoryRequest, source: int) -> wire.SetHistoryResponse:
+        self.served.history = list(request.cells)
+        return wire.SetHistoryResponse(status=wire.Status.OK)
+
+
+class _Listening(wire.Listener.Handler):
+    """Hears a running cell, for Remote."""
+
+    def __init__(self, remote: "Remote"):
+        super().__init__()
+        self.remote = remote
+
+    def started(self, request: wire.Started, source: int) -> None:
+        if self.remote.on_started is not None:
+            self.remote.on_started(request.number)
+
+    def output(self, request: wire.Output, source: int) -> None:
+        if self.remote.on_output is not None:
+            self.remote.on_output(request.stream, request.text)
+
+    def finished(self, request: wire.Finished, source: int) -> None:
+        done, self.remote.on_finished = self.remote.on_finished, None
+        self.remote.on_started = self.remote.on_output = None
+        if done is not None:
+            done(from_wire_result(request.result))
+
+
+class Local(Served):
+    """Served, asked as a Remote is, in-process: run() tells what it's
+    run as it runs, then returns.  Tests use it in the REPL's place."""
+
+    def run_cell(self, source: str, on_started: typing.Callable[[int], None],
+                 on_output: typing.Callable[[str, str], None], on_finished: typing.Callable[[Result], None]):
+        on_started(self.evaluator.count + 1)
+        on_finished(self.run(source, on_output))
+
+    def interrupt(self) -> bool:
+        return False
+
+    def close(self):
+        pass
+
+
+def check(status: wire.Status, what: str, message: str = ""):
+    """Raise for a status other than OK.
+
+    :raises KeyError: for UNKNOWN, a forgotten ref.
+    :raises BusyError: for BUSY.
+    :raises darq.errors.DarqError: for FAILED."""
+    if status == wire.Status.OK:
+        return
+    if status == wire.Status.UNKNOWN:
+        raise KeyError(what)
+    if status == wire.Status.BUSY:
+        raise BusyError(f"{what}: a cell's running")
+    raise darq.errors.DarqError(f"{what}: {message or status.name}")
+
+
+class Remote:
+    """An evaluator process, as Served is in-process: what the REPL's
+    window asks of it.  But run() is asynchronous: what's printed, and the
+    result, are told on the loop it's given."""
+
+    def __init__(self, handle: int, loop: darq.loop.EventLoopInterface, dpid: int = 0, bootstrap: int | None = None):
+        """Constructor.
+
+        :param bootstrap: The port it was started with, which it watches:
+                          it ends when that's closed, as by close()."""
+        self.handle = handle
+        self.dpid = dpid
+        self.bootstrap = bootstrap
+        self.asking = wire.Evaluator.Client(handle, timeout=TIMEOUT)
+        self.running = wire.Evaluator.Client(handle, timeout=None)
+        self.on_started: typing.Callable[[int], None] | None = None
+        self.on_output: typing.Callable[[str, str], None] | None = None
+        self.on_finished: typing.Callable[[Result], None] | None = None
+        self.listener = darq.open_port()
+        self.server = darq.Server()
+        self.server.add(self.listener, _Listening(self))
+        self.server.attach(loop)
+
+    def close(self):
+        """Stop hearing it, and end it."""
+        for handle in (self.listener, self.handle, self.bootstrap):
+            if handle is None:
+                continue
+            try:
+                darq.close_port(handle)
+            except darq.errors.DarqError:
+                pass
+        if self.dpid:
+            try:
+                darq.kill_process(self.dpid)
+            except darq.errors.DarqError:
+                pass
+
+    def start(self) -> str:
+        return self.running.start().said
+
+    def run_cell(self, source: str, on_started: typing.Callable[[int], None],
+                 on_output: typing.Callable[[str, str], None], on_finished: typing.Callable[[Result], None]):
+        """Run a cell: it's told on the loop when it starts, with its
+        number, what it prints, and its result."""
+        self.on_started, self.on_output, self.on_finished = on_started, on_output, on_finished
+        check(self.asking.run(source=source, listener=self.listener).status, "run")
+
+    def interrupt(self) -> bool:
+        return self.asking.interrupt().running
+
+    def is_complete(self, source: str) -> bool:
+        return self.asking.is_complete(source=source).complete
+
+    def complete(self, before: str) -> tuple[list[str], int]:
+        found = self.asking.complete(before=before)
+        return list(found.names), found.prefix
+
+    def help(self, before: str) -> Help | None:
+        found = self.asking.help(before=before)
+        if not found.found or found.help is None:
+            return None
+        return Help(found.help.name, tuple(found.help.signatures), found.help.docstring)
+
+    @property
+    def history(self) -> list[str]:
+        return list(self.asking.history().cells)
+
+    @history.setter
+    def history(self, cells: list[str]):
+        check(self.asking.set_history(cells=list(cells)).status, "set the history")
+
+    def tops(self, keep: typing.Iterable[int] = ()) -> list[tuple[str, Ref]]:
+        return [(top.label, from_wire_ref(top.ref)) for top in self.asking.tops(keep=list(keep)).tops]
+
+    def members(self, ref: Ref, private: bool = False) -> list[Member]:
+        found = self.asking.members(ref=ref.id, private=private)
+        check(found.status, ref.label)
+        return [Member(from_wire_ref(m.ref), m.kind, m.type_name, m.expandable) for m in found.members]
+
+    def source_of(self, ref: Ref) -> Source:
+        found = self.asking.source_of(ref=ref.id)
+        check(found.status, ref.label)
+        assert found.source is not None
+        return Source(found.source.text, found.source.editable, found.source.why)
+
+    def whole_class(self, ref: Ref) -> str:
+        found = self.asking.whole_class(ref=ref.id)
+        check(found.status, ref.label)
+        return found.text
+
+    def actions(self, ref: Ref) -> Actions:
+        found = self.asking.actions(ref=ref.id)
+        check(found.status, ref.label)
+        a = found.actions
+        assert a is not None
+        return Actions(a.add_member, a.rebuild, a.whole_class, a.extract, a.delete)
+
+    def new_member(self, ref: Ref) -> Ref:
+        found = self.asking.new_member(ref=ref.id)
+        check(found.status, ref.label)
+        return from_wire_ref(found.ref)
+
+    def save(self, ref: Ref, text: str) -> Result:
+        found = self.running.save(ref=ref.id, text=text)
+        check(found.status, f"save {ref.label}", found.message)
+        return from_wire_result(found.result)
+
+    def rebuild(self, ref: Ref) -> Result:
+        found = self.running.rebuild(ref=ref.id)
+        check(found.status, f"rebuild {ref.label}", found.message)
+        return from_wire_result(found.result)
+
+    def delete(self, ref: Ref) -> Result:
+        found = self.running.delete(ref=ref.id)
+        check(found.status, f"delete {ref.label}", found.message)
+        return from_wire_result(found.result)
+
+    def write_session(self) -> "Written":
+        found = self.asking.write_session()
+        check(found.status, "write the session")
+        return from_wire_written(found.written)
+
+    def load_session(self, text: str) -> Result:
+        found = self.running.load_session(text=text)
+        check(found.status, "load the session")
+        return from_wire_result(found.result)
+
+    def extract(self, root: str) -> "Written":
+        found = self.asking.extract(root=root)
+        check(found.status, f"extract {root}")
+        return from_wire_written(found.written)
+
+
+def start_evaluator(loop: darq.loop.EventLoopInterface, notify: int | None = None,
+                    path: str = EVALUATOR, timeout: float = START_TIMEOUT) -> Remote:
+    """Start an evaluator process, as this one's child, and wait for it to
+    be Ready.
+
+    :param loop: Where a running cell's output, and result, are told.
+    :param notify: A port to be told, PortDestroyed, when it ends.
+    :raises darq.errors.DarqError: if it can't be started, or isn't Ready
+                                   in time."""
+    bootstrap = darq.open_port()
+    ready = None
+    try:
+        dpid = darq.spawn_process(path, bootstrap=bootstrap)
+        deadline = time.monotonic() + timeout
+        while True:
+            message = darq.receive_message(bootstrap, timeout=max(0.0, deadline - time.monotonic()))
+            if message is None:
+                darq.kill_process(dpid)
+                raise darq.errors.DarqError(f"The evaluator wasn't Ready within {timeout}s")
+            source, payload, handles = message
+            if darq.system.decode_port_destroyed(source, payload) is not None:
+                continue
+            ready = wire.Ready()
+            try:
+                if darq.dipc.decode_method(payload) != ready.METHOD:
+                    continue
+                ready.decode(payload, handles)
+            except darq.errors.MessageDecodingError:
+                continue
+            if ready.evaluator is not None:
+                break
+    finally:
+        # It watches the bootstrap port, and ends when it's closed: it's
+        # kept open, by the Remote, till it's closed.
+        if ready is None or ready.evaluator is None:
+            darq.close_port(bootstrap)
+    assert ready is not None and ready.evaluator is not None
+    if notify is not None:
+        darq.notify_on_death(ready.evaluator, notify)
+    return Remote(ready.evaluator, loop, dpid, bootstrap)
+
+
+def evaluator_main() -> int:
+    """The evaluator process's darq_main (lenses/repl/evaluator): serve
+    Served to the REPL that started it, and run what it asks on this, the
+    main thread."""
+    bootstrap = darq.get_bootstrap_port()
+    if bootstrap is None:
+        logging.error("No bootstrap port: the evaluator's started by the REPL")
+        return 1
+    service = Service(Served())
+    port = darq.open_port()
+    loop = darq.loop.SelectEventLoop()
+    server = darq.Server()
+    server.add(port, service)
+    server.attach(loop)
+    darq.notify_on_death(bootstrap, port)
+    threading.Thread(target=loop.run, name="evaluator-protocol", daemon=True).start()
+    wire.Starter.Client(bootstrap).ready(evaluator=port)
+    service.serve()
+    return 0
 
 
 def from_file(value: typing.Any, filename: str) -> bool:

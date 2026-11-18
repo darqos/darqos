@@ -171,12 +171,13 @@ others are opened from History or Search.  A session's saved when it's
 asked to be, and opened again with what was saved (see Saving a
 Session, below).  It doesn't index anything; it can't debug.
 
-* ``darq.repl`` is its engine, which uses no Qt: a namespace, and
-  numbered cells run in it.  A cell's last expression is its result,
+* ``darq.repl.Evaluator`` is what runs the session, which uses no Qt: a
+  namespace, and numbered cells run in it, in a process of its own, the
+  REPL's evaluator (see The Evaluator, below).  A cell's last expression is its result,
   which ``$3`` refers to later (rewritten to ``_out[3]``, but in strings
   and comments), as ``_`` is the last.  What it prints is captured, and
   a traceback shows only the cell's frames.  Completion is jedi's,
-  against the live namespace, as is help (``Engine.help``): a name's
+  against the live namespace, as is help (``Evaluator.help``): a name's
   signatures, and its docstring, or a value's type's.
 * ``lenses/repl`` is its window, the lens for ``darq.python`` items (its
   ``lens.json``), started by the launcher, as lenses are, for a ``Use``:
@@ -205,9 +206,52 @@ Session, below).  It doesn't index anything; it can't debug.
   ``terminal``, with its source ``repl``, so
   ``terminal.windows()`` and the rest are ready (see :doc:`terminal`,
   "Automation"), and what's made with them is recorded as the REPL's
-  doing; and ``loop``, its Qt event loop, for ``terminal.watch``.
-* Cells run on Qt's thread: a long one, or a slow call, holds the
-  window till it's done, and can't be interrupted.
+  doing.  There's no event loop given: a cell makes its own, as a
+  program does, to serve, or to ``terminal.watch``.
+* While a cell runs, its output's shown as it's printed, and the window
+  works: what's typed next waits for it, as Enter says, in the status
+  line.  Ctrl+G interrupts it, and Ctrl+Shift+G restarts the evaluator.
+
+The Evaluator
+~~~~~~~~~~~~~
+
+A session's code runs in a process of its own, the REPL's evaluator
+(``lenses/repl/evaluator``), not in the REPL's: so what's written in the
+REPL runs as it would in a program.  A cell can make its own
+``QApplication``, run a ``QtEventLoop``, or a ``SelectEventLoop``, serve
+a protocol, and open windows, which are the evaluator's.  And what goes
+wrong in it, as a crash, or a cell that never returns, costs the
+evaluator, not the window.
+
+* The REPL starts it, as its child, when it uses a session
+  (``darq.repl.start_evaluator``), and asks it over its protocol,
+  ``darq.repl.evaluator`` (``lib/didl/evaluator.didl``), with
+  ``darq.repl.Remote``: the evaluator serves ``darq.repl.Served``, the
+  ``Evaluator`` asked by ids, as ``darq.repl.Service``.  It's private to
+  the REPL: it isn't registered, and ends when the REPL's gone.
+* What runs code, a cell, a save, a rebuild, a delete, or loading a
+  session, runs on its main thread, one at a time, as a program's code
+  does.  A cell's run returns at once: the REPL's told, on a port it
+  listens on, when the cell starts, and its number, what it prints, as
+  it prints it (held for 50ms, to send what's printed together, together),
+  and its result.  A save, or the rest, while a cell runs, is ``BUSY``.
+* Everything else, completion, help, the tree, sources, writing the
+  session, and extracting, is answered at once, on another thread, even
+  while a cell runs, from the namespace as it is then.
+* The tree's targets are named by refs: ids the evaluator keeps each
+  target by, as a target holds what it's bound in, which only it has.
+  It forgets them when the tree's read again, but for the drafts'.
+  What can be done to one, on its context menu, is the evaluator's to
+  say (``Actions``).
+* Ctrl+G interrupts what's running, with a ``SIGINT`` to the main
+  thread: it's a ``KeyboardInterrupt``, in the cell, which stops a
+  sleep, or a wait, too.  It can't stop C code that doesn't return to
+  Python, as Qt's ``exec()``: Ctrl+Shift+G restarts the evaluator,
+  killing it, and starting another.
+* If the evaluator dies, the REPL's told (it watches its port), and
+  restarts it, as Ctrl+Shift+G does.  A restart loads the session's
+  code, as it was last saved: what's been run since is lost, but its
+  cells are still in the history, to be run again.
 
 The Namespace Tree
 ~~~~~~~~~~~~~~~~~~
@@ -226,7 +270,7 @@ keeping what's expanded.
 
 Clicking a name edits it, in the editor, whose header says what it's
 editing, with a × to go back to the cell: so does Escape.  Its source
-is what was run, or saved, last, recorded by the engine as each cell
+is what was run, or saved, last, recorded by the evaluator as each cell
 runs, as IPython does, by object: a function's ``def``, with its
 decorators; a method's; a class's *header*, its decorators, its class
 line, and its docstring, whose members are edited one by one; a
@@ -277,7 +321,7 @@ read, or last saved, as: if it's been saved elsewhere since, as by
 another REPL using it, it asks before saving over it.
 
 The module is what each of the session's names is bound to, as it can
-be written (``darq.repl.Engine.write_session``):
+be written (``darq.repl.Evaluator.write_session``):
 
 * a function's, or a class's, source, as it's been run, or saved, since:
   a class's header and its members as they are now;
@@ -291,9 +335,8 @@ be written (``darq.repl.Engine.write_session``):
 
 What can't be written, as a value with no assignment, nor literal, is
 left out, and so is what needs it to be defined; the transcript says
-which, and why.  What the REPL gives the session, ``darq``,
-``terminal`` and ``loop``, isn't saved, unless it's been bound to
-something else.  It's written in an order it can be run in: imports
+which, and why.  What the REPL gives the session, ``darq`` and
+``terminal``, isn't saved, unless it's been bound to something else.  It's written in an order it can be run in: imports
 first, then each name once what it needs as it's run is (as a class's
 body, a decorator, a default value, or an assignment's value), found by
 ``symtable``; what's only needed once a function's called doesn't
@@ -311,7 +354,7 @@ Extracting a Package
 *Extract package…*, on a function's, or class's, context menu in the
 tree, takes it out of the session, with everything of the session's it
 needs, and nothing else, into a package item of its own
-(``darq.repl.Engine.extract``): usually a program's ``darq_main``, to be
+(``darq.repl.Evaluator.extract``): usually a program's ``darq_main``, to be
 imported, or run, by itself.
 
 What it needs is found from its source, and what's needed by that, and
@@ -320,8 +363,8 @@ and written as a session is (see Saving a Session, above), as the
 package's ``main.py``, in an order it can be run in.  The REPL's
 ``darq`` and ``terminal`` are imports, as they'd be anywhere.  Unlike
 saving, nothing's left out: if anything it needs can't be written, or
-isn't defined, or is a result, ``$3``, or is the REPL's own, as
-``loop``, it's not extracted, and the transcript says what, and why.
+isn't defined, or is a result, ``$3``, it's not extracted, and the
+transcript says what, and why.
 What's found by name as the code runs, as with ``getattr`` and a
 string, or ``globals()``, isn't seen.
 

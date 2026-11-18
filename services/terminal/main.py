@@ -131,7 +131,7 @@ class Terminal:
         self.channel = channel
         self.services = services
         self.loop = QtEventLoop()
-        self.launcher = Launcher(self, SOURCE, self.loop.post)
+        self.launcher = Launcher(self, SOURCE, self.loop.post, started=self.lens_started)
 
         # The compositor's windows, by number, with their titles; their
         # numbers, most recently focused first; and the focused one's (0
@@ -142,6 +142,12 @@ class Terminal:
         # Their Wayland app_ids: a lens's is its Lens port's name (see
         # darq.ui.lens.announce), so Sys-i asks it what it's showing.
         self.app_ids: dict[int, str] = {}
+
+        # What each lens, by its Lens port's name, last said it's showing,
+        # or was started for: its item, and whether it's an entity.  It's
+        # what windows() says when a lens doesn't answer in time, such as
+        # the REPL, running the cell that asked.
+        self.last_shown: dict[str, tuple[str, bool]] = {}
 
         # Their places and sizes; and the outputs', by name (see
         # automation.py).
@@ -550,9 +556,21 @@ class Terminal:
         self.channel.send(RaiseWindow(window=window))
         self.channel.send(FocusWindow(window=window))
 
+    def lens_started(self, dpid: int, item_id: str, entity: bool):
+        """A lens is started, on a launch's thread: what it's for is what
+        it's showing, till it says otherwise."""
+        name = f"{LENS_NAME_PREFIX}{dpid}"
+
+        def record() -> None:
+            self.last_shown.setdefault(name, (item_id, entity))
+
+        self.loop.post(record)
+
     def window_removed(self, window: int):
         self.windows.pop(window, None)
-        self.app_ids.pop(window, None)
+        name = self.app_ids.pop(window, None)
+        if name is not None and name not in self.app_ids.values():
+            self.last_shown.pop(name, None)
         self.geometry.pop(window, None)
         if window in self.recent:
             self.recent.remove(window)

@@ -729,7 +729,10 @@ Request                         Does
                                 each one's title, app_id, place and size,
                                 whether it's focused, and, for a lens's,
                                 the item it's showing, as it says when
-                                asked.
+                                asked, all at once; or, if it doesn't
+                                answer in time, as when it's the REPL
+                                running the cell that asked, what it
+                                said last, or was started for.
 ``ListOutputs``                 The screens, by name, with their places
                                 and sizes.
 ``Focus``                       Raises and focuses a window, as the

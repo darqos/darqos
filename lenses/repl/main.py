@@ -7,7 +7,7 @@
 # session (see darq.sessions); others are opened from History or Search.
 # A session's code and history are run, and taken up, as it's opened,
 # and saved to its item with Ctrl+Shift+S (see darq.repl, write_session).
-# Its engine is darq.repl.  See doc/repl.rst.
+# Its evaluator is darq.repl.  See doc/repl.rst.
 #
 # - Pygments syntax highlighting, of the input and the transcript, in the
 #   DarqOS palette (darq.ui.style), as the lenses use it.
@@ -20,8 +20,12 @@
 #   name edits its source in the editor, and Ctrl+S saves it, changing
 #   what exists in place (see darq.repl); Escape goes back to the cell.
 #   What's not saved is kept as a draft, marked in the tree.
-# - darq, and darq.terminal, as terminal, are ready,
-#   and loop, its event loop, for terminal.watch.
+# - darq, and darq.terminal, as terminal, are ready.
+# - The session's code runs in the evaluator, a process of its own
+#   (darq.repl.Remote; lenses/repl/evaluator), on its main thread, as a
+#   program's does: output's shown as it's printed, and the window works
+#   while a cell runs.  Ctrl+G interrupts it; Ctrl+Shift+G restarts the
+#   evaluator, as it's restarted if it dies.
 #
 # Keys: Enter runs a complete cell (else inserts a newline), Shift+Enter
 # always inserts a newline, Ctrl+Enter always runs, Ctrl+A goes to the
@@ -29,13 +33,10 @@
 # or last line step through history, Ctrl+L clears the transcript, Ctrl+Q
 # quits, ending the session.
 #
-# Cells run on Qt's thread: a long one, or a slow call, holds the window
-# till it's done.
 
-import inspect
 import json
 import logging
-import pprint
+import pathlib
 import re
 import sys
 import typing
@@ -57,7 +58,8 @@ import darq.packages
 from darq.ui import dialogs
 from darq.ui.lens import LensHandler, Viewing, announce
 from darq.ui.names import item_name
-from darq.repl import CLASS, FUNCTION, MODULE, PROPERTY, VARIABLE, Engine, Help, Result, Results, Target, kind_of
+import darq.repl
+from darq.repl import CLASS, FUNCTION, MODULE, PROPERTY, VARIABLE, Help, Local, Ref, Result
 from darq.ui import style
 from darq.ui.style import CONTROLS, SCROLL_BARS
 
@@ -68,6 +70,9 @@ TIMEOUT = 10.0
 USE_TIMEOUT = 60.0
 
 INDENT = "    "
+
+# The evaluator: the process the session's code runs in (darq.repl).
+EVALUATOR = str(pathlib.Path(__file__).resolve().parent / "evaluator")
 
 
 # ----------------------------------------------------------------------
@@ -255,15 +260,47 @@ class Transcript(QPlainTextEdit):
         self.ensureCursorVisible()
 
     def add_result(self, source: str, result: Result) -> None:
+        self.add_cell(result.number, source, result.edited)
+        self.add_outcome(result)
+
+    def add_cell(self, number: int, source: str, edited: str = "") -> None:
+        """A cell, or a save, as it's started: its number, and source."""
+        self._newline = False
         c = self._cursor()
         self._new_block(c)
-        prompt = f"[{result.number}] "
+        prompt = f"[{number}] "
         c.insertText(prompt, self.theme.format(Token.Generic.Prompt))
-        if result.edited:
+        if edited:
             # A save: what it edited, then its source.
-            c.insertText(f"# edit {result.edited}", self.theme.format(Token.Comment))
+            c.insertText(f"# edit {edited}", self.theme.format(Token.Comment))
             c.insertText("\n" + " " * len(prompt), self.theme.format(Token.Text))
         self._insert_code(c, source.rstrip("\n"), " " * len(prompt))
+        self._streaming = False
+        self.ensureCursorVisible()
+
+    def add_output(self, stream: str, text: str) -> None:
+        """What a running cell's printed, as it's printed: a line's end is
+        held, till there's more, so the last doesn't leave a blank line."""
+        c = self._cursor()
+        if not self._streaming:
+            self._new_block(c)
+            self._streaming = True
+        elif self._newline:
+            c.insertText("\n", self.theme.format(Token.Text))
+        self._newline = text.endswith("\n")
+        text = text[:-1] if self._newline else text
+        if text:
+            c.insertText(text, self.theme.format(Token.Generic.Error if stream == "stderr"
+                                                 else Token.Generic.Output))
+        self.ensureCursorVisible()
+
+    _streaming = False
+    _newline = False
+
+    def add_outcome(self, result: Result) -> None:
+        """How a cell, or a save, finished: its note, what it printed, if
+        that wasn't streamed, its error, and its value."""
+        self._streaming = self._newline = False
         if result.note:
             self.add_text(result.note, Token.Comment)
         if result.stdout:
@@ -278,11 +315,7 @@ class Transcript(QPlainTextEdit):
             label = f"${result.number}"
             c.insertText(label, self.theme.format(DOLLAR))
             c.insertText(" = ", self.theme.format(Token.Operator))
-            try:
-                text = pprint.pformat(result.value, width=100)
-            except Exception as e:
-                text = f"<repr failed: {e!r}>"
-            self._insert_code(c, text, " " * (len(label) + 3))
+            self._insert_code(c, result.shown, " " * (len(label) + 3))
         self.ensureCursorVisible()
 
 
@@ -365,9 +398,9 @@ class Editor(QPlainTextEdit):
     saved = pyqtSignal()
     escaped = pyqtSignal()
 
-    def __init__(self, engine: Engine, theme: Theme) -> None:
+    def __init__(self, evaluator: typing.Any, theme: Theme) -> None:
         super().__init__()
-        self.engine = engine
+        self.evaluator = evaluator
         theme.apply(self)
         self.highlighter = Highlighter(self, theme)
         self.setPlaceholderText(
@@ -409,7 +442,7 @@ class Editor(QPlainTextEdit):
         nothing to add to it."""
         popup = self.completer.popup()
         assert popup is not None
-        names, prefix = self.engine.complete(self._before_cursor())
+        names, prefix = self.evaluator.complete(self._before_cursor())
         if not names or len(names) == 1 and prefix == len(names[0]):
             popup.hide()
             return False
@@ -429,7 +462,7 @@ class Editor(QPlainTextEdit):
     def explain(self) -> bool:
         """Show the help for what's before the cursor: return False if
         there's none."""
-        help = self.engine.help(self._before_cursor())
+        help = self.evaluator.help(self._before_cursor())
         if help is None:
             return False
         self.help_popup.show_help(help)
@@ -490,7 +523,7 @@ class Editor(QPlainTextEdit):
                 return True
             if lines[-1][:1].isspace():
                 return False    # In a block: a blank line ends it.
-        return self.engine.is_complete(text)
+        return self.evaluator.is_complete(text)
 
     def newline(self) -> None:
         line = self.textCursor().block().text()
@@ -500,9 +533,16 @@ class Editor(QPlainTextEdit):
             indent += INDENT
         self.insertPlainText("\n" + indent)
 
+    # Whether a cell's running, so another can't be: the window says.
+    busy: typing.Callable[[], bool] = staticmethod(lambda: False)
+    refused = pyqtSignal()
+
     def run(self) -> None:
         source = self.toPlainText().rstrip()
         if not source.strip():
+            return
+        if self.busy():
+            self.refused.emit()
             return
         if not self.history or self.history[-1] != source:
             self.history.append(source)
@@ -622,7 +662,7 @@ DRAFT_MARK = " •"
 TARGET_ROLE = Qt.ItemDataRole.UserRole
 
 
-def label_of(target: Target) -> str:
+def label_of(target: Ref) -> str:
     """A target, as it's named to the operator."""
     return target.label if target.name else f"a new member of {'.'.join(target.path[:-1])}"
 
@@ -653,14 +693,14 @@ class NamespaceTree(QTreeWidget):
 
     chosen = pyqtSignal(object)
 
-    def __init__(self, engine: Engine) -> None:
+    def __init__(self, evaluator: typing.Any) -> None:
         super().__init__()
-        self.engine = engine
+        self.evaluator = evaluator
         self.setHeaderLabels(["Name", "Type"])
         self.setColumnWidth(0, 170)
         self.setIndentation(14)
         self.private = False
-        self.drafts: dict[tuple[int, str], tuple[Target, str]] = {}
+        self.drafts: dict[tuple[int, str], tuple[Ref, str]] = {}
         self.icons = {kind: badge(kind) for kind in BADGES}
         self.itemExpanded.connect(self.read_members)
         self.itemClicked.connect(self.choose)
@@ -668,16 +708,19 @@ class NamespaceTree(QTreeWidget):
         self.customContextMenuRequested.connect(self.menu)
 
         # Asked of the window, for the context menu: tests replace them.
-        self.actions_for: typing.Callable[[Target], list[tuple[str, typing.Callable[[], None]]]] = \
+        self.actions_for: typing.Callable[[Ref], list[tuple[str, typing.Callable[[], None]]]] = \
             lambda target: []
         self.session_actions: typing.Callable[[], list[tuple[str, typing.Callable[[], None]]]] = lambda: []
         self.refresh()
 
-    def tops(self) -> list[tuple[str, Target]]:
-        session = self.engine.session()
-        return [("Session", session),
-                ("Results", Target(self.engine.namespace, "_out", ("Results",))),
-                ("Built-ins", self.engine.builtins())]
+    def tops(self) -> list[tuple[str, Ref]]:
+        """The top level: the evaluator forgets the refs it gave out
+        before, but the drafts'."""
+        try:
+            return self.evaluator.tops(keep=[ref.id for ref, _ in self.drafts.values()])
+        except (darq.errors.DarqError, TimeoutError) as e:
+            logging.info(f"Can't read the namespace: {e}")
+            return []
 
     def refresh(self) -> None:
         """Read it all again, keeping what's expanded, and selected."""
@@ -735,31 +778,34 @@ class NamespaceTree(QTreeWidget):
         item.takeChild(0)
         target = item.data(0, TARGET_ROLE)
         try:
-            members = self.engine.members(target, self.private)
+            members = self.evaluator.members(target, self.private)
+        except KeyError:
+            QTreeWidgetItem(item, ["It's gone: read it again", ""])
+            return
         except Exception as e:
             QTreeWidgetItem(item, [f"Can't read it: {e}", ""])
             return
-        for binding in members:
-            child = QTreeWidgetItem(item, [self.name_of(binding.target), binding.type_name])
-            child.setIcon(0, self.icons[binding.kind])
-            child.setData(0, TARGET_ROLE, binding.target)
+        for member in members:
+            child = QTreeWidgetItem(item, [self.name_of(member.ref), member.type_name])
+            child.setIcon(0, self.icons[member.kind])
+            child.setData(0, TARGET_ROLE, member.ref)
             child.setForeground(1, QColor(style.TEXT_DIM))
-            if binding.expandable:
+            if member.expandable:
                 QTreeWidgetItem(child, [""])
 
-    def name_of(self, target: Target) -> str:
+    def name_of(self, target: Ref) -> str:
         return target.name + (DRAFT_MARK if target.key() in self.drafts else "")
 
     def choose(self, item: QTreeWidgetItem, column: int) -> None:
         target = item.data(0, TARGET_ROLE)
-        if isinstance(target, Target) and target.name:
+        if isinstance(target, Ref) and target.name:
             self.chosen.emit(target)
 
     def menu(self, point) -> None:
         item = self.itemAt(point)
         menu = QMenu(self)
         target = item.data(0, TARGET_ROLE) if item is not None else None
-        if isinstance(target, Target):
+        if isinstance(target, Ref):
             for text, action in self.actions_for(target):
                 menu.addAction(text, action)
             menu.addSeparator()
@@ -778,8 +824,14 @@ class NamespaceTree(QTreeWidget):
 
 
 class Window(QMainWindow):
-    def __init__(self, engine: Engine | None = None,
-                 on_closed: typing.Callable[[], None] | None = None) -> None:
+    """A session's window: its editor, transcript and tree, asking its
+    evaluator, a process of its own (darq.repl.Remote), or, in tests,
+    darq.repl.Local, which is asked alike.  restart, if it's given, makes
+    a new one, as after it's died."""
+
+    def __init__(self, evaluator: typing.Any = None,
+                 on_closed: typing.Callable[[], None] | None = None,
+                 restart: typing.Callable[[], typing.Any] | None = None) -> None:
         super().__init__()
         self.on_closed = on_closed
         self.viewing = Viewing(self, SOURCE)
@@ -807,9 +859,16 @@ class Window(QMainWindow):
         self.resize(1160, 700)
         self.setStyleSheet(STYLESHEET)
         theme = Theme()
-        self.engine = engine or Engine()
+        self.evaluator = evaluator if evaluator is not None else Local()
+        self.make_evaluator = restart
+
+        # Whether a cell's running: another isn't, nor a save, till it's
+        # finished.
+        self.running = False
         self.transcript = Transcript(theme)
-        self.editor = Editor(self.engine, theme)
+        self.editor = Editor(self.evaluator, theme)
+        self.editor.busy = lambda: self.running
+        self.editor.refused.connect(lambda: self.say("A cell's running: Ctrl+G interrupts it"))
         self.editor.submitted.connect(self.on_submitted)
         self.editor.saved.connect(self.save)
         self.editor.escaped.connect(self.back_to_cell)
@@ -817,7 +876,7 @@ class Window(QMainWindow):
         # What the editor's editing: a target, or, if it's None, a cell;
         # the source it was given, to tell a draft; the cell's draft,
         # while it's elsewhere; and whether it's a class whole, to read.
-        self.target: Target | None = None
+        self.target: Ref | None = None
         self.loaded = ""
         self.cell_draft = ""
         self.reading = False
@@ -848,8 +907,8 @@ class Window(QMainWindow):
         right.setSizes([520, 180])
 
         self.transcript.add_text(f"Python {sys.version.split()[0]}", Token.Comment)
-        self.transcript.add_text(self.engine.start(), Token.Comment)
-        self.tree = NamespaceTree(self.engine)
+        self.transcript.add_text(self.evaluator.start(), Token.Comment)
+        self.tree = NamespaceTree(self.evaluator)
         self.tree.chosen.connect(self.edit)
         self.tree.actions_for = self.actions_for
         self.tree.session_actions = lambda: [("Save session", self.save_session)] if self.item is not None else []
@@ -862,7 +921,19 @@ class Window(QMainWindow):
         QShortcut(QKeySequence("Ctrl+Q"), self).activated.connect(self.close)
         QShortcut(QKeySequence("Ctrl+L"), self).activated.connect(self.transcript.clear)
         QShortcut(QKeySequence("Ctrl+Shift+S"), self).activated.connect(self.save_session)
+        QShortcut(QKeySequence("Ctrl+G"), self).activated.connect(self.interrupt)
+        QShortcut(QKeySequence("Ctrl+Shift+G"), self).activated.connect(lambda: self.restart("Restarted"))
         self.editor.setFocus()
+
+    def say(self, message: str) -> None:
+        """Say something in the status line, for a while."""
+        self.statusBar().showMessage(message, 4000)  # type: ignore[union-attr]
+
+    def busy(self) -> bool:
+        """Whether a cell's running: if it is, it says so."""
+        if self.running:
+            self.say("A cell's running: Ctrl+G interrupts it")
+        return self.running
 
     def set_session(self, name: str, item_id: str) -> None:
         """Say which session it is: its item's name, as its title."""
@@ -877,14 +948,64 @@ class Window(QMainWindow):
                 a0.ignore()
             return
         self.viewing.stop()
+        self.evaluator.close()
         super().closeEvent(a0)
         if self.on_closed is not None:
             on_closed, self.on_closed = self.on_closed, None
             on_closed()
 
     def on_submitted(self, source: str) -> None:
-        self.transcript.add_result(source, self.engine.run(source))
+        self.running = True
         self.unsaved = True
+        self.statusBar().showMessage("Running: Ctrl+G interrupts")  # type: ignore[union-attr]
+
+        def started(number: int):
+            self.transcript.add_cell(number, source)
+
+        try:
+            self.evaluator.run_cell(source, started, self.transcript.add_output, self.finished)
+        except (darq.errors.DarqError, TimeoutError) as e:
+            self.running = False
+            self.transcript.add_text(f"Can't run it: {e}", Token.Generic.Error)
+
+    def finished(self, result: Result) -> None:
+        self.running = False
+        self.statusBar().clearMessage()  # type: ignore[union-attr]
+        self.transcript.add_outcome(result)
+        self.tree.refresh()
+
+    # The evaluator
+
+    def interrupt(self) -> None:
+        """Interrupt the running cell: it raises KeyboardInterrupt."""
+        try:
+            if not self.evaluator.interrupt():
+                self.say("Nothing's running")
+        except (darq.errors.DarqError, TimeoutError) as e:
+            self.say(f"Can't interrupt it: {e}")
+
+    def restart(self, why: str) -> None:
+        """Start a new evaluator, as after the last's died: the session's
+        code, as last saved, is loaded again; what's run since is lost,
+        but for its cells, in the history."""
+        if self.make_evaluator is None:
+            self.say("It can't be restarted")
+            return
+        history = list(self.editor.history)
+        self.evaluator.close()
+        try:
+            self.evaluator = self.make_evaluator()
+        except (darq.errors.DarqError, TimeoutError) as e:
+            self.transcript.add_text(f"Can't start the evaluator: {e}", Token.Generic.Error)
+            return
+        self.editor.evaluator = self.evaluator
+        self.tree.evaluator = self.evaluator
+        self.tree.drafts.clear()
+        self.running = False
+        self.statusBar().clearMessage()  # type: ignore[union-attr]
+        self.transcript.add_text(f"{why}: {self.evaluator.start()}", Token.Comment)
+        if self.item is not None:
+            self.load(self.package, history)
         self.tree.refresh()
 
     # The session, kept in its item
@@ -895,6 +1016,13 @@ class Window(QMainWindow):
         self.item = item
         self.package = package
         self.generation = generation
+        self.load(package)
+        self.unsaved = False
+        self.tree.refresh()
+
+    def load(self, package: bytes, kept: list[str] | None = None) -> None:
+        """Run a session's code into the namespace, and take up its
+        history: as it was saved, or as it is now, after a restart."""
         try:
             files = darq.packages.contents(package)
         except darq.packages.PackageError as e:
@@ -906,9 +1034,12 @@ class Window(QMainWindow):
                 cells = [c for c in json.loads(history.decode("utf-8")) if isinstance(c, str)]
             except (ValueError, UnicodeDecodeError):
                 cells = []
-            self.engine.history = list(cells)
+            self.evaluator.history = list(cells)
             self.editor.history = list(cells)
             self.editor._hpos = len(cells)
+        if kept is not None:
+            self.editor.history = kept
+            self.editor._hpos = len(kept)
         extracts = files.get(darq.packages.EXTRACTS)
         if extracts:
             try:
@@ -918,26 +1049,24 @@ class Window(QMainWindow):
                 self.extracts = {}
         code = files.get(darq.packages.MAIN)
         if code is not None and code.strip():
-            result = self.engine.load_session(code.decode("utf-8"))
-            self.transcript.add_text(result.note + (f", from {len(self.engine.history)} cells run"
-                                                    if self.engine.history else ""), Token.Comment)
+            result = self.evaluator.load_session(code.decode("utf-8"))
+            self.transcript.add_text(result.note + (f", from {len(self.evaluator.history)} cells run"
+                                                    if self.evaluator.history else ""), Token.Comment)
             if result.error:
                 self.transcript.add_text("What couldn't be run:\n" + result.error, Token.Generic.Traceback)
-        self.unsaved = False
-        self.tree.refresh()
 
     def save_session(self) -> None:
         """Save the session to its item: its code, as a module, and its
         history.  What can't be written is left out, and said."""
         if self.item is None:
             return
-        written = self.engine.write_session()
+        written = self.evaluator.write_session()
         try:
             files = darq.packages.contents(self.package) if self.package else {}
         except darq.packages.PackageError:
             files = {}
         files[darq.packages.MAIN] = written.text.encode("utf-8")
-        files[darq.packages.HISTORY] = json.dumps(self.engine.history, indent=1).encode("utf-8")
+        files[darq.packages.HISTORY] = json.dumps(self.evaluator.history, indent=1).encode("utf-8")
         if self.extracts:
             files[darq.packages.EXTRACTS] = json.dumps(self.extracts, indent=1, sort_keys=True).encode("utf-8")
         package = darq.packages.make(dict(files))
@@ -963,12 +1092,16 @@ class Window(QMainWindow):
 
     # Editing a target
 
-    def edit(self, target: Target, text: str | None = None, reading: bool = False) -> None:
+    def edit(self, target: Ref, text: str | None = None, reading: bool = False) -> None:
         """Edit a target, or, for a library's, or a class whole, read
         it: with its draft, if it has one."""
         self.stash()
         if text is None:
-            source = self.engine.source_of(target)
+            try:
+                source = self.evaluator.source_of(target)
+            except KeyError:
+                self.say(f"{label_of(target)}'s gone: read the tree again")
+                return
             text, editable, why = source.text, source.editable, source.why
         else:
             editable, why = not reading, "The whole class is read: edit its header and members"
@@ -1013,15 +1146,23 @@ class Window(QMainWindow):
     def save(self) -> None:
         """Save the target, as a cell: it's shown, and the draft's gone."""
         target = self.target
-        if target is None or self.editor.isReadOnly() or self.reading:
+        if target is None or self.editor.isReadOnly() or self.reading or self.busy():
             return
         text = self.editor.toPlainText()
-        self.done(text, self.engine.save(target, text))
+        try:
+            result = self.evaluator.save(target, text)
+        except KeyError:
+            self.say(f"{label_of(target)}'s gone: its draft's kept")
+            return
+        except (darq.errors.DarqError, TimeoutError) as e:
+            self.say(f"Can't save it: {e}")
+            return
+        self.done(text, result)
         self.unsaved = True
         if self.transcript_error is None:
             self.tree.drafts.pop(target.key(), None)
             if target.name:
-                self.loaded = self.engine.source_of(target).text
+                self.loaded = self.evaluator.source_of(target).text
                 self.editor.setPlainText(self.loaded)
             else:
                 self.editor.setPlainText("")
@@ -1037,37 +1178,38 @@ class Window(QMainWindow):
 
     # The tree's context menu
 
-    def actions_for(self, target: Target) -> list[tuple[str, typing.Callable[[], None]]]:
-        """What can be done to a target: a class defined in a cell can
-        have a member added, be rebuilt, or be read whole; what's bound in
-        the session, or a cell's class, or an object, can be deleted."""
+    def actions_for(self, target: Ref) -> list[tuple[str, typing.Callable[[], None]]]:
+        """What can be done to a target, as the evaluator says: a class
+        defined in a cell can have a member added, be rebuilt, or be read
+        whole; what's bound in the session, or a cell's class, or an
+        object, can be deleted."""
+        try:
+            can = self.evaluator.actions(target)
+        except (KeyError, darq.errors.DarqError, TimeoutError):
+            return []
         actions: list[tuple[str, typing.Callable[[], None]]] = []
-        value = self.engine.lookup(target.container, target.name)
-        if kind_of(value) == CLASS and target.name:
-            if id(value) in self.engine.headers:
-                path = (*target.path, "")
-                actions.append(("Add member", lambda: self.edit(Target(value, "", path),
-                                                                "def name(self):\n    pass\n")))
-                actions.append(("Rebuild", lambda: self.run_action(self.engine.rebuild(target),
-                                                                   f"# rebuild {target.label}\n")))
-            actions.append(("View whole class", lambda: self.edit(target, self.engine.whole_class(target),
+        if can.add_member:
+            actions.append(("Add member", lambda: self.edit(self.evaluator.new_member(target),
+                                                            "def name(self):\n    pass\n")))
+        if can.rebuild:
+            actions.append(("Rebuild", lambda: self.run_action(lambda: self.evaluator.rebuild(target),
+                                                               f"# rebuild {target.label}\n")))
+        if can.whole_class:
+            actions.append(("View whole class", lambda: self.edit(target, self.evaluator.whole_class(target),
                                                                   reading=True)))
-        if self.engine.is_session(target.container) and kind_of(value) in (FUNCTION, CLASS) and target.name:
+        if can.extract:
             actions.append(("Extract package…", lambda: self.extract_package(target)))
-        container = target.container
-        deletable = (self.engine.is_session(container) or id(container) in self.engine.headers
-                     or not (inspect.isclass(container) or inspect.ismodule(container)
-                             or isinstance(container, (dict, Results))))
-        if target.name and deletable and not target.name.startswith("$"):
-            actions.append(("Delete", lambda: self.run_action(self.engine.delete(target), f"del {target.label}\n")))
+        if can.delete:
+            actions.append(("Delete", lambda: self.run_action(lambda: self.evaluator.delete(target),
+                                                              f"del {target.label}\n")))
         return actions
 
-    def extract_package(self, target: Target) -> None:
+    def extract_package(self, target: Ref) -> None:
         """Extract a function, or class, and what it needs of the session,
         to a package item: the one it was last extracted to, or a new one,
         named as it's to be imported."""
         root = target.name
-        written = self.engine.extract(root)
+        written = self.evaluator.extract(root)
         if written.left_out:
             self.transcript.add_text(f"Can't extract {root}: " + "; ".join(
                 f"{name}, as {why}" for name, why in written.left_out), Token.Generic.Error)
@@ -1111,7 +1253,17 @@ class Window(QMainWindow):
         self.transcript.add_text(f"Extracted {root}, with the {others} name{'' if others == 1 else 's'} it needs, "
                                  f"to {name} ({item_id})", Token.Comment)
 
-    def run_action(self, result: Result, text: str) -> None:
+    def run_action(self, action: typing.Callable[[], Result], text: str) -> None:
+        if self.busy():
+            return
+        try:
+            result = action()
+        except KeyError:
+            self.say("It's gone: read the tree again")
+            return
+        except (darq.errors.DarqError, TimeoutError) as e:
+            self.say(f"Can't: {e}")
+            return
         self.done(text, result)
         self.unsaved = True
         self.tree.refresh()
@@ -1121,11 +1273,17 @@ class ReplLens(LensHandler):
     """Answers the Lens protocol: uses a session, a darq.python item, in a
     REPL of its own."""
 
-    def __init__(self, loop: QtEventLoop):
+    def __init__(self, loop: QtEventLoop, port: int = 0):
         # Looks up an item's name, for its window's title: tests replace it.
         self.name_of: typing.Callable[[str], str] = item_name
         self.loop = loop
         self.window: Window | None = None
+
+        # Its port, which is told when the evaluator dies; and how it
+        # starts one: tests replace it.
+        self.port = port
+        self.start_evaluator: typing.Callable[[], typing.Any] = \
+            lambda: darq.repl.start_evaluator(self.loop, notify=self.port, path=EVALUATOR)
 
         # The session's item: its port's client.
         self.item: typing.Any = None
@@ -1136,9 +1294,12 @@ class ReplLens(LensHandler):
         if request.item is None:
             return UseResponse(status=Status.FAILED)
         self.item = Python.Client(request.item, timeout=TIMEOUT)
-        engine = Engine()
-        engine.namespace["loop"] = self.loop
-        self.window = Window(engine, on_closed=self.finished)
+        try:
+            evaluator = self.start_evaluator()
+        except (darq.errors.DarqError, TimeoutError) as e:
+            logging.error(f"Can't start the evaluator: {e}")
+            return UseResponse(status=Status.FAILED)
+        self.window = Window(evaluator, on_closed=self.finished, restart=self.start_evaluator)
         self.window.set_session(self.name_of(request.item_id), request.item_id)
         try:
             got = self.item.get()
@@ -1154,6 +1315,13 @@ class ReplLens(LensHandler):
         logging.info(f"Using {request.item_id}")
         self.shown_item = request.item_id
         return UseResponse(status=Status.OK)
+
+    def port_destroyed(self, handle: int):
+        """The evaluator's died: start another."""
+        window = self.window
+        if window is not None and getattr(window.evaluator, "handle", None) == handle:
+            logging.info("The evaluator died: restarting it")
+            window.restart("The evaluator died, and was restarted")
 
     def close(self, request: Close, source: int) -> None:
         if self.window is not None:
@@ -1188,8 +1356,8 @@ def darq_main():
     app.setQuitOnLastWindowClosed(False)
     loop = QtEventLoop()
 
-    lens = ReplLens(loop)
     port = darq.open_port()
+    lens = ReplLens(loop, port)
     announce(port)
     server = darq.Server()
     server.add(port, lens)

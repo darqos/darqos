@@ -191,7 +191,7 @@ def test_an_extracted_program_is_imported(live_pkernel, tmp_path):  # noqa: F811
         import darq
         import darq.packages as packages
         from darq.protocols.type import Type
-        from darq.repl import Engine
+        from darq.repl import Evaluator
 
         def darq_main():
             types = Type.Client(darq.connect("darq.type"), timeout=30)
@@ -201,13 +201,13 @@ def test_an_extracted_program_is_imported(live_pkernel, tmp_path):  # noqa: F811
                     return "darq.python never registered"
                 time.sleep(0.05)
 
-            engine = Engine()
-            engine.start()
+            evaluator = Evaluator()
+            evaluator.start()
             for cell in ["BASE = 40", "def helper():\\n    return BASE + 2",
                          "def darq_main():\\n    return helper()"]:
-                if engine.run(cell).error:
+                if evaluator.run(cell).error:
                     return "a cell failed"
-            written = engine.extract("darq_main")
+            written = evaluator.extract("darq_main")
             if written.left_out:
                 return f"not extracted: {written.left_out}"
             item_id = packages.create(packages.make({"main.py": written.text}), "tidyx", "test")
@@ -218,8 +218,8 @@ def test_an_extracted_program_is_imported(live_pkernel, tmp_path):  # noqa: F811
             if not packages.unusable("tidyx").startswith("another package is named tidyx"):
                 return "its name wasn't taken"
 
-            engine.run("BASE = 41")
-            packages.update(item_id, packages.make({"main.py": engine.extract("darq_main").text}), "test")
+            evaluator.run("BASE = 41")
+            packages.update(item_id, packages.make({"main.py": evaluator.extract("darq_main").text}), "test")
             importlib.reload(tidyx.main)
             if tidyx.main.darq_main() != 43:
                 return "not updated"

@@ -10,6 +10,7 @@
 # showing, is done off it, by a launcher, and answered later, with a
 # Deferred.
 
+import concurrent.futures
 import dataclasses
 import logging
 import typing
@@ -78,6 +79,7 @@ class Host(typing.Protocol):
     focused: int
     windows: dict[int, str]
     app_ids: dict[int, str]
+    last_shown: dict[str, tuple[str, bool]]
     recent: list[int]
     geometry: dict[int, Rect]
     outputs: dict[str, Rect]
@@ -92,6 +94,7 @@ class Host(typing.Protocol):
     def run_item(self, item_id: str) -> str: ...
 
     def lock(self) -> None: ...
+    def lens_started(self, dpid: int, item_id: str, entity: bool) -> None: ...
     def say(self, message: str) -> None: ...
 
 
@@ -181,21 +184,31 @@ class TerminalService(Terminal.Handler):
         if not lenses:
             return ListWindowsResponse(windows=[self.window(w) for w in order], status=Status.OK)
 
-        # Lenses are asked what they're showing, off Qt's thread.
-        deferred = self.defer(timeout=LENS_TIMEOUT * (len(lenses) + 1))
+        # Lenses are asked what they're showing, off Qt's thread, all at
+        # once, so a busy one costs one timeout, however many there are.
+        # One that doesn't answer is said to show what it last said, or
+        # was started for.
+        deferred = self.defer(timeout=LENS_TIMEOUT * 2)
+
+        def ask_one(name: str) -> tuple[str, bool] | None:
+            try:
+                return lens_shows(name)
+            except (darq.errors.DarqError, TimeoutError) as e:
+                logging.info(f"Can't ask {name} what it's showing: {e}")
+                return None
 
         def ask() -> dict[int, tuple[str, bool]]:
-            shows = {}
-            for window, name in lenses.items():
-                try:
-                    shows[window] = lens_shows(name)
-                except (darq.errors.DarqError, TimeoutError) as e:
-                    logging.info(f"Can't ask {name} what it's showing: {e}")
-            return shows
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(lenses)) as pool:
+                answers = dict(zip(lenses, pool.map(ask_one, lenses.values())))
+            return {window: shown for window, shown in answers.items() if shown is not None}
 
         def asked(shows: dict[int, tuple[str, bool]] | None, error: Exception | None):
             shows = shows or {}
-            windows = [self.window(w, *shows.get(w, ("", False))) for w in order if w in self.terminal.windows]
+            for window, shown in shows.items():
+                self.terminal.last_shown[lenses[window]] = shown
+            last = self.terminal.last_shown
+            windows = [self.window(w, *shows.get(w, last.get(lenses.get(w, ""), ("", False))))
+                       for w in order if w in self.terminal.windows]
             try:
                 deferred.reply(ListWindowsResponse(windows=windows, status=Status.OK))
             except RuntimeError:
@@ -248,8 +261,9 @@ class TerminalService(Terminal.Handler):
         """Start opening an item for a request, with its own launcher."""
         opening = Opening(self.defer(timeout=OPEN_TIMEOUT), respond)
 
-        def started(dpid: int):
+        def started(dpid: int, item_id: str, entity: bool):
             opening.dpid = dpid
+            self.terminal.lens_started(dpid, item_id, entity)
 
         host = LaunchHost(self.terminal.services, self.launched)
         launcher = Launcher(typing.cast(typing.Any, host), source or DEFAULT_SOURCE, self.post, run=self.run,

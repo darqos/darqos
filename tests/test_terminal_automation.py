@@ -137,6 +137,56 @@ def test_a_lenss_window_says_what_its_showing(service, terminal, monkeypatch):  
     assert [(w.window, w.item_id) for w in listed.windows] == [(3, DOC), (4, "")]
 
 
+def test_a_lens_that_doesnt_answer_shows_what_it_last_did(service, terminal, monkeypatch):  # noqa: F811
+    """As the REPL can't, while it runs the cell that asked: what it said
+    last, or was started for, is said for it."""
+    monkeypatch.setattr(terminal.loop, "post", lambda f: f())
+    window(terminal, 3, "session", app_id="lens.80")
+    window(terminal, 4, "Notes", app_id="lens.81")
+    window(terminal, 5, "Other", app_id="lens.82")
+    terminal.lens_started(80, "darq.python:" + "1" * 32, False)
+    answers = {"lens.81": (DOC, False)}
+
+    def lens_shows(name, timeout=None):
+        if name not in answers:
+            raise TimeoutError(name)
+        return answers[name]
+
+    monkeypatch.setattr(automation, "lens_shows", lens_shows)
+    service.list_windows(protocol.ListWindowsRequest(), 0)
+    [listed] = service.deferred[-1].replies
+    assert [(w.window, w.item_id) for w in listed.windows] == [
+        (3, "darq.python:" + "1" * 32), (4, DOC), (5, "")]
+
+    # Its last answer, once it's stopped answering.
+    del answers["lens.81"]
+    service.list_windows(protocol.ListWindowsRequest(), 0)
+    [listed] = service.deferred[-1].replies
+    assert [(w.window, w.item_id) for w in listed.windows][1] == (4, DOC)
+
+    # Forgotten with its window.
+    terminal.handle(WindowRemoved(window=4))
+    assert "lens.81" not in terminal.last_shown
+
+
+def test_lenses_are_asked_at_once(service, terminal, monkeypatch):  # noqa: F811
+    """Each busy lens doesn't add its own wait."""
+    import time
+    for n in range(4):
+        window(terminal, 3 + n, f"Slow {n}", app_id=f"lens.{90 + n}")
+
+    def lens_shows(name, timeout=None):
+        time.sleep(0.3)
+        return DOC, False
+
+    monkeypatch.setattr(automation, "lens_shows", lens_shows)
+    start = time.monotonic()
+    service.list_windows(protocol.ListWindowsRequest(), 0)
+    assert time.monotonic() - start < 0.9
+    [listed] = service.deferred[-1].replies
+    assert [w.item_id for w in listed.windows] == [DOC] * 4
+
+
 def test_focus_move_and_close(service, terminal):  # noqa: F811
     window(terminal, 3)
     terminal.compositor.received()
