@@ -43,7 +43,7 @@ import typing
 
 from pygments.lexers import PythonLexer
 from pygments.token import Token, _TokenType
-from PyQt6.QtCore import QPoint, QStringListModel, Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, QStringListModel, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (QColor, QIcon, QKeyEvent, QKeySequence, QPainter, QPalette, QPixmap, QShortcut,
                          QSyntaxHighlighter, QTextCharFormat, QTextCursor)
 from PyQt6.QtWidgets import (QApplication, QCompleter, QHBoxLayout, QLabel, QMainWindow, QMenu, QPlainTextEdit,
@@ -1287,6 +1287,9 @@ class ReplLens(LensHandler):
         self.start_evaluator: typing.Callable[[], typing.Any] = \
             lambda: darq.repl.start_evaluator(self.loop, notify=self.port, path=EVALUATOR)
 
+        # Whether the system's shutting down: the evaluator isn't restarted.
+        self.shutting_down = False
+
         # The session's item: its port's client.
         self.item: typing.Any = None
 
@@ -1321,9 +1324,34 @@ class ReplLens(LensHandler):
     def port_destroyed(self, handle: int):
         """The evaluator's died: start another."""
         window = self.window
+        if self.shutting_down:
+            return
         if window is not None and getattr(window.evaluator, "handle", None) == handle:
             logging.info("The evaluator died: restarting it")
             window.restart("The evaluator died, and was restarted")
+
+    def on_shutdown(self, reboot: bool, now: bool) -> darq.ShutdownLater | None:
+        """At shutdown: a session with what's been run since it was saved
+        asks whether to save it, first; told it's now, it saves it, without
+        asking."""
+        self.shutting_down = True
+        window = self.window
+        if window is None or window.item is None or not window.unsaved:
+            return None
+        if now:
+            window.save_session()
+            return None
+        later = darq.ShutdownLater("asking whether to save the session")
+
+        def ask():
+            if not later.finished and window.confirm(
+                    "The system's shutting down, and the session has changed since it was saved: save it?"):
+                later.note("saving the session")
+                window.save_session()
+            later.done()
+
+        QTimer.singleShot(0, ask)
+        return later
 
     def close(self, request: Close, source: int) -> None:
         if self.window is not None:
@@ -1360,6 +1388,7 @@ def darq_main():
 
     port = darq.open_port()
     lens = ReplLens(loop, port)
+    darq.on_shutdown(lens.on_shutdown, loop)
     announce(port)
     server = darq.Server()
     server.add(port, lens)

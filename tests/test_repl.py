@@ -1358,3 +1358,62 @@ def test_the_evaluator_runs_cells_in_its_own_process(live_pkernel, tmp_path):  #
     # The evaluator ends with it.
     evaluators = [p for p in kernel._process_table.values() if p._image_path == str(evaluator)]
     run_kernel_until(kernel, lambda: all(p.get_status() == zombie for p in evaluators), "the evaluator to end")
+
+
+################################################################
+# Shutting down
+
+def test_the_evaluator_waits_for_its_repl_at_shutdown(monkeypatch):
+    service = repl_module.Service(repl_module.Served())
+    ended: list[bool] = []
+    monkeypatch.setattr(service, "end", lambda: ended.append(True))
+    later = service.on_shutdown(False, False)
+    assert later is not None and later.text == "waiting for its REPL" and not later.finished
+    service.port_destroyed(5)
+    assert later.finished and ended == [True]
+    assert service.on_shutdown(False, True) is None
+
+
+@pytest.fixture
+def lens_in_use(qt_app, monkeypatch):
+    import types
+    from darq.protocols.lens import UseRequest
+    item = SessionItem()
+    monkeypatch.setattr(window, "Python", types.SimpleNamespace(Client=lambda port, timeout=None: item))
+    lens = window.ReplLens(types.SimpleNamespace(stop=lambda: None))
+    lens.name_of = lambda item_id: "session"
+    lens.start_evaluator = repl_module.Local
+    lens.use(UseRequest(item_id=SESSION, item=9), 0)
+    assert lens.window is not None
+    yield lens, item
+    lens.window.closing_quietly = True
+    lens.window.close()
+
+
+def test_a_saved_session_shuts_down_at_once(lens_in_use):
+    lens, item = lens_in_use
+    assert lens.on_shutdown(False, False) is None and item.puts == []
+
+
+def test_an_unsaved_session_asks_to_be_saved_at_shutdown(lens_in_use, qt_app):
+    lens, item = lens_in_use
+    ran_in(lens.window, "x = 1")
+    asked: list[str] = []
+    lens.window.confirm = lambda question: asked.append(question) or True
+    later = lens.on_shutdown(True, False)
+    assert later is not None and later.text == "asking whether to save the session"
+    qt_app.processEvents()
+    assert later.finished and item.puts == ["repl"] and len(asked) == 1
+
+    # Its evaluator's dying then isn't restarted.
+    restarted: list[bool] = []
+    lens.start_evaluator = lambda: restarted.append(True)
+    lens.port_destroyed(getattr(lens.window.evaluator, "handle", 0))
+    assert restarted == []
+
+
+def test_shutting_down_now_saves_without_asking(lens_in_use):
+    lens, item = lens_in_use
+    ran_in(lens.window, "x = 1")
+    lens.window.confirm = lambda question: pytest.fail("asked")
+    assert lens.on_shutdown(False, True) is None and item.puts == ["repl"]

@@ -77,6 +77,9 @@ from ._runtime.pcall import (
     GetBootValueResponse,
     GetVersionRequest,
     GetVersionResponse,
+    ShutdownNow,
+    ShutdownStateRequest,
+    ShutdownStateResponse,
     KillProcessRequest,
     MAX_BOOT_VALUE_LENGTH,
     MAX_BOOT_VALUES,
@@ -163,6 +166,11 @@ __all__ = [
     "get_boot_value",
     "get_version",
     "set_boot_value",
+    "on_shutdown",
+    "shutdown_now",
+    "shutdown_state",
+    "ShutdownLater",
+    "ShutdownWait",
     "shutdown",
     "reboot",
     "ExitReason",
@@ -216,6 +224,8 @@ class ProcessState(typing.Protocol):
     def getpid(self) -> int: ...
 
     def getppid(self) -> int: ...
+
+    def set_shutdown_handler(self, handler: "ShutdownHandler", loop: EventLoopInterface) -> None: ...
 
 
 # Placeholder until pyloader injects the real process state.
@@ -944,6 +954,82 @@ def get_version() -> Version:
     return _version
 
 
+class ShutdownLater:
+    """What a shutdown handler returns when it needs time: it calls done()
+    when it's finished, from any thread, and note() to say what it's
+    doing meanwhile, which the Terminal shows (see on_shutdown)."""
+
+    def __init__(self, note: str = ""):
+        self.lock = threading.Lock()
+        self.text = note
+        self.finished = False
+        self.on_done: typing.Callable[[], None] | None = None
+
+    def note(self, text: str):
+        """Say what it's doing, as it's shown while the shutdown waits."""
+        with self.lock:
+            self.text = text
+
+    def done(self):
+        """It's finished: the process says OK, and exits."""
+        with self.lock:
+            if self.finished:
+                return
+            self.finished = True
+            on_done = self.on_done
+        if on_done is not None:
+            on_done()
+
+
+# A shutdown handler: called with whether it's a reboot, and whether it's
+# now (ShutdownNow): it returns None, if it's finished, or a ShutdownLater.
+ShutdownHandler = typing.Callable[[bool, bool], ShutdownLater | None]
+
+
+def on_shutdown(handler: ShutdownHandler, loop: EventLoopInterface):
+    """Be told when the system shuts down, or reboots, on an event loop,
+    to finish what must be: save, ask the operator, and so on (see
+    doc/shutdown.rst).
+
+    The handler's called as handler(reboot, now).  It returns None when
+    it's finished, and the process exits; or a ShutdownLater, whose done()
+    it calls when it's finished, and meanwhile the p-kernel's told it's
+    waiting, with its note, every few seconds.  If it takes too long, it's
+    called again, with now True: it should save what it can, at once, and
+    return; the process is killed shortly after.
+
+    Without a handler, a process just exits when the system shuts down.
+
+    :param loop: The loop to call it on: the program's own."""
+    _darq_process_state.set_shutdown_handler(handler, loop)
+
+
+class ShutdownWait(typing.NamedTuple):
+    """A process a shutdown's waiting for: its DPID, its name (its
+    program's path), and what it says it's doing."""
+    dpid: int
+    name: str
+    note: str
+
+
+def shutdown_state() -> tuple[bool, list[ShutdownWait]]:
+    """Return whether a shutdown, or reboot, is running, and the
+    processes it's waiting for (see doc/shutdown.rst).
+
+    :raises NotPermittedError: if the p-kernel didn't spawn this process."""
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.SYNC)
+    syscall.set_request(ShutdownStateRequest(0))
+
+    _darq_process_state.queue_new_syscall(syscall)
+    syscall.sync_wait()
+
+    response = typing.cast(ShutdownStateResponse, syscall.get_response())
+    if response.result != BootResult.OK:
+        raise NotPermittedError("only a system process may ask what a shutdown's waiting for")
+    return response.running, [ShutdownWait(*w) for w in response.waiting]
+
+
 def set_boot_value(name: str, value: bytes | None):
     """Set a name's value in the boot vector, or remove it.
 
@@ -1002,6 +1088,18 @@ def shutdown():
     syscall.set_request(request)
 
     # Enqueue.  There's no response to a Shutdown, so don't wait.
+    _darq_process_state.queue_new_syscall(syscall)
+    return
+
+
+def shutdown_now():
+    """Hurry a shutdown, or reboot: every process it's waiting for is
+    told ShutdownNow at once, and killed shortly after (see
+    doc/shutdown.rst).  As shutdown(), only system processes may; there's
+    no response."""
+    syscall = SystemCallState()
+    syscall.set_mode(SystemCallMode.SYNC)
+    syscall.set_request(ShutdownNow(0))
     _darq_process_state.queue_new_syscall(syscall)
     return
 

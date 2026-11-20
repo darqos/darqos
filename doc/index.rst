@@ -39,6 +39,7 @@ Kernel
 ************************************************************************
 
 .. include:: p-kernel.rst
+.. include:: shutdown.rst
 .. include:: kernel.rst
 
 	     

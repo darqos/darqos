@@ -43,9 +43,16 @@ from darq.loop import SocketListener, TimerListener
 TCP_HOST = "127.0.0.1"
 TCP_PORT = 11000
 
-# Seconds to wait for processes to exit at shutdown, before killing their
-# host processes.
-SHUTDOWN_TIMEOUT = 5.0
+# Shutdown (see doc/shutdown.rst): each process is asked, and says OK,
+# and exits, or WAIT, every WAIT_INTERVAL seconds, till it's OK.  One
+# that's silent for two intervals, or has waited WAIT_LIMIT seconds, is
+# told ShutdownNow, and killed SHUTDOWN_GRACE seconds later, as is one
+# that said OK but hasn't exited.  The shutdown's checked every
+# SHUTDOWN_TICK seconds.
+WAIT_INTERVAL = 5.0
+WAIT_LIMIT = 60.0
+SHUTDOWN_GRACE = 3.0
+SHUTDOWN_TICK = 1.0
 
 # Seconds to wait for a spawned process to send RUN_REQUEST, before killing
 # its host process (so the spawn fails).
@@ -82,13 +89,16 @@ PACKAGE_PROGRAM = re.compile(r"darq\.python:[0-9a-f]{32}")
 # is in its kernel directory.
 DARQ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Processes started at boot, in order, as paths relative to DARQ_ROOT:
-# the Storage, History, Index, Type, Security, Knowledge Base and HTTP
-# services, then the type sync, which registers the installed types and
-# lenses with the Type service.  A client's connect waits for its service's name to be
-# registered, so they're all started at once.
-BOOT_PROCESSES = ("services/storage", "services/history", "services/index", "services/type",
-                  "services/security", "services/kb", "services/http", "tools/type-sync")
+# Processes started at boot, as paths relative to DARQ_ROOT: the Storage,
+# Knowledge Base, History, Index, Type, Security and HTTP services, then
+# the type sync, which registers the installed types and lenses with the
+# Type service.  A client's connect waits for its service's name to be
+# registered, so they're all started at once.  They're listed in the
+# order they depend on each other, Storage first, as they're shut down in
+# reverse, one at a time, so a service outlives what might use it (see
+# doc/shutdown.rst).
+BOOT_PROCESSES = ("services/storage", "services/kb", "services/history", "services/index", "services/type",
+                  "services/security", "services/http", "tools/type-sync")
 
 # The Terminal (see doc/terminal.rst), started after them unless
 # DARQ_TERMINAL is 0 (or empty).  It's the session: if it exits or dies,
@@ -232,6 +242,28 @@ class HandleEntry:
     def __init__(self, port: KernelPortState, right: PortRight):
         self.port = port
         self.right = right
+
+
+class ShutdownAsked:
+    """A process asked to shut down: when, when it was last heard, what
+    it says it's doing, and when it said OK, or was told ShutdownNow."""
+
+    def __init__(self, now: float):
+        self.asked = now
+        self.heard = now
+        self.note = ""
+        self.ok: float | None = None
+        self.told_now: float | None = None
+
+
+class _Tick(darq.loop.TimerListener):
+    """Calls a function each time a repeating timer fires."""
+
+    def __init__(self, function):
+        self.function = function
+
+    def on_timeout(self, timer_id: int, expiry_time: float, actual_time: float):
+        self.function()
 
 
 class KernelProcessState:
@@ -735,8 +767,10 @@ class PseudoKernel(SocketListener, TimerListener):
         # Set once shutdown is complete: no process is left running.
         self._stopped: bool = False
 
-        # Timer to force shutdown, while it's in progress.
+        # The shutdown's tick, while it's in progress; and the processes
+        # it's asked, by DPID.
         self._shutdown_timer: int | None = None
+        self._asked: dict[int, ShutdownAsked] = {}
 
         # Run directory, and the boot vector kept in it.
         self.run_dir = os.path.abspath(os.environ.get("DARQ_RUN", DEFAULT_RUN_DIR))
@@ -1114,13 +1148,17 @@ class PseudoKernel(SocketListener, TimerListener):
         return True
 
     def begin_shutdown(self, reboot: bool):
-        """Kill every process, then leave the event loop.
+        """Shut every process down, then leave the event loop.
 
-        Running processes are asked to exit, as by kill_process, and
-        spawned ones not yet running have their host processes killed.
-        Any still running after SHUTDOWN_TIMEOUT have their host processes
-        killed too.  Once none are left, the event loop stops: the caller
-        of run() then exits, or restarts the p-kernel (see restart()).
+        Processes are asked in two phases (see doc/shutdown.rst): first
+        every one that isn't a service, at once; then, once they've
+        finished, the services, one at a time, in reverse of the order they
+        started: the Terminal first, Storage last.  Each answers OK, and exits, or WAIT, till it's
+        OK; one that's silent, or waits too long, is told ShutdownNow, and
+        then killed.  Spawned processes not yet running have their host
+        processes killed.  Once none are left, the event loop stops: the
+        caller of run() then exits, or restarts the p-kernel (see
+        restart()).
 
         :param reboot: If True, restart the p-kernel afterwards."""
         if self._stopping:
@@ -1130,17 +1168,126 @@ class PseudoKernel(SocketListener, TimerListener):
         logging.info(f"Starting {'reboot' if reboot else 'shutdown'}.")
 
         for process in list(self._process_table.values()):
-            status = process.get_status()
-            if status == KernelProcessStatus.RUNNING:
-                process.add_kill_request(None, 0)
-                process.send_data(pk.KillProcessRequest(0, process.get_dpid()).encode())
-            elif status == KernelProcessStatus.SPAWNED:
+            if process.get_status() == KernelProcessStatus.SPAWNED:
                 self.kill_host_process(process)
 
-        self._shutdown_timer = self._loop.add_timer(
-            SHUTDOWN_TIMEOUT, darq.loop.DeferredListener(self._loop, self.force_shutdown))
+        self._shutdown_timer = self._loop.add_timer(SHUTDOWN_TICK, _Tick(self.shutdown_tick))
         self.check_shutdown()
         return
+
+    def service_rank(self, process: KernelProcessState) -> int | None:
+        """A service's place in the order services stop: the Terminal,
+        started last, first, then the boot services in reverse; or None
+        for a process that isn't a service."""
+        if process is self._terminal:
+            return 0
+        if process.get_parent_dpid() != 0:
+            return None
+        for rank, path in enumerate(reversed(BOOT_PROCESSES), start=1):
+            if process._image_path == os.path.join(DARQ_ROOT, path):
+                return rank
+        return None
+
+    def alive(self, process: KernelProcessState) -> bool:
+        return process.get_status() in (KernelProcessStatus.RUNNING, KernelProcessStatus.SPAWNED)
+
+    def advance_shutdown(self):
+        """Ask the processes whose turn it is: first, every process that
+        isn't a service, at once; then, once they've all finished, the
+        services, one at a time, in reverse of the order they started, the
+        Terminal first, and Storage last."""
+        running = [p for p in self._process_table.values() if self.alive(p)]
+        others = [p for p in running if self.service_rank(p) is None]
+        if others:
+            for process in others:
+                if process.get_dpid() not in self._asked and process.get_status() == KernelProcessStatus.RUNNING:
+                    self.ask_to_shut_down(process)
+            return
+        if any(p.get_dpid() in self._asked for p in running):
+            return
+        waiting = [p for p in running if p.get_status() == KernelProcessStatus.RUNNING]
+        if waiting:
+            first = min(waiting, key=lambda p: (self.service_rank(p) or 0, p.get_dpid()))
+            self.ask_to_shut_down(first)
+
+    def ask_to_shut_down(self, process: KernelProcessState):
+        reason = pk.ShutdownReason.REBOOT if self._reboot else pk.ShutdownReason.SHUTDOWN
+        logging.info(f"{process.name()} asked to shut down")
+        self._asked[process.get_dpid()] = ShutdownAsked(time.monotonic())
+
+        # Ended at shutdown, it's KILLED, as by kill_process, unless it
+        # reports its exit.
+        process.add_kill_request(None, 0)
+        process.send_data(pk.ShutdownRequest(reason, int(WAIT_LIMIT)).encode())
+
+    def handle_shutdown_status(self, process: KernelProcessState, message: pk.ShutdownStatus):
+        """A process's answer to ShutdownRequest: OK, and it's exiting, or
+        WAIT, with a note of what it's doing."""
+        asked = self._asked.get(process.get_dpid())
+        if asked is None:
+            logging.warning(f"{process.name()} answered a shutdown it wasn't asked to")
+            return
+        asked.heard = time.monotonic()
+        asked.note = message.get_note()
+        if message.state == pk.ShutdownState.OK and asked.ok is None:
+            logging.info(f"{process.name()} is shutting down")
+            asked.ok = asked.heard
+        elif message.state == pk.ShutdownState.WAIT:
+            logging.info(f"{process.name()} is waiting: {asked.note}")
+
+    def shutdown_tick(self):
+        """Each second, while shutting down: tell ShutdownNow to a process
+        that's silent, or has waited too long; kill one that's had its
+        grace; and ask whoever's turn it is."""
+        now = time.monotonic()
+        for dpid, asked in list(self._asked.items()):
+            process = self._process_table.get(dpid)
+            if process is None or not self.alive(process):
+                continue
+            if asked.told_now is not None or asked.ok is not None:
+                if now - (asked.told_now if asked.told_now is not None else asked.ok or now) >= SHUTDOWN_GRACE:
+                    logging.error(f"{process.name()} didn't exit at shutdown: killed")
+                    self.kill(process)
+            elif now - asked.heard >= 2 * WAIT_INTERVAL or now - asked.asked >= WAIT_LIMIT:
+                why = "silent" if now - asked.heard >= 2 * WAIT_INTERVAL else "waited too long"
+                logging.warning(f"{process.name()} {why}: telling it to shut down now")
+                asked.told_now = now
+                process.send_data(pk.ShutdownNow(int(SHUTDOWN_GRACE)).encode())
+        self.check_shutdown()
+
+    def handle_shutdown_now(self, process: KernelProcessState, message: pk.ShutdownNow):
+        """A system process, as the Terminal is, hurries the shutdown:
+        every process it's waiting for is told ShutdownNow at once."""
+        if not self.may_shut_down(process, "shutdown now") or not self._stopping:
+            return
+        now = time.monotonic()
+        for dpid, asked in self._asked.items():
+            other = self._process_table.get(dpid)
+            if other is not None and self.alive(other) and asked.ok is None and asked.told_now is None:
+                asked.told_now = now
+                other.send_data(pk.ShutdownNow(int(SHUTDOWN_GRACE)).encode())
+
+    def kill(self, process: KernelProcessState):
+        """End a process at shutdown: its host process, or its session."""
+        if process.get_child() is not None:
+            self.kill_host_process(process)
+        elif process.get_status() == KernelProcessStatus.RUNNING:
+            self.handle_disconnect(process)
+
+    def handle_shutdown_state_request(self, process: KernelProcessState, request: pk.ShutdownStateRequest):
+        """Say whether a shutdown's running, and what it's waiting for: to
+        a system process, as the Terminal is."""
+        if process.get_parent_dpid() != 0:
+            logging.warning(f"{process.name()} shutdown_state refused: not a system process")
+            response = pk.ShutdownStateResponse(request.request_id, pk.BootResult.NOT_PERMITTED)
+        else:
+            waiting = []
+            for dpid, asked in sorted(self._asked.items()):
+                other = self._process_table.get(dpid)
+                if other is not None and self.alive(other) and other is not process:
+                    waiting.append((dpid, os.path.relpath(other._image_path, DARQ_ROOT), asked.note))
+            response = pk.ShutdownStateResponse(request.request_id, 0, self._stopping, waiting)
+        process.send_data(response.encode())
 
     @staticmethod
     def kill_host_process(process: KernelProcessState):
@@ -1152,7 +1299,8 @@ class PseudoKernel(SocketListener, TimerListener):
         return
 
     def force_shutdown(self):
-        """Kill the host processes of processes still running at shutdown."""
+        """Kill the host processes of every process still running at
+        shutdown, as when it's been interrupted."""
         for process in list(self._process_table.values()):
             if process.get_status() in (KernelProcessStatus.RUNNING, KernelProcessStatus.SPAWNED):
                 logging.error(f"{process.name()} didn't exit at shutdown")
@@ -1165,9 +1313,11 @@ class PseudoKernel(SocketListener, TimerListener):
         return
 
     def check_shutdown(self):
-        """Finish shutting down, once no process is running or spawned."""
+        """Ask whoever's turn it is to shut down; and finish shutting
+        down, once no process is running or spawned."""
         if not self._stopping:
             return
+        self.advance_shutdown()
 
         for process in self._process_table.values():
             if process.get_status() in (KernelProcessStatus.RUNNING, KernelProcessStatus.SPAWNED):
@@ -2135,6 +2285,21 @@ class PseudoKernel(SocketListener, TimerListener):
             message = pk.Shutdown()
             message.decode(message_bytes)
             self.handle_shutdown(process, message)
+
+        elif message_type == pk.MessageType.SHUTDOWN_STATUS:
+            message = pk.ShutdownStatus()
+            message.decode(message_bytes)
+            self.handle_shutdown_status(process, message)
+
+        elif message_type == pk.MessageType.SHUTDOWN_NOW:
+            message = pk.ShutdownNow()
+            message.decode(message_bytes)
+            self.handle_shutdown_now(process, message)
+
+        elif message_type == pk.MessageType.SHUTDOWN_STATE_RQST:
+            message = pk.ShutdownStateRequest()
+            message.decode(message_bytes)
+            self.handle_shutdown_state_request(process, message)
 
         else:
             logging.warning(f"{process.name()} Received message with "

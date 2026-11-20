@@ -75,6 +75,14 @@ Summary notes on newly added features for each release.
   what's saved uses.  Cells are numbered on from a reopened session's,
   so `$8` means the same result after it's reopened.
   Saving says how many names, and results, it wrote.
+- **Shutting down asks each program to finish, rather than killing it.**
+  Each says it's finished, or that it's waiting, with what it's doing,
+  till it is: first every program that isn't a service, then the
+  services, one at a time, the Terminal first and Storage last.  The
+  REPL asks whether to save an unsaved session.  The Terminal shows
+  what's being waited for, and why; *n* shuts down now.  A program
+  that's silent, or waits too long, is told to finish now, then killed.
+  Programs can take part with `darq.on_shutdown`: see doc/shutdown.rst.
 
 - **Items are named from the start.**  The Knowledge Base now sets up its
   vocabulary when it starts.  Until something used a person, a book, or

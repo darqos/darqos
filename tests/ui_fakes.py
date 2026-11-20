@@ -168,6 +168,15 @@ class FakeServices:
     def reboot(self):
         self.calls.append("reboot")
 
+    # What a shutdown's waiting for, as the p-kernel says.
+    waiting: list = []
+
+    def shutdown_state(self):
+        return bool(self.calls), list(self.waiting)
+
+    def shutdown_now(self):
+        self.calls.append("shutdown now")
+
 
 def inline(function):
     """Run a launch, or post its result, at once: see darq.ui.launcher."""

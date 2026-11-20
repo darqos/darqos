@@ -178,6 +178,8 @@ class FakePKernel:
             message = pk.WaitRequest()
         elif message_type == pk.MessageType.EXITED:
             message = pk.Exited()
+        elif message_type == pk.MessageType.SHUTDOWN_STATUS:
+            message = pk.ShutdownStatus()
         else:
             raise AssertionError(f"unexpected message type {message_type}")
         message.decode(message_buf)
@@ -973,6 +975,94 @@ def test_kill_running_app(pproc, install_app, body):
     assert pproc._app_result is None
     assert pproc._pending == {}
     assert pproc.exit_status == 0
+
+
+def statuses(process) -> list[tuple[int, str]]:
+    """What the process said to the shutdown: all of it, as the fake
+    p-kernel's thread has read it all once the process has closed."""
+    process.kernel.thread.join(TIMEOUT)
+    return [(m.state, m.get_note()) for m in process.kernel.received if isinstance(m, pk.ShutdownStatus)]
+
+
+SHUTDOWN_APP = """
+    import pathlib
+    import threading
+    import darq
+    import darq.loop
+
+    MARK = pathlib.Path({mark!r})
+
+    def darq_main():
+        loop = darq.loop.SelectEventLoop()
+
+        def handler(reboot, now):
+            MARK.write_text(MARK.read_text() + f"{{reboot}} {{now}};" if MARK.exists() else f"{{reboot}} {{now}};")
+            {handler}
+
+        darq.on_shutdown(handler, loop)
+        darq.system.send_message(16385, 16386, b"started")
+        try:
+            loop.run()
+        finally:
+            loop.close()
+    """
+
+
+def shutdown_on_start(process, reason=pk.ShutdownReason.SHUTDOWN):
+    process.kernel.actions[pk.MessageType.SEND_MESSAGE_RQST] = \
+        lambda request: process.kernel.send(pk.ShutdownRequest(reason, 60))
+
+
+def test_without_a_handler_shutdown_says_ok(pproc, install_app):
+    install_app("""
+        import time
+        import darq
+        def darq_main():
+            darq.system.send_message(16385, 16386, b"started")
+            while True:
+                time.sleep(0.01)
+        """)
+    shutdown_on_start(pproc)
+    run_process(pproc)
+    assert statuses(pproc) == [(pk.ShutdownState.OK, "")] and pproc._app_killed
+
+
+def test_a_handler_that_finishes_at_once(pproc, install_app, tmp_path):
+    mark = tmp_path / "mark"
+    install_app(SHUTDOWN_APP.format(mark=str(mark), handler="return None"))
+    shutdown_on_start(pproc, pk.ShutdownReason.REBOOT)
+    run_process(pproc)
+    assert mark.read_text() == "True False;"
+    assert statuses(pproc) == [(pk.ShutdownState.OK, "")]
+
+
+def test_a_handler_that_finishes_later_says_wait(pproc, install_app, tmp_path, monkeypatch):
+    monkeypatch.setitem(type(pproc).shutdown_waiting.__globals__, "SHUTDOWN_WAIT_INTERVAL", 0.1)
+    mark = tmp_path / "mark"
+    install_app(SHUTDOWN_APP.format(mark=str(mark), handler="""later = darq.system.ShutdownLater("saving")
+            threading.Timer(0.35, later.done).start()
+            return later"""))
+    shutdown_on_start(pproc)
+    run_process(pproc)
+    said = statuses(pproc)
+    assert said[-1] == (pk.ShutdownState.OK, "") and len(said) >= 3
+    assert set(said[:-1]) == {(pk.ShutdownState.WAIT, "saving")}
+
+
+def test_shutdown_now_tells_the_handler(pproc, install_app, tmp_path):
+    mark = tmp_path / "mark"
+    install_app(SHUTDOWN_APP.format(mark=str(mark), handler="""if not now:
+                return darq.system.ShutdownLater("never done")"""))
+    shutdown_on_start(pproc)
+
+    def hurry(request):
+        if request.state == pk.ShutdownState.WAIT:
+            pproc.kernel.send(pk.ShutdownNow(3))
+
+    pproc.kernel.actions[pk.MessageType.SHUTDOWN_STATUS] = hurry
+    run_process(pproc)
+    assert mark.read_text() == "False False;False True;"
+    assert statuses(pproc)[-1] == (pk.ShutdownState.OK, "")
 
 
 def test_kill_app_blocked_in_pcall(pproc, install_app):

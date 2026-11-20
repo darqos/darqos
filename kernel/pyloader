@@ -31,6 +31,7 @@ import setproctitle
 import socket
 import sys
 import threading
+import typing
 import traceback
 
 import darq
@@ -41,6 +42,21 @@ from darq._runtime import process
 # A program kept as a Python package's item, rather than a directory (see
 # PACKAGE_PROGRAM in the p-kernel).
 PACKAGE_PROGRAM = re.compile(r"darq\.python:[0-9a-f]{32}")
+
+
+# Seconds between saying WAIT, while the application finishes shutting
+# down: within the p-kernel's interval (see doc/shutdown.rst).
+SHUTDOWN_WAIT_INTERVAL = 4.0
+
+
+class ShutdownTick(darq.loop.TimerListener):
+    """Calls a function each time a repeating timer fires."""
+
+    def __init__(self, function):
+        self.function = function
+
+    def on_timeout(self, timer_id: int, expiry_time: float, actual_time: float):
+        self.function()
 
 
 class AppState(enum.Enum):
@@ -85,6 +101,17 @@ class PythonPProcess(darq.loop.SocketListener):
         # listener, set by darq.init_cb().  Callbacks are posted to it.
         self.loop: darq.loop.EventLoopInterface | None = None
         self.listener: process.EventListener | None = None
+
+        # The application's shutdown handler, and its loop (see
+        # darq.on_shutdown); and, while it's finishing, what it returned,
+        # and the timer that says WAIT for it.
+        self.shutdown_handler: typing.Any = None
+        self.shutdown_loop: darq.loop.EventLoopInterface | None = None
+        self.shutdown_later: typing.Any = None
+        self.shutdown_timer: int | None = None
+        self.shutting_down = False
+        self.reboot_shutdown = False
+        self.said_ok = False
 
         # The application's progress, guarded by the lock: it's changed
         # by both threads.  The main thread waits for the start event
@@ -351,8 +378,9 @@ class PythonPProcess(darq.loop.SocketListener):
         Called on another thread, holding the lock, so the application
         can't finish first.  Python delivers the exception when the main
         thread next executes bytecode, so it won't interrupt native code,
-        such as a Qt event loop with nothing to do.  So a Qt application's
-        event loops are told to exit too: then the exception is raised in
+        such as a Qt event loop with nothing to do.  So the loops it's
+        given are woken, and a Qt application's event loops are told to
+        exit too: then the exception is raised in
         its own code, once exec() returns, rather than in a slot, where
         PyQt would end the process at once, without its finally blocks or
         pyloader's cleanup."""
@@ -360,6 +388,14 @@ class PythonPProcess(darq.loop.SocketListener):
         ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(self._app_ident),
                                                    ctypes.py_object(SystemExit))
         self.quit_qt()
+
+        # Wake the loops it's given, as a select loop waiting for nothing
+        # runs no bytecode till it's woken: a posted call wakes it.
+        for loop in {id(x): x for x in (self.loop, self.shutdown_loop) if x is not None}.values():
+            try:
+                loop.post(lambda: None)
+            except Exception:
+                pass
 
     @staticmethod
     def quit_qt():
@@ -639,6 +675,11 @@ class PythonPProcess(darq.loop.SocketListener):
             message.decode(message_buf)
             self.complete_syscall(message)
 
+        elif message_type == pk.MessageType.SHUTDOWN_STATE_RESP:
+            message = pk.ShutdownStateResponse()
+            message.decode(message_buf)
+            self.complete_syscall(message)
+
         elif message_type == pk.MessageType.SET_BOOT_VALUE_RESP:
             message = pk.SetBootValueResponse()
             message.decode(message_buf)
@@ -653,6 +694,16 @@ class PythonPProcess(darq.loop.SocketListener):
             message = pk.KillProcessRequest()
             message.decode(message_buf)
             self.handle_kill_process_request(message)
+
+        elif message_type == pk.MessageType.SHUTDOWN_RQST:
+            message = pk.ShutdownRequest()
+            message.decode(message_buf)
+            self.handle_shutdown_request(message)
+
+        elif message_type == pk.MessageType.SHUTDOWN_NOW:
+            message = pk.ShutdownNow()
+            message.decode(message_buf)
+            self.handle_shutdown_now(message)
 
         elif message_type == pk.MessageType.KILL_PROCESS_RESP:
             message = pk.KillProcessResponse()
@@ -794,6 +845,100 @@ class PythonPProcess(darq.loop.SocketListener):
 
         self.complete_syscall(message)
         return
+
+    def set_shutdown_handler(self, handler, loop: darq.loop.EventLoopInterface):
+        """Call handler on loop when the system shuts down: see
+        darq.on_shutdown."""
+        self.shutdown_handler = handler
+        self.shutdown_loop = loop
+
+    def handle_shutdown_request(self, message: pk.ShutdownRequest):
+        """The system's shutting down: say OK and end, or, with a handler,
+        let it finish first, saying WAIT meanwhile.
+
+        Called on the I/O thread."""
+        if self.shutting_down:
+            return
+        self.shutting_down = True
+        reboot = message.reason == pk.ShutdownReason.REBOOT
+        handler, loop = self.shutdown_handler, self.shutdown_loop
+        if handler is None or loop is None:
+            logging.info("Shutting down.")
+            self.shutdown_finished()
+            return
+
+        def call():
+            try:
+                later = handler(reboot, False)
+            except Exception:
+                logging.exception("The shutdown handler failed")
+                later = None
+            if later is None:
+                self.io_loop.post(self.shutdown_finished)
+            else:
+                later.on_done = lambda: self.io_loop.post(self.shutdown_finished)
+                self.io_loop.post(lambda: self.shutdown_waiting(later))
+
+        logging.info("Shutting down: asking the application.")
+        self.reboot_shutdown = reboot
+        try:
+            loop.post(call)
+        except RuntimeError:
+            logging.warning("The application's loop is closed: shutting down.")
+            self.shutdown_finished()
+
+    def shutdown_waiting(self, later):
+        """The application's finishing: say WAIT, with its note, now and
+        every WAIT_INTERVAL seconds, till it's done.  On the I/O thread."""
+        if not self.shutting_down or self.shutdown_later is not None:
+            return
+        self.shutdown_later = later
+        if later.finished:
+            self.shutdown_finished()
+            return
+        self.say_waiting()
+        self.shutdown_timer = self.io_loop.add_timer(SHUTDOWN_WAIT_INTERVAL, ShutdownTick(self.say_waiting))
+
+    def say_waiting(self):
+        later = self.shutdown_later
+        if later is None or later.finished:
+            return
+        with later.lock:
+            note = later.text
+        self.send_to_p_kernel(pk.ShutdownStatus(pk.ShutdownState.WAIT, note))
+
+    def handle_shutdown_now(self, message: pk.ShutdownNow):
+        """Killed shortly: tell the handler, to save what it can, then
+        end.  On the I/O thread."""
+        handler, loop = self.shutdown_handler, self.shutdown_loop
+        if handler is None or loop is None or not self.shutting_down:
+            self.shutdown_finished()
+            return
+        logging.warning(f"Shutting down now: killed in {message.grace}s")
+
+        def call():
+            try:
+                handler(self.reboot_shutdown, True)
+            except Exception:
+                logging.exception("The shutdown handler failed")
+            self.io_loop.post(self.shutdown_finished)
+
+        try:
+            loop.post(call)
+        except RuntimeError:
+            self.shutdown_finished()
+
+    def shutdown_finished(self):
+        """Say OK, and end the application.  On the I/O thread."""
+        if self.shutdown_timer is not None:
+            self.io_loop.cancel_timer(self.shutdown_timer)
+            self.shutdown_timer = None
+        if self.said_ok:
+            return
+        self.said_ok = True
+        self.send_to_p_kernel(pk.ShutdownStatus(pk.ShutdownState.OK))
+        self.kill_app()
+        self._end_app()
 
     def handle_kill_process_request(self, message: pk.KillProcessRequest):
         """Handle the p-kernel's request to kill this process."""

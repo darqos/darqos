@@ -10,6 +10,7 @@ import datetime
 import pathlib
 import typing
 
+import darq.errors
 from PyQt6 import QtCore
 from PyQt6.QtGui import QHideEvent, QKeyEvent
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QVBoxLayout, QWidget
@@ -203,6 +204,46 @@ class PowerPanel(Panel):
         self.hide()
         if choice != "cancel":
             self.power(choice)
+
+
+class ShutdownPanel(Panel):
+    """While the system shuts down, or reboots: what it's waiting for, and
+    why, each second; n hurries it, telling them all to finish now."""
+
+    CLOSES_ON_DEACTIVATE = False
+
+    def __init__(self, host):
+        super().__init__("Shutting down", 640, 220)
+        self.host = host
+        self.waiting = QLabel()
+        self.waiting.setWordWrap(True)
+        self.contents.addWidget(self.waiting)
+        self.contents.addWidget(QLabel("n: Shut down now"))
+        self.timer = QtCore.QTimer(self)
+        self.timer.setInterval(1000)
+        self.timer.timeout.connect(self.refresh)
+
+    def show_for(self, reboot: bool):
+        self.heading.setText("Rebooting" if reboot else "Shutting down")
+        self.open()
+        self.timer.start()
+
+    def refresh(self):
+        try:
+            _, waiting = self.host.services.shutdown_state()
+        except (darq.errors.DarqError, TimeoutError) as e:
+            self.waiting.setText(f"Can't tell what it's waiting for: {e}")
+            return
+        if not waiting:
+            self.waiting.setText("Stopping the services")
+            return
+        self.waiting.setText("Waiting for:\n" + "\n".join(
+            f"{w.name}" + (f": {w.note}" if w.note else "") for w in waiting))
+
+    def keyPressEvent(self, a0: QKeyEvent | None):
+        if a0 is not None and a0.text().lower() == "n":
+            self.host.services.shutdown_now()
+            self.set_status("Telling them to finish now")
 
 
 class NoticePanel(Panel):

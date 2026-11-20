@@ -1,0 +1,39 @@
+.\" darqos
+.\" Copyright (C) 2026 David Arnold
+.TH shutdown_state 2 2026-11-20 DarqOS "DarqOS Kernel API Manual"
+.SH NAME
+shutdown_state \- what a shutdown is waiting for
+.SH LIBRARY
+.I darq
+.SH SYNOPSIS
+.BR shutdown_state() " -> tuple[bool, list[ShutdownWait]]"
+.PP
+class \fIShutdownWait\fP:
+    dpid: \fIint\fP
+    name: \fIstr\fP
+    note: \fIstr\fP
+.SH DESCRIPTION
+.BR shutdown_state ()
+returns whether a shutdown, or reboot, is running, and the processes it's
+waiting for: each one asked to finish, and not yet gone, by its DPID,
+its program's path, and the note it last gave, as "saving", with
+WAIT.
+The Terminal shows them while it's shutting down.
+.SH ERRORS
+.TP
+.B NotPermittedError
+The process isn't a system process: the p-kernel didn't spawn it.
+.SH HISTORY
+Introduced in \fISecond Edition\fP.
+.SH EXAMPLES
+.EX
+running, waiting = darq.shutdown_state()
+for wait in waiting:
+    print(wait.name, wait.note)
+.EE
+.SH SEE ALSO
+.BR on_shutdown (3),
+.BR shutdown_now (2),
+.BR shutdown_state (2),
+.BR pkernel (8),
+.BR pyloader (8)

@@ -563,6 +563,31 @@ def test_power_panel(terminal):
     assert terminal.fake_services.calls == ["reboot"]
 
 
+def test_the_shutdown_panel_says_what_its_waiting_for(terminal):
+    import darq
+    from PyQt6.QtCore import Qt
+    unlock(terminal)
+    terminal.fake_services.waiting = [darq.ShutdownWait(12, "lenses/repl", "asking whether to save the session"),
+                                      darq.ShutdownWait(13, "tools/update", "")]
+    hotkey(terminal, main.XK_b)
+    terminal.power_panel.keyPressEvent(key(Qt.Key.Key_S, "s"))
+    panel = terminal.shutdown_panel
+    assert visible(terminal) == [panel] and panel.heading.text() == "Shutting down"
+    assert panel.waiting.text() == ("Waiting for:\nlenses/repl: asking whether to save the session\n"
+                                    "tools/update")
+
+    # It doesn't close when it loses the focus; n hurries it.
+    panel.keyPressEvent(key(Qt.Key.Key_X, "x"))
+    assert terminal.fake_services.calls == ["shutdown"]
+    panel.keyPressEvent(key(Qt.Key.Key_N, "n"))
+    assert terminal.fake_services.calls == ["shutdown", "shutdown now"]
+    assert panel.status.text() == "Telling them to finish now"
+
+    terminal.fake_services.waiting = []
+    panel.refresh()
+    assert panel.waiting.text() == "Stopping the services"
+
+
 @pytest.mark.parametrize("keysym, name", [(main.XK_e, "Events")])
 def test_tbd(terminal, keysym, name):
     from PyQt6.QtCore import Qt

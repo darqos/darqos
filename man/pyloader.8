@@ -99,6 +99,16 @@ then closes its side of the connection, waits for the p-kernel to
 close its side, and exits, even if the application left other threads
 running.
 .PP
+At shutdown, the p-kernel's ShutdownRequest is answered OK, and the
+application ended as if killed, unless it has a shutdown handler
+.RB ( on_shutdown (3)):
+then the handler's called on its loop, and, while it's not finished,
+.B pyloader
+says WAIT, with its note, every 4 seconds.
+Told ShutdownNow, it calls the handler again, and ends the application.
+The loops it's given are woken, so an idle select loop sees the
+exception at once.
+.PP
 A killed application is stopped by raising
 .B SystemExit
 in the main thread; any p-call it is blocked in is abandoned.

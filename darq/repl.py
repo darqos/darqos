@@ -1337,6 +1337,10 @@ class Service(wire.Evaluator.Handler):
         self.pending = 0
         self.main: int | None = None
 
+        # At shutdown, what's done once its REPL's gone: it waits for it,
+        # as the REPL saves its session with it.
+        self.shutting_down: darq.ShutdownLater | None = None
+
     # The main thread
 
     def serve(self):
@@ -1391,7 +1395,17 @@ class Service(wire.Evaluator.Handler):
 
     def port_destroyed(self, handle: int):
         logging.info("The REPL's gone: the evaluator's ending")
+        if self.shutting_down is not None:
+            self.shutting_down.done()
         self.end()
+
+    def on_shutdown(self, reboot: bool, now: bool) -> darq.ShutdownLater | None:
+        """At shutdown, wait for the REPL to go, as it's asked at the same
+        time, and may save its session with this, first; or, now, go."""
+        if now:
+            return None
+        self.shutting_down = darq.ShutdownLater("waiting for its REPL")
+        return self.shutting_down
 
     # What runs code
 
@@ -1796,6 +1810,7 @@ def evaluator_main() -> int:
     server.add(port, service)
     server.attach(loop)
     darq.notify_on_death(bootstrap, port)
+    darq.on_shutdown(service.on_shutdown, loop)
     threading.Thread(target=loop.run, name="evaluator-protocol", daemon=True).start()
     wire.Starter.Client(bootstrap).ready(evaluator=port)
     service.serve()

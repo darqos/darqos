@@ -2281,25 +2281,178 @@ def test_kernel_spawned_processes_kept(pkernel):
 # Shutdown and reboot
 ################################################################
 
-def test_shutdown_kills_processes(pkernel):
+def shutdown_requests(peer) -> list[pk.ShutdownRequest]:
+    found = []
+    for message_type, buf in received_messages(peer):
+        if message_type == pk.MessageType.SHUTDOWN_RQST:
+            request = pk.ShutdownRequest()
+            request.decode(buf)
+            found.append(request)
+    return found
+
+
+def say(kernel, process, state, note=""):
+    send_to_kernel(kernel, process, pk.ShutdownStatus(state, note))
+
+
+def test_shutdown_asks_processes(pkernel):
     a, a_peer = add_running_process(pkernel, 1)
     b, b_peer = add_running_process(pkernel, 2)
 
     send_to_kernel(pkernel, a, pk.Shutdown())
-    for process, peer in ((a, a_peer), (b, b_peer)):
-        [(message_type, buf)] = received_messages(peer)
-        assert message_type == pk.MessageType.KILL_PROCESS_RQST
-        request = pk.KillProcessRequest()
-        request.decode(buf)
-        assert request.dpid == process.get_dpid()
+    for peer in (a_peer, b_peer):
+        [request] = shutdown_requests(peer)
+        assert (request.reason, request.wait_limit) == (pk.ShutdownReason.SHUTDOWN, 60)
 
-    # Shutdown completes once they've all gone.
+    # Each says OK, and goes: shutdown completes once they've all gone.
+    say(pkernel, a, pk.ShutdownState.OK)
     pkernel.handle_disconnect(a)
     assert not pkernel._stopped
+    say(pkernel, b, pk.ShutdownState.OK)
     pkernel.handle_disconnect(b)
     assert pkernel._stopped
     assert not pkernel.reboot_requested()
     assert b.get_exit_reason() == pk.ExitReason.KILLED
+
+
+def test_non_services_are_asked_at_once_then_the_terminal(pkernel, terminal):
+    module = pkernel.module
+    repl, repl_peer = add_running_process(pkernel, 5)
+    repl.set_parent_dpid(terminal.get_dpid())
+    evaluator, evaluator_peer = add_running_process(pkernel, 6)
+    evaluator.set_parent_dpid(5)
+    storage, storage_peer = add_running_process(pkernel, 9)
+    storage._image_path = module.os.path.join(module.DARQ_ROOT, "services/storage")
+    terminal_peer = pkernel.peers[1]
+    received_messages(terminal_peer)
+
+    pkernel.begin_shutdown(reboot=True)
+    assert [len(shutdown_requests(peer)) for peer in (repl_peer, evaluator_peer)] == [1, 1]
+    assert shutdown_requests(terminal_peer) == [] and shutdown_requests(storage_peer) == []
+
+    # The Terminal's the first service asked, once the rest have gone.
+    pkernel.handle_disconnect(evaluator)
+    assert shutdown_requests(terminal_peer) == []
+    pkernel.handle_disconnect(repl)
+    [request] = shutdown_requests(terminal_peer)
+    assert request.reason == pk.ShutdownReason.REBOOT and shutdown_requests(storage_peer) == []
+    pkernel.handle_disconnect(terminal)
+    assert len(shutdown_requests(storage_peer)) == 1
+
+
+def test_boot_services_are_asked_last_one_at_a_time(pkernel):
+    module = pkernel.module
+    services = {}
+    for dpid, path in ((11, "services/storage"), (12, "services/kb"), (13, "services/http")):
+        process, peer = add_running_process(pkernel, dpid)
+        process._image_path = module.os.path.join(module.DARQ_ROOT, path)
+        services[path] = (process, peer)
+    app, app_peer = add_running_process(pkernel, 20)
+
+    pkernel.begin_shutdown(reboot=False)
+    assert len(shutdown_requests(app_peer)) == 1
+    assert all(shutdown_requests(peer) == [] for _, peer in services.values())
+
+    pkernel.handle_disconnect(app)
+    order = []
+    for _ in range(3):
+        asked = [path for path, (_, peer) in services.items() if shutdown_requests(peer)]
+        assert len(asked) == 1
+        order += asked
+        pkernel.handle_disconnect(services[asked[0]][0])
+    assert order == ["services/http", "services/kb", "services/storage"] and pkernel._stopped
+
+
+def test_a_waiting_process_is_waited_for(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+    pkernel.begin_shutdown(reboot=False)
+    received_messages(peer)
+    asked = pkernel._asked[1]
+
+    # Saying WAIT keeps it: it's not hurried while it's heard.
+    asked.asked -= 30
+    asked.heard -= 9
+    say(pkernel, process, pk.ShutdownState.WAIT, "saving")
+    pkernel.shutdown_tick()
+    assert received_messages(peer) == [] and asked.note == "saving"
+
+    # Silent for two intervals, it's told ShutdownNow; then killed.
+    asked.heard -= 10
+    pkernel.shutdown_tick()
+    [(message_type, buf)] = received_messages(peer)
+    assert message_type == pk.MessageType.SHUTDOWN_NOW
+    now = pk.ShutdownNow()
+    now.decode(buf)
+    assert now.grace == 3
+    asked.told_now -= 3
+    pkernel.shutdown_tick()
+    assert pkernel._stopped and process.get_exit_reason() == pk.ExitReason.KILLED
+
+
+def test_waiting_too_long_is_hurried(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+    pkernel.begin_shutdown(reboot=False)
+    received_messages(peer)
+    pkernel._asked[1].asked -= 60
+    say(pkernel, process, pk.ShutdownState.WAIT, "still going")
+    pkernel.shutdown_tick()
+    assert [t for t, _ in received_messages(peer)] == [pk.MessageType.SHUTDOWN_NOW]
+
+
+def test_saying_ok_and_not_exiting_is_killed(pkernel):
+    process, peer = add_running_process(pkernel, 1)
+    stuck = subprocess.Popen(["sleep", "60"])
+    process.set_child(stuck)
+    pkernel.begin_shutdown(reboot=False)
+    say(pkernel, process, pk.ShutdownState.OK)
+    pkernel._asked[1].ok -= 3
+    pkernel.shutdown_tick()
+    assert stuck.wait(E2E_TIMEOUT) != 0
+
+
+def test_a_system_process_hurries_the_shutdown(pkernel):
+    terminal, terminal_peer = add_running_process(pkernel, 1)
+    a, a_peer = add_running_process(pkernel, 2)
+    a.set_parent_dpid(1)
+    b, b_peer = add_running_process(pkernel, 3)
+    b.set_parent_dpid(1)
+    pkernel._terminal = terminal
+    pkernel.begin_shutdown(reboot=False)
+    say(pkernel, a, pk.ShutdownState.WAIT, "saving")
+    say(pkernel, b, pk.ShutdownState.OK)
+    for peer in (a_peer, b_peer):
+        received_messages(peer)
+
+    # Only a system process may: a's own request changes nothing.
+    send_to_kernel(pkernel, a, pk.ShutdownNow(0))
+    assert received_messages(a_peer) == []
+    send_to_kernel(pkernel, terminal, pk.ShutdownNow(0))
+    assert [t for t, _ in received_messages(a_peer)] == [pk.MessageType.SHUTDOWN_NOW]
+    assert received_messages(b_peer) == []
+
+
+def test_shutdown_state_is_for_system_processes(pkernel):
+    terminal, terminal_peer = add_running_process(pkernel, 1)
+    other, other_peer = add_running_process(pkernel, 2)
+    other.set_parent_dpid(1)
+    pkernel._terminal = terminal
+    pkernel.begin_shutdown(reboot=False)
+    say(pkernel, other, pk.ShutdownState.WAIT, "asking about a session")
+    received_messages(terminal_peer)
+    received_messages(other_peer)
+
+    send_to_kernel(pkernel, terminal, pk.ShutdownStateRequest(4))
+    [(_, buf)] = received_messages(terminal_peer)
+    state = pk.ShutdownStateResponse()
+    state.decode(buf)
+    assert (state.request_id, state.result, state.running) == (4, 0, True)
+    assert [(d, n) for d, _, n in state.waiting] == [(2, "asking about a session")]
+
+    send_to_kernel(pkernel, other, pk.ShutdownStateRequest(5))
+    [(_, buf)] = received_messages(other_peer)
+    refused = pk.ShutdownStateResponse()
+    refused.decode(buf)
+    assert refused.result == pk.BootResult.NOT_PERMITTED
 
 
 def test_shutdown_without_processes(pkernel):
@@ -2494,6 +2647,51 @@ def test_live_shutdown(live_pkernel, tmp_path):
     assert process.get_exit_reason() == pk.ExitReason.KILLED
     run_kernel_until(kernel, lambda: process.get_child().returncode is not None,
                      "the kernel to reap the process")
+
+
+def test_live_shutdown_waits_for_a_handler(live_pkernel, tmp_path):
+    """A program that needs time to shut down says WAIT, and is waited
+    for, then exits: it isn't killed."""
+    kernel = live_pkernel
+    module = kernel.module
+    mark = tmp_path / "mark"
+    path = write_app(tmp_path / "app", f"""
+        import pathlib
+        import threading
+        import darq
+        import darq.loop
+
+        def darq_main():
+            loop = darq.loop.SelectEventLoop()
+
+            def handler(reboot, now):
+                later = darq.ShutdownLater("saving")
+
+                def finish():
+                    pathlib.Path({str(mark)!r}).write_text("saved")
+                    later.done()
+
+                threading.Timer(1.5, finish).start()
+                return later
+
+            darq.on_shutdown(handler, loop)
+            try:
+                loop.run()
+            finally:
+                loop.close()
+        """)
+    dpid = kernel.do_spawn_process(None, path)
+    process = kernel._process_table[dpid]
+    run_kernel_until(kernel, lambda: process.get_status() == module.KernelProcessStatus.RUNNING,
+                     "the process to run")
+    deadline = time.monotonic() + 0.5
+    run_kernel_until(kernel, lambda: time.monotonic() > deadline, "it to set its handler")
+
+    kernel.begin_shutdown(reboot=False)
+    run_kernel_until(kernel, lambda: kernel._asked[dpid].note == "saving", "it to say it's waiting")
+    run_kernel_until(kernel, lambda: kernel._stopped, "shutdown to complete")
+    assert mark.read_text() == "saved"
+    assert kernel._asked[dpid].ok is not None and kernel._asked[dpid].told_now is None
 
 
 ################################################################

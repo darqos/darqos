@@ -66,6 +66,12 @@ class Services:
     def shutdown(self):
         darq.shutdown()
 
+    def shutdown_state(self) -> tuple[bool, list[darq.ShutdownWait]]:
+        return darq.shutdown_state()
+
+    def shutdown_now(self):
+        darq.shutdown_now()
+
     def reboot(self):
         darq.reboot()
 

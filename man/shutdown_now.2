@@ -1,0 +1,31 @@
+.\" darqos
+.\" Copyright (C) 2026 David Arnold
+.TH shutdown_now 2 2026-11-20 DarqOS "DarqOS Kernel API Manual"
+.SH NAME
+shutdown_now \- hurry a shutdown
+.SH LIBRARY
+.I darq
+.SH SYNOPSIS
+.BR shutdown_now ()
+.SH DESCRIPTION
+.BR shutdown_now ()
+hurries a running shutdown, or reboot: every process it's waiting for,
+that hasn't said OK, is told ShutdownNow at once, and has its host
+process killed 3 seconds later, if it hasn't exited.
+Only a system process, one the p-kernel spawned, may: from any other,
+it's ignored, and logged.
+There's no response.
+.SH ERRORS
+None: a refusal is only logged.
+.SH HISTORY
+Introduced in \fISecond Edition\fP.
+.SH EXAMPLES
+.EX
+darq.shutdown_now()
+.EE
+.SH SEE ALSO
+.BR on_shutdown (3),
+.BR shutdown_now (2),
+.BR shutdown_state (2),
+.BR pkernel (8),
+.BR pyloader (8)

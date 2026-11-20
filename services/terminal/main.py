@@ -69,8 +69,8 @@ from darq.protocols.type import Context as TypeContext
 from darq.ui.launcher import Launcher
 from darq.ui.names import item_names
 
-from panels import (HistoryPanel, NewPanel, NoticePanel, Panel, PowerPanel, SearchPanel, SwitcherPanel, TbdPanel,
-                    ToolsPanel)
+from panels import (HistoryPanel, NewPanel, NoticePanel, Panel, PowerPanel, SearchPanel, ShutdownPanel,
+                    SwitcherPanel, TbdPanel, ToolsPanel)
 from screens import CHOOSE, ENTER, UNAVAILABLE, WAITING, Screens
 import type_list
 from host import Services
@@ -183,12 +183,13 @@ class Terminal:
         self.search = SearchPanel(self)
         self.switcher = SwitcherPanel()
         self.power_panel = PowerPanel(self.power)
+        self.shutdown_panel = ShutdownPanel(self)
         self.tbd = TbdPanel()
         self.notice = NoticePanel()
         self.root = pathlib.Path(os.environ.get("DARQ_ROOT", DEFAULT_ROOT))
         self.tools = ToolsPanel(self, self.root)
         self.panels: list[Panel] = [self.new, self.history, self.search, self.switcher, self.power_panel,
-                                    self.tbd, self.notice, self.tools]
+                                    self.tbd, self.notice, self.tools, self.shutdown_panel]
 
         self.notifier = QtCore.QSocketNotifier(voidptr(channel.fileno()), QtCore.QSocketNotifier.Type.Read)
         self.notifier.activated.connect(self.read_channel)
@@ -637,6 +638,10 @@ class Terminal:
             self.services.shutdown()
         elif choice == "reboot":
             self.services.reboot()
+        else:
+            return
+        # What it's waiting for, till it's done (see doc/shutdown.rst).
+        self.shutdown_panel.show_for(reboot=choice == "reboot")
 
 
 def wait_ready(channel: PolicyChannel, timeout: float = READY_TIMEOUT) -> bool:

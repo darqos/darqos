@@ -1,0 +1,63 @@
+.\" darqos
+.\" Copyright (C) 2026 David Arnold
+.TH on_shutdown 3 2026-11-20 DarqOS "DarqOS Library Manual"
+.SH NAME
+on_shutdown \- finish a program at shutdown
+.SH LIBRARY
+.I darq
+.SH SYNOPSIS
+.BI on_shutdown( handler ", " loop )
+.PP
+.BI handler( reboot ", " now ) " -> ShutdownLater | None"
+.PP
+class \fIShutdownLater\fP:
+    def note(\fItext\fP)
+    def done()
+.SH DESCRIPTION
+.BR on_shutdown ()
+has
+.I handler
+called, on
+.IR loop ,
+the program's own event loop, when the system shuts down, or reboots
+.RI ( reboot ),
+so the program can finish what it must first: save, or ask the
+operator.
+.PP
+The handler returns None when it's finished, and the program ends.
+Or it returns a
+.BR ShutdownLater ,
+and calls its
+.BR done ()
+when it's finished, from any thread;
+.BR note ()
+says what it's doing meanwhile, which
+.BR pyloader (8)
+tells the p-kernel, with WAIT, every 4 seconds, and the Terminal shows.
+If it's silent, or takes longer than 60 seconds, it's called again, with
+.I now
+true: it should save what it can, at once, and return, and the program
+ends; it's killed 3 seconds later otherwise.
+.PP
+Without a handler, a program ends at once at shutdown.
+.SH ERRORS
+None.
+.SH HISTORY
+Introduced in \fISecond Edition\fP.
+.SH EXAMPLES
+.EX
+def finish(reboot, now):
+    if now or not unsaved:
+        return None
+    later = darq.ShutdownLater("saving")
+    save(then=later.done)
+    return later
+
+darq.on_shutdown(finish, loop)
+.EE
+.SH SEE ALSO
+.BR on_shutdown (3),
+.BR shutdown_now (2),
+.BR shutdown_state (2),
+.BR pkernel (8),
+.BR pyloader (8)

@@ -8,6 +8,7 @@
 # from the darq namespace: import this module, as pcall (or pk).
 
 
+import json
 import struct
 from enum import IntEnum
 
@@ -58,6 +59,13 @@ __all__ = [
     "SetBootValueRequest",
     "SetBootValueResponse",
     "Shutdown",
+    "ShutdownNow",
+    "ShutdownReason",
+    "ShutdownRequest",
+    "ShutdownState",
+    "ShutdownStateRequest",
+    "ShutdownStateResponse",
+    "ShutdownStatus",
     "SpawnProcessRequest",
     "SpawnResult",
     "SpawnProcessResponse",
@@ -114,6 +122,11 @@ class MessageType(IntEnum):
     NOTIFY_ON_DEATH_RESP = 32
     GET_VERSION_RQST = 33
     GET_VERSION_RESP = 34
+    SHUTDOWN_RQST = 35
+    SHUTDOWN_STATUS = 36
+    SHUTDOWN_NOW = 37
+    SHUTDOWN_STATE_RQST = 38
+    SHUTDOWN_STATE_RESP = 39
 
 
 class SendResult(IntEnum):
@@ -213,6 +226,21 @@ class BootResult(IntEnum):
 
     # The p-kernel couldn't save the boot vector.
     IO_ERROR = 6
+
+
+class ShutdownReason(IntEnum):
+    """Why the system's shutting down: to stop, or to start again."""
+    SHUTDOWN = 0
+    REBOOT = 1
+
+
+class ShutdownState(IntEnum):
+    """A process's answer to a shutdown request."""
+    # It's finished: it's exiting.
+    OK = 0
+
+    # It's doing what it must first: it says so again, till it's OK.
+    WAIT = 1
 
 
 class ExitReason(IntEnum):
@@ -1464,3 +1492,131 @@ class Shutdown(Message):
 
     def decode(self, buffer: bytes):
         return super().decode(buffer)
+
+
+class ShutdownRequest(Message):
+    """From the p-kernel: the system's shutting down, or rebooting.  The
+    process answers with ShutdownStatus: OK, and exits; or WAIT, again
+    every few seconds, till it's OK.  wait_limit is the seconds it may
+    wait, before it's told ShutdownNow (see doc/shutdown.rst)."""
+
+    def __init__(self, reason: int = ShutdownReason.SHUTDOWN, wait_limit: int = 0):
+        super().__init__(MessageType.SHUTDOWN_RQST)
+        self.reason: int = UInt32(reason)
+        self.wait_limit: int = UInt32(wait_limit)
+        self.set_length(self.header_length + 8)
+
+    def encode(self) -> bytes:
+        return super().encode() + struct.pack(">LL", self.reason, self.wait_limit)
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+        self.reason, self.wait_limit = struct.unpack(">LL", buffer[self.header_length:self.header_length + 8])
+        return
+
+
+class ShutdownStatus(Message):
+    """To the p-kernel: a process's answer to ShutdownRequest, OK or WAIT,
+    with a note of what it's doing, which the Terminal shows."""
+
+    def __init__(self, state: int = ShutdownState.OK, note: str = ""):
+        super().__init__(MessageType.SHUTDOWN_STATUS)
+        self.state: int = UInt32(state)
+        self.note = note.encode("utf-8")
+        self.set_length(self.header_length + 8 + self.padded_length(self.note))
+
+    def get_note(self) -> str:
+        return self.note.decode("utf-8", errors="replace")
+
+    def encode(self) -> bytes:
+        return super().encode() + struct.pack(">LL", self.state, len(self.note)) + self.pad_bytes(self.note)
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+        start = self.header_length + 8
+        self.state, length = struct.unpack(">LL", buffer[self.header_length:start])
+        if start + length > self.length:
+            raise MessageDecodingError("note overruns message")
+        self.note = bytes(buffer[start:start + length])
+        return
+
+
+class ShutdownNow(Message):
+    """From the p-kernel: the process is killed in grace seconds; it should
+    save what it can, say OK, and exit."""
+
+    def __init__(self, grace: int = 0):
+        super().__init__(MessageType.SHUTDOWN_NOW)
+        self.grace: int = UInt32(grace)
+        self.set_length(self.header_length + 8)
+
+    def encode(self) -> bytes:
+        return super().encode() + struct.pack(">Lxxxx", self.grace)
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+        self.grace = struct.unpack(">Lxxxx", buffer[self.header_length:self.header_length + 8])[0]
+        return
+
+
+class ShutdownStateRequest(Message):
+    """Ask what a shutdown's waiting for: a system process's p-call."""
+
+    def __init__(self, request_id: int = 0):
+        super().__init__(MessageType.SHUTDOWN_STATE_RQST)
+        self.request_id: int = UInt32(request_id)
+        self.set_length(self.header_length + 8)
+
+    def encode(self) -> bytes:
+        return super().encode() + struct.pack(">Lxxxx", self.request_id)
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+        self.request_id = struct.unpack(">Lxxxx", buffer[self.header_length:self.header_length + 8])[0]
+        return
+
+
+class ShutdownStateResponse(Message):
+    """Whether a shutdown's running, and what it's waiting for: each
+    process's DPID, name, and note, as JSON.  A process that isn't a
+    system process is NOT_PERMITTED (result, as BootResult's)."""
+
+    def __init__(self, request_id: int = 0, result: int = 0, running: bool = False,
+                 waiting: list[tuple[int, str, str]] | None = None):
+        super().__init__(MessageType.SHUTDOWN_STATE_RESP)
+        self.request_id: int = UInt32(request_id)
+        self.result: int = UInt32(result)
+        self.running = bool(running)
+        self.waiting: list[tuple[int, str, str]] = list(waiting or [])
+        self._body = json.dumps([list(w) for w in self.waiting]).encode("utf-8")
+        self.set_length(self.header_length + 16 + self.padded_length(self._body))
+
+    def encode(self) -> bytes:
+        self._body = json.dumps([list(w) for w in self.waiting]).encode("utf-8")
+        self.set_length(self.header_length + 16 + self.padded_length(self._body))
+        return (super().encode() + struct.pack(">LLLL", self.request_id, self.result, int(self.running),
+                                               len(self._body)) + self.pad_bytes(self._body))
+
+    def decode(self, buffer: bytes):
+        super().decode(buffer)
+        if len(buffer) < self.length:
+            raise MessageDecodingError("buffer too short for packet")
+        start = self.header_length + 16
+        self.request_id, self.result, running, length = struct.unpack(">LLLL", buffer[self.header_length:start])
+        if start + length > self.length:
+            raise MessageDecodingError("waiting overruns message")
+        self.running = bool(running)
+        try:
+            found = json.loads(bytes(buffer[start:start + length]).decode("utf-8"))
+            self.waiting = [(int(d), str(n), str(t)) for d, n, t in found]
+        except (ValueError, TypeError) as e:
+            raise MessageDecodingError(f"bad waiting list: {e}") from e
+        return

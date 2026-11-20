@@ -48,6 +48,7 @@ from darq._runtime.pcall import (
     WaitRequest,
     WaitResponse,
 )
+from darq._runtime import pcall as pk
 from darq.errors import MessageDecodingError
 
 
@@ -738,3 +739,40 @@ class TestHeaderOnlyMessages:
     def test_short_buffer_raises(self, cls, message_type):
         with pytest.raises(MessageDecodingError):
             cls().decode(b"\x00" * 7)
+
+
+def test_shutdown_messages_round_trip():
+    request = pk.ShutdownRequest(pk.ShutdownReason.REBOOT, 60)
+    got = pk.ShutdownRequest()
+    got.decode(request.encode())
+    assert (got.type, got.reason, got.wait_limit) == (pk.MessageType.SHUTDOWN_RQST, pk.ShutdownReason.REBOOT, 60)
+
+    status = pk.ShutdownStatus(pk.ShutdownState.WAIT, "saving the session ✓")
+    got_status = pk.ShutdownStatus()
+    got_status.decode(status.encode())
+    assert (got_status.state, got_status.get_note()) == (pk.ShutdownState.WAIT, "saving the session ✓")
+    assert len(status.encode()) == status.length and status.length % 4 == 0
+
+    now = pk.ShutdownNow(3)
+    got_now = pk.ShutdownNow()
+    got_now.decode(now.encode())
+    assert got_now.grace == 3
+
+    asked = pk.ShutdownStateRequest(7)
+    got_asked = pk.ShutdownStateRequest()
+    got_asked.decode(asked.encode())
+    assert got_asked.request_id == 7
+
+    state = pk.ShutdownStateResponse(7, 0, True, [(12, "lenses/repl", "asking about a session"), (3, "x", "")])
+    got_state = pk.ShutdownStateResponse()
+    got_state.decode(state.encode())
+    assert (got_state.request_id, got_state.running, got_state.waiting) == (
+        7, True, [(12, "lenses/repl", "asking about a session"), (3, "x", "")])
+
+
+def test_a_bad_shutdown_state_is_refused():
+    state = pk.ShutdownStateResponse(1, 0, True, [])
+    buffer = bytearray(state.encode())
+    buffer[24:26] = b"{{"
+    with pytest.raises(MessageDecodingError):
+        pk.ShutdownStateResponse().decode(bytes(buffer))

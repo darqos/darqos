@@ -171,13 +171,17 @@ an interrupt (SIGINT) or termination (SIGTERM, as
 .B systemctl stop
 sends), shuts the system down; the p-call from any other
 process is ignored, and logged.
-Shutting down, every running
-process is killed, as by
-.BR kill_process ,
-and spawned processes not yet running have their host processes
-killed.
-Processes still running after 5 seconds have their host processes
-killed.
+Shutting down, every running process is asked to finish, and
+answers OK, and exits, or WAIT, every few seconds, till it's OK: first
+every process that isn't a service, at once; then the services, one at
+a time, in reverse of the order they started, the Terminal first, and
+Storage last.
+One that's silent for 10 seconds, or has waited 60, is told to finish
+now, and has its host process killed 3 seconds later, as does one that
+said OK but hasn't exited.
+Spawned processes not yet running have their host processes killed.
+See
+.I doc/shutdown.rst.
 Once none are left,
 .B pkernel
 exits with status 0 for a shutdown, or replaces itself with a new

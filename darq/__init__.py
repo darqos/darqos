@@ -41,6 +41,7 @@ __all__ = [
     "spawn_process", "spawn_process_cb", "get_bootstrap_port", "kill_process", "kill_process_cb",
     "exit", "wait", "ChildStatus", "register_name", "register_name_cb", "lookup_name",
     "lookup_name_cb", "get_boot_value", "get_version", "set_boot_value", "shutdown", "reboot",
+    "on_shutdown", "shutdown_now", "shutdown_state", "ShutdownLater", "ShutdownWait",
     "ExitReason", "MAX_HANDLES", "MAX_REGISTERED_NAME_LENGTH", "MAX_BOOT_VALUES",
     "MAX_BOOT_VALUE_LENGTH", "Deferred", "Server", "Timer", "connect", "release_reply_port",
     "send", "serve",
